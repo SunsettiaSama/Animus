@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ReAct LLM</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      height: 100vh;
+      display: flex;
+    }
+
+    /* ── sidebar ── */
+    #sidebar {
+      width: 300px;
+      min-width: 300px;
+      background: #1a1d27;
+      border-right: 1px solid #2d3148;
+      display: flex;
+      flex-direction: column;
+      padding: 24px 20px;
+      gap: 16px;
+      overflow-y: auto;
+    }
+
+    #sidebar h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #7c85f5;
+      letter-spacing: .5px;
+      margin-bottom: 4px;
+    }
+
+    label {
+      font-size: 12px;
+      color: #8b92b8;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 13px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color .2s;
+    }
+    input:focus, textarea:focus { border-color: #7c85f5; }
+    textarea { resize: vertical; min-height: 72px; }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    #btn-init {
+      margin-top: 4px;
+      padding: 9px;
+      background: #7c85f5;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    #btn-init:hover { background: #6470e8; }
+    #btn-init:disabled { background: #3d4263; cursor: not-allowed; }
+
+    #status-badge {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 20px;
+      text-align: center;
+      background: #2d3148;
+      color: #8b92b8;
+    }
+    #status-badge.ready { background: #1a3a2a; color: #4ade80; }
+    #status-badge.error { background: #3a1a1a; color: #f87171; }
+
+    /* ── chat area ── */
+    #chat-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .msg {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-width: 720px;
+    }
+    .msg.user { align-self: flex-end; align-items: flex-end; }
+    .msg.assistant { align-self: flex-start; align-items: flex-start; }
+
+    .msg-role {
+      font-size: 11px;
+      color: #8b92b8;
+      padding: 0 4px;
+    }
+
+    .msg-bubble {
+      padding: 11px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user .msg-bubble {
+      background: #7c85f5;
+      color: #fff;
+      border-bottom-right-radius: 3px;
+    }
+    .msg.assistant .msg-bubble {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      color: #e2e8f0;
+      border-bottom-left-radius: 3px;
+    }
+
+    /* ── input bar ── */
+    #input-bar {
+      padding: 16px 32px 24px;
+      display: flex;
+      gap: 10px;
+      border-top: 1px solid #1a1d27;
+    }
+
+    #user-input {
+      flex: 1;
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 10px;
+      color: #e2e8f0;
+      font-size: 14px;
+      padding: 12px 16px;
+      resize: none;
+      outline: none;
+      min-height: 48px;
+      max-height: 160px;
+      transition: border-color .2s;
+    }
+    #user-input:focus { border-color: #7c85f5; }
+
+    #btn-send {
+      align-self: flex-end;
+      padding: 12px 22px;
+      background: #7c85f5;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    #btn-send:hover { background: #6470e8; }
+    #btn-send:disabled { background: #3d4263; cursor: not-allowed; }
+
+    .thinking { color: #8b92b8; font-style: italic; font-size: 13px; }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── sidebar ── -->
+<aside id="sidebar">
+  <h2>⚙ 模型配置</h2>
+
+  <div class="field">
+    <label id="label-model">本地模型路径</label>
+    <input id="cfg-model" placeholder="Qwen/Qwen2.5-7B 或 /models/llama3" />
+    <span id="hint-model" style="font-size:11px;color:#8b92b8;">本地推理时填写 HuggingFace ID 或绝对路径</span>
+  </div>
+
+  <div class="field">
+    <label>API Key（留空则本地推理）</label>
+    <input id="cfg-apikey" type="password" placeholder="sk-..." />
+  </div>
+
+  <div class="field">
+    <label>Base URL（可选）</label>
+    <input id="cfg-baseurl" placeholder="http://localhost:8000/v1" />
+  </div>
+
+  <div class="row2">
+    <div class="field">
+      <label>Max Tokens</label>
+      <input id="cfg-maxtokens" type="number" value="512" min="1" />
+    </div>
+    <div class="field">
+      <label>Temperature</label>
+      <input id="cfg-temp" type="number" value="1.0" step="0.1" min="0" max="2" />
+    </div>
+  </div>
+
+  <div class="field">
+    <label>System Prompt</label>
+    <textarea id="cfg-sysprompt" placeholder="你是一个有帮助的助手。"></textarea>
+  </div>
+
+  <button id="btn-init" onclick="initLLM()">初始化模型</button>
+  <div id="status-badge">未初始化</div>
+</aside>
+
+<!-- ── chat ── -->
+<main id="chat-area">
+  <div id="messages"></div>
+  <div id="input-bar">
+    <textarea id="user-input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行…" disabled></textarea>
+    <button id="btn-send" onclick="sendMessage()" disabled>发送</button>
+  </div>
+</main>
+
+<script>
+  const badge   = document.getElementById('status-badge');
+  const btnSend = document.getElementById('btn-send');
+  const input   = document.getElementById('user-input');
+  const msgs    = document.getElementById('messages');
+
+  async function initLLM() {
+    const btn = document.getElementById('btn-init');
+    const model = document.getElementById('cfg-model').value.trim();
+    if (!model) { alert('请填写模型路径或名称'); return; }
+
+    btn.disabled = true;
+    badge.className = '';
+    badge.textContent = '初始化中…';
+
+    const body = {
+      model,
+      api_key:       document.getElementById('cfg-apikey').value.trim(),
+      base_url:      document.getElementById('cfg-baseurl').value.trim() || null,
+      max_tokens:    parseInt(document.getElementById('cfg-maxtokens').value) || 512,
+      temperature:   parseFloat(document.getElementById('cfg-temp').value) || 1.0,
+      system_prompt: document.getElementById('cfg-sysprompt').value.trim(),
+    };
+
+    const res = await fetch('/api/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+
+    btn.disabled = false;
+
+    if (!res || !res.ok) {
+      badge.className = 'error';
+      badge.textContent = '初始化失败';
+      return;
+    }
+
+    const data = await res.json();
+    badge.className = 'ready';
+    badge.textContent = `就绪 · ${data.mode === 'api' ? 'API 模式' : '本地推理'}`;
+    input.disabled = false;
+    btnSend.disabled = false;
+    input.focus();
+  }
+
+  async function sendMessage() {
+    const text = input.value.trim();
+    if (!text) return;
+
+    appendMsg('user', text);
+    input.value = '';
+    input.style.height = 'auto';
+
+    btnSend.disabled = true;
+    const thinkingEl = appendMsg('assistant', '…', true);
+
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: text }),
+    }).catch(() => null);
+
+    thinkingEl.remove();
+    btnSend.disabled = false;
+
+    if (!res || !res.ok) {
+      appendMsg('assistant', '[请求失败，请检查后端]');
+      return;
+    }
+
+    const data = await res.json();
+    if (data.error) {
+      appendMsg('assistant', `[错误] ${data.error}`);
+    } else {
+      appendMsg('assistant', data.response);
+    }
+    input.focus();
+  }
+
+  function appendMsg(role, text, isThinking = false) {
+    const wrap = document.createElement('div');
+    wrap.className = `msg ${role}`;
+
+    const roleEl = document.createElement('div');
+    roleEl.className = 'msg-role';
+    roleEl.textContent = role === 'user' ? '你' : 'Assistant';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble' + (isThinking ? ' thinking' : '');
+    bubble.textContent = text;
+
+    wrap.appendChild(roleEl);
+    wrap.appendChild(bubble);
+    msgs.appendChild(wrap);
+    msgs.scrollTop = msgs.scrollHeight;
+    return wrap;
+  }
+
+  // dynamically update model field label based on api_key
+  document.getElementById('cfg-apikey').addEventListener('input', function () {
+    const isApi = this.value.trim().length > 0;
+    document.getElementById('label-model').textContent = isApi ? 'API 模型名称' : '本地模型路径';
+    document.getElementById('cfg-model').placeholder    = isApi ? 'gpt-4o / deepseek-chat' : 'Qwen/Qwen2.5-7B 或 /models/llama3';
+    document.getElementById('hint-model').textContent   = isApi
+      ? 'API 模式：填写服务商提供的模型名称，如 gpt-4o'
+      : '本地推理：填写 HuggingFace ID 或本地绝对路径';
+  });
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!btnSend.disabled) sendMessage();
+    }
+  });
+
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+  });
+</script>
+</body>
+</html>
