@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ReAct LLM</title>
+  <title>ReAct</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -13,6 +13,7 @@
       color: #e2e8f0;
       height: 100vh;
       display: flex;
+      overflow: hidden;
     }
 
     /* ── sidebar ── */
@@ -24,16 +25,16 @@
       display: flex;
       flex-direction: column;
       padding: 24px 20px;
-      gap: 16px;
+      gap: 14px;
       overflow-y: auto;
     }
 
     #sidebar h2 {
-      font-size: 15px;
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 700;
       color: #7c85f5;
-      letter-spacing: .5px;
-      margin-bottom: 4px;
+      letter-spacing: .6px;
+      text-transform: uppercase;
     }
 
     label {
@@ -43,7 +44,11 @@
       margin-bottom: 4px;
     }
 
-    input, textarea, select {
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    textarea,
+    select {
       width: 100%;
       background: #0f1117;
       border: 1px solid #2d3148;
@@ -54,15 +59,13 @@
       outline: none;
       transition: border-color .2s;
     }
-    input:focus, textarea:focus { border-color: #7c85f5; }
-    textarea { resize: vertical; min-height: 72px; }
+    input:focus, textarea:focus, select:focus { border-color: #7c85f5; }
+    textarea { resize: vertical; min-height: 68px; }
 
     .field { display: flex; flex-direction: column; gap: 4px; }
+    .row2  { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-
-    #btn-init {
-      margin-top: 4px;
+    .btn-primary {
       padding: 9px;
       background: #7c85f5;
       border: none;
@@ -72,52 +75,101 @@
       font-weight: 600;
       cursor: pointer;
       transition: background .2s;
+      width: 100%;
     }
-    #btn-init:hover { background: #6470e8; }
-    #btn-init:disabled { background: #3d4263; cursor: not-allowed; }
+    .btn-primary:hover { background: #6470e8; }
+    .btn-primary:disabled { background: #3d4263; cursor: not-allowed; }
 
-    #status-badge {
+    .status-badge {
       font-size: 11px;
-      padding: 3px 8px;
+      padding: 4px 8px;
       border-radius: 20px;
       text-align: center;
       background: #2d3148;
       color: #8b92b8;
     }
-    #status-badge.ready { background: #1a3a2a; color: #4ade80; }
-    #status-badge.error { background: #3a1a1a; color: #f87171; }
+    .status-badge.ready { background: #1a3a2a; color: #4ade80; }
+    .status-badge.error { background: #3a1a1a; color: #f87171; }
+    .status-badge.busy  { background: #2a2518; color: #fbbf24; }
 
-    /* ── chat area ── */
-    #chat-area {
+    .section-divider {
+      border: none;
+      border-top: 1px solid #2d3148;
+      margin: 4px 0;
+    }
+
+    .tool-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #e2e8f0;
+      transition: background .15s;
+    }
+    .tool-item:hover { background: #252840; }
+    .tool-item input[type="checkbox"] { width: auto; accent-color: #7c85f5; cursor: pointer; }
+    .tool-item small { color: #8b92b8; font-size: 11px; margin-left: auto; }
+
+    /* ── main ── */
+    #main {
       flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
 
+    /* ── tab bar ── */
+    #tab-bar {
+      display: flex;
+      gap: 2px;
+      padding: 0 20px;
+      background: #1a1d27;
+      border-bottom: 1px solid #2d3148;
+      flex-shrink: 0;
+    }
+
+    .tab-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: #8b92b8;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 13px 16px 11px;
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+      white-space: nowrap;
+    }
+    .tab-btn:hover { color: #c7ccf5; }
+    .tab-btn.active { color: #7c85f5; border-bottom-color: #7c85f5; }
+
+    /* ── panels ── */
+    .panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel.hidden { display: none; }
+
+    /* ── chat panel ── */
     #messages {
       flex: 1;
       overflow-y: auto;
-      padding: 28px 32px;
+      padding: 28px 36px;
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      gap: 18px;
     }
 
-    .msg {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      max-width: 720px;
-    }
-    .msg.user { align-self: flex-end; align-items: flex-end; }
+    .msg { display: flex; flex-direction: column; gap: 4px; max-width: 740px; }
+    .msg.user      { align-self: flex-end;   align-items: flex-end; }
     .msg.assistant { align-self: flex-start; align-items: flex-start; }
 
-    .msg-role {
-      font-size: 11px;
-      color: #8b92b8;
-      padding: 0 4px;
-    }
+    .msg-role { font-size: 11px; color: #8b92b8; padding: 0 4px; }
 
     .msg-bubble {
       padding: 11px 16px;
@@ -138,16 +190,29 @@
       color: #e2e8f0;
       border-bottom-left-radius: 3px;
     }
+    .thinking { color: #8b92b8; font-style: italic; font-size: 13px; }
 
-    /* ── input bar ── */
-    #input-bar {
-      padding: 16px 32px 24px;
+    /* ── react panel ── */
+    #react-steps {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px 36px;
       display: flex;
-      gap: 10px;
-      border-top: 1px solid #1a1d27;
+      flex-direction: column;
+      gap: 14px;
     }
 
-    #user-input {
+    /* ── shared input bar ── */
+    .input-bar {
+      padding: 14px 36px 22px;
+      display: flex;
+      gap: 10px;
+      border-top: 1px solid #2d3148;
+      background: #0f1117;
+      flex-shrink: 0;
+    }
+
+    .chat-input {
       flex: 1;
       background: #1a1d27;
       border: 1px solid #2d3148;
@@ -160,12 +225,13 @@
       min-height: 48px;
       max-height: 160px;
       transition: border-color .2s;
+      font-family: inherit;
     }
-    #user-input:focus { border-color: #7c85f5; }
+    .chat-input:focus { border-color: #7c85f5; }
 
-    #btn-send {
+    .btn-send {
       align-self: flex-end;
-      padding: 12px 22px;
+      padding: 12px 24px;
       background: #7c85f5;
       border: none;
       border-radius: 10px;
@@ -174,12 +240,163 @@
       font-weight: 600;
       cursor: pointer;
       transition: background .2s;
+      white-space: nowrap;
     }
-    #btn-send:hover { background: #6470e8; }
-    #btn-send:disabled { background: #3d4263; cursor: not-allowed; }
+    .btn-send:hover { background: #6470e8; }
+    .btn-send:disabled { background: #3d4263; cursor: not-allowed; }
 
-    .thinking { color: #8b92b8; font-style: italic; font-size: 13px; }
+    /* ── react step cards ── */
+    .question-card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      padding: 16px 20px;
+    }
+    .q-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #8b92b8;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 8px;
+    }
+    .q-text {
+      font-size: 15px;
+      color: #e2e8f0;
+      font-weight: 500;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
 
+    .step-card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .step-header {
+      padding: 9px 16px;
+      background: #20233a;
+      font-size: 11px;
+      font-weight: 700;
+      color: #7c85f5;
+      letter-spacing: .6px;
+      text-transform: uppercase;
+    }
+
+    .step-section {
+      padding: 14px 16px;
+      border-top: 1px solid #2d3148;
+      border-left: 3px solid transparent;
+    }
+    .step-section.thought     { border-left-color: #3b82f6; }
+    .step-section.action-sec  { border-left-color: #f59e0b; }
+    .step-section.observation { border-left-color: #22c55e; }
+
+    .sec-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 7px;
+    }
+    .step-section.thought     .sec-label { color: #60a5fa; }
+    .step-section.action-sec  .sec-label { color: #fbbf24; }
+    .step-section.observation .sec-label { color: #4ade80; }
+
+    .sec-content {
+      font-size: 13px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #e2e8f0;
+    }
+
+    .code-block {
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: "Courier New", Consolas, monospace;
+      font-size: 12px;
+      color: #a5b4fc;
+      margin-top: 6px;
+      white-space: pre;
+      overflow-x: auto;
+    }
+
+    .answer-card {
+      background: #1e1a3a;
+      border: 1px solid #5b63c8;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .answer-header {
+      padding: 9px 16px;
+      background: #282260;
+      font-size: 11px;
+      font-weight: 700;
+      color: #a5b4fc;
+      letter-spacing: .6px;
+      text-transform: uppercase;
+    }
+    .answer-body {
+      padding: 16px 20px;
+      font-size: 15px;
+      color: #e2e8f0;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .error-card {
+      background: #2a1818;
+      border: 1px solid #b91c1c;
+      border-radius: 12px;
+      padding: 14px 18px;
+      color: #f87171;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .step-raw-output {
+      padding: 12px 16px;
+      font-size: 13px;
+      line-height: 1.65;
+      color: #c4cbe8;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: "Courier New", Consolas, monospace;
+      min-height: 36px;
+    }
+
+    .step-thinking {
+      font-size: 11px;
+      font-weight: 400;
+      color: #8b92b8;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    .running-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #8b92b8;
+      font-size: 13px;
+      font-style: italic;
+      padding: 4px 0;
+    }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+    .running-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #7c85f5;
+      animation: pulse 1.2s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+
+    /* ── scrollbar ── */
     ::-webkit-scrollbar { width: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
@@ -187,14 +404,15 @@
 </head>
 <body>
 
-<!-- ── sidebar ── -->
+<!-- ══════════ SIDEBAR ══════════ -->
 <aside id="sidebar">
+
   <h2>⚙ 模型配置</h2>
 
   <div class="field">
     <label id="label-model">本地模型路径</label>
     <input id="cfg-model" placeholder="Qwen/Qwen2.5-7B 或 /models/llama3" />
-    <span id="hint-model" style="font-size:11px;color:#8b92b8;">本地推理时填写 HuggingFace ID 或绝对路径</span>
+    <span id="hint-model" style="font-size:11px;color:#8b92b8;">本地推理：填写 HuggingFace ID 或绝对路径</span>
   </div>
 
   <div class="field">
@@ -223,32 +441,98 @@
     <textarea id="cfg-sysprompt" placeholder="你是一个有帮助的助手。"></textarea>
   </div>
 
-  <button id="btn-init" onclick="initLLM()">初始化模型</button>
-  <div id="status-badge">未初始化</div>
+  <button class="btn-primary" id="btn-init" onclick="initLLM()">初始化模型</button>
+  <div class="status-badge" id="llm-badge">未初始化</div>
+
+  <!-- ReAct config — visible only on ReAct tab -->
+  <div id="react-sidebar" style="display:none">
+    <hr class="section-divider" />
+    <h2>🤖 ReAct 配置</h2>
+
+    <div class="field">
+      <label>提示语言</label>
+      <select id="react-lang">
+        <option value="cn">中文 (CN)</option>
+        <option value="en">English (EN)</option>
+      </select>
+    </div>
+
+    <div class="row2">
+      <div class="field">
+        <label>最大步骤数</label>
+        <input id="react-maxsteps" type="number" value="10" min="1" max="50" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label>启用工具</label>
+      <label class="tool-item">
+        <input type="checkbox" value="weather" id="tool-weather" checked />
+        <span>weather</span>
+        <small>查询天气</small>
+      </label>
+    </div>
+
+    <button class="btn-primary" id="btn-react-init" onclick="initReact()">初始化 ReAct</button>
+    <div class="status-badge" id="react-badge">未初始化</div>
+  </div>
+
 </aside>
 
-<!-- ── chat ── -->
-<main id="chat-area">
-  <div id="messages"></div>
-  <div id="input-bar">
-    <textarea id="user-input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行…" disabled></textarea>
-    <button id="btn-send" onclick="sendMessage()" disabled>发送</button>
+<!-- ══════════ MAIN ══════════ -->
+<div id="main">
+
+  <!-- tabs -->
+  <div id="tab-bar">
+    <button class="tab-btn active" id="tab-chat"  onclick="switchTab('chat')">💬 对话</button>
+    <button class="tab-btn"        id="tab-react" onclick="switchTab('react')">🤖 ReAct 推理</button>
   </div>
-</main>
+
+  <!-- ── chat panel ── -->
+  <div class="panel" id="chat-panel">
+    <div id="messages"></div>
+    <div class="input-bar">
+      <textarea class="chat-input" id="user-input" rows="1"
+        placeholder="输入消息，Enter 发送，Shift+Enter 换行…" disabled></textarea>
+      <button class="btn-send" id="btn-send" onclick="sendMessage()" disabled>发送</button>
+    </div>
+  </div>
+
+  <!-- ── react panel ── -->
+  <div class="panel hidden" id="react-panel">
+    <div id="react-steps"></div>
+    <div class="input-bar">
+      <textarea class="chat-input" id="react-input" rows="1"
+        placeholder="输入你的问题，Enter 运行，Shift+Enter 换行…" disabled></textarea>
+      <button class="btn-send" id="btn-run" onclick="runReact()" disabled>运行</button>
+    </div>
+  </div>
+
+</div>
 
 <script>
-  const badge   = document.getElementById('status-badge');
-  const btnSend = document.getElementById('btn-send');
-  const input   = document.getElementById('user-input');
-  const msgs    = document.getElementById('messages');
+  /* ─── state ─── */
+  let currentTab = 'chat';
 
+  /* ─── tab switch ─── */
+  function switchTab(name) {
+    currentTab = name;
+    ['chat', 'react'].forEach(t => {
+      document.getElementById(`tab-${t}`).classList.toggle('active', t === name);
+      document.getElementById(`${t}-panel`).classList.toggle('hidden', t !== name);
+    });
+    document.getElementById('react-sidebar').style.display = name === 'react' ? 'block' : 'none';
+  }
+
+  /* ─── LLM init ─── */
   async function initLLM() {
-    const btn = document.getElementById('btn-init');
+    const btn   = document.getElementById('btn-init');
+    const badge = document.getElementById('llm-badge');
     const model = document.getElementById('cfg-model').value.trim();
     if (!model) { alert('请填写模型路径或名称'); return; }
 
     btn.disabled = true;
-    badge.className = '';
+    badge.className = 'status-badge busy';
     badge.textContent = '初始化中…';
 
     const body = {
@@ -269,29 +553,45 @@
     btn.disabled = false;
 
     if (!res || !res.ok) {
-      badge.className = 'error';
+      badge.className = 'status-badge error';
       badge.textContent = '初始化失败';
       return;
     }
 
     const data = await res.json();
-    badge.className = 'ready';
+    badge.className = 'status-badge ready';
     badge.textContent = `就绪 · ${data.mode === 'api' ? 'API 模式' : '本地推理'}`;
-    input.disabled = false;
-    btnSend.disabled = false;
-    input.focus();
+
+    document.getElementById('user-input').disabled = false;
+    document.getElementById('btn-send').disabled = false;
+    document.getElementById('user-input').focus();
   }
 
+  /* ─── chat send ─── */
   async function sendMessage() {
-    const text = input.value.trim();
+    const input = document.getElementById('user-input');
+    const text  = input.value.trim();
     if (!text) return;
 
-    appendMsg('user', text);
+    appendChatMsg('user', text);
     input.value = '';
-    input.style.height = 'auto';
+    autoResize(input);
+    document.getElementById('btn-send').disabled = true;
 
-    btnSend.disabled = true;
-    const thinkingEl = appendMsg('assistant', '…', true);
+    // create streaming bubble
+    const msgs   = document.getElementById('messages');
+    const wrap   = document.createElement('div');
+    wrap.className = 'msg assistant';
+    const roleEl = document.createElement('div');
+    roleEl.className = 'msg-role';
+    roleEl.textContent = 'Assistant';
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble thinking';
+    bubble.textContent = '…';
+    wrap.appendChild(roleEl);
+    wrap.appendChild(bubble);
+    msgs.appendChild(wrap);
+    msgs.scrollTop = msgs.scrollHeight;
 
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -299,24 +599,50 @@
       body: JSON.stringify({ prompt: text }),
     }).catch(() => null);
 
-    thinkingEl.remove();
-    btnSend.disabled = false;
-
     if (!res || !res.ok) {
-      appendMsg('assistant', '[请求失败，请检查后端]');
+      bubble.className = 'msg-bubble';
+      bubble.textContent = '[请求失败，请检查后端]';
+      document.getElementById('btn-send').disabled = false;
       return;
     }
 
-    const data = await res.json();
-    if (data.error) {
-      appendMsg('assistant', `[错误] ${data.error}`);
-    } else {
-      appendMsg('assistant', data.response);
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer  = '';
+    let content = '';
+    let started = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        if (!part.startsWith('data: ')) continue;
+        const data = JSON.parse(part.slice(6));
+        if (data.done) break;
+        if (data.chunk) {
+          if (!started) {
+            bubble.className = 'msg-bubble';
+            bubble.textContent = '';
+            started = true;
+          }
+          content += data.chunk;
+          bubble.textContent = content;
+          msgs.scrollTop = msgs.scrollHeight;
+        }
+      }
     }
+
+    document.getElementById('btn-send').disabled = false;
     input.focus();
   }
 
-  function appendMsg(role, text, isThinking = false) {
+  function appendChatMsg(role, text, isThinking = false) {
+    const msgs = document.getElementById('messages');
     const wrap = document.createElement('div');
     wrap.className = `msg ${role}`;
 
@@ -335,26 +661,272 @@
     return wrap;
   }
 
-  // dynamically update model field label based on api_key
+  /* ─── react init ─── */
+  async function initReact() {
+    const btn   = document.getElementById('btn-react-init');
+    const badge = document.getElementById('react-badge');
+
+    btn.disabled = true;
+    badge.className = 'status-badge busy';
+    badge.textContent = '初始化中…';
+
+    const tools = Array.from(
+      document.querySelectorAll('#react-sidebar input[type="checkbox"]:checked')
+    ).map(el => el.value);
+
+    const body = {
+      lang:      document.getElementById('react-lang').value,
+      max_steps: parseInt(document.getElementById('react-maxsteps').value) || 10,
+      tools,
+    };
+
+    const res = await fetch('/api/react/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+
+    btn.disabled = false;
+
+    if (!res || !res.ok) {
+      const err = res ? await res.json() : null;
+      badge.className = 'status-badge error';
+      badge.textContent = err?.error || '初始化失败';
+      return;
+    }
+
+    badge.className = 'status-badge ready';
+    badge.textContent = '就绪';
+    document.getElementById('react-input').disabled = false;
+    document.getElementById('btn-run').disabled = false;
+    document.getElementById('react-input').focus();
+  }
+
+  /* ─── react run ─── */
+  const _stepCards = {};   // index → card element
+
+  async function runReact() {
+    const inputEl = document.getElementById('react-input');
+    const question = inputEl.value.trim();
+    if (!question) return;
+
+    const stepsEl = document.getElementById('react-steps');
+    stepsEl.innerHTML = '';
+    Object.keys(_stepCards).forEach(k => delete _stepCards[k]);
+
+    // question card
+    const qCard = document.createElement('div');
+    qCard.className = 'question-card';
+    qCard.innerHTML = `<div class="q-label">❓ 问题</div><div class="q-text">${esc(question)}</div>`;
+    stepsEl.appendChild(qCard);
+
+    document.getElementById('btn-run').disabled = true;
+    inputEl.disabled = true;
+
+    const res = await fetch('/api/react/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    }).catch(() => null);
+
+    if (!res || !res.ok) {
+      const err = res ? await res.json().catch(() => null) : null;
+      appendError(stepsEl, err?.error || '请求失败，请检查后端是否正常。');
+      resetReactBar();
+      return;
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer   = '';
+    let finished = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        if (!part.startsWith('data: ')) continue;
+        const data = JSON.parse(part.slice(6));
+
+        if (data.type === 'step_start') {
+          _stepCards[data.index] = createStreamingCard(data.index, stepsEl);
+
+        } else if (data.type === 'chunk') {
+          const rawEl = document.getElementById(`step-raw-${data.index}`);
+          if (rawEl) {
+            rawEl.textContent += data.chunk;
+            stepsEl.scrollTop = stepsEl.scrollHeight;
+          }
+
+        } else if (data.type === 'step') {
+          upgradeCard(_stepCards[data.index], data);
+          stepsEl.scrollTop = stepsEl.scrollHeight;
+
+        } else if (data.type === 'finish') {
+          // seal any streaming card that was the finish step
+          const streamCard = _stepCards[data.index ?? -1];
+          if (streamCard) sealStreamingCard(streamCard, data.index ?? -1);
+          appendAnswer(stepsEl, data.answer);
+          finished = true;
+          stepsEl.scrollTop = stepsEl.scrollHeight;
+        }
+      }
+    }
+
+    if (!finished) {
+      appendError(stepsEl, '⚠ 已达最大步骤数，未得到最终答案。');
+      stepsEl.scrollTop = stepsEl.scrollHeight;
+    }
+
+    resetReactBar();
+  }
+
+  function createStreamingCard(index, container) {
+    const card = document.createElement('div');
+    card.className = 'step-card';
+    card.innerHTML = `
+      <div class="step-header" id="step-hdr-${index}">
+        Step ${index + 1}
+        <span class="step-thinking"><span class="running-dot" style="display:inline-block;margin-left:8px;vertical-align:middle;"></span> 推理中…</span>
+      </div>
+      <div class="step-section thought" style="padding:0">
+        <div id="step-raw-${index}" class="step-raw-output"></div>
+      </div>`;
+    container.appendChild(card);
+    return card;
+  }
+
+  function upgradeCard(card, data) {
+    if (!card) return;
+    const inputStr = JSON.stringify(data.action_input, null, 2);
+    card.innerHTML = `
+      <div class="step-header">Step ${data.index + 1}</div>
+      <div class="step-section thought">
+        <div class="sec-label">💭 Thought</div>
+        <div class="sec-content">${esc(data.thought)}</div>
+      </div>
+      <div class="step-section action-sec">
+        <div class="sec-label">⚡ Action · ${esc(data.action)}</div>
+        <div class="code-block">${esc(inputStr)}</div>
+      </div>
+      <div class="step-section observation">
+        <div class="sec-label">👁 Observation</div>
+        <div class="sec-content">${esc(data.observation)}</div>
+      </div>`;
+  }
+
+  function sealStreamingCard(card, index) {
+    if (!card) return;
+    const hdr = card.querySelector(`#step-hdr-${index}`);
+    if (hdr) {
+      const thinking = hdr.querySelector('.step-thinking');
+      if (thinking) thinking.remove();
+    }
+  }
+
+  function appendAnswer(container, answer) {
+    const card = document.createElement('div');
+    card.className = 'answer-card';
+    card.innerHTML = `
+      <div class="answer-header">✅ 最终答案</div>
+      <div class="answer-body">${esc(answer)}</div>`;
+    container.appendChild(card);
+  }
+
+  function appendError(container, msg) {
+    const card = document.createElement('div');
+    card.className = 'error-card';
+    card.textContent = msg;
+    container.appendChild(card);
+  }
+
+  function resetReactBar() {
+    document.getElementById('btn-run').disabled = false;
+    document.getElementById('react-input').disabled = false;
+    document.getElementById('react-input').focus();
+  }
+
+  /* ─── utils ─── */
+  function esc(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+  }
+
+  /* ─── check server status on load ─── */
+  (async () => {
+    const [statusRes, cfgRes] = await Promise.all([
+      fetch('/api/status').catch(() => null),
+      fetch('/api/config').catch(() => null),
+    ]);
+
+    if (cfgRes && cfgRes.ok) {
+      const cfg = await cfgRes.json();
+      if (cfg.model) {
+        document.getElementById('cfg-model').value      = cfg.model       ?? '';
+        document.getElementById('cfg-baseurl').value    = cfg.base_url    ?? '';
+        document.getElementById('cfg-maxtokens').value  = cfg.max_tokens  ?? 512;
+        document.getElementById('cfg-temp').value       = cfg.temperature ?? 1.0;
+        document.getElementById('cfg-sysprompt').value  = cfg.system_prompt ?? '';
+        // api_key: 有值时仅更新 label，不回填密码框（安全）
+        if (cfg.api_key) {
+          document.getElementById('label-model').textContent  = 'API 模型名称';
+          document.getElementById('hint-model').textContent   = 'API 模式：填写服务商提供的模型名称，如 gpt-4o';
+          document.getElementById('cfg-model').placeholder    = 'gpt-4o / deepseek-chat';
+        }
+      }
+    }
+
+    if (statusRes && statusRes.ok) {
+      const data = await statusRes.json();
+      if (data.initialized) {
+        document.getElementById('llm-badge').className   = 'status-badge ready';
+        document.getElementById('llm-badge').textContent = '就绪 · 已从配置文件加载';
+        document.getElementById('user-input').disabled   = false;
+        document.getElementById('btn-send').disabled     = false;
+      }
+    }
+  })();
+
+  /* ─── model label toggle ─── */
   document.getElementById('cfg-apikey').addEventListener('input', function () {
     const isApi = this.value.trim().length > 0;
-    document.getElementById('label-model').textContent = isApi ? 'API 模型名称' : '本地模型路径';
-    document.getElementById('cfg-model').placeholder    = isApi ? 'gpt-4o / deepseek-chat' : 'Qwen/Qwen2.5-7B 或 /models/llama3';
-    document.getElementById('hint-model').textContent   = isApi
+    document.getElementById('label-model').textContent   = isApi ? 'API 模型名称' : '本地模型路径';
+    document.getElementById('cfg-model').placeholder     = isApi ? 'gpt-4o / deepseek-chat' : 'Qwen/Qwen2.5-7B 或 /models/llama3';
+    document.getElementById('hint-model').textContent    = isApi
       ? 'API 模式：填写服务商提供的模型名称，如 gpt-4o'
       : '本地推理：填写 HuggingFace ID 或本地绝对路径';
   });
 
-  input.addEventListener('keydown', e => {
+  /* ─── keyboard shortcuts ─── */
+  document.getElementById('user-input').addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!btnSend.disabled) sendMessage();
+      if (!document.getElementById('btn-send').disabled) sendMessage();
+    }
+  });
+  document.getElementById('react-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!document.getElementById('btn-run').disabled) runReact();
     }
   });
 
-  input.addEventListener('input', () => {
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+  /* ─── auto-resize inputs ─── */
+  ['user-input', 'react-input'].forEach(id => {
+    document.getElementById(id).addEventListener('input', function () { autoResize(this); });
   });
 </script>
 </body>
