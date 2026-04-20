@@ -1,0 +1,25 @@
+# Web server
+fastapi
+uvicorn[standard]
+pydantic
+
+# LangChain core
+langchain-core
+langchain-community
+langchain-openai
+
+# Local LLM (HuggingFace)
+transformers
+torch
+accelerate
+
+# Embeddings + vector store
+faiss-cpu
+sentence-transformers
+
+# HuggingFace Hub
+huggingface-hub
+
+# Utilities
+pyyaml
+numpy

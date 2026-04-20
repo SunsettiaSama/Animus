@@ -5,13 +5,13 @@ import json
 from config.react.prompt_config import PromptConfig
 from react.memory.memory import Step
 from react.memory.processor import MemoryResult
-from react.prompt.template import PromptTemplate, get_template
+from react.prompt.template import ReActTemplate, get_template
 
 
 class PromptBuilder:
     def __init__(self, tool_descriptions: dict[str, str], cfg: PromptConfig | None = None):
         self._tool_descriptions = tool_descriptions
-        self._tpl: PromptTemplate = get_template((cfg or PromptConfig()).lang)
+        self._tpl: ReActTemplate = get_template((cfg or PromptConfig()).lang)
 
     def build(self, question: str, result: MemoryResult) -> str:
         tpl = self._tpl

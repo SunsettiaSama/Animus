@@ -55,6 +55,10 @@ class MediumTermMemory:
         if len(self._pending) >= self._cfg.summary_trigger_steps:
             self._roll_summary()
 
+    def flush(self) -> None:
+        if self._pending:
+            self._roll_summary()
+
     def _roll_summary(self) -> None:
         new_steps_text = "\n\n".join(_step_to_text(s) for s in self._pending)
         prev = self._summary if self._summary else "None"

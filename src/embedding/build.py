@@ -5,13 +5,13 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import numpy as np
 import torch
-from FlagEmbedding import FlagModel
+from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 
 from config.embedding.config import BuildConfig
 from embedding.corpus import Chunk, build_chunks, load_csv
-from embedding import index as idx_module
 
 
 def _resolve_device(device: str) -> str:
@@ -20,23 +20,14 @@ def _resolve_device(device: str) -> str:
     return device
 
 
-def _embed_chunks(
-    chunks: list[Chunk],
-    model: FlagModel,
-    passage_prefix: str,
-    batch_size: int,
-) -> np.ndarray:
-    texts = [passage_prefix + c.text for c in chunks]
-    batches: list[np.ndarray] = []
-    total = len(texts)
-    for start in range(0, total, batch_size):
-        batch = texts[start : start + batch_size]
-        vecs = model.encode(batch)
-        batches.append(np.array(vecs, dtype="float32"))
-        done = min(start + batch_size, total)
-        print(f"  embedding: {done}/{total}", end="\r", flush=True)
-    print()
-    return np.vstack(batches)
+def _chunks_to_documents(chunks: list[Chunk]) -> list[Document]:
+    return [
+        Document(
+            page_content=c.text,
+            metadata={"chunk_id": c.chunk_id, "source_row": c.source_row, **c.meta},
+        )
+        for c in chunks
+    ]
 
 
 def build(cfg: BuildConfig) -> None:
@@ -50,26 +41,20 @@ def build(cfg: BuildConfig) -> None:
 
     device = _resolve_device(cfg.device)
     print(f"[3/4] embedding  model={cfg.model_name_or_path}  device={device}")
-    model = FlagModel(
-        cfg.model_name_or_path,
-        use_fp16=cfg.use_fp16,
-        device=device,
+    embeddings = HuggingFaceBgeEmbeddings(
+        model_name=cfg.model_name_or_path,
+        model_kwargs={"device": device},
+        encode_kwargs={
+            "normalize_embeddings": True,
+            "batch_size": cfg.batch_size,
+        },
+        embed_instruction=cfg.passage_prefix,
     )
-    vectors = _embed_chunks(chunks, model, cfg.passage_prefix, cfg.batch_size)
 
     print("[4/4] building FAISS index and saving")
-    faiss_index = idx_module.build_faiss_index(vectors)
-    chunks_meta = [
-        {"chunk_id": c.chunk_id, "source_row": c.source_row, "text": c.text, **c.meta}
-        for c in chunks
-    ]
-    idx_module.save(
-        cfg.output_dir,
-        faiss_index,
-        chunks_meta,
-        cfg.index_filename,
-        cfg.meta_filename,
-    )
-    print(f"      index  →  {cfg.output_dir}/{cfg.index_filename}")
-    print(f"      meta   →  {cfg.output_dir}/{cfg.meta_filename}")
+    docs = _chunks_to_documents(chunks)
+    vectorstore = FAISS.from_documents(docs, embeddings)
+    os.makedirs(cfg.output_dir, exist_ok=True)
+    vectorstore.save_local(cfg.output_dir, cfg.index_filename.replace(".faiss", ""))
+    print(f"      index  →  {cfg.output_dir}/")
     print("done.")

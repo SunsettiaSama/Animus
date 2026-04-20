@@ -2,20 +2,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from langchain_core.prompts import PromptTemplate
+
 
 @dataclass
-class PromptTemplate:
-    system: str
+class ReActTemplate:
+    system: PromptTemplate
     long_term_header: str
     medium_term_header: str
     question_prefix: str
     suffix: str
-    step_format: str
+    step_format: PromptTemplate
     separator: str
 
 
-EN = PromptTemplate(
-    system=(
+EN = ReActTemplate(
+    system=PromptTemplate.from_template(
         "You are a ReAct (Reasoning + Acting) agent. "
         "Solve the given question step by step using the available tools.\n\n"
         "Available tools:\n{tool_list}\n\n"
@@ -33,7 +35,7 @@ EN = PromptTemplate(
     medium_term_header="Summary of previous steps:",
     question_prefix="Question:",
     suffix="Thought:",
-    step_format=(
+    step_format=PromptTemplate.from_template(
         "Thought: {thought}\n"
         "Action: {action}\n"
         "Action Input: {action_input}\n"
@@ -42,8 +44,8 @@ EN = PromptTemplate(
     separator="---",
 )
 
-CN = PromptTemplate(
-    system=(
+CN = ReActTemplate(
+    system=PromptTemplate.from_template(
         "你是一个 ReAct（推理 + 行动）智能体，请使用可用工具逐步解决用户的问题。\n\n"
         "可用工具：\n{tool_list}\n\n"
         "请严格按照以下格式输出：\n"
@@ -60,7 +62,7 @@ CN = PromptTemplate(
     medium_term_header="历史步骤摘要：",
     question_prefix="问题：",
     suffix="Thought:",
-    step_format=(
+    step_format=PromptTemplate.from_template(
         "Thought: {thought}\n"
         "Action: {action}\n"
         "Action Input: {action_input}\n"
@@ -69,13 +71,13 @@ CN = PromptTemplate(
     separator="---",
 )
 
-_REGISTRY: dict[str, PromptTemplate] = {
+_REGISTRY: dict[str, ReActTemplate] = {
     "en": EN,
     "cn": CN,
 }
 
 
-def get_template(lang: str) -> PromptTemplate:
+def get_template(lang: str) -> ReActTemplate:
     key = lang.lower().strip()
     if key not in _REGISTRY:
         raise ValueError(f"unknown prompt language: {lang!r}, choices: {list(_REGISTRY)}")

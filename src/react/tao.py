@@ -10,7 +10,7 @@ from react.action.executor import ActionExecutor
 from react.memory.memory import Step
 from react.memory.processor import MemoryProcessor
 from react.parser import parse_llm_output
-from react.prompt.builder import PromptBuilder
+from react.prompt.manager import PromptManager
 
 
 @dataclass
@@ -52,26 +52,29 @@ class TaoLoop:
         self._llm = llm
         self._executor = executor
         self._cfg = cfg
-        self._prompt_builder = PromptBuilder(tool_descriptions, cfg.prompt)
+        self._manager = PromptManager(tool_descriptions, cfg.prompt)
 
     def stream(self, question: str) -> Generator[TaoEvent, None, None]:
         processor = MemoryProcessor(self._cfg.memory, self._llm)
 
         for i in range(self._cfg.max_steps):
             result = processor.recall(question)
-            prompt = self._prompt_builder.build(question, result)
+            messages = self._manager.build_messages(question, result)
 
             yield StepStartEvent(index=i)
 
             raw_output = ""
-            for chunk in self._llm.stream_generate(prompt):
+            for chunk in self._llm.stream_generate_messages(messages):
                 raw_output += chunk
                 yield ChunkEvent(index=i, chunk=chunk)
 
             thought, action, action_input = parse_llm_output(raw_output)
 
             if action.lower() == self._cfg.finish_action:
-                yield FinishEvent(answer=action_input.get("answer", raw_output))
+                answer = action_input.get("answer", raw_output)
+                processor.commit(question, answer)
+                self._manager.add_turn(question, answer)
+                yield FinishEvent(answer=answer)
                 return
 
             observation = self._executor.run(
@@ -95,6 +98,9 @@ class TaoLoop:
             )
 
         raise RuntimeError(f"TaoLoop exceeded max_steps={self._cfg.max_steps} without finishing")
+
+    def reset(self) -> None:
+        self._manager.clear_history()
 
     def run(self, question: str) -> str:
         for event in self.stream(question):

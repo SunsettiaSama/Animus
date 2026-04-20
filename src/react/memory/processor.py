@@ -53,6 +53,18 @@ class MemoryProcessor:
             long_term=self._long.recall(query) if self._long is not None else "",
         )
 
+    def commit(self, question: str, answer: str) -> None:
+        if self._medium is not None:
+            self._medium.flush()
+
+        if self._long is not None:
+            parts = [f"Q: {question}"]
+            if self._medium is not None and self._medium.has_summary:
+                parts.append(f"Process: {self._medium.summary}")
+            parts.append(f"A: {answer}")
+            self._long.add("\n".join(parts), question=question)
+            self._long.save()
+
     def clear(self) -> None:
         if self._short is not None:
             self._short.clear()

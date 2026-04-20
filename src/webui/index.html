@@ -3,931 +3,1398 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ReAct</title>
+  <title>ReAct Agent</title>
   <style>
+    :root {
+      --bg:          #ffffff;
+      --bg2:         #f9fafb;
+      --bg3:         #f3f4f6;
+      --border:      #e5e7eb;
+      --text:        #111827;
+      --text2:       #6b7280;
+      --text3:       #9ca3af;
+      --accent:      #2563eb;
+      --accent2:     #1d4ed8;
+      --user-bg:     #2563eb;
+      --agent-bg:    #f3f4f6;
+      --r:           12px;
+      --r2:          8px;
+      --sidebar-w:   260px;
+    }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0f1117;
-      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg2);
+      color: var(--text);
       height: 100vh;
-      display: flex;
       overflow: hidden;
     }
 
-    /* ── sidebar ── */
-    #sidebar {
-      width: 300px;
-      min-width: 300px;
-      background: #1a1d27;
-      border-right: 1px solid #2d3148;
-      display: flex;
-      flex-direction: column;
-      padding: 24px 20px;
-      gap: 14px;
-      overflow-y: auto;
-    }
+    .hidden { display: none !important; }
 
-    #sidebar h2 {
-      font-size: 13px;
-      font-weight: 700;
-      color: #7c85f5;
-      letter-spacing: .6px;
-      text-transform: uppercase;
+    button { cursor: pointer; border: none; background: none; font-family: inherit; color: inherit; }
+
+    input, textarea, select {
+      font-family: inherit;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--r2);
+      padding: 8px 12px;
+      outline: none;
+      width: 100%;
+      transition: border-color .15s;
     }
+    input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+    textarea { resize: none; }
 
     label {
-      font-size: 12px;
-      color: #8b92b8;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text2);
       display: block;
+      margin-bottom: 5px;
+    }
+
+    /* ── Icon button ── */
+    .icon-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: var(--r2);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 17px;
+      color: var(--text2);
+      flex-shrink: 0;
+      transition: background .12s, color .12s;
+    }
+    .icon-btn:hover { background: var(--bg3); color: var(--text); }
+    .icon-btn.danger:hover { background: #fee2e2; color: #ef4444; }
+
+    /* ════════════════════════════════════════
+       LANDING SCREEN
+    ════════════════════════════════════════ */
+    #s-landing {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 36px;
+    }
+
+    #btn-settings-top {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+    }
+
+    .landing-logo {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    .landing-logo .logo-mark {
+      width: 64px;
+      height: 64px;
+      border-radius: 18px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       margin-bottom: 4px;
     }
+    .landing-logo h1 { font-size: 26px; font-weight: 700; }
+    .landing-logo p  { font-size: 15px; color: var(--text2); }
 
-    input[type="text"],
-    input[type="password"],
-    input[type="number"],
-    textarea,
-    select {
-      width: 100%;
-      background: #0f1117;
-      border: 1px solid #2d3148;
-      border-radius: 6px;
-      color: #e2e8f0;
-      font-size: 13px;
-      padding: 7px 10px;
-      outline: none;
-      transition: border-color .2s;
+    .mode-cards {
+      display: flex;
+      gap: 16px;
     }
-    input:focus, textarea:focus, select:focus { border-color: #7c85f5; }
-    textarea { resize: vertical; min-height: 68px; }
-
-    .field { display: flex; flex-direction: column; gap: 4px; }
-    .row2  { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-
-    .btn-primary {
-      padding: 9px;
-      background: #7c85f5;
-      border: none;
-      border-radius: 6px;
-      color: #fff;
-      font-size: 13px;
-      font-weight: 600;
+    .mode-card {
+      width: 156px;
+      padding: 24px 16px 20px;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: var(--r);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
       cursor: pointer;
-      transition: background .2s;
-      width: 100%;
+      transition: border-color .15s, box-shadow .15s, transform .12s;
     }
-    .btn-primary:hover { background: #6470e8; }
-    .btn-primary:disabled { background: #3d4263; cursor: not-allowed; }
+    .mode-card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 4px 16px rgba(37,99,235,.13);
+      transform: translateY(-2px);
+    }
+    .mode-card .card-icon  { font-size: 30px; }
+    .mode-card .card-title { font-size: 15px; font-weight: 600; }
+    .mode-card .card-desc  { font-size: 12px; color: var(--text2); text-align: center; line-height: 1.5; }
 
-    .status-badge {
-      font-size: 11px;
-      padding: 4px 8px;
-      border-radius: 20px;
+    #landing-recent {
+      width: 520px;
+      max-width: 90vw;
+    }
+    .recent-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 10px;
       text-align: center;
-      background: #2d3148;
-      color: #8b92b8;
     }
-    .status-badge.ready { background: #1a3a2a; color: #4ade80; }
-    .status-badge.error { background: #3a1a1a; color: #f87171; }
-    .status-badge.busy  { background: #2a2518; color: #fbbf24; }
+    .recent-grid {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
+    .recent-item {
+      flex: 1;
+      max-width: 164px;
+      padding: 11px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--r2);
+      cursor: pointer;
+      transition: border-color .12s;
+      overflow: hidden;
+    }
+    .recent-item:hover { border-color: var(--accent); }
+    .ri-mode  { font-size: 11px; color: var(--text3); margin-bottom: 3px; }
+    .ri-title { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-    .section-divider {
-      border: none;
-      border-top: 1px solid #2d3148;
-      margin: 4px 0;
+    /* ════════════════════════════════════════
+       WORKSPACE SCREEN
+    ════════════════════════════════════════ */
+    #s-workspace {
+      position: fixed;
+      inset: 0;
+      display: flex;
     }
 
-    .tool-item {
+    /* -- Sidebar -- */
+    #sidebar {
+      width: var(--sidebar-w);
+      min-width: var(--sidebar-w);
+      background: var(--bg);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .sidebar-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 12px 10px;
+      border-bottom: 1px solid var(--border);
+      gap: 6px;
+    }
+    .sidebar-hdr .logo-text { font-size: 15px; font-weight: 700; flex: 1; padding-left: 4px; }
+    .sidebar-hdr-actions { display: flex; gap: 2px; }
+
+    #sidebar-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px;
+    }
+
+    .hist-item {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 6px 8px;
-      border-radius: 6px;
+      padding: 8px 10px;
+      border-radius: var(--r2);
       cursor: pointer;
-      font-size: 13px;
-      color: #e2e8f0;
-      transition: background .15s;
+      transition: background .1s;
     }
-    .tool-item:hover { background: #252840; }
-    .tool-item input[type="checkbox"] { width: auto; accent-color: #7c85f5; cursor: pointer; }
-    .tool-item small { color: #8b92b8; font-size: 11px; margin-left: auto; }
+    .hist-item:hover { background: var(--bg2); }
+    .hist-item.active { background: #eff6ff; }
+    .hi-icon { font-size: 15px; flex-shrink: 0; }
+    .hi-body { flex: 1; min-width: 0; }
+    .hi-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hi-meta  { font-size: 11px; color: var(--text3); margin-top: 1px; }
+    .hi-del   { display: none; font-size: 13px; padding: 2px 5px; border-radius: 4px; color: var(--text3); }
+    .hist-item:hover .hi-del { display: block; }
+    .hi-del:hover { background: #fee2e2; color: #ef4444; }
 
-    /* ── main ── */
-    #main {
+    .sidebar-empty {
+      padding: 20px 14px;
+      font-size: 13px;
+      color: var(--text3);
+      text-align: center;
+    }
+
+    /* -- Main area -- */
+    #main-area {
       flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      background: var(--bg2);
     }
 
-    /* ── tab bar ── */
-    #tab-bar {
+    #topbar {
+      height: 52px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
       display: flex;
-      gap: 2px;
-      padding: 0 20px;
-      background: #1a1d27;
-      border-bottom: 1px solid #2d3148;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      flex-shrink: 0;
+      gap: 10px;
+    }
+    .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    #tb-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
+    .mode-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      background: #eff6ff;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: .4px;
       flex-shrink: 0;
     }
+    .mode-badge.react { background: #f0fdf4; color: #16a34a; }
+    .topbar-right { display: flex; gap: 2px; align-items: center; }
 
-    .tab-btn {
-      background: none;
-      border: none;
-      border-bottom: 2px solid transparent;
-      color: #8b92b8;
-      font-size: 13px;
-      font-weight: 600;
-      padding: 13px 16px 11px;
-      cursor: pointer;
-      transition: color .15s, border-color .15s;
-      white-space: nowrap;
-    }
-    .tab-btn:hover { color: #c7ccf5; }
-    .tab-btn.active { color: #7c85f5; border-bottom-color: #7c85f5; }
-
-    /* ── panels ── */
-    .panel {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-    .panel.hidden { display: none; }
-
-    /* ── chat panel ── */
-    #messages {
+    /* -- Messages -- */
+    #msgs {
       flex: 1;
       overflow-y: auto;
-      padding: 28px 36px;
+      padding: 24px 20px 12px;
       display: flex;
       flex-direction: column;
       gap: 18px;
     }
 
-    .msg { display: flex; flex-direction: column; gap: 4px; max-width: 740px; }
-    .msg.user      { align-self: flex-end;   align-items: flex-end; }
-    .msg.assistant { align-self: flex-start; align-items: flex-start; }
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text3);
+      font-size: 14px;
+      gap: 10px;
+      padding-bottom: 60px;
+    }
+    .empty-icon { font-size: 36px; }
 
-    .msg-role { font-size: 11px; color: #8b92b8; padding: 0 4px; }
+    .message { display: flex; gap: 10px; max-width: 82%; }
+    .message.user      { align-self: flex-end;   flex-direction: row-reverse; }
+    .message.assistant { align-self: flex-start; }
+
+    .msg-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      flex-shrink: 0;
+      background: var(--bg3);
+      color: var(--text2);
+    }
+    .message.user .msg-avatar { background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; }
+
+    .msg-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; }
+    .message.user .msg-body { align-items: flex-end; }
 
     .msg-bubble {
-      padding: 11px 16px;
-      border-radius: 12px;
+      padding: 10px 14px;
+      border-radius: var(--r);
       font-size: 14px;
       line-height: 1.65;
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .msg.user .msg-bubble {
-      background: #7c85f5;
+    .message.user .msg-bubble {
+      background: var(--user-bg);
       color: #fff;
       border-bottom-right-radius: 3px;
     }
-    .msg.assistant .msg-bubble {
-      background: #1a1d27;
-      border: 1px solid #2d3148;
-      color: #e2e8f0;
+    .message.assistant .msg-bubble {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
       border-bottom-left-radius: 3px;
     }
-    .thinking { color: #8b92b8; font-style: italic; font-size: 13px; }
+    .msg-bubble.streaming::after {
+      content: '▋';
+      animation: blink .7s step-start infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
 
-    /* ── react panel ── */
-    #react-steps {
-      flex: 1;
-      overflow-y: auto;
-      padding: 28px 36px;
+    .msg-time { font-size: 11px; color: var(--text3); padding: 0 3px; }
+
+    /* -- ReAct steps -- */
+    .react-steps { margin-bottom: 6px; }
+
+    .steps-toggle {
       display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-
-    /* ── shared input bar ── */
-    .input-bar {
-      padding: 14px 36px 22px;
-      display: flex;
-      gap: 10px;
-      border-top: 1px solid #2d3148;
-      background: #0f1117;
-      flex-shrink: 0;
-    }
-
-    .chat-input {
-      flex: 1;
-      background: #1a1d27;
-      border: 1px solid #2d3148;
-      border-radius: 10px;
-      color: #e2e8f0;
-      font-size: 14px;
-      padding: 12px 16px;
-      resize: none;
-      outline: none;
-      min-height: 48px;
-      max-height: 160px;
-      transition: border-color .2s;
-      font-family: inherit;
-    }
-    .chat-input:focus { border-color: #7c85f5; }
-
-    .btn-send {
-      align-self: flex-end;
-      padding: 12px 24px;
-      background: #7c85f5;
-      border: none;
-      border-radius: 10px;
-      color: #fff;
-      font-size: 14px;
-      font-weight: 600;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--r2);
+      font-size: 13px;
+      color: var(--text2);
       cursor: pointer;
-      transition: background .2s;
-      white-space: nowrap;
+      width: 100%;
+      transition: background .12s;
     }
-    .btn-send:hover { background: #6470e8; }
-    .btn-send:disabled { background: #3d4263; cursor: not-allowed; }
+    .steps-toggle:hover { background: var(--bg3); }
+    .chevron { transition: transform .2s; display: inline-block; font-size: 11px; }
+    .steps-toggle.open .chevron { transform: rotate(90deg); }
 
-    /* ── react step cards ── */
-    .question-card {
-      background: #1a1d27;
-      border: 1px solid #2d3148;
-      border-radius: 12px;
-      padding: 16px 20px;
-    }
-    .q-label {
-      font-size: 11px;
-      font-weight: 700;
-      color: #8b92b8;
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      margin-bottom: 8px;
-    }
-    .q-text {
-      font-size: 15px;
-      color: #e2e8f0;
-      font-weight: 500;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
+    .react-steps-body { margin-top: 6px; display: flex; flex-direction: column; gap: 8px; }
 
     .step-card {
-      background: #1a1d27;
-      border: 1px solid #2d3148;
-      border-radius: 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--r2);
       overflow: hidden;
-    }
-    .step-header {
-      padding: 9px 16px;
-      background: #20233a;
-      font-size: 11px;
-      font-weight: 700;
-      color: #7c85f5;
-      letter-spacing: .6px;
-      text-transform: uppercase;
-    }
-
-    .step-section {
-      padding: 14px 16px;
-      border-top: 1px solid #2d3148;
-      border-left: 3px solid transparent;
-    }
-    .step-section.thought     { border-left-color: #3b82f6; }
-    .step-section.action-sec  { border-left-color: #f59e0b; }
-    .step-section.observation { border-left-color: #22c55e; }
-
-    .sec-label {
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      margin-bottom: 7px;
-    }
-    .step-section.thought     .sec-label { color: #60a5fa; }
-    .step-section.action-sec  .sec-label { color: #fbbf24; }
-    .step-section.observation .sec-label { color: #4ade80; }
-
-    .sec-content {
       font-size: 13px;
-      line-height: 1.65;
-      white-space: pre-wrap;
-      word-break: break-word;
-      color: #e2e8f0;
     }
+    .step-hdr {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      background: var(--bg3);
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--text2);
+    }
+    .step-action-tag {
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #fef3c7;
+      color: #b45309;
+      font-weight: 600;
+    }
+    .step-streaming-label { font-size: 11px; color: var(--text3); font-weight: 400; }
 
-    .code-block {
-      background: #0f1117;
-      border: 1px solid #2d3148;
-      border-radius: 6px;
-      padding: 8px 12px;
+    .step-raw {
+      padding: 10px 12px;
       font-family: "Courier New", Consolas, monospace;
       font-size: 12px;
-      color: #a5b4fc;
-      margin-top: 6px;
+      color: var(--text2);
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.6;
+    }
+
+    .step-sections { display: flex; flex-direction: column; }
+    .step-sec {
+      padding: 8px 12px;
+      border-top: 1px solid var(--border);
+      border-left: 3px solid transparent;
+    }
+    .step-sec.thought     { border-left-color: #3b82f6; }
+    .step-sec.action-sec  { border-left-color: #f59e0b; }
+    .step-sec.observation { border-left-color: #10b981; }
+
+    .sec-lbl {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+      margin-bottom: 5px;
+    }
+    .step-sec.thought     .sec-lbl { color: #3b82f6; }
+    .step-sec.action-sec  .sec-lbl { color: #b45309; }
+    .step-sec.observation .sec-lbl { color: #10b981; }
+
+    .sec-content { color: var(--text); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .code-val {
+      display: block;
+      margin-top: 5px;
+      padding: 5px 9px;
+      background: var(--bg3);
+      border-radius: 5px;
+      font-family: "Courier New", Consolas, monospace;
+      font-size: 12px;
+      color: var(--text);
       white-space: pre;
       overflow-x: auto;
     }
 
-    .answer-card {
-      background: #1e1a3a;
-      border: 1px solid #5b63c8;
-      border-radius: 12px;
-      overflow: hidden;
-    }
-    .answer-header {
-      padding: 9px 16px;
-      background: #282260;
-      font-size: 11px;
-      font-weight: 700;
-      color: #a5b4fc;
-      letter-spacing: .6px;
-      text-transform: uppercase;
-    }
-    .answer-body {
-      padding: 16px 20px;
-      font-size: 15px;
-      color: #e2e8f0;
-      line-height: 1.7;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
-    .error-card {
-      background: #2a1818;
-      border: 1px solid #b91c1c;
-      border-radius: 12px;
-      padding: 14px 18px;
-      color: #f87171;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    .step-raw-output {
-      padding: 12px 16px;
-      font-size: 13px;
-      line-height: 1.65;
-      color: #c4cbe8;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-family: "Courier New", Consolas, monospace;
-      min-height: 36px;
-    }
-
-    .step-thinking {
-      font-size: 11px;
-      font-weight: 400;
-      color: #8b92b8;
-      margin-left: 6px;
-      vertical-align: middle;
-    }
-
-    .running-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      color: #8b92b8;
-      font-size: 13px;
-      font-style: italic;
-      padding: 4px 0;
-    }
-    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
-    .running-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: #7c85f5;
-      animation: pulse 1.2s ease-in-out infinite;
+    /* -- Input bar -- */
+    #input-area {
+      padding: 10px 16px 14px;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
       flex-shrink: 0;
     }
 
-    /* ── scrollbar ── */
-    ::-webkit-scrollbar { width: 5px; }
+    .input-wrapper {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      background: var(--bg2);
+      border: 1.5px solid var(--border);
+      border-radius: var(--r);
+      padding: 7px 7px 7px 14px;
+      transition: border-color .15s;
+    }
+    .input-wrapper:focus-within { border-color: var(--accent); }
+
+    #msg-input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      padding: 0;
+      min-height: 24px;
+      max-height: 120px;
+      font-size: 14px;
+      line-height: 1.5;
+      resize: none;
+    }
+    #msg-input:focus { outline: none; }
+
+    #btn-send {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--r2);
+      background: var(--accent);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+      transition: background .15s;
+    }
+    #btn-send:hover:not(:disabled) { background: var(--accent2); }
+    #btn-send:disabled { background: var(--bg3); color: var(--text3); }
+
+    /* ════════════════════════════════════════
+       SETTINGS MODAL
+    ════════════════════════════════════════ */
+    #overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .32);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+    }
+
+    #settings-modal {
+      background: var(--bg);
+      border-radius: var(--r);
+      width: 460px;
+      max-width: 95vw;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .18);
+    }
+
+    .modal-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal-hdr h2 { font-size: 17px; font-weight: 700; }
+
+    .modal-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-btn {
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text2);
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: color .12s, border-color .12s;
+    }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-btn:hover:not(.active) { color: var(--text); }
+
+    .modal-body { flex: 1; overflow-y: auto; padding: 18px; }
+    .form-group { margin-bottom: 15px; }
+    .form-group:last-child { margin-bottom: 0; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .modal-footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 18px;
+      border-top: 1px solid var(--border);
+    }
+    #modal-msg { flex: 1; font-size: 13px; color: var(--text2); }
+    #modal-msg.ok  { color: #16a34a; }
+    #modal-msg.err { color: #ef4444; }
+
+    .btn-primary {
+      padding: 8px 18px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: var(--r2);
+      font-size: 14px;
+      font-weight: 600;
+      transition: background .15s;
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--accent2); }
+    .btn-primary:disabled { background: var(--bg3); color: var(--text3); cursor: not-allowed; }
+
+    .btn-secondary {
+      padding: 8px 16px;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--r2);
+      font-size: 14px;
+      transition: background .15s;
+    }
+    .btn-secondary:hover { background: var(--bg3); }
+
+    /* -- Scrollbar -- */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   </style>
 </head>
 <body>
 
-<!-- ══════════ SIDEBAR ══════════ -->
-<aside id="sidebar">
+<!-- ══════════════════════════════════
+     LANDING SCREEN
+══════════════════════════════════ -->
+<div id="s-landing">
+  <button class="icon-btn" id="btn-settings-top" onclick="openSettings()" title="Settings">⚙</button>
 
-  <h2>⚙ 模型配置</h2>
-
-  <div class="field">
-    <label id="label-model">本地模型路径</label>
-    <input id="cfg-model" placeholder="Qwen/Qwen2.5-7B 或 /models/llama3" />
-    <span id="hint-model" style="font-size:11px;color:#8b92b8;">本地推理：填写 HuggingFace ID 或绝对路径</span>
+  <div class="landing-logo">
+    <div class="logo-mark">⚡</div>
+    <h1>ReAct Agent</h1>
+    <p>Intelligent reasoning assistant</p>
   </div>
 
-  <div class="field">
-    <label>API Key（留空则本地推理）</label>
-    <input id="cfg-apikey" type="password" placeholder="sk-..." />
+  <div class="mode-cards">
+    <button class="mode-card" onclick="startNew('chat')">
+      <span class="card-icon">💬</span>
+      <span class="card-title">Chat</span>
+      <span class="card-desc">Direct conversation with the LLM</span>
+    </button>
+    <button class="mode-card" onclick="startNew('react')">
+      <span class="card-icon">⚡</span>
+      <span class="card-title">ReAct</span>
+      <span class="card-desc">Reasoning + tool actions</span>
+    </button>
   </div>
 
-  <div class="field">
-    <label>Base URL（可选）</label>
-    <input id="cfg-baseurl" placeholder="http://localhost:8000/v1" />
-  </div>
+  <div id="landing-recent"></div>
+</div>
 
-  <div class="row2">
-    <div class="field">
-      <label>Max Tokens</label>
-      <input id="cfg-maxtokens" type="number" value="512" min="1" />
+
+<!-- ══════════════════════════════════
+     WORKSPACE SCREEN
+══════════════════════════════════ -->
+<div id="s-workspace" class="hidden">
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="sidebar-hdr">
+      <button class="icon-btn" onclick="goHome()" title="Home">←</button>
+      <span class="logo-text">History</span>
+      <div class="sidebar-hdr-actions">
+        <button class="icon-btn" onclick="startNewKeepMode()" title="New conversation">＋</button>
+        <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
+      </div>
     </div>
-    <div class="field">
-      <label>Temperature</label>
-      <input id="cfg-temp" type="number" value="1.0" step="0.1" min="0" max="2" />
-    </div>
-  </div>
+    <div id="sidebar-list"></div>
+  </aside>
 
-  <div class="field">
-    <label>System Prompt</label>
-    <textarea id="cfg-sysprompt" placeholder="你是一个有帮助的助手。"></textarea>
-  </div>
-
-  <button class="btn-primary" id="btn-init" onclick="initLLM()">初始化模型</button>
-  <div class="status-badge" id="llm-badge">未初始化</div>
-
-  <!-- ReAct config — visible only on ReAct tab -->
-  <div id="react-sidebar" style="display:none">
-    <hr class="section-divider" />
-    <h2>🤖 ReAct 配置</h2>
-
-    <div class="field">
-      <label>提示语言</label>
-      <select id="react-lang">
-        <option value="cn">中文 (CN)</option>
-        <option value="en">English (EN)</option>
-      </select>
-    </div>
-
-    <div class="row2">
-      <div class="field">
-        <label>最大步骤数</label>
-        <input id="react-maxsteps" type="number" value="10" min="1" max="50" />
+  <!-- Main -->
+  <div id="main-area">
+    <div id="topbar">
+      <div class="topbar-left">
+        <span id="tb-title">New Conversation</span>
+        <span id="tb-mode" class="mode-badge">Chat</span>
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn hidden" id="btn-clear-react" onclick="clearReactSession()" title="Clear ReAct dialogue history">🔄</button>
+        <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
       </div>
     </div>
 
-    <div class="field">
-      <label>启用工具</label>
-      <label class="tool-item">
-        <input type="checkbox" value="weather" id="tool-weather" checked />
-        <span>weather</span>
-        <small>查询天气</small>
-      </label>
+    <div id="msgs">
+      <div class="empty-state" id="empty-hint">
+        <span class="empty-icon">💬</span>
+        <span>Type a message below to begin</span>
+      </div>
     </div>
 
-    <button class="btn-primary" id="btn-react-init" onclick="initReact()">初始化 ReAct</button>
-    <div class="status-badge" id="react-badge">未初始化</div>
-  </div>
-
-</aside>
-
-<!-- ══════════ MAIN ══════════ -->
-<div id="main">
-
-  <!-- tabs -->
-  <div id="tab-bar">
-    <button class="tab-btn active" id="tab-chat"  onclick="switchTab('chat')">💬 对话</button>
-    <button class="tab-btn"        id="tab-react" onclick="switchTab('react')">🤖 ReAct 推理</button>
-  </div>
-
-  <!-- ── chat panel ── -->
-  <div class="panel" id="chat-panel">
-    <div id="messages"></div>
-    <div class="input-bar">
-      <textarea class="chat-input" id="user-input" rows="1"
-        placeholder="输入消息，Enter 发送，Shift+Enter 换行…" disabled></textarea>
-      <button class="btn-send" id="btn-send" onclick="sendMessage()" disabled>发送</button>
-    </div>
-  </div>
-
-  <!-- ── react panel ── -->
-  <div class="panel hidden" id="react-panel">
-    <div id="react-steps"></div>
-    <div class="input-bar">
-      <textarea class="chat-input" id="react-input" rows="1"
-        placeholder="输入你的问题，Enter 运行，Shift+Enter 换行…" disabled></textarea>
-      <button class="btn-send" id="btn-run" onclick="runReact()" disabled>运行</button>
+    <div id="input-area">
+      <div class="input-wrapper">
+        <textarea id="msg-input" rows="1" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
+        <button id="btn-send" onclick="sendMessage()">↑</button>
+      </div>
     </div>
   </div>
 
 </div>
 
-<script>
-  /* ─── state ─── */
-  let currentTab = 'chat';
 
-  /* ─── tab switch ─── */
-  function switchTab(name) {
-    currentTab = name;
-    ['chat', 'react'].forEach(t => {
-      document.getElementById(`tab-${t}`).classList.toggle('active', t === name);
-      document.getElementById(`${t}-panel`).classList.toggle('hidden', t !== name);
-    });
-    document.getElementById('react-sidebar').style.display = name === 'react' ? 'block' : 'none';
+<!-- ══════════════════════════════════
+     SETTINGS MODAL
+══════════════════════════════════ -->
+<div id="overlay" class="hidden" onclick="overlayClick(event)">
+  <div id="settings-modal">
+
+    <div class="modal-hdr">
+      <h2>Settings</h2>
+      <button class="icon-btn" onclick="closeSettings()">✕</button>
+    </div>
+
+    <div class="modal-tabs">
+      <button class="tab-btn active" id="tab-btn-model"     onclick="setTab('model')">Model</button>
+      <button class="tab-btn"        id="tab-btn-react-cfg" onclick="setTab('react-cfg')">ReAct</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Model tab -->
+      <div id="tab-model">
+        <div class="form-group">
+          <label>Model Name</label>
+          <input id="s-model" type="text" placeholder="gpt-4o · deepseek-chat · Qwen/Qwen2.5-7B-Instruct" />
+        </div>
+        <div class="form-group">
+          <label>API Key</label>
+          <input id="s-apikey" type="password" placeholder="sk-…" />
+        </div>
+        <div class="form-group">
+          <label>Base URL <span style="font-weight:400;color:var(--text3)">(optional)</span></label>
+          <input id="s-baseurl" type="text" placeholder="https://api.openai.com/v1" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Max Tokens</label>
+            <input id="s-maxtokens" type="number" value="512" min="1" />
+          </div>
+          <div class="form-group">
+            <label>Temperature</label>
+            <input id="s-temp" type="number" value="1.0" step="0.1" min="0" max="2" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>System Prompt</label>
+          <textarea id="s-sysprompt" rows="3" placeholder="You are a helpful assistant."></textarea>
+        </div>
+      </div>
+
+      <!-- ReAct tab -->
+      <div id="tab-react-cfg" class="hidden">
+        <div class="form-group">
+          <label>Prompt Language</label>
+          <select id="s-lang">
+            <option value="cn">中文 (CN)</option>
+            <option value="en">English (EN)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Max Steps</label>
+          <input id="s-maxsteps" type="number" value="10" min="1" max="50" />
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <span id="modal-msg"></span>
+      <button class="btn-secondary" onclick="closeSettings()">Cancel</button>
+      <button class="btn-primary" id="btn-apply" onclick="applySettings()">Save &amp; Apply</button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  /* ════════════════════════════════════
+     STATE
+  ════════════════════════════════════ */
+  const S = {
+    mode:        'chat',
+    convId:      null,
+    messages:    [],
+    streaming:   false,
+    llmReady:    false,
+    reactReady:  false,
+    history:     [],
+    activeWs:    null,
+  };
+
+  /* ════════════════════════════════════
+     BOOT
+  ════════════════════════════════════ */
+  async function boot() {
+    await Promise.all([loadStatus(), loadHistory()]);
+    await fillSettings();
+    renderLandingRecent();
   }
 
-  /* ─── LLM init ─── */
-  async function initLLM() {
-    const btn   = document.getElementById('btn-init');
-    const badge = document.getElementById('llm-badge');
-    const model = document.getElementById('cfg-model').value.trim();
-    if (!model) { alert('请填写模型路径或名称'); return; }
+  async function loadStatus() {
+    const r = await fetch('/api/status').catch(() => null);
+    if (!r?.ok) return;
+    const d = await r.json();
+    S.llmReady   = d.initialized;
+    S.reactReady = d.react_ready;
+  }
 
-    btn.disabled = true;
-    badge.className = 'status-badge busy';
-    badge.textContent = '初始化中…';
+  async function loadHistory() {
+    const r = await fetch('/api/history').catch(() => null);
+    if (!r?.ok) return;
+    S.history = (await r.json()).conversations || [];
+  }
 
-    const body = {
-      model,
-      api_key:       document.getElementById('cfg-apikey').value.trim(),
-      base_url:      document.getElementById('cfg-baseurl').value.trim() || null,
-      max_tokens:    parseInt(document.getElementById('cfg-maxtokens').value) || 512,
-      temperature:   parseFloat(document.getElementById('cfg-temp').value) || 1.0,
-      system_prompt: document.getElementById('cfg-sysprompt').value.trim(),
-    };
+  async function fillSettings() {
+    const r = await fetch('/api/config').catch(() => null);
+    if (!r?.ok) return;
+    const c = await r.json();
+    if (!c || Object.keys(c).length === 0) return;
+    $('s-model').value     = c.model        ?? '';
+    $('s-apikey').value    = c.api_key       ?? '';
+    $('s-baseurl').value   = c.base_url      ?? '';
+    $('s-maxtokens').value = c.max_tokens    ?? 512;
+    $('s-temp').value      = c.temperature   ?? 1.0;
+    $('s-sysprompt').value = c.system_prompt ?? '';
+  }
 
-    const res = await fetch('/api/init', {
+  /* ════════════════════════════════════
+     NAVIGATION
+  ════════════════════════════════════ */
+  function goHome() {
+    if (S.activeWs) { S.activeWs.close(); S.activeWs = null; }
+    S.convId    = null;
+    S.messages  = [];
+    S.streaming = false;
+    showScreen('landing');
+    renderLandingRecent();
+  }
+
+  async function startNew(mode) {
+    if (!S.llmReady) {
+      openSettings();
+      setModalMsg('⚠ Please configure and save model settings first.', 'err');
+      return;
+    }
+    if (mode === 'react') {
+      const ok = await callReactInit();
+      if (!ok) { openSettings(); setModalMsg('⚠ Failed to initialize ReAct.', 'err'); return; }
+    }
+    S.mode     = mode;
+    S.convId   = genId();
+    S.messages = [];
+    showScreen('workspace');
+    updateTopbar();
+    clearMsgs();
+    renderSidebar();
+    focusInput();
+  }
+
+  function startNewKeepMode() { startNew(S.mode); }
+
+  async function loadConv(id) {
+    const r = await fetch(`/api/history/${id}`).catch(() => null);
+    if (!r?.ok) return;
+    const conv = await r.json();
+
+    S.mode     = conv.mode || 'chat';
+    S.convId   = conv.id;
+    S.messages = conv.messages || [];
+
+    // For ReAct mode: (re-)initialize TaoLoop then restore PromptManager history
+    // so the agent retains full context when the user continues the conversation.
+    if (S.mode === 'react') {
+      if (!S.llmReady) { openSettings(); setModalMsg('⚠ Please configure model settings first.', 'err'); return; }
+      const ok = await callReactInit();
+      if (!ok) { openSettings(); setModalMsg('⚠ Failed to initialize ReAct.', 'err'); return; }
+      await fetch('/api/react/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: S.messages }),
+      }).catch(() => null);
+    }
+
+    showScreen('workspace');
+    updateTopbar(conv.title || convTitle(S.messages));
+    clearMsgs();
+    S.messages.forEach(msg => renderMessage(msg, false));
+    scrollMsgs();
+    renderSidebar();
+    focusInput();
+  }
+
+  async function callReactInit() {
+    const lang     = $('s-lang')?.value    || 'cn';
+    const maxSteps = parseInt($('s-maxsteps')?.value) || 10;
+    const r = await fetch('/api/react/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ lang, max_steps: maxSteps, primary_tools: null }),
     }).catch(() => null);
+    if (!r?.ok) return false;
+    S.reactReady = true;
+    return true;
+  }
 
-    btn.disabled = false;
+  async function clearReactSession() {
+    const r = await fetch('/api/react/reset', { method: 'POST' }).catch(() => null);
+    if (!r?.ok) return;
+    S.convId   = genId();
+    S.messages = [];
+    clearMsgs();
+    updateTopbar();
+    renderSidebar();
+  }
 
-    if (!res || !res.ok) {
-      badge.className = 'status-badge error';
-      badge.textContent = '初始化失败';
+  /* ════════════════════════════════════
+     SETTINGS
+  ════════════════════════════════════ */
+  function openSettings()  { $('overlay').classList.remove('hidden'); }
+  function closeSettings() { $('overlay').classList.add('hidden'); setModalMsg(''); }
+  function overlayClick(e) { if (e.target === $('overlay')) closeSettings(); }
+
+  function setTab(name) {
+    ['model', 'react-cfg'].forEach(t => {
+      $(`tab-${t}`).classList.toggle('hidden', t !== name);
+      $(`tab-btn-${t}`).classList.toggle('active', t === name);
+    });
+  }
+
+  function setModalMsg(msg, cls) {
+    const el = $('modal-msg');
+    el.textContent = msg;
+    el.className   = cls || '';
+  }
+
+  async function applySettings() {
+    const btn = $('btn-apply');
+    btn.disabled = true;
+    setModalMsg('Saving…');
+
+    const cfg = {
+      model:         $('s-model').value.trim(),
+      api_key:       $('s-apikey').value.trim(),
+      base_url:      $('s-baseurl').value.trim(),
+      max_tokens:    parseInt($('s-maxtokens').value)    || 512,
+      temperature:   parseFloat($('s-temp').value)       || 1.0,
+      do_sample:     false,
+      device:        'auto',
+      system_prompt: $('s-sysprompt').value.trim(),
+    };
+
+    if (!cfg.model) {
+      setModalMsg('⚠ Model name is required.', 'err');
+      btn.disabled = false;
       return;
     }
 
-    const data = await res.json();
-    badge.className = 'status-badge ready';
-    badge.textContent = `就绪 · ${data.mode === 'api' ? 'API 模式' : '本地推理'}`;
+    const saveR = await fetch('/api/config/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    }).catch(() => null);
 
-    document.getElementById('user-input').disabled = false;
-    document.getElementById('btn-send').disabled = false;
-    document.getElementById('user-input').focus();
+    if (!saveR?.ok) { setModalMsg('Failed to save config.', 'err'); btn.disabled = false; return; }
+
+    const initR = await fetch('/api/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    }).catch(() => null);
+
+    if (!initR?.ok) { setModalMsg('Failed to initialize LLM.', 'err'); btn.disabled = false; return; }
+
+    S.llmReady = true;
+
+    if (S.reactReady || S.mode === 'react') {
+      S.reactReady = await callReactInit();
+    }
+
+    setModalMsg('✓ Saved & applied.', 'ok');
+    btn.disabled = false;
+    setTimeout(closeSettings, 900);
   }
 
-  /* ─── chat send ─── */
+  /* ════════════════════════════════════
+     MESSAGING
+  ════════════════════════════════════ */
   async function sendMessage() {
-    const input = document.getElementById('user-input');
-    const text  = input.value.trim();
+    if (S.streaming) return;
+    const inp  = $('msg-input');
+    const text = inp.value.trim();
     if (!text) return;
 
-    appendChatMsg('user', text);
-    input.value = '';
-    autoResize(input);
-    document.getElementById('btn-send').disabled = true;
-
-    // create streaming bubble
-    const msgs   = document.getElementById('messages');
-    const wrap   = document.createElement('div');
-    wrap.className = 'msg assistant';
-    const roleEl = document.createElement('div');
-    roleEl.className = 'msg-role';
-    roleEl.textContent = 'Assistant';
-    const bubble = document.createElement('div');
-    bubble.className = 'msg-bubble thinking';
-    bubble.textContent = '…';
-    wrap.appendChild(roleEl);
-    wrap.appendChild(bubble);
-    msgs.appendChild(wrap);
-    msgs.scrollTop = msgs.scrollHeight;
-
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: text }),
-    }).catch(() => null);
-
-    if (!res || !res.ok) {
-      bubble.className = 'msg-bubble';
-      bubble.textContent = '[请求失败，请检查后端]';
-      document.getElementById('btn-send').disabled = false;
+    if (!S.llmReady) {
+      openSettings();
+      setModalMsg('⚠ Please configure model settings first.', 'err');
       return;
     }
 
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer  = '';
+    if (S.mode === 'react' && !S.reactReady) {
+      const ok = await callReactInit();
+      if (!ok) { openSettings(); setModalMsg('⚠ Failed to initialize ReAct.', 'err'); return; }
+    }
+
+    inp.value = '';
+    autoResize(inp);
+
+    const userMsg = { role: 'user', content: text, timestamp: now() };
+    S.messages.push(userMsg);
+    renderMessage(userMsg, false);
+
+    if (S.mode === 'chat') {
+      await streamChat(text);
+    } else {
+      await streamReact(text);
+    }
+  }
+
+  async function streamChat(text) {
+    S.streaming = true;
+    setSendDisabled(true);
+
+    const asstMsg = { role: 'assistant', content: '', timestamp: now() };
+    S.messages.push(asstMsg);
+    const msgEl    = renderMessage(asstMsg, true);
+    const bubbleEl = msgEl.querySelector('.msg-bubble');
+    bubbleEl.classList.add('streaming');
+
+    const ws = new WebSocket(wsUrl('/ws/chat'));
+    S.activeWs = ws;
     let content = '';
-    let started = false;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split('\n\n');
-      buffer = parts.pop();
-
-      for (const part of parts) {
-        if (!part.startsWith('data: ')) continue;
-        const data = JSON.parse(part.slice(6));
-        if (data.done) break;
-        if (data.chunk) {
-          if (!started) {
-            bubble.className = 'msg-bubble';
-            bubble.textContent = '';
-            started = true;
-          }
-          content += data.chunk;
-          bubble.textContent = content;
-          msgs.scrollTop = msgs.scrollHeight;
-        }
+    // Send prior turns as history so the LLM maintains multi-turn context.
+    // S.messages currently has [...history, userMsg, emptyAsstPlaceholder].
+    // We slice off the last two (current question + empty placeholder) to get
+    // only the completed prior turns.
+    const history = S.messages.slice(0, -2).map(m => ({ role: m.role, content: m.content || '' }));
+    ws.onopen    = () => ws.send(JSON.stringify({ prompt: text, history }));
+    ws.onmessage = (e) => {
+      const d = JSON.parse(e.data);
+      if (d.error) {
+        asstMsg.content = `[Error] ${d.error}`;
+        bubbleEl.textContent = asstMsg.content;
+        bubbleEl.classList.remove('streaming');
+        ws.close(); return;
       }
-    }
-
-    document.getElementById('btn-send').disabled = false;
-    input.focus();
-  }
-
-  function appendChatMsg(role, text, isThinking = false) {
-    const msgs = document.getElementById('messages');
-    const wrap = document.createElement('div');
-    wrap.className = `msg ${role}`;
-
-    const roleEl = document.createElement('div');
-    roleEl.className = 'msg-role';
-    roleEl.textContent = role === 'user' ? '你' : 'Assistant';
-
-    const bubble = document.createElement('div');
-    bubble.className = 'msg-bubble' + (isThinking ? ' thinking' : '');
-    bubble.textContent = text;
-
-    wrap.appendChild(roleEl);
-    wrap.appendChild(bubble);
-    msgs.appendChild(wrap);
-    msgs.scrollTop = msgs.scrollHeight;
-    return wrap;
-  }
-
-  /* ─── react init ─── */
-  async function initReact() {
-    const btn   = document.getElementById('btn-react-init');
-    const badge = document.getElementById('react-badge');
-
-    btn.disabled = true;
-    badge.className = 'status-badge busy';
-    badge.textContent = '初始化中…';
-
-    const tools = Array.from(
-      document.querySelectorAll('#react-sidebar input[type="checkbox"]:checked')
-    ).map(el => el.value);
-
-    const body = {
-      lang:      document.getElementById('react-lang').value,
-      max_steps: parseInt(document.getElementById('react-maxsteps').value) || 10,
-      tools,
+      if (d.done) { ws.close(); return; }
+      if (d.chunk) {
+        content += d.chunk;
+        asstMsg.content = content;
+        bubbleEl.textContent = content;
+        scrollMsgs();
+      }
     };
-
-    const res = await fetch('/api/react/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).catch(() => null);
-
-    btn.disabled = false;
-
-    if (!res || !res.ok) {
-      const err = res ? await res.json() : null;
-      badge.className = 'status-badge error';
-      badge.textContent = err?.error || '初始化失败';
-      return;
-    }
-
-    badge.className = 'status-badge ready';
-    badge.textContent = '就绪';
-    document.getElementById('react-input').disabled = false;
-    document.getElementById('btn-run').disabled = false;
-    document.getElementById('react-input').focus();
+    ws.onerror = () => {
+      bubbleEl.textContent = '[Connection error]';
+      bubbleEl.classList.remove('streaming');
+    };
+    ws.onclose = async () => {
+      bubbleEl.classList.remove('streaming');
+      S.streaming = false;
+      S.activeWs  = null;
+      setSendDisabled(false);
+      updateConvTitle();
+      await saveConv();
+      renderSidebar();
+      focusInput();
+    };
   }
 
-  /* ─── react run ─── */
-  const _stepCards = {};   // index → card element
+  async function streamReact(question) {
+    S.streaming = true;
+    setSendDisabled(true);
 
-  async function runReact() {
-    const inputEl = document.getElementById('react-input');
-    const question = inputEl.value.trim();
-    if (!question) return;
+    const asstMsg = { role: 'assistant', content: '', steps: [], timestamp: now() };
+    S.messages.push(asstMsg);
+    const msgEl       = renderMessage(asstMsg, true);
+    const stepBody    = msgEl.querySelector('.react-steps-body');
+    const stepToggle  = msgEl.querySelector('.steps-toggle');
+    const finalBubble = msgEl.querySelector('.msg-bubble');
 
-    const stepsEl = document.getElementById('react-steps');
-    stepsEl.innerHTML = '';
-    Object.keys(_stepCards).forEach(k => delete _stepCards[k]);
+    const localStepEls = {};
 
-    // question card
-    const qCard = document.createElement('div');
-    qCard.className = 'question-card';
-    qCard.innerHTML = `<div class="q-label">❓ 问题</div><div class="q-text">${esc(question)}</div>`;
-    stepsEl.appendChild(qCard);
+    const ws = new WebSocket(wsUrl('/ws/react/run'));
+    S.activeWs = ws;
 
-    document.getElementById('btn-run').disabled = true;
-    inputEl.disabled = true;
+    ws.onopen    = () => ws.send(JSON.stringify({ question }));
+    ws.onmessage = (e) => {
+      const d = JSON.parse(e.data);
 
-    const res = await fetch('/api/react/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question }),
-    }).catch(() => null);
+      if (d.error) {
+        finalBubble.textContent = `[Error] ${d.error}`;
+        finalBubble.classList.remove('hidden');
+        ws.close(); return;
+      }
 
-    if (!res || !res.ok) {
-      const err = res ? await res.json().catch(() => null) : null;
-      appendError(stepsEl, err?.error || '请求失败，请检查后端是否正常。');
-      resetReactBar();
-      return;
-    }
-
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer   = '';
-    let finished = false;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split('\n\n');
-      buffer = parts.pop();
-
-      for (const part of parts) {
-        if (!part.startsWith('data: ')) continue;
-        const data = JSON.parse(part.slice(6));
-
-        if (data.type === 'step_start') {
-          _stepCards[data.index] = createStreamingCard(data.index, stepsEl);
-
-        } else if (data.type === 'chunk') {
-          const rawEl = document.getElementById(`step-raw-${data.index}`);
-          if (rawEl) {
-            rawEl.textContent += data.chunk;
-            stepsEl.scrollTop = stepsEl.scrollHeight;
-          }
-
-        } else if (data.type === 'step') {
-          upgradeCard(_stepCards[data.index], data);
-          stepsEl.scrollTop = stepsEl.scrollHeight;
-
-        } else if (data.type === 'finish') {
-          // seal any streaming card that was the finish step
-          const streamCard = _stepCards[data.index ?? -1];
-          if (streamCard) sealStreamingCard(streamCard, data.index ?? -1);
-          appendAnswer(stepsEl, data.answer);
-          finished = true;
-          stepsEl.scrollTop = stepsEl.scrollHeight;
+      if (d.type === 'step_start') {
+        asstMsg.steps.push({ index: d.index, thought: '', action: '', action_input: {}, observation: '', raw: '' });
+        const el = makeStreamingStepEl(d.index);
+        localStepEls[d.index] = el;
+        stepBody.appendChild(el);
+        if (stepToggle) {
+          stepToggle.classList.remove('hidden');
+          stepToggle.querySelector('.step-count').textContent =
+            `${asstMsg.steps.length} step${asstMsg.steps.length > 1 ? 's' : ''}`;
         }
+        scrollMsgs();
+
+      } else if (d.type === 'chunk') {
+        const step = asstMsg.steps.find(s => s.index === d.index);
+        if (step) step.raw = (step.raw || '') + d.chunk;
+        const rawEl = localStepEls[d.index]?.querySelector('.step-raw');
+        if (rawEl) { rawEl.textContent += d.chunk; scrollMsgs(); }
+
+      } else if (d.type === 'step') {
+        const step = asstMsg.steps.find(s => s.index === d.index);
+        if (step) Object.assign(step, d);
+        upgradeStepEl(localStepEls[d.index], d);
+
+      } else if (d.type === 'finish') {
+        asstMsg.content = d.answer;
+        finalBubble.textContent = d.answer;
+        finalBubble.classList.remove('hidden');
+        scrollMsgs();
+        ws.close();
+      }
+    };
+    ws.onerror = () => {
+      finalBubble.textContent = '[Connection error]';
+      finalBubble.classList.remove('hidden');
+    };
+    ws.onclose = async () => {
+      S.streaming = false;
+      S.activeWs  = null;
+      setSendDisabled(false);
+      updateConvTitle();
+      await saveConv();
+      renderSidebar();
+      focusInput();
+    };
+  }
+
+  /* ════════════════════════════════════
+     RENDERING
+  ════════════════════════════════════ */
+  function renderMessage(msg, isStreaming) {
+    const area      = $('msgs');
+    const emptyHint = $('empty-hint');
+    if (emptyHint) emptyHint.remove();
+
+    const el = document.createElement('div');
+    el.className = `message ${msg.role}`;
+
+    if (msg.role === 'user') {
+      el.innerHTML = `
+        <div class="msg-body">
+          <div class="msg-bubble">${esc(msg.content)}</div>
+          <div class="msg-time">${relTime(msg.timestamp)}</div>
+        </div>
+        <div class="msg-avatar">You</div>`;
+    } else {
+      const isReact   = S.mode === 'react' || (msg.steps && msg.steps.length > 0);
+      const stepsHtml = (msg.steps && msg.steps.length > 0) ? buildStepsHtml(msg.steps) : '';
+
+      let stepsSection = '';
+      if (isReact) {
+        const bodyHidden   = isStreaming ? '' : 'hidden';
+        const toggleHidden = (isStreaming || (msg.steps && msg.steps.length > 0)) ? '' : 'hidden';
+        const count        = msg.steps?.length || 0;
+        stepsSection = `
+          <div class="react-steps">
+            <button class="steps-toggle ${toggleHidden}" onclick="toggleSteps(this)">
+              <span class="chevron">▶</span>
+              <span class="step-count">${count} step${count !== 1 ? 's' : ''}</span>
+            </button>
+            <div class="react-steps-body ${bodyHidden}">${stepsHtml}</div>
+          </div>`;
+      }
+
+      const bubbleHidden = (isStreaming && isReact) ? 'hidden' : '';
+      el.innerHTML = `
+        <div class="msg-avatar">⚡</div>
+        <div class="msg-body">
+          ${stepsSection}
+          <div class="msg-bubble ${bubbleHidden}">${esc(msg.content)}</div>
+          <div class="msg-time">${relTime(msg.timestamp)}</div>
+        </div>`;
+
+      // For loaded history with steps: keep body hidden, show toggle
+      if (!isStreaming && msg.steps && msg.steps.length > 0) {
+        el.querySelector('.react-steps-body')?.classList.add('hidden');
+        el.querySelector('.steps-toggle')?.classList.remove('hidden');
       }
     }
 
-    if (!finished) {
-      appendError(stepsEl, '⚠ 已达最大步骤数，未得到最终答案。');
-      stepsEl.scrollTop = stepsEl.scrollHeight;
-    }
-
-    resetReactBar();
+    area.appendChild(el);
+    scrollMsgs();
+    return el;
   }
 
-  function createStreamingCard(index, container) {
-    const card = document.createElement('div');
-    card.className = 'step-card';
-    card.innerHTML = `
-      <div class="step-header" id="step-hdr-${index}">
-        Step ${index + 1}
-        <span class="step-thinking"><span class="running-dot" style="display:inline-block;margin-left:8px;vertical-align:middle;"></span> 推理中…</span>
+  function toggleSteps(btn) {
+    const isOpen = btn.classList.toggle('open');
+    btn.parentElement.querySelector('.react-steps-body')?.classList.toggle('hidden', !isOpen);
+  }
+
+  function buildStepsHtml(steps) {
+    return steps.map(s => {
+      if (s.thought) {
+        return `
+          <div class="step-card">
+            <div class="step-hdr">
+              <span>Step ${(s.index ?? 0) + 1}</span>
+              <span class="step-action-tag">${esc(s.action)}</span>
+            </div>
+            <div class="step-sections">
+              <div class="step-sec thought">
+                <div class="sec-lbl">Thought</div>
+                <div class="sec-content">${esc(s.thought)}</div>
+              </div>
+              <div class="step-sec action-sec">
+                <div class="sec-lbl">Action · ${esc(s.action)}</div>
+                <code class="code-val">${esc(JSON.stringify(s.action_input, null, 2))}</code>
+              </div>
+              <div class="step-sec observation">
+                <div class="sec-lbl">Observation</div>
+                <div class="sec-content">${esc(s.observation)}</div>
+              </div>
+            </div>
+          </div>`;
+      }
+      return `
+        <div class="step-card">
+          <div class="step-hdr"><span>Step ${(s.index ?? 0) + 1}</span></div>
+          <div class="step-raw">${esc(s.raw || '')}</div>
+        </div>`;
+    }).join('');
+  }
+
+  function makeStreamingStepEl(index) {
+    const el = document.createElement('div');
+    el.className = 'step-card';
+    el.innerHTML = `
+      <div class="step-hdr">
+        <span>Step ${index + 1}</span>
+        <span class="step-streaming-label">thinking…</span>
       </div>
-      <div class="step-section thought" style="padding:0">
-        <div id="step-raw-${index}" class="step-raw-output"></div>
+      <div class="step-raw"></div>`;
+    return el;
+  }
+
+  function upgradeStepEl(el, data) {
+    if (!el) return;
+    el.innerHTML = `
+      <div class="step-hdr">
+        <span>Step ${data.index + 1}</span>
+        <span class="step-action-tag">${esc(data.action)}</span>
+      </div>
+      <div class="step-sections">
+        <div class="step-sec thought">
+          <div class="sec-lbl">Thought</div>
+          <div class="sec-content">${esc(data.thought)}</div>
+        </div>
+        <div class="step-sec action-sec">
+          <div class="sec-lbl">Action · ${esc(data.action)}</div>
+          <code class="code-val">${esc(JSON.stringify(data.action_input, null, 2))}</code>
+        </div>
+        <div class="step-sec observation">
+          <div class="sec-lbl">Observation</div>
+          <div class="sec-content">${esc(data.observation)}</div>
+        </div>
       </div>`;
-    container.appendChild(card);
-    return card;
   }
 
-  function upgradeCard(card, data) {
-    if (!card) return;
-    const inputStr = JSON.stringify(data.action_input, null, 2);
-    card.innerHTML = `
-      <div class="step-header">Step ${data.index + 1}</div>
-      <div class="step-section thought">
-        <div class="sec-label">💭 Thought</div>
-        <div class="sec-content">${esc(data.thought)}</div>
-      </div>
-      <div class="step-section action-sec">
-        <div class="sec-label">⚡ Action · ${esc(data.action)}</div>
-        <div class="code-block">${esc(inputStr)}</div>
-      </div>
-      <div class="step-section observation">
-        <div class="sec-label">👁 Observation</div>
-        <div class="sec-content">${esc(data.observation)}</div>
+  /* ════════════════════════════════════
+     PERSISTENCE
+  ════════════════════════════════════ */
+  async function saveConv() {
+    if (!S.convId || S.messages.length === 0) return;
+    const title    = convTitle(S.messages);
+    const existing = S.history.find(h => h.id === S.convId);
+    const created  = existing?.created_at || now();
+
+    await fetch('/api/history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: S.convId, title, mode: S.mode,
+        messages: S.messages, created_at: created, updated_at: now(),
+      }),
+    }).catch(() => {});
+
+    const item = { id: S.convId, title, mode: S.mode, updated_at: now() };
+    const idx  = S.history.findIndex(h => h.id === S.convId);
+    if (idx >= 0) S.history[idx] = item;
+    else          S.history.unshift(item);
+  }
+
+  async function deleteConv(id, e) {
+    e.stopPropagation();
+    await fetch(`/api/history/${id}`, { method: 'DELETE' }).catch(() => {});
+    S.history = S.history.filter(h => h.id !== id);
+    renderSidebar();
+    if (S.convId === id) goHome();
+  }
+
+  /* ════════════════════════════════════
+     UI HELPERS
+  ════════════════════════════════════ */
+  function showScreen(name) {
+    $('s-landing').classList.toggle('hidden', name !== 'landing');
+    $('s-workspace').classList.toggle('hidden', name !== 'workspace');
+  }
+
+  function updateTopbar(title) {
+    $('tb-title').textContent = title || 'New Conversation';
+    const badge = $('tb-mode');
+    badge.textContent = S.mode === 'react' ? 'ReAct' : 'Chat';
+    badge.className   = `mode-badge${S.mode === 'react' ? ' react' : ''}`;
+    $('btn-clear-react').classList.toggle('hidden', S.mode !== 'react');
+  }
+
+  function clearMsgs() {
+    $('msgs').innerHTML = `
+      <div class="empty-state" id="empty-hint">
+        <span class="empty-icon">${S.mode === 'react' ? '⚡' : '💬'}</span>
+        <span>Type a message below to begin</span>
       </div>`;
   }
 
-  function sealStreamingCard(card, index) {
-    if (!card) return;
-    const hdr = card.querySelector(`#step-hdr-${index}`);
-    if (hdr) {
-      const thinking = hdr.querySelector('.step-thinking');
-      if (thinking) thinking.remove();
+  function updateConvTitle() {
+    $('tb-title').textContent = convTitle(S.messages) || 'New Conversation';
+  }
+
+  function renderSidebar() {
+    const list = $('sidebar-list');
+    if (S.history.length === 0) {
+      list.innerHTML = '<div class="sidebar-empty">No conversations yet</div>';
+      return;
     }
+    list.innerHTML = S.history.map(h => `
+      <div class="hist-item${h.id === S.convId ? ' active' : ''}" onclick="loadConv('${h.id}')">
+        <span class="hi-icon">${h.mode === 'react' ? '⚡' : '💬'}</span>
+        <div class="hi-body">
+          <div class="hi-title">${esc(h.title)}</div>
+          <div class="hi-meta">${relTime(h.updated_at)}</div>
+        </div>
+        <button class="hi-del" onclick="deleteConv('${h.id}', event)" title="Delete">✕</button>
+      </div>`).join('');
   }
 
-  function appendAnswer(container, answer) {
-    const card = document.createElement('div');
-    card.className = 'answer-card';
-    card.innerHTML = `
-      <div class="answer-header">✅ 最终答案</div>
-      <div class="answer-body">${esc(answer)}</div>`;
-    container.appendChild(card);
+  function renderLandingRecent() {
+    const el = $('landing-recent');
+    if (S.history.length === 0) { el.innerHTML = ''; return; }
+    const recent = S.history.slice(0, 3);
+    el.innerHTML = `
+      <div class="recent-label">Recent</div>
+      <div class="recent-grid">
+        ${recent.map(h => `
+          <div class="recent-item" onclick="loadConv('${h.id}')">
+            <div class="ri-mode">${h.mode === 'react' ? '⚡ ReAct' : '💬 Chat'}</div>
+            <div class="ri-title">${esc(h.title)}</div>
+          </div>`).join('')}
+      </div>`;
   }
 
-  function appendError(container, msg) {
-    const card = document.createElement('div');
-    card.className = 'error-card';
-    card.textContent = msg;
-    container.appendChild(card);
+  function setSendDisabled(v) {
+    $('btn-send').disabled   = v;
+    $('msg-input').disabled  = v;
   }
 
-  function resetReactBar() {
-    document.getElementById('btn-run').disabled = false;
-    document.getElementById('react-input').disabled = false;
-    document.getElementById('react-input').focus();
+  function scrollMsgs() {
+    const el = $('msgs');
+    el.scrollTop = el.scrollHeight;
   }
 
-  /* ─── utils ─── */
-  function esc(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+  function focusInput() {
+    setTimeout(() => $('msg-input')?.focus(), 40);
+  }
+
+  /* ════════════════════════════════════
+     UTILS
+  ════════════════════════════════════ */
+  function $(id) { return document.getElementById(id); }
+
+  function esc(s) {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function wsUrl(path) {
+    return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`;
+  }
+
+  function genId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  function now() { return new Date().toISOString(); }
+
+  function relTime(ts) {
+    if (!ts) return '';
+    const d = Date.now() - new Date(ts).getTime();
+    if (d < 60000)    return 'Just now';
+    if (d < 3600000)  return `${Math.floor(d / 60000)}m ago`;
+    if (d < 86400000) return `${Math.floor(d / 3600000)}h ago`;
+    return new Date(ts).toLocaleDateString();
+  }
+
+  function convTitle(messages) {
+    const first = messages.find(m => m.role === 'user');
+    if (!first) return 'New Conversation';
+    const t = first.content.trim();
+    return t.length > 52 ? t.slice(0, 52) + '…' : t;
   }
 
   function autoResize(el) {
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
   }
 
-  /* ─── check server status on load ─── */
-  (async () => {
-    const [statusRes, cfgRes] = await Promise.all([
-      fetch('/api/status').catch(() => null),
-      fetch('/api/config').catch(() => null),
-    ]);
-
-    if (cfgRes && cfgRes.ok) {
-      const cfg = await cfgRes.json();
-      if (cfg.model) {
-        document.getElementById('cfg-model').value      = cfg.model       ?? '';
-        document.getElementById('cfg-baseurl').value    = cfg.base_url    ?? '';
-        document.getElementById('cfg-maxtokens').value  = cfg.max_tokens  ?? 512;
-        document.getElementById('cfg-temp').value       = cfg.temperature ?? 1.0;
-        document.getElementById('cfg-sysprompt').value  = cfg.system_prompt ?? '';
-        // api_key: 有值时仅更新 label，不回填密码框（安全）
-        if (cfg.api_key) {
-          document.getElementById('label-model').textContent  = 'API 模型名称';
-          document.getElementById('hint-model').textContent   = 'API 模式：填写服务商提供的模型名称，如 gpt-4o';
-          document.getElementById('cfg-model').placeholder    = 'gpt-4o / deepseek-chat';
-        }
-      }
-    }
-
-    if (statusRes && statusRes.ok) {
-      const data = await statusRes.json();
-      if (data.initialized) {
-        document.getElementById('llm-badge').className   = 'status-badge ready';
-        document.getElementById('llm-badge').textContent = '就绪 · 已从配置文件加载';
-        document.getElementById('user-input').disabled   = false;
-        document.getElementById('btn-send').disabled     = false;
-      }
-    }
-  })();
-
-  /* ─── model label toggle ─── */
-  document.getElementById('cfg-apikey').addEventListener('input', function () {
-    const isApi = this.value.trim().length > 0;
-    document.getElementById('label-model').textContent   = isApi ? 'API 模型名称' : '本地模型路径';
-    document.getElementById('cfg-model').placeholder     = isApi ? 'gpt-4o / deepseek-chat' : 'Qwen/Qwen2.5-7B 或 /models/llama3';
-    document.getElementById('hint-model').textContent    = isApi
-      ? 'API 模式：填写服务商提供的模型名称，如 gpt-4o'
-      : '本地推理：填写 HuggingFace ID 或本地绝对路径';
-  });
-
-  /* ─── keyboard shortcuts ─── */
-  document.getElementById('user-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (!document.getElementById('btn-send').disabled) sendMessage();
-    }
-  });
-  document.getElementById('react-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (!document.getElementById('btn-run').disabled) runReact();
-    }
-  });
-
-  /* ─── auto-resize inputs ─── */
-  ['user-input', 'react-input'].forEach(id => {
-    document.getElementById(id).addEventListener('input', function () { autoResize(this); });
+  /* ════════════════════════════════════
+     KEYBOARD + INIT
+  ════════════════════════════════════ */
+  document.addEventListener('DOMContentLoaded', () => {
+    const inp = $('msg-input');
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+    inp.addEventListener('input', function () { autoResize(this); });
+    boot();
   });
 </script>
+
 </body>
 </html>

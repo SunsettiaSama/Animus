@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from langchain_core.tools import BaseTool
 
 
-class BaseAction(ABC):
+class BaseAction(BaseTool):
     name: str
+    description: str = ""
 
-    @abstractmethod
     def execute(self, **kwargs) -> str:
         raise NotImplementedError
+
+    def _run(self, *args, **kwargs) -> str:
+        return self.execute(**kwargs)
+
+    async def _arun(self, *args, **kwargs) -> str:
+        return self._run(*args, **kwargs)
