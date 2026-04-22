@@ -50,6 +50,15 @@ class ConvLoop:
     def stream(self, question: str) -> Generator[TaoEvent, None, None]:
         return self._tao.stream(question)
 
+    def post_process(self) -> None:
+        """Delegate to :meth:`TaoLoop.post_process`.
+
+        Runs commit, persona evolution, history update, and static prompt cache
+        rebuild.  Call this in a background thread after the ``FinishEvent``
+        has been delivered to the client.
+        """
+        self._tao.post_process()
+
     def reset(self) -> None:
         self._tao.reset()
 

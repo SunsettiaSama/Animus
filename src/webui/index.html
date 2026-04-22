@@ -584,6 +584,88 @@
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ════════════════════════════════════════
+       PERSONA
+    ════════════════════════════════════════ */
+    /* Toggle switch */
+    .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; inset: 0; background: var(--bg3); border-radius: 22px; transition: .2s; border: 1px solid var(--border); }
+    .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 2px; bottom: 2px; background: #fff; border-radius: 50%; transition: .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+    .switch input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+    .switch input:checked + .slider:before { transform: translateX(18px); }
+
+    /* Toggle row */
+    .toggle-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 0; }
+    .toggle-label { flex: 1; }
+    .toggle-title { display: block; font-size: 13px; font-weight: 600; color: var(--text); }
+    .toggle-desc { display: block; font-size: 12px; color: var(--text2); margin-top: 3px; line-height: 1.45; }
+
+    /* Section divider */
+    .section-divider { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text3); padding: 5px 0; border-bottom: 1px solid var(--border); margin: 14px 0 12px; }
+    .section-divider:first-child { margin-top: 0; }
+
+    /* Chronicle list */
+    .chronicle-list { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r2); padding: 8px 10px; max-height: 130px; overflow-y: auto; }
+    .chronicle-entry { padding: 5px 0; border-bottom: 1px solid var(--border); }
+    .chronicle-entry:last-child { border-bottom: none; }
+    .ce-date { font-size: 11px; color: var(--text3); display: block; margin-bottom: 2px; }
+    .ce-text { font-size: 12px; color: var(--text); line-height: 1.45; }
+    .chronicle-empty { font-size: 12px; color: var(--text3); }
+
+    /* Persona active badge in topbar */
+    .persona-badge { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 20px; background: #fdf4ff; color: #7c3aed; flex-shrink: 0; }
+
+    /* Toast notification */
+    .toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(14px); background: #1f2937; color: #fff; font-size: 13px; padding: 9px 20px; border-radius: 20px; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; z-index: 500; white-space: nowrap; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* Full prompt section */
+    .full-prompt-section { margin-top: 5px; align-self: flex-end; width: 100%; }
+    .full-prompt-toggle {
+      font-size: 11px;
+      color: var(--text3);
+      padding: 2px 6px 2px 3px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: color .12s, background .12s;
+    }
+    .full-prompt-toggle:hover { color: var(--text2); background: var(--bg3); }
+    .full-prompt-toggle .chevron { font-size: 9px; transition: transform .2s; }
+    .full-prompt-toggle.open .chevron { transform: rotate(90deg); }
+
+    .full-prompt-body {
+      margin-top: 6px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--r2);
+      padding: 10px 12px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .full-prompt-msg { margin-bottom: 10px; }
+    .full-prompt-msg:last-child { margin-bottom: 0; }
+    .fp-role {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 4px;
+    }
+    .fp-role.system    { color: #7c3aed; }
+    .fp-role.user      { color: var(--accent); }
+    .fp-role.assistant { color: #10b981; }
+    .fp-content {
+      font-size: 12px;
+      font-family: "Courier New", Consolas, monospace;
+      line-height: 1.55;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
   </style>
 </head>
 <body>
@@ -641,6 +723,7 @@
       <div class="topbar-left">
         <span id="tb-title">New Conversation</span>
         <span id="tb-mode" class="mode-badge">Chat</span>
+        <span id="tb-persona-badge" class="persona-badge hidden">🎭 Persona</span>
       </div>
       <div class="topbar-right">
         <button class="icon-btn hidden" id="btn-clear-react" onclick="clearReactSession()" title="Clear ReAct dialogue history">🔄</button>
@@ -680,6 +763,7 @@
     <div class="modal-tabs">
       <button class="tab-btn active" id="tab-btn-model"     onclick="setTab('model')">Model</button>
       <button class="tab-btn"        id="tab-btn-react-cfg" onclick="setTab('react-cfg')">ReAct</button>
+      <button class="tab-btn"        id="tab-btn-persona"   onclick="setTab('persona')">🎭 Persona</button>
     </div>
 
     <div class="modal-body">
@@ -711,6 +795,13 @@
           <label>System Prompt</label>
           <textarea id="s-sysprompt" rows="3" placeholder="You are a helpful assistant."></textarea>
         </div>
+        <div class="toggle-row" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+          <div class="toggle-label">
+            <span class="toggle-title">Show Full Input</span>
+            <span class="toggle-desc">在每条用户消息下方显示实际发送给模型的完整提示（系统提示 + 对话历史 + 当前消息）。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-show-full-prompt" onchange="onToggleFullPrompt()"><span class="slider"></span></label>
+        </div>
       </div>
 
       <!-- ReAct tab -->
@@ -726,6 +817,88 @@
           <label>Max Steps</label>
           <input id="s-maxsteps" type="number" value="10" min="1" max="50" />
         </div>
+      </div>
+
+      <!-- Persona tab -->
+      <div id="tab-persona" class="hidden">
+
+        <!-- 人格演化开关 -->
+        <div class="section-divider" style="margin-top:0">人格演化</div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">启用人格演化</span>
+            <span class="toggle-desc">Agent 将维护持久化的人物画像，每轮对话结束后自动注入画像内容；状态栏会显示 🎭 Persona 标记。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-persona-enabled"><span class="slider"></span></label>
+        </div>
+
+        <!-- 人物画像 -->
+        <div class="section-divider">人物画像</div>
+        <div class="form-group">
+          <label>名称</label>
+          <input id="s-p-name" type="text" placeholder="助手名称" />
+        </div>
+        <div class="form-group">
+          <label>背景</label>
+          <textarea id="s-p-background" rows="2" placeholder="人物背景、身份、经历…"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>性格特征 <span style="font-weight:400;color:var(--text3)">逗号分隔</span></label>
+            <input id="s-p-traits" type="text" placeholder="理性、专注、好奇" />
+          </div>
+          <div class="form-group">
+            <label>价值观 <span style="font-weight:400;color:var(--text3)">逗号分隔</span></label>
+            <input id="s-p-values" type="text" placeholder="诚实、严谨、有效" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>风格</label>
+          <input id="s-p-style" type="text" placeholder="简洁直接，擅用类比" />
+        </div>
+
+        <!-- 事件演化 -->
+        <div class="section-divider">事件演化</div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">记录事件演化</span>
+            <span class="toggle-desc">以叙事方式记录 Agent 每次推理行为，积累经历后注入 Prompt；关闭后仅保留静态画像。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-chronicle-enabled" checked><span class="slider"></span></label>
+        </div>
+        <div class="form-group">
+          <label>
+            近期经历（只读）
+            <button onclick="loadChronicle()" style="font-size:11px;color:var(--accent);margin-left:8px;font-weight:500;">↻ 刷新</button>
+          </label>
+          <div id="chronicle-list" class="chronicle-list">
+            <span class="chronicle-empty">暂无记录</span>
+          </div>
+        </div>
+
+        <!-- 长度限制 -->
+        <div class="section-divider">长度限制 <span style="font-weight:400;font-style:normal;letter-spacing:0">（0 = 不限制）</span></div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>画像渲染上限 <span style="font-weight:400;color:var(--text3)">参考 200–1000</span></label>
+            <input id="s-p-max-profile" type="number" value="500" min="0" />
+          </div>
+          <div class="form-group">
+            <label>条目字符上限 <span style="font-weight:400;color:var(--text3)">超出整条丢弃</span></label>
+            <input id="s-p-max-entry" type="number" value="200" min="0" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>经历渲染上限 <span style="font-weight:400;color:var(--text3)">参考 300–2000</span></label>
+            <input id="s-p-max-render" type="number" value="800" min="0" />
+          </div>
+          <div class="form-group">
+            <label>注入条目数 <span style="font-weight:400;color:var(--text3)">最近 N 条经历</span></label>
+            <input id="s-p-recent" type="number" value="5" min="1" max="20" />
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -743,14 +916,16 @@
      STATE
   ════════════════════════════════════ */
   const S = {
-    mode:        'chat',
-    convId:      null,
-    messages:    [],
-    streaming:   false,
-    llmReady:    false,
-    reactReady:  false,
-    history:     [],
-    activeWs:    null,
+    mode:            'chat',
+    convId:          null,
+    messages:        [],
+    streaming:       false,
+    llmReady:        false,
+    reactReady:      false,
+    history:         [],
+    activeWs:        null,
+    personaEnabled:  false,
+    showFullPrompt:  localStorage.getItem('showFullPrompt') === 'true',
   };
 
   /* ════════════════════════════════════
@@ -759,6 +934,7 @@
   async function boot() {
     await Promise.all([loadStatus(), loadHistory()]);
     await fillSettings();
+    await loadPersona();
     renderLandingRecent();
   }
 
@@ -781,12 +957,13 @@
     if (!r?.ok) return;
     const c = await r.json();
     if (!c || Object.keys(c).length === 0) return;
-    $('s-model').value     = c.model        ?? '';
-    $('s-apikey').value    = c.api_key       ?? '';
-    $('s-baseurl').value   = c.base_url      ?? '';
-    $('s-maxtokens').value = c.max_tokens    ?? 512;
-    $('s-temp').value      = c.temperature   ?? 1.0;
-    $('s-sysprompt').value = c.system_prompt ?? '';
+    $('s-model').value            = c.model        ?? '';
+    $('s-apikey').value           = c.api_key       ?? '';
+    $('s-baseurl').value          = c.base_url      ?? '';
+    $('s-maxtokens').value        = c.max_tokens    ?? 512;
+    $('s-temp').value             = c.temperature   ?? 1.0;
+    $('s-sysprompt').value        = c.system_prompt ?? '';
+    $('s-show-full-prompt').checked = S.showFullPrompt;
   }
 
   /* ════════════════════════════════════
@@ -885,16 +1062,38 @@
   function overlayClick(e) { if (e.target === $('overlay')) closeSettings(); }
 
   function setTab(name) {
-    ['model', 'react-cfg'].forEach(t => {
+    ['model', 'react-cfg', 'persona'].forEach(t => {
       $(`tab-${t}`).classList.toggle('hidden', t !== name);
       $(`tab-btn-${t}`).classList.toggle('active', t === name);
     });
+    if (name === 'persona') loadChronicle();
   }
 
   function setModalMsg(msg, cls) {
     const el = $('modal-msg');
     el.textContent = msg;
     el.className   = cls || '';
+  }
+
+  function onToggleFullPrompt() {
+    S.showFullPrompt = $('s-show-full-prompt').checked;
+    localStorage.setItem('showFullPrompt', S.showFullPrompt);
+    document.querySelectorAll('.full-prompt-section').forEach(el => {
+      el.classList.toggle('hidden', !S.showFullPrompt);
+    });
+  }
+
+  function toggleFullPrompt(btn) {
+    btn.classList.toggle('open');
+    btn.nextElementSibling?.classList.toggle('hidden');
+  }
+
+  function buildFullPromptHtml(context) {
+    return context.map(m => `
+      <div class="full-prompt-msg">
+        <div class="fp-role ${m.role}">${m.role.toUpperCase()}</div>
+        <div class="fp-content">${esc(m.content)}</div>
+      </div>`).join('');
   }
 
   async function applySettings() {
@@ -937,6 +1136,8 @@
 
     S.llmReady = true;
 
+    await savePersona();
+
     if (S.reactReady || S.mode === 'react') {
       S.reactReady = await callReactInit();
     }
@@ -969,14 +1170,26 @@
     inp.value = '';
     autoResize(inp);
 
-    const userMsg = { role: 'user', content: text, timestamp: now() };
+    const fullContext = [];
+    const sysprompt = $('s-sysprompt').value.trim();
+    if (sysprompt) fullContext.push({ role: 'system', content: sysprompt });
+    S.messages.forEach(m => {
+      if (m.role === 'user' || m.role === 'assistant')
+        fullContext.push({ role: m.role, content: m.content || '' });
+    });
+    fullContext.push({ role: 'user', content: text });
+
+    // For ReAct mode the actual prompt is richer (tool descs, memory, persona…);
+    // we store the basic chat context as a fallback that gets replaced by the
+    // server-side prompt_preview event once the real messages are assembled.
+    const userMsg = { role: 'user', content: text, timestamp: now(), full_context: fullContext };
     S.messages.push(userMsg);
-    renderMessage(userMsg, false);
+    const userMsgEl = renderMessage(userMsg, false);
 
     if (S.mode === 'chat') {
       await streamChat(text);
     } else {
-      await streamReact(text);
+      await streamReact(text, userMsg, userMsgEl);
     }
   }
 
@@ -1032,7 +1245,7 @@
     };
   }
 
-  async function streamReact(question) {
+  async function streamReact(question, userMsg, userMsgEl) {
     S.streaming = true;
     setSendDisabled(true);
 
@@ -1058,7 +1271,22 @@
         ws.close(); return;
       }
 
-      if (d.type === 'step_start') {
+      if (d.type === 'prompt_preview') {
+        // Replace the basic chat context with the actual assembled prompt from the server.
+        // Always update the DOM content so the correct data is shown when the toggle is enabled.
+        if (userMsg) userMsg.full_context = d.messages;
+        if (userMsgEl) {
+          const fpSection = userMsgEl.querySelector('.full-prompt-section');
+          if (fpSection) {
+            const toggle = fpSection.querySelector('.full-prompt-toggle');
+            const body   = fpSection.querySelector('.full-prompt-body');
+            if (toggle) toggle.innerHTML =
+              `<span class="chevron">▶</span>Full prompt (${d.messages.length} msg${d.messages.length !== 1 ? 's' : ''})`;
+            if (body) body.innerHTML = buildFullPromptHtml(d.messages);
+          }
+        }
+
+      } else if (d.type === 'step_start') {
         asstMsg.steps.push({ index: d.index, thought: '', action: '', action_input: {}, observation: '', raw: '' });
         const el = makeStreamingStepEl(d.index);
         localStepEls[d.index] = el;
@@ -1086,6 +1314,7 @@
         finalBubble.textContent = d.answer;
         finalBubble.classList.remove('hidden');
         scrollMsgs();
+        if (S.personaEnabled) showToast('🎭 人格已演化');
         ws.close();
       }
     };
@@ -1116,10 +1345,19 @@
     el.className = `message ${msg.role}`;
 
     if (msg.role === 'user') {
+      const fpSection = msg.full_context
+        ? `<div class="full-prompt-section${S.showFullPrompt ? '' : ' hidden'}">
+             <button class="full-prompt-toggle" onclick="toggleFullPrompt(this)">
+               <span class="chevron">▶</span>Full prompt (${msg.full_context.length} msg${msg.full_context.length !== 1 ? 's' : ''})
+             </button>
+             <div class="full-prompt-body hidden">${buildFullPromptHtml(msg.full_context)}</div>
+           </div>`
+        : '';
       el.innerHTML = `
         <div class="msg-body">
           <div class="msg-bubble">${esc(msg.content)}</div>
           <div class="msg-time">${relTime(msg.timestamp)}</div>
+          ${fpSection}
         </div>
         <div class="msg-avatar">You</div>`;
     } else {
@@ -1281,6 +1519,7 @@
     badge.textContent = S.mode === 'react' ? 'ReAct' : 'Chat';
     badge.className   = `mode-badge${S.mode === 'react' ? ' react' : ''}`;
     $('btn-clear-react').classList.toggle('hidden', S.mode !== 'react');
+    $('tb-persona-badge').classList.toggle('hidden', !(S.personaEnabled && S.mode === 'react'));
   }
 
   function clearMsgs() {
@@ -1381,6 +1620,86 @@
   function autoResize(el) {
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  }
+
+  /* ════════════════════════════════════
+     PERSONA
+  ════════════════════════════════════ */
+  async function loadPersona() {
+    const r = await fetch('/api/persona').catch(() => null);
+    if (!r?.ok) return;
+    const d = await r.json();
+
+    $('s-persona-enabled').checked   = d.enabled ?? false;
+    $('s-chronicle-enabled').checked = d.chronicle_enabled ?? true;
+    $('s-p-name').value        = d.profile?.name       ?? 'Assistant';
+    $('s-p-background').value  = d.profile?.background ?? '';
+    $('s-p-traits').value      = (d.profile?.traits ?? []).join(', ');
+    $('s-p-values').value      = (d.profile?.values ?? []).join(', ');
+    $('s-p-style').value       = d.profile?.style      ?? '';
+    $('s-p-recent').value      = d.chronicle_recent_in_prompt ?? 5;
+    $('s-p-max-profile').value = d.max_profile_chars         ?? 500;
+    $('s-p-max-entry').value   = d.max_chronicle_entry_chars  ?? 200;
+    $('s-p-max-render').value  = d.max_chronicle_render_chars ?? 800;
+
+    S.personaEnabled = d.enabled ?? false;
+    updateTopbar();
+  }
+
+  async function savePersona() {
+    const traits = $('s-p-traits').value.split(',').map(s => s.trim()).filter(Boolean);
+    const values = $('s-p-values').value.split(',').map(s => s.trim()).filter(Boolean);
+    const body = {
+      enabled:                   $('s-persona-enabled').checked,
+      chronicle_enabled:         $('s-chronicle-enabled').checked,
+      name:                      $('s-p-name').value.trim() || 'Assistant',
+      background:                $('s-p-background').value.trim(),
+      traits,
+      values,
+      style:                     $('s-p-style').value.trim(),
+      chronicle_recent_in_prompt: parseInt($('s-p-recent').value)      || 5,
+      max_chronicle_entries:     100,
+      max_profile_chars:         parseInt($('s-p-max-profile').value)  || 500,
+      max_chronicle_entry_chars: parseInt($('s-p-max-entry').value)    || 200,
+      max_chronicle_render_chars: parseInt($('s-p-max-render').value)  || 800,
+    };
+    await fetch('/api/persona/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+    S.personaEnabled = body.enabled;
+    updateTopbar();
+  }
+
+  async function loadChronicle() {
+    const r = await fetch('/api/persona/chronicle').catch(() => null);
+    if (!r?.ok) return;
+    const d = await r.json();
+    const entries = d.entries || [];
+    const list = $('chronicle-list');
+    if (!list) return;
+    if (entries.length === 0) {
+      list.innerHTML = '<span class="chronicle-empty">暂无记录</span>';
+      return;
+    }
+    list.innerHTML = entries.slice(-8).reverse().map(e => `
+      <div class="chronicle-entry">
+        <span class="ce-date">${e.timestamp?.slice(0, 10) || ''}</span>
+        <span class="ce-text">${esc(e.narrative)}</span>
+      </div>`).join('');
+  }
+
+  function showToast(msg) {
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    requestAnimationFrame(() => { requestAnimationFrame(() => t.classList.add('show')); });
+    setTimeout(() => {
+      t.classList.remove('show');
+      setTimeout(() => t.remove(), 300);
+    }, 2600);
   }
 
   /* ════════════════════════════════════

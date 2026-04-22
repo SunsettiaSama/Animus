@@ -5,6 +5,7 @@ config/
 
 .vscode/
 .env/
+.pytest_cache/
 
 node_modules/        # 依赖包（最大必忽略）
 build/               # 打包产物

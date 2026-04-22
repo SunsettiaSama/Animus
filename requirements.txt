@@ -23,3 +23,4 @@ huggingface-hub
 # Utilities
 pyyaml
 numpy
+httpx

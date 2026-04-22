@@ -16,13 +16,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from config.llm_core.config import LLMConfig
 from config.react.memory.memory_config import MemoryConfig
+from config.react.persona_config import PersonaConfig
 from config.react.prompt_config import PromptConfig
 from config.react.tao_config import TaoConfig
 from llm_core.llm import LLM
 from react.action.executor import ActionExecutor
 from react.action.manager import ToolManager
 from react.loop import ConvLoop
-from react.tao import ChunkEvent, FinishEvent, StepEvent, StepStartEvent, TaoLoop
+from react.tao import ChunkEvent, FinishEvent, PromptPreviewEvent, StepEvent, StepStartEvent, TaoLoop
 
 app = FastAPI()
 
@@ -34,6 +35,8 @@ _tool_manager = ToolManager()
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _LLM_CONFIG_YAML = os.path.join(_REPO_ROOT, "config", "llm_core", "config.yaml")
 _HISTORY_DIR = os.path.join(_REPO_ROOT, ".react")
+_PERSONA_DIR = os.path.join(_REPO_ROOT, ".react", "persona")
+_PERSONA_CFG_FILE = os.path.join(_PERSONA_DIR, "persona_config.json")
 
 
 @app.on_event("startup")
@@ -87,6 +90,21 @@ class SaveConfigRequest(BaseModel):
     system_prompt: str = ""
 
 
+class PersonaSaveRequest(BaseModel):
+    enabled: bool = False
+    chronicle_enabled: bool = True
+    name: str = "Assistant"
+    background: str = ""
+    traits: list[str] = []
+    values: list[str] = []
+    style: str = ""
+    chronicle_recent_in_prompt: int = 5
+    max_chronicle_entries: int = 100
+    max_profile_chars: int = 500
+    max_chronicle_entry_chars: int = 200
+    max_chronicle_render_chars: int = 800
+
+
 class SaveConvRequest(BaseModel):
     id: str
     title: str
@@ -98,6 +116,29 @@ class SaveConvRequest(BaseModel):
 
 class RestoreRequest(BaseModel):
     messages: list[dict]
+
+
+# ── Persona helpers ───────────────────────────────────────────────────────────
+
+def _load_persona_cfg_dict() -> dict:
+    if not os.path.exists(_PERSONA_CFG_FILE):
+        return {}
+    with open(_PERSONA_CFG_FILE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _load_persona_config() -> PersonaConfig:
+    d = _load_persona_cfg_dict()
+    return PersonaConfig(
+        enabled=d.get("enabled", False),
+        persona_dir=_PERSONA_DIR,
+        max_chronicle_entries=d.get("max_chronicle_entries", 100),
+        chronicle_recent_in_prompt=d.get("chronicle_recent_in_prompt", 5),
+        chronicle_enabled=d.get("chronicle_enabled", True),
+        max_profile_chars=d.get("max_profile_chars", 500),
+        max_chronicle_entry_chars=d.get("max_chronicle_entry_chars", 200),
+        max_chronicle_render_chars=d.get("max_chronicle_render_chars", 800),
+    )
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -194,6 +235,7 @@ def react_init(req: ReactInitRequest):
         max_steps=req.max_steps,
         prompt=PromptConfig(lang=req.lang),
         memory=MemoryConfig(),
+        persona=_load_persona_config(),
     )
     tao = TaoLoop(llm=_llm, executor=executor, tool_descriptions=tool_descriptions, cfg=cfg)
     _conv_loop = ConvLoop(tao)
@@ -229,7 +271,9 @@ def react_run(req: ReactRunRequest):
 
     def generate():
         for event in _conv_loop.stream(req.question):
-            if isinstance(event, StepStartEvent):
+            if isinstance(event, PromptPreviewEvent):
+                data = {"type": "prompt_preview", "messages": event.messages}
+            elif isinstance(event, StepStartEvent):
                 data = {"type": "step_start", "index": event.index}
             elif isinstance(event, ChunkEvent):
                 data = {"type": "chunk", "index": event.index, "chunk": event.chunk}
@@ -245,6 +289,8 @@ def react_run(req: ReactRunRequest):
             elif isinstance(event, FinishEvent):
                 data = {"type": "finish", "answer": event.answer}
             yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+        # Commit and rebuild static cache after all SSE events are flushed.
+        _conv_loop.post_process()
 
     return StreamingResponse(
         generate(),
@@ -285,6 +331,62 @@ def react_tools_search(query: str, top_k: int = 5):
             for m in results
         ],
     }
+
+
+# ── Persona ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/persona")
+def get_persona():
+    from react.persona.store import PersonaStore
+    store = PersonaStore(_PERSONA_DIR)
+    profile = store.load_profile()
+    d = _load_persona_cfg_dict()
+    return {
+        "enabled":                   d.get("enabled", False),
+        "chronicle_enabled":         d.get("chronicle_enabled", True),
+        "profile":                   profile.to_dict(),
+        "chronicle_recent_in_prompt": d.get("chronicle_recent_in_prompt", 5),
+        "max_chronicle_entries":     d.get("max_chronicle_entries", 100),
+        "max_profile_chars":         d.get("max_profile_chars", 500),
+        "max_chronicle_entry_chars": d.get("max_chronicle_entry_chars", 200),
+        "max_chronicle_render_chars": d.get("max_chronicle_render_chars", 800),
+    }
+
+
+@app.post("/api/persona/save")
+def save_persona(req: PersonaSaveRequest):
+    from react.persona.profile import PersonaProfile
+    from react.persona.store import PersonaStore
+    os.makedirs(_PERSONA_DIR, exist_ok=True)
+    store = PersonaStore(_PERSONA_DIR)
+    store.save_profile(PersonaProfile(
+        name=req.name,
+        background=req.background,
+        traits=req.traits,
+        values=req.values,
+        style=req.style,
+    ))
+    cfg_data = {
+        "enabled":                   req.enabled,
+        "chronicle_enabled":         req.chronicle_enabled,
+        "chronicle_recent_in_prompt": req.chronicle_recent_in_prompt,
+        "max_chronicle_entries":     req.max_chronicle_entries,
+        "max_profile_chars":         req.max_profile_chars,
+        "max_chronicle_entry_chars": req.max_chronicle_entry_chars,
+        "max_chronicle_render_chars": req.max_chronicle_render_chars,
+    }
+    with open(_PERSONA_CFG_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg_data, f, ensure_ascii=False, indent=2)
+    return {"status": "ok"}
+
+
+@app.get("/api/persona/chronicle")
+def get_persona_chronicle():
+    from react.persona.store import PersonaStore
+    d = _load_persona_cfg_dict()
+    store = PersonaStore(_PERSONA_DIR)
+    chronicle = store.load_chronicle(d.get("max_chronicle_entries", 100))
+    return {"entries": chronicle.to_dict().get("entries", [])}
 
 
 # ── Conversation history ───────────────────────────────────────────────────────
@@ -399,7 +501,9 @@ async def ws_react_run(websocket: WebSocket):
 
     def _produce():
         for event in _conv_loop.stream(question):
-            if isinstance(event, StepStartEvent):
+            if isinstance(event, PromptPreviewEvent):
+                msg = {"type": "prompt_preview", "messages": event.messages}
+            elif isinstance(event, StepStartEvent):
                 msg = {"type": "step_start", "index": event.index}
             elif isinstance(event, ChunkEvent):
                 msg = {"type": "chunk", "index": event.index, "chunk": event.chunk}
@@ -417,15 +521,33 @@ async def ws_react_run(websocket: WebSocket):
             else:
                 continue
             loop.call_soon_threadsafe(queue.put_nowait, msg)
+        # Signal the consumer to close the WebSocket BEFORE post-processing.
+        # The client receives the finish event and the connection is released
+        # immediately; commit / embedding / cache-rebuild happen in the background.
         loop.call_soon_threadsafe(queue.put_nowait, None)
 
-    loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _produce)
+    def _on_produce_done(fut):
+        exc = fut.exception()
+        if exc:
+            loop.call_soon_threadsafe(
+                queue.put_nowait, {"type": "error", "message": str(exc)}
+            )
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    task = loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _produce)
+    task.add_done_callback(_on_produce_done)
 
     while True:
         item = await queue.get()
         if item is None:
             break
         await websocket.send_json(item)
+
+    # Run commit + static-cache rebuild in a background thread so the WebSocket
+    # can close without waiting for embedding / disk writes / LLM distillation.
+    # Mark the returned future's exception as retrieved to suppress asyncio warnings.
+    post_fut = loop.run_in_executor(None, _conv_loop.post_process)
+    post_fut.add_done_callback(lambda f: f.exception())
 
     await websocket.close()
 

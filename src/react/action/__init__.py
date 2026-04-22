@@ -3,7 +3,7 @@ from .executor import ActionExecutor
 from .manager import ToolManager
 from .mcp import BaseMCPTool, MCPRegistry, MCPServerConfig
 from .skill import BaseSkill, SkillMeta, SkillRegistry
-from .tool import ToolMeta, ToolRegistry
+from .tools import ToolMeta, ToolRegistry
 
 __all__ = [
     # 共享基类与执行

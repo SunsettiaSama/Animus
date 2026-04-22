@@ -1,0 +1,27 @@
+# =============================================================================
+# requirements-light.txt — API 部署专用（无本地 GPU 推理）
+#
+# 适用场景：通过 OpenAI / 兼容 API 调用 LLM，不在本地运行 HuggingFace 模型。
+# 比完整 requirements.txt 少约 4 GB（省去 torch / transformers / faiss-cpu）。
+#
+# 若需要长期记忆（本地向量库），取消注释 faiss-cpu / sentence-transformers。
+# =============================================================================
+
+# ── Web 服务 ───────────────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+pydantic
+
+# ── LangChain ──────────────────────────────────────────────────────────────
+langchain-core
+langchain-community
+langchain-openai
+
+# ── 长期记忆向量库（可选，默认关闭） ──────────────────────────────────────
+# faiss-cpu
+# sentence-transformers
+
+# ── 工具与网络 ─────────────────────────────────────────────────────────────
+pyyaml
+numpy
+httpx

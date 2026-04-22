@@ -39,7 +39,7 @@ def init_empty_store(cfg: LongTermMemoryConfig) -> LongTermStore:
 
 def make_memory(cfg: LongTermMemoryConfig) -> LongTermMemory:
     store = load_store(cfg) if cfg.load_from_disk else init_empty_store(cfg)
-    return LongTermMemory(store)
+    return LongTermMemory(store, cfg)
 
 
 __all__ = ["load_store", "init_empty_store", "make_memory"]

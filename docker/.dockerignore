@@ -1,0 +1,49 @@
+# =============================================================================
+# .dockerignore — 构建镜像时排除的路径（路径相对于构建上下文，即项目根）
+#
+# BuildKit 会在 Dockerfile 同目录（docker/）优先查找此文件，
+# 因此无需将其放到项目根目录。
+# =============================================================================
+
+# Git
+.git
+.gitignore
+
+# Python 字节码与缓存
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+
+# 虚拟环境
+.venv
+venv
+env
+
+# 运行时数据（通过 volume 挂载，不打入镜像）
+.react/
+
+# 本地模型（体积过大，通过 volume 挂载）
+models/
+
+# LLM 密钥配置（通过 volume 挂载，不打入镜像）
+config/llm_core/
+
+# 测试
+src/test/
+
+# 文档与开发工具
+docs/
+idea/
+corpus/
+docker/
+
+# 编辑器
+.vscode
+.cursor
+*.md
+
+# 临时文件
+*.log
+*.tmp

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
+
+from pydantic import BaseModel, Field
 
 from react.action.base import BaseAction
 
 if TYPE_CHECKING:
     from react.action.manager import ToolManager
+
+
+class ToolSearchArgs(BaseModel):
+    query: str = Field(..., min_length=1, description="描述你需要的功能，如 '随机数' 或 'base64编码'")
+    top_k: int = Field(3, ge=1, le=20, description="返回结果数，1~20")
 
 
 class ToolSearchAction(BaseAction):
@@ -22,13 +29,11 @@ class ToolSearchAction(BaseAction):
         "参数：query（描述你需要的功能，如 '随机数' 或 'base64编码'）；"
         "top_k（可选，返回结果数，默认 3）"
     )
+    args_model: ClassVar[type[BaseModel]] = ToolSearchArgs
 
-    manager: Any = None  # ToolManager，arbitrary_types_allowed 已由 BaseTool 开启
+    manager: Any = None
 
-    def execute(self, query: str = "", top_k: int = 3, **kwargs) -> str:
-        if not query:
-            raise ValueError("缺少参数 query")
-
+    def execute(self, query: str, top_k: int = 3, **kwargs) -> str:
         results = self.manager.search(query.strip(), int(top_k))
 
         if not results:

@@ -16,18 +16,23 @@ _STEP_TEMPLATE = (
     "Observation: {observation}"
 )
 
-_SUMMARY_PROMPT = """\
-You are a memory summarizer for a ReAct reasoning agent.
-Your task: produce a concise updated summary that captures the key findings and \
-progress made so far, within {max_tokens} words.
+_DISTILL_PROMPT = """\
+You are a knowledge distiller for a ReAct reasoning agent.
+The following steps were evicted from short-term memory. Extract only what is \
+genuinely useful for future reasoning, within {max_tokens} words.
 
-Previous Summary:
-{prev_summary}
+Previous Distillate:
+{prev_distillate}
 
-New Steps to Absorb:
-{new_steps}
+Evicted Steps to Distill:
+{evicted_steps}
 
-Write only the updated summary, no preamble."""
+Produce an updated distillate that captures:
+1. Key facts discovered (tool results and observations that matter)
+2. Successful reasoning paths (what worked and why)
+3. Dead ends or failed attempts (to avoid repetition)
+
+Output only the distillate, no preamble."""
 
 
 def _step_to_text(step: Step) -> str:
@@ -43,7 +48,7 @@ class MediumTermMemory:
     def __init__(self, cfg: MediumTermMemoryConfig, llm: LLM):
         self._cfg = cfg
         self._llm = llm
-        self._summary: str = ""
+        self._distillate: str = ""
         self._pending: list[Step] = []
 
     def absorb(self, evicted_steps: list[Step]) -> None:
@@ -52,34 +57,34 @@ class MediumTermMemory:
 
         self._pending.extend(evicted_steps)
 
-        if len(self._pending) >= self._cfg.summary_trigger_steps:
-            self._roll_summary()
+        if len(self._pending) >= self._cfg.distill_trigger_steps:
+            self._distill()
 
     def flush(self) -> None:
         if self._pending:
-            self._roll_summary()
+            self._distill()
 
-    def _roll_summary(self) -> None:
-        new_steps_text = "\n\n".join(_step_to_text(s) for s in self._pending)
-        prev = self._summary if self._summary else "None"
+    def _distill(self) -> None:
+        evicted_text = "\n\n".join(_step_to_text(s) for s in self._pending)
+        prev = self._distillate if self._distillate else "None"
 
-        prompt = _SUMMARY_PROMPT.format(
-            max_tokens=self._cfg.max_summary_tokens,
-            prev_summary=prev,
-            new_steps=new_steps_text,
+        prompt = _DISTILL_PROMPT.format(
+            max_tokens=self._cfg.max_distillate_tokens,
+            prev_distillate=prev,
+            evicted_steps=evicted_text,
         )
 
-        self._summary = self._llm.generate(prompt)
+        self._distillate = self._llm.generate(prompt)
         self._pending.clear()
 
     @property
-    def summary(self) -> str:
-        return self._summary
+    def distillate(self) -> str:
+        return self._distillate
 
     @property
-    def has_summary(self) -> bool:
-        return bool(self._summary)
+    def has_distillate(self) -> bool:
+        return bool(self._distillate)
 
     def clear(self) -> None:
-        self._summary = ""
+        self._distillate = ""
         self._pending.clear()

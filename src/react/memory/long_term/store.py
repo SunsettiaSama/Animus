@@ -16,6 +16,10 @@ MEMORIES_FILE = "memories.json"
 FAISS_INDEX_NAME = "memory_index"
 
 
+def _trunc(text: str, limit: int) -> str:
+    return text[:limit] if limit > 0 and len(text) > limit else text
+
+
 @dataclass
 class MemoryEntry:
     id: str
@@ -82,6 +86,7 @@ class LongTermStore:
     # --- write ---
 
     def add(self, text: str, **meta) -> MemoryEntry:
+        text = _trunc(text, self._cfg.max_entry_chars)
         entry = MemoryEntry.new(text, **meta)
         self._entries.append(entry)
         doc = Document(
@@ -107,7 +112,8 @@ class LongTermStore:
         if self._vectorstore is None or not self._entries:
             return ""
         results = self._vectorstore.similarity_search(query, k=self._cfg.top_k)
-        return "\n\n".join(doc.page_content for doc in results)
+        text = "\n\n".join(doc.page_content for doc in results)
+        return _trunc(text, self._cfg.max_recall_chars)
 
     # --- persistence ---
 

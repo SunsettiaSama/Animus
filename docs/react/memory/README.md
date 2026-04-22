@@ -46,13 +46,24 @@ processor = MemoryProcessor(cfg=MemoryConfig(), llm=llm)
 processor.add(step)
 
 # 构建 Prompt 时调用
-result = processor.recall(query="用户问题")
+# include_long_term=False 跳过向量检索，适用于同一问题的第 2+ 步
+result = processor.recall(query="用户问题", include_long_term=True)
 result.short_term   # list[Step]，注入完整对话历史
 result.medium_term  # str，注入摘要
-result.long_term    # str，注入检索结果
+result.long_term    # str，注入检索结果（include_long_term=False 时为 ""）
+
+# 读取当前中期蒸馏文本（post_process 时用于构建静态 Prompt 缓存）
+processor.medium_distillate  # str
 ```
 
-`MemoryProcessor` 内部自动处理驱逐链（短期 → 中期），`recall()` 对长期记忆执行向量检索。
+### `recall()` 的 `include_long_term` 参数
+
+ReAct 链中同一问题可能执行多步推理。长期向量检索（BGE Embedding + FAISS）是相对耗时的操作，而检索结果在同一问题的多步推理中不会变化，因此：
+
+- **第 0 步**：`include_long_term=True`，执行完整检索，缓存结果到局部变量 `_cached_lt`
+- **第 1+ 步**：`include_long_term=False`，跳过检索，直接复用 `_cached_lt`
+
+`MemoryProcessor` 内部的 `_is_session_start` 标志仅在 `include_long_term=True` 且实际调用 `smart_recall` 时更新，不受后续步骤影响。
 
 ## 数据流
 
@@ -71,6 +82,19 @@ ShortTermMemory.add(step)  →  evicted: list[Step]
                             ├─ pending < trigger_steps → 暂存
                             └─ pending >= trigger_steps → LLM 生成摘要（覆盖旧摘要）
 ```
+
+## commit() 与 post_process() 的关系
+
+`commit()` 由 `TaoLoop.post_process()` 在后台线程中调用（FinishEvent 发送给客户端后）：
+
+```
+post_process() [后台线程]
+  └─ processor.commit(question, answer)
+        ├─ medium.flush()              ← 强制蒸馏剩余 pending steps
+        └─ long.add(...) + long.save() ← 写入 FAISS + memories.json
+```
+
+commit 结束后，`post_process()` 通过 `processor.medium_distillate` 读取最新蒸馏文本，用于构建下一轮的静态 Prompt 缓存（`StaticPromptParts`）。
 
 ## 配置
 

@@ -1,0 +1,73 @@
+# =============================================================================
+# docker-compose.yml — ReAct Agent 完整服务栈
+#
+# 在项目根目录执行（通过 -f 指定此文件）：
+#   docker compose -f docker/docker-compose.yml up -d
+#   docker compose -f docker/docker-compose.yml logs -f react
+#   docker compose -f docker/docker-compose.yml down
+#
+# 注意：volume 路径中的 ../ 均相对于本 compose 文件所在目录（docker/）
+# =============================================================================
+
+services:
+
+  # ── SearXNG 元搜索引擎 ──────────────────────────────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    container_name: react-searxng
+    restart: unless-stopped
+    # 仅绑定本机回环地址，不对外暴露
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ../config/network/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    networks:
+      - react-net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          wget -q --spider
+          "http://localhost:8080/search?q=test&format=json"
+          || exit 1
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+  # ── ReAct Agent ─────────────────────────────────────────────────────────
+  react:
+    build:
+      # 构建上下文为项目根目录
+      context: ..
+      # dockerfile 路径相对于 context（项目根）
+      dockerfile: docker/Dockerfile
+      # 如需本地 LLM 推理（torch CPU），取消以下注释：
+      # args:
+      #   REQUIREMENTS: requirements.txt
+      #   TORCH_EXTRA: "--index-url https://download.pytorch.org/whl/cpu"
+    image: react-agent:latest
+    container_name: react-agent
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # LLM 配置含密钥，只做卷挂载，不打入镜像
+      - ../config/llm_core:/app/config/llm_core:ro
+      # 运行时数据：记忆、人格、轨迹
+      - ../.react:/app/.react
+      # 本地模型目录（不使用本地模型时可删除此行）
+      - ../models:/app/models:ro
+    environment:
+      SEARXNG_URL: http://searxng:8080
+      # 可选：直接通过环境变量覆盖 LLM 密钥（优先于 config.yaml）
+      # LLM_API_KEY: your_key_here
+    depends_on:
+      searxng:
+        condition: service_healthy
+    networks:
+      - react-net
+
+networks:
+  react-net:
+    driver: bridge
