@@ -1,5 +1,6 @@
 from .calculator import CalculatorAction
 from .datetime_tool import GetDatetimeAction, GetWeekdayAction
+from .memory_recall import MemoryRecallAction
 from .random_tool import GenerateUUIDAction, RandomChoiceAction, RandomNumberAction
 from .string_tool import Base64Action, HashAction, StringTransformAction
 from .unit_converter import UnitConverterAction
@@ -12,6 +13,7 @@ __all__ = [
     "GetDatetimeAction",
     "GetWeekdayAction",
     "GenerateUUIDAction",
+    "MemoryRecallAction",
     "RandomChoiceAction",
     "RandomNumberAction",
     "Base64Action",

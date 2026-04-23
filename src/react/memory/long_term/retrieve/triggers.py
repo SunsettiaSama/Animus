@@ -17,6 +17,20 @@ _HISTORY_KEYWORDS: list[str] = [
     "you recall", "we discussed", "that task",
 ]
 
+# 关键词列表：命中任意一个 → TIMELINE 模式（时态查询，需要时间顺序）
+_TIMELINE_KEYWORDS: list[str] = [
+    # 中文
+    "最近", "近期", "近来", "近几天", "最近几天", "近几周",
+    "上周", "上个月", "昨天", "今天", "今天发生", "这周", "这个月",
+    "什么时候", "何时发生", "按时间", "时间线", "时间顺序",
+    "最近发生", "发生了什么", "最新", "最近的记录",
+    # English
+    "recently", "lately", "last week", "last month",
+    "yesterday", "today", "this week", "this month",
+    "when did", "timeline", "chronological", "in order",
+    "recent events", "what happened", "latest",
+]
+
 
 def detect_mode(
     query: str,
@@ -28,6 +42,9 @@ def detect_mode(
     if is_session_start:
         return RetrieveMode.PROFILE
 
+    if _is_timeline_query(query):
+        return RetrieveMode.TIMELINE
+
     if _is_history_dependent(query):
         return RetrieveMode.HEAVY
 
@@ -35,6 +52,11 @@ def detect_mode(
         return RetrieveMode.SUPPLEMENT
 
     return RetrieveMode.LIGHT
+
+
+def _is_timeline_query(query: str) -> bool:
+    q = query.lower()
+    return any(kw in q for kw in _TIMELINE_KEYWORDS)
 
 
 def _is_history_dependent(query: str) -> bool:

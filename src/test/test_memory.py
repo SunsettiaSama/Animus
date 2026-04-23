@@ -489,6 +489,160 @@ def test_full_interaction_scenario():
 
 
 # ─────────────────────────────────────────────
+# LongTermStore 时序检索单元测试（无 FAISS）
+# ─────────────────────────────────────────────
+
+def _make_long_term_store():
+    """构建一个不依赖 FAISS / BGE 的 LongTermStore（vectorstore=None）。"""
+    from config.react.memory.memory_config import LongTermMemoryConfig
+    from react.memory.long_term.store import LongTermStore
+    cfg = LongTermMemoryConfig(enabled=True, load_from_disk=False, memory_dir=".test_mem")
+    return LongTermStore(entries=[], cfg=cfg, vectorstore=None)
+
+
+def _inject_entries(store, texts: list[str]) -> None:
+    """直接向 _entries 插入带伪造时间戳的 MemoryEntry，不经过 FAISS。"""
+    from react.memory.long_term.store import MemoryEntry
+    from datetime import datetime, timezone, timedelta
+    base = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    for i, text in enumerate(texts):
+        ts = (base + timedelta(hours=i)).isoformat()
+        store._entries.append(MemoryEntry(id=str(i), text=text, created_at=ts))
+
+
+def test_recall_timeline_order():
+    """recall_timeline 应按插入（时间）顺序返回，且数量受 n 限制。"""
+    store = _make_long_term_store()
+    _inject_entries(store, ["alpha", "beta", "gamma", "delta", "epsilon"])
+
+    pairs = store.recall_timeline(n=3)
+    assert len(pairs) == 3
+    # 最近 3 条：gamma / delta / epsilon（保留插入顺序，oldest first）
+    texts = [t for _, t in pairs]
+    assert texts == ["gamma", "delta", "epsilon"], f"Unexpected: {texts}"
+    print("[OK] test_recall_timeline_order")
+
+
+def test_recall_timeline_empty_store():
+    """空 store 的 recall_timeline 应返回空列表，不崩溃。"""
+    store = _make_long_term_store()
+    assert store.recall_timeline(5) == []
+    print("[OK] test_recall_timeline_empty_store")
+
+
+def test_recall_timeline_n_larger_than_entries():
+    """n > 条目总数时应返回全部条目。"""
+    store = _make_long_term_store()
+    _inject_entries(store, ["x", "y"])
+    pairs = store.recall_timeline(n=10)
+    assert len(pairs) == 2
+    print("[OK] test_recall_timeline_n_larger_than_entries")
+
+
+def test_recall_timeline_has_created_at():
+    """每条结果的 created_at 应为非空 ISO 字符串。"""
+    store = _make_long_term_store()
+    _inject_entries(store, ["hello", "world"])
+    for created_at, _ in store.recall_timeline(2):
+        assert created_at, "created_at should be non-empty"
+        assert "T" in created_at or " " in created_at, (
+            f"created_at looks invalid: {created_at!r}"
+        )
+    print("[OK] test_recall_timeline_has_created_at")
+
+
+# ─────────────────────────────────────────────
+# LongTermMemory.recall_timeline 格式测试
+# ─────────────────────────────────────────────
+
+def _make_long_term_memory():
+    from config.react.memory.memory_config import LongTermMemoryConfig
+    from react.memory.long_term.store import LongTermStore
+    from react.memory.long_term.memory import LongTermMemory
+    cfg = LongTermMemoryConfig(enabled=True, load_from_disk=False, memory_dir=".test_mem")
+    store = LongTermStore(entries=[], cfg=cfg, vectorstore=None)
+    return LongTermMemory(store=store, cfg=cfg), store
+
+
+def test_long_term_memory_recall_timeline_format():
+    """recall_timeline 返回的字符串应含 [DATE] 前缀和原始文本。"""
+    mem, store = _make_long_term_memory()
+    _inject_entries(store, ["用户喜欢喝茶", "用户不喜欢咖啡"])
+
+    result = mem.recall_timeline(n=2)
+    assert result, "result should not be empty"
+    assert "[2025-01-01" in result, f"Expected date prefix, got:\n{result}"
+    assert "用户喜欢喝茶" in result
+    assert "用户不喜欢咖啡" in result
+    print("[OK] test_long_term_memory_recall_timeline_format")
+
+
+def test_long_term_memory_recall_timeline_empty():
+    """空记忆 recall_timeline 应返回空字符串。"""
+    mem, _ = _make_long_term_memory()
+    assert mem.recall_timeline(5) == ""
+    print("[OK] test_long_term_memory_recall_timeline_empty")
+
+
+# ─────────────────────────────────────────────
+# triggers.py — 模式检测单元测试
+# ─────────────────────────────────────────────
+
+def test_detect_mode_timeline_keywords():
+    """含时态关键词的查询应触发 TIMELINE 模式。"""
+    from config.react.memory.retrieve_config import RetrieveConfig
+    from react.memory.long_term.retrieve.triggers import detect_mode
+    from react.memory.long_term.retrieve.base import RetrieveMode
+
+    cfg = RetrieveConfig()
+    for kw in ["最近发生了什么", "这周有什么进展", "recently what happened", "last week"]:
+        mode = detect_mode(kw, cfg)
+        assert mode == RetrieveMode.TIMELINE, (
+            f"Expected TIMELINE for {kw!r}, got {mode}"
+        )
+    print("[OK] test_detect_mode_timeline_keywords")
+
+
+def test_detect_mode_heavy_keywords():
+    """含历史回忆关键词的查询应触发 HEAVY 模式（优先级低于 TIMELINE）。"""
+    from config.react.memory.retrieve_config import RetrieveConfig
+    from react.memory.long_term.retrieve.triggers import detect_mode
+    from react.memory.long_term.retrieve.base import RetrieveMode
+
+    cfg = RetrieveConfig()
+    for kw in ["你还记得上次我说的", "as i mentioned earlier"]:
+        mode = detect_mode(kw, cfg)
+        assert mode == RetrieveMode.HEAVY, (
+            f"Expected HEAVY for {kw!r}, got {mode}"
+        )
+    print("[OK] test_detect_mode_heavy_keywords")
+
+
+def test_detect_mode_profile_on_session_start():
+    """会话启动时应触发 PROFILE 模式，无论查询内容如何。"""
+    from config.react.memory.retrieve_config import RetrieveConfig
+    from react.memory.long_term.retrieve.triggers import detect_mode
+    from react.memory.long_term.retrieve.base import RetrieveMode
+
+    cfg = RetrieveConfig()
+    mode = detect_mode("最近发生了什么", cfg, is_session_start=True)
+    assert mode == RetrieveMode.PROFILE, f"Expected PROFILE, got {mode}"
+    print("[OK] test_detect_mode_profile_on_session_start")
+
+
+def test_detect_mode_light_default():
+    """普通查询、无历史/时态关键词时应触发 LIGHT 模式。"""
+    from config.react.memory.retrieve_config import RetrieveConfig
+    from react.memory.long_term.retrieve.triggers import detect_mode
+    from react.memory.long_term.retrieve.base import RetrieveMode
+
+    cfg = RetrieveConfig(supplement_context_min_len=0)  # 关闭 SUPPLEMENT 触发
+    mode = detect_mode("如何用 Python 读取文件", cfg)
+    assert mode == RetrieveMode.LIGHT, f"Expected LIGHT, got {mode}"
+    print("[OK] test_detect_mode_light_default")
+
+
+# ─────────────────────────────────────────────
 # 入口
 # ─────────────────────────────────────────────
 
@@ -515,6 +669,19 @@ ALL_TESTS = [
     test_processor_clear_resets_session_flag,
     # 场景测试
     test_full_interaction_scenario,
+    # LongTermStore 时序检索
+    test_recall_timeline_order,
+    test_recall_timeline_empty_store,
+    test_recall_timeline_n_larger_than_entries,
+    test_recall_timeline_has_created_at,
+    # LongTermMemory.recall_timeline
+    test_long_term_memory_recall_timeline_format,
+    test_long_term_memory_recall_timeline_empty,
+    # triggers 模式检测
+    test_detect_mode_timeline_keywords,
+    test_detect_mode_heavy_keywords,
+    test_detect_mode_profile_on_session_start,
+    test_detect_mode_light_default,
 ]
 
 

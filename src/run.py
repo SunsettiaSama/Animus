@@ -64,18 +64,22 @@ def _section(title: str) -> None:
 #  Docker / SearXNG 容器生命周期管理
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _run_docker(*args: str, timeout: int = 10) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["docker", *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+def _run_docker(*args: str, timeout: int = 10) -> subprocess.CompletedProcess | None:
+    """返回 CompletedProcess；若 docker 可执行文件不存在则返回 None。"""
+    try:
+        return subprocess.run(
+            ["docker", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return None
 
 
 def _docker_available() -> bool:
     result = _run_docker("info", timeout=5)
-    return result.returncode == 0
+    return result is not None and result.returncode == 0
 
 
 def _container_status() -> str:
@@ -85,7 +89,7 @@ def _container_status() -> str:
         "--filter", f"name=^{_CONTAINER_NAME}$",
         "--format", "{{.Status}}",
     )
-    return result.stdout.strip()
+    return result.stdout.strip() if result else ""
 
 
 def _wait_until_up(seconds: int = 12) -> bool:

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from cache.config import CacheConfig
 from config.llm_core.config import LLMConfig
 from config.react.memory.memory_config import MemoryConfig
 from config.react.persona_config import PersonaConfig
@@ -32,11 +33,19 @@ _conv_loop: ConvLoop | None = None
 _llm_cfg: LLMConfig | None = None
 _tool_manager = ToolManager()
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_LLM_CONFIG_YAML = os.path.join(_REPO_ROOT, "config", "llm_core", "config.yaml")
-_HISTORY_DIR = os.path.join(_REPO_ROOT, ".react")
-_PERSONA_DIR = os.path.join(_REPO_ROOT, ".react", "persona")
+_REPO_ROOT        = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_LLM_CONFIG_YAML  = os.path.join(_REPO_ROOT, "config", "llm_core", "config.yaml")
+_MEMORY_CONFIG_YAML = os.path.join(_REPO_ROOT, "config", "react", "memory.yaml")
+_CACHE            = CacheConfig(root=os.path.join(_REPO_ROOT, ".react"))
+_HISTORY_DIR      = _CACHE.history_dir
+_PERSONA_DIR      = _CACHE.persona_dir
 _PERSONA_CFG_FILE = os.path.join(_PERSONA_DIR, "persona_config.json")
+
+
+def _load_memory_config() -> MemoryConfig:
+    if os.path.exists(_MEMORY_CONFIG_YAML):
+        return MemoryConfig.from_yaml(_MEMORY_CONFIG_YAML)
+    return MemoryConfig()
 
 
 @app.on_event("startup")
@@ -103,6 +112,17 @@ class PersonaSaveRequest(BaseModel):
     max_profile_chars: int = 500
     max_chronicle_entry_chars: int = 200
     max_chronicle_render_chars: int = 800
+    # 演化引擎
+    evolution_enabled: bool = False
+    evolve_interval: int = 1
+    # 技能库
+    skills_enabled: bool = True
+    max_skills_in_prompt: int = 5
+    max_skills_chars: int = 600
+    # 自省
+    reflection_enabled: bool = False
+    reflect_interval: int = 3
+    max_reflection_chars: int = 400
 
 
 class SaveConvRequest(BaseModel):
@@ -132,12 +152,20 @@ def _load_persona_config() -> PersonaConfig:
     return PersonaConfig(
         enabled=d.get("enabled", False),
         persona_dir=_PERSONA_DIR,
-        max_chronicle_entries=d.get("max_chronicle_entries", 100),
-        chronicle_recent_in_prompt=d.get("chronicle_recent_in_prompt", 5),
         chronicle_enabled=d.get("chronicle_enabled", True),
-        max_profile_chars=d.get("max_profile_chars", 500),
+        max_chronicle_entries=d.get("max_chronicle_entries", 100),
         max_chronicle_entry_chars=d.get("max_chronicle_entry_chars", 200),
         max_chronicle_render_chars=d.get("max_chronicle_render_chars", 800),
+        chronicle_recent_in_prompt=d.get("chronicle_recent_in_prompt", 5),
+        max_profile_chars=d.get("max_profile_chars", 500),
+        evolution_enabled=d.get("evolution_enabled", False),
+        evolve_interval=d.get("evolve_interval", 1),
+        skills_enabled=d.get("skills_enabled", True),
+        max_skills_in_prompt=d.get("max_skills_in_prompt", 5),
+        max_skills_chars=d.get("max_skills_chars", 600),
+        reflection_enabled=d.get("reflection_enabled", False),
+        reflect_interval=d.get("reflect_interval", 3),
+        max_reflection_chars=d.get("max_reflection_chars", 400),
     )
 
 
@@ -195,6 +223,11 @@ def init_llm(req: InitRequest):
     )
     _llm_cfg = cfg
     _llm = LLM(cfg)
+    # Keep every LLM sub-component in the active TaoLoop in sync so that
+    # persona evolution, milestone scoring, and generation all use the new
+    # model/key immediately — without requiring a full react_init rebuild.
+    if _conv_loop is not None:
+        _conv_loop._tao.update_llm(_llm)
     return {"status": "ok", "mode": "api" if req.api_key else "local"}
 
 
@@ -233,8 +266,9 @@ def react_init(req: ReactInitRequest):
 
     cfg = TaoConfig(
         max_steps=req.max_steps,
+        cache=_CACHE,
         prompt=PromptConfig(lang=req.lang),
-        memory=MemoryConfig(),
+        memory=_load_memory_config(),
         persona=_load_persona_config(),
     )
     tao = TaoLoop(llm=_llm, executor=executor, tool_descriptions=tool_descriptions, cfg=cfg)
@@ -337,28 +371,36 @@ def react_tools_search(query: str, top_k: int = 5):
 
 @app.get("/api/persona")
 def get_persona():
-    from react.persona.store import PersonaStore
-    store = PersonaStore(_PERSONA_DIR)
+    from react.persona.profile.store import ProfileStore
+    store = ProfileStore(_PERSONA_DIR)
     profile = store.load_profile()
     d = _load_persona_cfg_dict()
     return {
-        "enabled":                   d.get("enabled", False),
-        "chronicle_enabled":         d.get("chronicle_enabled", True),
-        "profile":                   profile.to_dict(),
+        "enabled":                    d.get("enabled", False),
+        "chronicle_enabled":          d.get("chronicle_enabled", True),
+        "profile":                    profile.to_dict(),
         "chronicle_recent_in_prompt": d.get("chronicle_recent_in_prompt", 5),
-        "max_chronicle_entries":     d.get("max_chronicle_entries", 100),
-        "max_profile_chars":         d.get("max_profile_chars", 500),
-        "max_chronicle_entry_chars": d.get("max_chronicle_entry_chars", 200),
+        "max_chronicle_entries":      d.get("max_chronicle_entries", 100),
+        "max_profile_chars":          d.get("max_profile_chars", 500),
+        "max_chronicle_entry_chars":  d.get("max_chronicle_entry_chars", 200),
         "max_chronicle_render_chars": d.get("max_chronicle_render_chars", 800),
+        "evolution_enabled":          d.get("evolution_enabled", False),
+        "evolve_interval":            d.get("evolve_interval", 1),
+        "skills_enabled":             d.get("skills_enabled", True),
+        "max_skills_in_prompt":       d.get("max_skills_in_prompt", 5),
+        "max_skills_chars":           d.get("max_skills_chars", 600),
+        "reflection_enabled":         d.get("reflection_enabled", False),
+        "reflect_interval":           d.get("reflect_interval", 3),
+        "max_reflection_chars":       d.get("max_reflection_chars", 400),
     }
 
 
 @app.post("/api/persona/save")
 def save_persona(req: PersonaSaveRequest):
-    from react.persona.profile import PersonaProfile
-    from react.persona.store import PersonaStore
+    from react.persona.profile.profile import PersonaProfile
+    from react.persona.profile.store import ProfileStore
     os.makedirs(_PERSONA_DIR, exist_ok=True)
-    store = PersonaStore(_PERSONA_DIR)
+    store = ProfileStore(_PERSONA_DIR)
     store.save_profile(PersonaProfile(
         name=req.name,
         background=req.background,
@@ -367,13 +409,21 @@ def save_persona(req: PersonaSaveRequest):
         style=req.style,
     ))
     cfg_data = {
-        "enabled":                   req.enabled,
-        "chronicle_enabled":         req.chronicle_enabled,
+        "enabled":                    req.enabled,
+        "chronicle_enabled":          req.chronicle_enabled,
         "chronicle_recent_in_prompt": req.chronicle_recent_in_prompt,
-        "max_chronicle_entries":     req.max_chronicle_entries,
-        "max_profile_chars":         req.max_profile_chars,
-        "max_chronicle_entry_chars": req.max_chronicle_entry_chars,
+        "max_chronicle_entries":      req.max_chronicle_entries,
+        "max_profile_chars":          req.max_profile_chars,
+        "max_chronicle_entry_chars":  req.max_chronicle_entry_chars,
         "max_chronicle_render_chars": req.max_chronicle_render_chars,
+        "evolution_enabled":          req.evolution_enabled,
+        "evolve_interval":            req.evolve_interval,
+        "skills_enabled":             req.skills_enabled,
+        "max_skills_in_prompt":       req.max_skills_in_prompt,
+        "max_skills_chars":           req.max_skills_chars,
+        "reflection_enabled":         req.reflection_enabled,
+        "reflect_interval":           req.reflect_interval,
+        "max_reflection_chars":       req.max_reflection_chars,
     }
     with open(_PERSONA_CFG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg_data, f, ensure_ascii=False, indent=2)
@@ -382,9 +432,9 @@ def save_persona(req: PersonaSaveRequest):
 
 @app.get("/api/persona/chronicle")
 def get_persona_chronicle():
-    from react.persona.store import PersonaStore
+    from react.persona.chronicle.store import ChronicleStore
     d = _load_persona_cfg_dict()
-    store = PersonaStore(_PERSONA_DIR)
+    store = ChronicleStore(_PERSONA_DIR)
     chronicle = store.load_chronicle(d.get("max_chronicle_entries", 100))
     return {"entries": chronicle.to_dict().get("entries", [])}
 
@@ -434,6 +484,18 @@ def delete_history_item(conv_id: str):
     if os.path.exists(path):
         os.remove(path)
     return {"status": "ok"}
+
+
+@app.delete("/api/history")
+def clear_all_history():
+    if not os.path.exists(_HISTORY_DIR):
+        return {"status": "ok", "deleted": 0}
+    count = 0
+    for fn in os.listdir(_HISTORY_DIR):
+        if fn.endswith(".json"):
+            os.remove(os.path.join(_HISTORY_DIR, fn))
+            count += 1
+    return {"status": "ok", "deleted": count}
 
 
 # ── WebSocket streaming ────────────────────────────────────────────────────────

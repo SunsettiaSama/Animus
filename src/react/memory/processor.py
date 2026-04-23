@@ -13,6 +13,7 @@ from react.memory.short_term.memory import ShortTermMemory
 
 if TYPE_CHECKING:
     from llm_core.llm import LLM
+    from react.memory.milestone.memory import MilestoneMemory
 
 
 @dataclass
@@ -20,6 +21,7 @@ class MemoryResult:
     short_term: list[Step] = field(default_factory=list)
     medium_term: str = ""
     long_term: str = ""
+    milestone: str = ""
 
 
 class MemoryProcessor:
@@ -28,6 +30,7 @@ class MemoryProcessor:
         cfg: MemoryConfig,
         llm: LLM | None = None,
         long_term: LongTermMemory | None = None,
+        milestone: MilestoneMemory | None = None,
     ):
         self._cfg = cfg
         self._trace: list[Step] = []
@@ -43,10 +46,11 @@ class MemoryProcessor:
                 raise ValueError("LLM instance is required when medium_term memory is enabled")
             self._medium = MediumTermMemory(cfg.medium_term, llm)
 
-        # 优先使用外部注入的长期记忆单例；未注入时按配置自行创建（向后兼容）
         self._long: LongTermMemory | None = long_term
         if self._long is None and cfg.long_term.enabled:
             self._long = make_memory(cfg.long_term)
+
+        self._milestone: MilestoneMemory | None = milestone
 
     def add(self, step: Step) -> None:
         self._trace.append(step)
@@ -83,10 +87,15 @@ class MemoryProcessor:
             )
             self._is_session_start = False
 
+        milestone_text = ""
+        if self._milestone is not None and query:
+            milestone_text = self._milestone.retrieve(query)
+
         return MemoryResult(
             short_term=short_steps,
             medium_term=medium_text,
             long_term=long_text,
+            milestone=milestone_text,
         )
 
     def commit(self, question: str, answer: str) -> None:
@@ -113,6 +122,17 @@ class MemoryProcessor:
             parts.append(f"A: {answer}")
             self._long.add("\n".join(parts), question=question)
             self._long.save()
+
+        if self._milestone is not None:
+            added, evicted = self._milestone.try_add(question, answer, self._trace)
+            if added:
+                self._milestone.save()
+            # 溢出的里程碑条目迁移到 L3，确保不丢失
+            if evicted and self._long is not None:
+                for e in evicted:
+                    text = f"[迁移自里程碑] {e.summary}\n{e.detail}"
+                    self._long.add(text, source="milestone", importance=e.importance)
+                self._long.save()
 
     def clear(self) -> None:
         self._trace.clear()

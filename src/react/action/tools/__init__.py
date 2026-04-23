@@ -7,6 +7,7 @@ from .impl import (
     GetDatetimeAction,
     GetWeekdayAction,
     HashAction,
+    MemoryRecallAction,
     RandomChoiceAction,
     RandomNumberAction,
     StringTransformAction,
@@ -32,5 +33,6 @@ __all__ = [
     "RandomNumberAction",
     "RandomChoiceAction",
     "GenerateUUIDAction",
+    "MemoryRecallAction",
     "ToolSearchAction",
 ]

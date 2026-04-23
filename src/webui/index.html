@@ -117,13 +117,9 @@
     .landing-logo h1 { font-size: 26px; font-weight: 700; }
     .landing-logo p  { font-size: 15px; color: var(--text2); }
 
-    .mode-cards {
-      display: flex;
-      gap: 16px;
-    }
     .mode-card {
-      width: 156px;
-      padding: 24px 16px 20px;
+      width: 220px;
+      padding: 28px 20px 22px;
       background: var(--bg);
       border: 1.5px solid var(--border);
       border-radius: var(--r);
@@ -139,8 +135,8 @@
       box-shadow: 0 4px 16px rgba(37,99,235,.13);
       transform: translateY(-2px);
     }
-    .mode-card .card-icon  { font-size: 30px; }
-    .mode-card .card-title { font-size: 15px; font-weight: 600; }
+    .mode-card .card-icon  { font-size: 34px; }
+    .mode-card .card-title { font-size: 16px; font-weight: 600; }
     .mode-card .card-desc  { font-size: 12px; color: var(--text2); text-align: center; line-height: 1.5; }
 
     #landing-recent {
@@ -271,7 +267,10 @@
       text-transform: uppercase;
       letter-spacing: .4px;
       flex-shrink: 0;
+      cursor: pointer;
+      transition: opacity .15s;
     }
+    .mode-badge:hover { opacity: .75; }
     .mode-badge.react { background: #f0fdf4; color: #16a34a; }
     .topbar-right { display: flex; gap: 2px; align-items: center; }
 
@@ -682,18 +681,11 @@
     <p>Intelligent reasoning assistant</p>
   </div>
 
-  <div class="mode-cards">
-    <button class="mode-card" onclick="startNew('chat')">
-      <span class="card-icon">💬</span>
-      <span class="card-title">Chat</span>
-      <span class="card-desc">Direct conversation with the LLM</span>
-    </button>
-    <button class="mode-card" onclick="startNew('react')">
-      <span class="card-icon">⚡</span>
-      <span class="card-title">ReAct</span>
-      <span class="card-desc">Reasoning + tool actions</span>
-    </button>
-  </div>
+  <button class="mode-card start-card" onclick="startNew()">
+    <span id="start-card-icon" class="card-icon">💬</span>
+    <span id="start-card-title" class="card-title">New Conversation</span>
+    <span id="start-card-desc" class="card-desc">Click to start · Toggle tools in Settings</span>
+  </button>
 
   <div id="landing-recent"></div>
 </div>
@@ -711,6 +703,7 @@
       <span class="logo-text">History</span>
       <div class="sidebar-hdr-actions">
         <button class="icon-btn" onclick="startNewKeepMode()" title="New conversation">＋</button>
+        <button class="icon-btn danger" onclick="confirmClearAllHistory()" title="Clear all history">🗑</button>
         <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
       </div>
     </div>
@@ -722,7 +715,7 @@
     <div id="topbar">
       <div class="topbar-left">
         <span id="tb-title">New Conversation</span>
-        <span id="tb-mode" class="mode-badge">Chat</span>
+        <button id="tb-mode" class="mode-badge" onclick="toggleMode()" title="Click to switch mode">Chat</button>
         <span id="tb-persona-badge" class="persona-badge hidden">🎭 Persona</span>
       </div>
       <div class="topbar-right">
@@ -806,6 +799,14 @@
 
       <!-- ReAct tab -->
       <div id="tab-react-cfg" class="hidden">
+        <div class="toggle-row" style="margin-bottom:16px">
+          <div class="toggle-label">
+            <span class="toggle-title">启用工具层（Agent 模式）</span>
+            <span class="toggle-desc">开启后新建对话将使用 ReAct 模式，Agent 会通过推理步骤调用工具；关闭则使用纯对话 Chat 模式。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-tools-enabled" onchange="onToggleTools()"><span class="slider"></span></label>
+        </div>
+        <div id="react-cfg-fields">
         <div class="form-group">
           <label>Prompt Language</label>
           <select id="s-lang">
@@ -816,6 +817,7 @@
         <div class="form-group">
           <label>Max Steps</label>
           <input id="s-maxsteps" type="number" value="10" min="1" max="50" />
+        </div>
         </div>
       </div>
 
@@ -926,6 +928,7 @@
     activeWs:        null,
     personaEnabled:  false,
     showFullPrompt:  localStorage.getItem('showFullPrompt') === 'true',
+    toolsEnabled:    localStorage.getItem('toolsEnabled') === 'true',
   };
 
   /* ════════════════════════════════════
@@ -935,6 +938,8 @@
     await Promise.all([loadStatus(), loadHistory()]);
     await fillSettings();
     await loadPersona();
+    $('s-tools-enabled').checked = S.toolsEnabled;
+    updateStartCard();
     renderLandingRecent();
   }
 
@@ -979,6 +984,7 @@
   }
 
   async function startNew(mode) {
+    if (mode === undefined) mode = S.toolsEnabled ? 'react' : 'chat';
     if (!S.llmReady) {
       openSettings();
       setModalMsg('⚠ Please configure and save model settings first.', 'err');
@@ -1083,6 +1089,61 @@
     });
   }
 
+  function onToggleTools() {
+    S.toolsEnabled = $('s-tools-enabled').checked;
+    localStorage.setItem('toolsEnabled', S.toolsEnabled);
+    updateStartCard();
+  }
+
+  function updateStartCard() {
+    const icon  = $('start-card-icon');
+    const title = $('start-card-title');
+    const desc  = $('start-card-desc');
+    if (!icon) return;
+    if (S.toolsEnabled) {
+      icon.textContent  = '⚡';
+      title.textContent = 'New Agent Conversation';
+      desc.textContent  = 'ReAct · Reasoning + tool actions';
+    } else {
+      icon.textContent  = '💬';
+      title.textContent = 'New Conversation';
+      desc.textContent  = 'Chat · Direct conversation with the LLM';
+    }
+  }
+
+  async function toggleMode() {
+    if (S.streaming) return;
+    const newMode = S.mode === 'chat' ? 'react' : 'chat';
+    if (newMode === 'react') {
+      if (!S.llmReady) { openSettings(); setModalMsg('⚠ Please configure model settings first.', 'err'); return; }
+      const ok = await callReactInit();
+      if (!ok) return;
+    }
+    S.mode = newMode;
+    S.toolsEnabled = (newMode === 'react');
+    localStorage.setItem('toolsEnabled', S.toolsEnabled);
+    $('s-tools-enabled').checked = S.toolsEnabled;
+    updateStartCard();
+    updateTopbar();
+    clearMsgs();
+    S.messages = [];
+    S.convId   = genId();
+    renderSidebar();
+    focusInput();
+  }
+
+  async function confirmClearAllHistory() {
+    const ok = confirm('⚠ 确认要清除所有历史对话记录吗？\n\n此操作不可撤销，所有本地保存的对话将被永久删除。');
+    if (!ok) return;
+    const r = await fetch('/api/history', { method: 'DELETE' }).catch(() => null);
+    if (!r?.ok) { alert('清除失败，请重试。'); return; }
+    S.history = [];
+    renderSidebar();
+    renderLandingRecent();
+    if (S.convId) goHome();
+    showToast('✓ 历史记录已清除');
+  }
+
   function toggleFullPrompt(btn) {
     btn.classList.toggle('open');
     btn.nextElementSibling?.classList.toggle('hidden');
@@ -1136,11 +1197,53 @@
 
     S.llmReady = true;
 
+    // ── Step 3: Save persona settings to disk ────────────────────────────────
     await savePersona();
 
-    if (S.reactReady || S.mode === 'react') {
+    // ── Step 4: (Re-)initialize React ────────────────────────────────────────
+    // TaoLoop stores a direct reference to the _llm object at construction time.
+    // /api/init replaces the server-side _llm with a new instance, so any active
+    // TaoLoop still holds a stale reference to the old LLM. We must re-create
+    // TaoLoop whenever the LLM or React-specific settings may have changed and
+    // React was already running (S.reactReady) or is about to be used.
+    const intendedMode = S.toolsEnabled ? 'react' : 'chat';
+
+    if (intendedMode === 'react' || S.reactReady) {
       S.reactReady = await callReactInit();
+      if (intendedMode === 'react' && !S.reactReady) {
+        setModalMsg('⚠ Failed to initialize ReAct.', 'err');
+        btn.disabled = false;
+        return;
+      }
+      // Re-creating TaoLoop wipes the PromptManager history. If the user is
+      // currently in a React workspace with an ongoing conversation, restore
+      // the context so the agent retains full turn history after settings save.
+      if (S.reactReady && S.mode === 'react' && S.messages.length > 0) {
+        await fetch('/api/react/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: S.messages }),
+        }).catch(() => null);
+      }
     }
+
+    // ── Step 5: Apply mode to current window immediately ──────────────────────
+    const modeChanged  = S.mode !== intendedMode;
+    S.mode = intendedMode;
+
+    const inWorkspace = !$('s-workspace').classList.contains('hidden');
+    if (inWorkspace) {
+      if (modeChanged) {
+        // Mode switched: discard current draft and start a clean slate,
+        // same behaviour as the topbar toggleMode() button.
+        S.messages = [];
+        S.convId   = genId();
+        clearMsgs();
+        renderSidebar();
+      }
+      updateTopbar();
+    }
+    updateStartCard();
 
     setModalMsg('✓ Saved & applied.', 'ok');
     btn.disabled = false;

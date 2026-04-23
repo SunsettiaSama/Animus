@@ -29,11 +29,19 @@ class DDGBackend(BaseSearchBackend):
         categories: str,
     ) -> list[SearchResult]:
         import time
+        import warnings
         from duckduckgo_search import DDGS
 
+        # duckduckgo_search v8 在 text() 内部硬编码 backends = ["bing"]，
+        # 导致无论传入什么 backend 参数都走 Bing，而 Bing 解析在当前版本返回空列表。
+        # _text_lite() 直接调用工作正常，绕开 text() 的派发逻辑。
         time.sleep(1)
-        with DDGS() as ddgs:
-            raw = list(ddgs.text(query, max_results=max_results))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            ddgs = DDGS()
+
+        region = None if language in ("auto", "") else language
+        raw = ddgs._text_lite(query, region=region, max_results=max_results)
 
         return [
             SearchResult(

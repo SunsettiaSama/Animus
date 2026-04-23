@@ -7,6 +7,22 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 
 
+def build_faiss_index(
+    docs: list[Document],
+    embeddings: HuggingFaceBgeEmbeddings,
+) -> FAISS:
+    return FAISS.from_documents(docs, embeddings)
+
+
+def save(
+    vectorstore: FAISS,
+    output_dir: str,
+    index_name: str = "index",
+) -> None:
+    os.makedirs(output_dir, exist_ok=True)
+    vectorstore.save_local(output_dir, index_name)
+
+
 def load(
     output_dir: str,
     embeddings: HuggingFaceBgeEmbeddings,

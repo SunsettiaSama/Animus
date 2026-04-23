@@ -9,6 +9,7 @@ class RetrieveMode(Enum):
     HEAVY = "heavy"           # 场景2：问题明显依赖历史
     SUPPLEMENT = "supplement" # 场景3：短期/中期无答案时补全
     PROFILE = "profile"       # 场景4：会话启动时检索用户档案
+    TIMELINE = "timeline"     # 场景5：时态查询，按 created_at 顺序返回最近条目
 
 
 @dataclass

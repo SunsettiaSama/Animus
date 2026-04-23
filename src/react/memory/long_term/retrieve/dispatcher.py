@@ -25,6 +25,9 @@ class Retriever:
     # --- 主入口：显式指定模式 ---
 
     def retrieve(self, req: RetrieveRequest) -> RetrieveResult:
+        if req.mode == RetrieveMode.TIMELINE:
+            return self._timeline_retrieve()
+
         top_k_attr, min_score_attr = _MODE_PARAMS[req.mode]
         top_k: int = getattr(self._cfg, top_k_attr)
         min_score: float = getattr(self._cfg, min_score_attr)
@@ -69,7 +72,21 @@ class Retriever:
             )
         )
 
-    # --- 内部：带阈值过滤的检索 ---
+    # --- 内部：时序召回（不经过 FAISS） ---
+
+    def _timeline_retrieve(self) -> RetrieveResult:
+        pairs = self._store.recall_timeline(self._cfg.timeline_top_k)
+        hits = [
+            f"[{created_at[:16].replace('T', ' ')} UTC]\n{text}"
+            for created_at, text in pairs
+        ]
+        return RetrieveResult(
+            mode=RetrieveMode.TIMELINE,
+            hits=hits,
+            combined="\n\n".join(hits),
+        )
+
+    # --- 内部：带阈值过滤的语义检索 ---
 
     def _search(self, query: str, top_k: int, min_score: float) -> list[str]:
         pairs = self._store.search_with_scores(query, top_k)

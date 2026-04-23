@@ -78,21 +78,30 @@ class ActionExecutor:
         if action_name in self._instances:
             instance = self._instances[action_name]
             args = self._coerce(instance, raw_args, source="instance")
-            return instance.execute(**args)
+            try:
+                return instance.execute(**args)
+            except Exception as exc:
+                return f"[工具执行错误] {type(exc).__name__}: {exc}"
 
         if action_name in self._lc_tools:
-            result = self._lc_tools[action_name].invoke(raw_args)
-            return str(result)
+            try:
+                result = self._lc_tools[action_name].invoke(raw_args)
+                return str(result)
+            except Exception as exc:
+                return f"[工具执行错误] {type(exc).__name__}: {exc}"
 
         if action_name not in self._registry:
-            raise ValueError(
-                f"未知工具: {action_name!r}。"
+            return (
+                f"[工具执行错误] 未知工具: {action_name!r}。"
                 f"可用工具: {self.available_actions}"
             )
 
         action_cls = self._registry[action_name]
         args = self._coerce(action_cls, raw_args, source="class")
-        return action_cls().execute(**args)
+        try:
+            return action_cls().execute(**args)
+        except Exception as exc:
+            return f"[工具执行错误] {type(exc).__name__}: {exc}"
 
     def _coerce(
         self,

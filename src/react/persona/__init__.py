@@ -1,16 +1,44 @@
-from .block import ChronicleBlock, PersonaBlock, ProfileBlock
-from .chronicle import ChronicleEntry, PersonaChronicle
+from .chronicle.block import ChronicleBlock
+from .chronicle.chronicle import ChronicleEntry, PersonaChronicle
+from .chronicle.store import ChronicleStore
+from .engine import EvolutionEngine
 from .manager import PersonaManager
-from .profile import PersonaProfile
-from .store import PersonaStore
+from .preference.block import PreferenceBlock
+from .preference.entry import PreferenceEntry
+from .preference.recent import RecentPreference
+from .preference.store import PreferenceStore
+from .preference.updater import PreferenceUpdater
+from .profile.block import ProfileBlock, ReflectionBlock, SkillsBlock
+from .profile.evolver import PersonaEvolver, ProfileDelta, SkillDelta
+from .profile.profile import PersonaProfile
+from .profile.skills import Skill, SkillsLibrary
+from .profile.store import ProfileStore
 
 __all__ = [
-    "ProfileBlock",
+    # chronicle
     "ChronicleBlock",
-    "PersonaBlock",
     "ChronicleEntry",
     "PersonaChronicle",
+    "ChronicleStore",
+    # engine
+    "EvolutionEngine",
+    # manager
     "PersonaManager",
+    # preference
+    "PreferenceEntry",
+    "RecentPreference",
+    "PreferenceStore",
+    "PreferenceUpdater",
+    "PreferenceBlock",
+    # profile
+    "ProfileBlock",
+    "ReflectionBlock",
+    "SkillsBlock",
+    "PersonaEvolver",
+    "ProfileDelta",
+    "SkillDelta",
     "PersonaProfile",
-    "PersonaStore",
+    "Skill",
+    "SkillsLibrary",
+    "ProfileStore",
 ]

@@ -7,15 +7,19 @@ from typing import Generator, Union
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from config.react.tao_config import TaoConfig
+from llm_core.handle import LLMHandle
 from llm_core.llm import LLM
 from react.action.executor import ActionExecutor
+from react.action.tools.impl.memory_recall import MemoryRecallAction
 from react.memory.long_term.init import make_memory
 from react.memory.long_term.memory import LongTermMemory
 from react.memory.memory import Step
+from react.memory.milestone.init import make_milestone
+from react.memory.milestone.memory import MilestoneMemory
 from react.memory.processor import MemoryProcessor, MemoryResult
-from react.parser import parse_llm_output
+from react.prompt.block import MemoryBlock, PromptBlock
+from react.prompt.parser import parse_llm_output
 from react.persona import PersonaManager
-from react.prompt.block import PromptBlock
 from react.prompt.manager import PromptManager, StaticPromptParts
 from react.trace import TraceStore
 
@@ -75,19 +79,39 @@ class TaoLoop:
         tool_descriptions: dict[str, str],
         cfg: TaoConfig,
     ):
-        self._llm = llm
+        self._llm = LLMHandle(llm)   # shared handle — update_llm() swaps the inner LLM
         self._executor = executor
         self._cfg = cfg
-        self._manager = PromptManager(tool_descriptions, cfg.prompt)
         self._trace_store: TraceStore | None = (
             TraceStore(cfg.trace) if cfg.trace.enabled else None
         )
         self._persona: PersonaManager | None = (
-            PersonaManager(cfg.persona) if cfg.persona.enabled else None
+            PersonaManager(cfg.persona, llm=self._llm) if cfg.persona.enabled else None
         )
+
+        # Build memory stores before PromptManager so the recall tool can be
+        # injected into the executor and its description added to the prompt.
         self._long_term: LongTermMemory | None = (
             make_memory(cfg.memory.long_term) if cfg.memory.long_term.enabled else None
         )
+        self._milestone: MilestoneMemory | None = (
+            make_milestone(cfg.memory.milestone, llm=self._llm)
+            if cfg.memory.milestone.enabled
+            else None
+        )
+
+        # Inject the recall tool when at least one memory backend is active.
+        # We copy tool_descriptions to avoid mutating the caller's dict.
+        effective_descriptions = dict(tool_descriptions)
+        if self._long_term is not None or self._milestone is not None:
+            recall = MemoryRecallAction(
+                long_term=self._long_term,
+                milestone=self._milestone,
+            )
+            self._executor.register_instance(recall)
+            effective_descriptions[recall.name] = recall.description
+
+        self._manager = PromptManager(effective_descriptions, cfg.prompt)
 
         # Pre-assembled static prompt parts for the next turn.
         # None on first turn; rebuilt in post_process() after each commit.
@@ -104,26 +128,42 @@ class TaoLoop:
 
     def stream(self, question: str) -> Generator[TaoEvent, None, None]:
         question = self._trunc(question, self._cfg.prompt.max_question_chars)
-        processor = MemoryProcessor(self._cfg.memory, self._llm, long_term=self._long_term)
+        processor = MemoryProcessor(
+            self._cfg.memory,
+            self._llm,
+            long_term=self._long_term,
+            milestone=self._milestone,
+        )
+
+        # 短期偏好对 L3 的检索偏置（使用上一轮更新后的偏好，偏置当前轮召回）
+        recall_query = (
+            self._persona.bias_query(question)
+            if self._persona is not None
+            else question
+        )
 
         # Long-term recall result cached after step 0 (expensive vector search
         # is only run once per question, reused for subsequent ReAct steps).
         _cached_lt: str = ""
+        _cached_milestone: str = ""
 
         for i in range(self._cfg.max_steps):
             # ── Memory recall ────────────────────────────────────────────────
             # Long-term search only at step 0; subsequent steps reuse the result.
-            result = processor.recall(question, include_long_term=(i == 0))
+            result = processor.recall(recall_query, include_long_term=(i == 0))
             if i == 0:
                 _cached_lt = result.long_term
+                _cached_milestone = result.milestone
 
             # ── Persona blocks ───────────────────────────────────────────────
             persona_blocks: list[PromptBlock] | None = (
-                [self._persona.profile_block(), self._persona.chronicle_block()]
-                if self._persona is not None else None
+                self._persona.all_blocks() if self._persona is not None else None
             )
 
             # ── Message assembly ─────────────────────────────────────────────
+            # Combine L3 long-term recall with L2 milestone hits into one slot.
+            lt_combined = "\n\n".join(filter(None, [_cached_lt, _cached_milestone]))
+
             # Use the pre-built static cache when available: avoids re-rendering
             # system/persona/medium-term on every turn.  Only the long-term slot
             # and the per-step dynamic parts (question, scratchpad, suffix) are
@@ -132,7 +172,7 @@ class TaoLoop:
                 messages = self._manager.build_messages_from_static(
                     self._static_cache,
                     question=question,
-                    long_term=_cached_lt,
+                    long_term=lt_combined,
                     short_term=result.short_term,
                 )
             else:
@@ -142,7 +182,7 @@ class TaoLoop:
                     MemoryResult(
                         short_term=result.short_term,
                         medium_term=result.medium_term,
-                        long_term=_cached_lt,
+                        long_term=lt_combined,
                     ),
                     extra_system_blocks=persona_blocks,
                 )
@@ -167,10 +207,10 @@ class TaoLoop:
                 raw_output += chunk
                 yield ChunkEvent(index=i, chunk=chunk)
 
-            thought, action, action_input = parse_llm_output(raw_output)
+            result = parse_llm_output(raw_output)
 
-            if action.lower() == self._cfg.finish_action:
-                answer = action_input.get("answer", raw_output)
+            if result.is_finish:
+                answer = result.action_input.get("answer", raw_output)
 
                 # Store commit payload — caller invokes post_process() in
                 # background AFTER FinishEvent is delivered to the client.
@@ -185,23 +225,23 @@ class TaoLoop:
 
             # ── Tool execution ───────────────────────────────────────────────
             observation = self._executor.run(
-                json.dumps({"action": action, "args": action_input}, ensure_ascii=False)
+                json.dumps({"action": result.action, "args": result.action_input}, ensure_ascii=False)
             )
             observation = self._trunc(observation, self._cfg.prompt.max_observation_chars)
 
             step = Step(
-                thought=thought,
-                action=action,
-                action_input=action_input,
+                thought=result.thought,
+                action=result.action,
+                action_input=result.action_input,
                 observation=observation,
             )
             processor.add(step)
 
             yield StepEvent(
                 index=i,
-                thought=thought,
-                action=action,
-                action_input=action_input,
+                thought=result.thought,
+                action=result.action,
+                action_input=result.action_input,
                 observation=observation,
             )
 
@@ -241,6 +281,14 @@ class TaoLoop:
         )
 
     # ── Misc ─────────────────────────────────────────────────────────────────
+
+    def update_llm(self, llm: LLM) -> None:
+        """Swap the underlying LLM for every component in this TaoLoop.
+
+        Because all sub-components share the same LLMHandle, a single call
+        here propagates instantly — no chain of per-component update calls.
+        """
+        self._llm.update(llm)
 
     def reset(self) -> None:
         self._manager.clear_history()

@@ -22,6 +22,17 @@ class LongTermMemory:
         """简单召回（向后兼容），不做模式判断。"""
         return self._store.recall(query)
 
+    def recall_timeline(self, n: int = 5) -> str:
+        """Return the n most recent memories in chronological order with timestamps."""
+        pairs = self._store.recall_timeline(n)
+        if not pairs:
+            return ""
+        parts = [
+            f"[{created_at[:16].replace('T', ' ')} UTC]\n{text}"
+            for created_at, text in pairs
+        ]
+        return "\n\n".join(parts)
+
     def smart_recall(
         self,
         query: str,
