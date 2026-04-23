@@ -23,15 +23,31 @@ class SystemBlock(PromptBlock):
 
 
 class MemoryBlock(PromptBlock):
-    def __init__(self, header: str, separator: str, content: str) -> None:
-        self._header = header
+    """Renders a labeled memory-tier block.
+
+    Output format (content omitted when empty → block is skipped):
+
+        ---
+        ## <title>
+        <desc>
+
+        <content>
+    """
+    def __init__(self, title: str, desc: str, separator: str, content: str) -> None:
+        self._title     = title
+        self._desc      = desc
         self._separator = separator
-        self._content = content
+        self._content   = content
 
     def render(self) -> str | None:
         if not self._content:
             return None
-        return "\n".join([self._separator, self._header, self._content])
+        parts = [self._separator, self._title]
+        if self._desc:
+            parts.append(self._desc)
+        parts.append("")          # blank line before content
+        parts.append(self._content)
+        return "\n".join(parts)
 
 
 class QuestionBlock(PromptBlock):

@@ -46,6 +46,8 @@ class PromptManager:
             f"- {name}: {desc}" for name, desc in tool_descriptions.items()
         )
         self._base_system: str = self._tpl.system.format(tool_list=tool_list)
+        # Pre-render the role block once; prepended to every system message.
+        self._role_prefix: str = self._tpl.react_role.render(separator=self._tpl.separator) or ""
 
         self._template = ChatPromptTemplate.from_messages([
             ("system", "{system}"),
@@ -67,17 +69,20 @@ class PromptManager:
         if extra_system_blocks:
             system_blocks.extend(extra_system_blocks)
         system_blocks += [
-            MemoryBlock(tpl.long_term_header, tpl.separator, result.long_term),
-            MemoryBlock(tpl.medium_term_header, tpl.separator, result.medium_term),
+            MemoryBlock(tpl.medium_term.title,         tpl.medium_term.desc,         tpl.separator, result.medium_term),
+            MemoryBlock(tpl.milestone.title,           tpl.milestone.desc,           tpl.separator, result.milestone),
+            MemoryBlock(tpl.long_term.title,           tpl.long_term.desc,           tpl.separator, result.long_term),
         ]
         human_blocks: list[PromptBlock] = [
             QuestionBlock(tpl.question_prefix, question),
+            MemoryBlock(tpl.short_term_distillate.title, tpl.short_term_distillate.desc, tpl.separator, result.short_term_distillate),
             StepsBlock(tpl.step_format, result.short_term),
             SuffixBlock(tpl.suffix),
         ]
 
-        system = "\n".join(b for block in system_blocks if (b := block.render()) is not None)
-        human = "\n".join(b for block in human_blocks if (b := block.render()) is not None)
+        rendered_blocks = [b for block in system_blocks if (b := block.render()) is not None]
+        system = "\n\n".join([self._role_prefix] + rendered_blocks) if self._role_prefix else "\n\n".join(rendered_blocks)
+        human  = "\n".join(b for block in human_blocks if (b := block.render()) is not None)
 
         return self._template.format_messages(
             system=system,
@@ -87,27 +92,19 @@ class PromptManager:
 
     def build_static(
         self,
-        medium_term: str = "",
         extra_system_blocks: list[PromptBlock] | None = None,
     ) -> StaticPromptParts:
         """Build the static parts of the next prompt (background pre-assembly).
 
-        Includes everything *except* the long-term recall block, because that
-        block requires the user's next question as the retrieval query.
-
-        Call this at the end of :meth:`post_process` so the cache is ready
-        before the user sends the next message.
+        Includes base system + persona only.  Both medium-term (recent history
+        loaded from disk) and long-term (vector retrieval) are injected
+        dynamically per turn in build_messages_from_static().
         """
-        tpl = self._tpl
         system_blocks: list[PromptBlock] = [SystemBlock(self._base_system)]
         if extra_system_blocks:
             system_blocks.extend(extra_system_blocks)
-        system_blocks.append(
-            MemoryBlock(tpl.medium_term_header, tpl.separator, medium_term)
-        )
-        system_without_lt = "\n".join(
-            b for block in system_blocks if (b := block.render()) is not None
-        )
+        rendered = [b for block in system_blocks if (b := block.render()) is not None]
+        system_without_lt = "\n\n".join([self._role_prefix] + rendered) if self._role_prefix else "\n\n".join(rendered)
         return StaticPromptParts(
             system_without_lt=system_without_lt,
             history=list(self._history),
@@ -118,24 +115,31 @@ class PromptManager:
         static: StaticPromptParts,
         question: str,
         long_term: str = "",
+        medium_term: str = "",
+        milestone: str = "",
         short_term: list[Step] | None = None,
+        short_term_distillate: str = "",
     ) -> list[BaseMessage]:
         """Complete prompt assembly using a pre-built :class:`StaticPromptParts`.
 
-        Only the long-term recall text and per-step dynamic data (question,
-        scratchpad steps, suffix) are injected here, keeping this path fast.
+        Each memory tier is injected as a separate labeled block so the model
+        clearly understands the origin and nature of each piece of context.
         """
         tpl = self._tpl
 
-        # Inject long-term recall into the pre-built system string
-        lt_block = MemoryBlock(tpl.long_term_header, tpl.separator, long_term)
-        lt_rendered = lt_block.render()
         system = static.system_without_lt
-        if lt_rendered:
-            system = system + "\n" + lt_rendered
+        for label, content in [
+            (tpl.medium_term,         medium_term),
+            (tpl.milestone,           milestone),
+            (tpl.long_term,           long_term),
+        ]:
+            rendered = MemoryBlock(label.title, label.desc, tpl.separator, content).render()
+            if rendered:
+                system = system + "\n\n" + rendered
 
         human_blocks: list[PromptBlock] = [
             QuestionBlock(tpl.question_prefix, question),
+            MemoryBlock(tpl.short_term_distillate.title, tpl.short_term_distillate.desc, tpl.separator, short_term_distillate),
             StepsBlock(tpl.step_format, short_term or []),
             SuffixBlock(tpl.suffix),
         ]

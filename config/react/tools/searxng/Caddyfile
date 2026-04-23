@@ -1,0 +1,125 @@
+# =============================================================================
+# Caddyfile — SearXNG 反向代理（自动 HTTPS）
+#
+# Caddy 会自动向 Let's Encrypt 申请并续期 TLS 证书，无需手动配置证书。
+#
+# 前置条件：
+#   1. 域名 DNS 已解析到本机公网 IP
+#   2. 防火墙放行 80（ACME 验证）和 443（HTTPS 流量）
+#   3. SearXNG 已按 settings.yml 绑定在 127.0.0.1:8888
+#
+# 启动：
+#   caddy run --config /path/to/Caddyfile
+#   caddy reload --config /path/to/Caddyfile   # 热重载
+#
+# 若仅在内网/本地使用（无公网域名），见文件末尾的本地 HTTPS 方案。
+# =============================================================================
+
+# ── 全局选项 ──────────────────────────────────────────────────────────────────
+{
+    # ACME 联系邮箱（Let's Encrypt 会发送证书到期通知）
+    email your-admin@yourdomain.com
+
+    # 生产环境使用正式 CA；测试时可切换为 Let's Encrypt 测试环境：
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# ── 生产站点（将域名替换为真实值）────────────────────────────────────────────
+search.yourdomain.com {
+
+    # ── 安全响应头 ─────────────────────────────────────────────────────────
+    header {
+        # 强制 HTTPS，有效期 1 年，包含子域名，可加入 preload 列表
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # 禁止 MIME 类型嗅探
+        X-Content-Type-Options   "nosniff"
+        # 禁止页面被嵌入 iframe（防止点击劫持）
+        X-Frame-Options          "DENY"
+        # 启用 XSS 过滤（旧浏览器兼容）
+        X-XSS-Protection         "1; mode=block"
+        # 不发送 Referer 头（保护用户隐私）
+        Referrer-Policy          "no-referrer"
+        # 隐藏服务器版本信息
+        -Server
+        # 隐藏 Caddy 版本
+        -X-Powered-By
+    }
+
+    # ── 速率限制（需安装 caddy-ratelimit 插件）────────────────────────────
+    # 若未安装插件，删除此段即可；SearXNG 内置 limiter 仍会生效
+    # rate_limit {
+    #     zone search_zone {
+    #         key {remote_host}
+    #         events 30          # 每个 IP 每分钟最多 30 次请求
+    #         window 1m
+    #     }
+    # }
+
+    # ── 路由规则 ──────────────────────────────────────────────────────────
+
+    # 仅允许 JSON 搜索 API 端点（严格模式：屏蔽 UI 页面）
+    # 取消注释以启用 API-only 模式：
+    # @allowed_api {
+    #     path /search
+    # }
+    # handle @allowed_api {
+    #     reverse_proxy 127.0.0.1:8888
+    # }
+    # respond "Forbidden" 403
+
+    # 默认：转发全部请求（含 Web UI）
+    reverse_proxy 127.0.0.1:8888 {
+        # 向上游传递客户端真实 IP
+        header_up X-Real-IP        {remote_host}
+        header_up X-Forwarded-For  {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        # 连接健康检查
+        health_uri     /
+        health_interval 30s
+        health_timeout  5s
+    }
+
+    # ── 访问日志 ──────────────────────────────────────────────────────────
+    log {
+        output file logs/searxng-access.log {
+            roll_size     100mb
+            roll_keep     5
+            roll_keep_for 720h   # 保留 30 天
+        }
+        format json
+        level  INFO
+    }
+}
+
+# =============================================================================
+# 本地 / 内网 HTTPS 方案（无需公网域名，使用 Caddy 内置 CA）
+#
+# 步骤：
+#   1. 安装 Caddy 根证书到系统信任区：  caddy trust
+#   2. 使用下方配置替换上面的站点块
+#   3. 在 web_search.yaml 中：url: "https://localhost:8443"
+#
+# 或使用 IP SAN 证书（内网多机访问）：
+#   https://192.168.1.100:8443 { ... }
+# =============================================================================
+
+# localhost:8443 {
+#     tls internal                    # Caddy 内置 CA 签发自签名证书
+#
+#     header {
+#         Strict-Transport-Security "max-age=31536000"
+#         X-Content-Type-Options    "nosniff"
+#         X-Frame-Options           "DENY"
+#         -Server
+#     }
+#
+#     reverse_proxy 127.0.0.1:8888 {
+#         header_up X-Forwarded-Proto {scheme}
+#     }
+#
+#     log {
+#         output file logs/searxng-local.log
+#         format console
+#     }
+# }

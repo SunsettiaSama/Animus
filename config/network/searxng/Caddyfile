@@ -1,0 +1,84 @@
+# =============================================================================
+# Caddyfile — SearXNG 反向代理（自动 HTTPS）
+#
+# Caddy 会自动向 Let's Encrypt 申请并续期 TLS 证书，无需手动配置证书。
+#
+# 前置条件：
+#   1. 域名 DNS 已解析到本机公网 IP
+#   2. 防火墙放行 80（ACME 验证）和 443（HTTPS 流量）
+#   3. SearXNG 已按 settings.yml 绑定在 127.0.0.1:8888
+#
+# 启动：
+#   caddy run --config /path/to/Caddyfile
+#   caddy reload --config /path/to/Caddyfile   # 热重载
+#
+# 若仅在内网/本地使用（无公网域名），见文件末尾的本地 HTTPS 方案。
+# =============================================================================
+
+{
+    email your-admin@yourdomain.com
+}
+
+search.yourdomain.com {
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options   "nosniff"
+        X-Frame-Options          "DENY"
+        X-XSS-Protection         "1; mode=block"
+        Referrer-Policy          "no-referrer"
+        -Server
+        -X-Powered-By
+    }
+
+    # 仅允许 JSON 搜索 API 端点（严格模式）
+    # 取消注释以启用 API-only 模式：
+    # @api { path /search }
+    # handle @api { reverse_proxy 127.0.0.1:8888 }
+    # respond "Forbidden" 403
+
+    reverse_proxy 127.0.0.1:8888 {
+        header_up X-Real-IP         {remote_host}
+        header_up X-Forwarded-For   {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        health_uri      /
+        health_interval 30s
+        health_timeout  5s
+    }
+
+    log {
+        output file logs/searxng-access.log {
+            roll_size     100mb
+            roll_keep     5
+            roll_keep_for 720h
+        }
+        format json
+        level  INFO
+    }
+}
+
+# =============================================================================
+# 本地 / 内网 HTTPS 方案（无需公网域名，使用 Caddy 内置 CA）
+#
+# 步骤：
+#   1. caddy trust        （安装根证书到系统信任区，一次即可）
+#   2. 使用下方配置替换上面的站点块
+#   3. 在 web_search.yaml 中：url: "https://localhost:8443"
+# =============================================================================
+
+# localhost:8443 {
+#     tls internal
+#     header {
+#         Strict-Transport-Security "max-age=31536000"
+#         X-Content-Type-Options    "nosniff"
+#         X-Frame-Options           "DENY"
+#         -Server
+#     }
+#     reverse_proxy 127.0.0.1:8888 {
+#         header_up X-Forwarded-Proto {scheme}
+#     }
+#     log {
+#         output file logs/searxng-local.log
+#         format console
+#     }
+# }

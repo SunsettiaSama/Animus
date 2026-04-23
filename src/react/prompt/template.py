@@ -6,10 +6,37 @@ from langchain_core.prompts import PromptTemplate
 
 
 @dataclass
+class MemoryTierLabel:
+    """A memory tier label consisting of a markdown title and a one-line description."""
+    title: str
+    desc: str
+
+    def render(self, content: str = "", separator: str = "---") -> str | None:
+        """Render as a labeled block (same convention as MemoryBlock).
+
+        Returns None when ``content`` is empty and ``desc`` is empty,
+        i.e. nothing meaningful to display.
+        """
+        if not content and not self.desc:
+            return None
+        parts = [separator, self.title]
+        if self.desc:
+            parts.append(self.desc)
+        if content:
+            parts.append("")        # blank line between description and content
+            parts.append(content)
+        return "\n".join(parts)
+
+
+@dataclass
 class ReActTemplate:
     system: PromptTemplate
-    long_term_header: str
-    medium_term_header: str
+    react_role: MemoryTierLabel       # agent identity / responsibility block
+    chat_role: MemoryTierLabel        # same for pure-chat mode
+    long_term: MemoryTierLabel
+    milestone: MemoryTierLabel
+    medium_term: MemoryTierLabel
+    short_term_distillate: MemoryTierLabel
     question_prefix: str
     suffix: str
     step_format: PromptTemplate
@@ -31,8 +58,38 @@ EN = ReActTemplate(
         'Action Input: {{"answer": "<your answer>"}}\n\n'
         "Do NOT skip any field. Always output Thought, Action, and Action Input."
     ),
-    long_term_header="Background Knowledge (retrieved from long-term memory):",
-    medium_term_header="Summary of previous steps:",
+    react_role=MemoryTierLabel(
+        title="## [ReAct Agent]",
+        desc=(
+            "You are a reasoning-and-acting agent that solves problems step by step. "
+            "You have access to external tools and a layered memory system "
+            "(long-term vector store, milestone events, mid-term history, and a short-term scratchpad). "
+            "Use the memory context below to inform your reasoning before acting."
+        ),
+    ),
+    chat_role=MemoryTierLabel(
+        title="## [Chat Assistant]",
+        desc=(
+            "You are a helpful, knowledgeable assistant. "
+            "Answer the user's questions clearly and concisely, drawing on the conversation history."
+        ),
+    ),
+    long_term=MemoryTierLabel(
+        title="## [L3 Long-Term Memory]",
+        desc="Semantically retrieved knowledge from past sessions (vector search over historical Q&A).",
+    ),
+    milestone=MemoryTierLabel(
+        title="## [Milestone Memory]",
+        desc="Important events and key breakthroughs identified in past interactions.",
+    ),
+    medium_term=MemoryTierLabel(
+        title="## [L2 Mid-Term Memory]",
+        desc="Recent conversation history — Q&A pairs from the past few days, in chronological order.",
+    ),
+    short_term_distillate=MemoryTierLabel(
+        title="## [L1 Short-Term Memory · Distillate]",
+        desc="Compressed summary of reasoning steps evicted from this session's scratchpad.",
+    ),
     question_prefix="Question:",
     suffix="Thought:",
     step_format=PromptTemplate.from_template(
@@ -58,8 +115,37 @@ CN = ReActTemplate(
         'Action Input: {{"answer": "<你的答案>"}}\n\n'
         "不要省略任何字段，每次必须输出 Thought、Action 和 Action Input。"
     ),
-    long_term_header="背景知识（来自长期记忆检索）：",
-    medium_term_header="历史步骤摘要：",
+    react_role=MemoryTierLabel(
+        title="## 【ReAct 智能体】",
+        desc=(
+            "你是一个通过推理与工具调用逐步解决问题的 ReAct 智能体。"
+            "你拥有外部工具访问能力，以及分层记忆系统（长期向量库、里程碑事件、中期对话历史、短期推理草稿）。"
+            "在行动前请结合下方的记忆上下文进行推理。"
+        ),
+    ),
+    chat_role=MemoryTierLabel(
+        title="## 【对话助手】",
+        desc=(
+            "你是一个知识丰富、乐于助人的对话助手。"
+            "请结合对话历史，清晰、简洁地回答用户的问题。"
+        ),
+    ),
+    long_term=MemoryTierLabel(
+        title="## 【L3 长期记忆】",
+        desc="根据当前问题从历史 session 语义检索到的相关背景知识。",
+    ),
+    milestone=MemoryTierLabel(
+        title="## 【里程碑记忆】",
+        desc="过往交互中被标记为重要的关键事件与突破性进展。",
+    ),
+    medium_term=MemoryTierLabel(
+        title="## 【L2 中期记忆】",
+        desc="近期对话历史（过去若干天的 Q&A 记录，按时间先后排列）。",
+    ),
+    short_term_distillate=MemoryTierLabel(
+        title="## 【L1 短期记忆 · 蒸馏】",
+        desc="本 session 因窗口溢出被驱逐的早期推理步骤压缩摘要。",
+    ),
     question_prefix="问题：",
     suffix="Thought:",
     step_format=PromptTemplate.from_template(

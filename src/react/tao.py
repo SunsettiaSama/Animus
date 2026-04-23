@@ -161,19 +161,17 @@ class TaoLoop:
             )
 
             # ── Message assembly ─────────────────────────────────────────────
-            # Combine L3 long-term recall with L2 milestone hits into one slot.
-            lt_combined = "\n\n".join(filter(None, [_cached_lt, _cached_milestone]))
-
-            # Use the pre-built static cache when available: avoids re-rendering
-            # system/persona/medium-term on every turn.  Only the long-term slot
-            # and the per-step dynamic parts (question, scratchpad, suffix) are
-            # injected here.
+            # Each memory tier is passed as a separate labeled slot; the
+            # manager renders independent section headers for each.
             if self._static_cache is not None:
                 messages = self._manager.build_messages_from_static(
                     self._static_cache,
                     question=question,
-                    long_term=lt_combined,
+                    long_term=_cached_lt,
+                    medium_term=result.medium_term,
+                    milestone=_cached_milestone,
                     short_term=result.short_term,
+                    short_term_distillate=result.short_term_distillate,
                 )
             else:
                 # First turn or cache invalidated — full build path.
@@ -181,8 +179,10 @@ class TaoLoop:
                     question,
                     MemoryResult(
                         short_term=result.short_term,
+                        short_term_distillate=result.short_term_distillate,
                         medium_term=result.medium_term,
-                        long_term=lt_combined,
+                        long_term=_cached_lt,
+                        milestone=_cached_milestone,
                     ),
                     extra_system_blocks=persona_blocks,
                 )
@@ -276,7 +276,6 @@ class TaoLoop:
         # Pre-build the static parts for the next turn while the user is
         # reading the current answer (or typing the next question).
         self._static_cache = self._manager.build_static(
-            medium_term=pf.processor.medium_distillate,
             extra_system_blocks=pf.persona_blocks,
         )
 

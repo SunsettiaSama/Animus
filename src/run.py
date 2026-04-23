@@ -26,15 +26,20 @@ ROOT = SRC.parent
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-# ── 默认路径常量 ──────────────────────────────────────────────────────────────
-_DEFAULT_LLM_CONFIG   = ROOT / "config" / "llm_core"  / "config.yaml"
-_SEARXNG_SETTINGS_YML = ROOT / "config" / "network"   / "searxng" / "settings.yml"
+from config import paths  # noqa: E402 — must come after sys.path setup
+from config.react.run_config import RunConfig  # noqa: E402
 
-# SearXNG Docker 参数
-_CONTAINER_NAME      = "react-searxng"
-_CONTAINER_IMAGE     = "searxng/searxng"
-_HOST_PORT           = 8888    # 宿主机端口（绑定 127.0.0.1，不暴露公网）
-_CONTAINER_PORT      = 8080    # 容器内 SearXNG 默认端口
+# ── 路径常量（统一从 AppPaths 获取，不再硬编码） ──────────────────────────────
+_DEFAULT_LLM_CONFIG   = paths.llm_config_yaml
+_SEARXNG_SETTINGS_YML = paths.searxng_settings_yml
+
+# 从 config/react/run.yaml 加载运行时默认值
+_run_cfg = RunConfig.load()
+
+_CONTAINER_NAME  = _run_cfg.searxng.container_name
+_CONTAINER_IMAGE = _run_cfg.searxng.image
+_HOST_PORT       = _run_cfg.searxng.host_port
+_CONTAINER_PORT  = _run_cfg.searxng.container_port
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -73,12 +78,12 @@ def _run_docker(*args: str, timeout: int = 10) -> subprocess.CompletedProcess | 
             text=True,
             timeout=timeout,
         )
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
 
 
 def _docker_available() -> bool:
-    result = _run_docker("info", timeout=5)
+    result = _run_docker("info", timeout=20)
     return result is not None and result.returncode == 0
 
 
@@ -146,7 +151,7 @@ def ensure_searxng(skip: bool) -> None:
             "-p",        f"127.0.0.1:{_HOST_PORT}:{_CONTAINER_PORT}",
         ]
         if _SEARXNG_SETTINGS_YML.exists():
-            cmd += ["-v", f"{_SEARXNG_SETTINGS_YML}:/etc/searxng/settings.yml:ro"]
+            cmd += ["-v", f"{_SEARXNG_SETTINGS_YML}:/etc/searxng/settings.yml"]
             _ok("SearXNG 配置", f"挂载 {_SEARXNG_SETTINGS_YML.name}")
         else:
             _warn("SearXNG 配置", "settings.yml 不存在，使用镜像默认配置")
@@ -201,22 +206,26 @@ def check_llm(config_path: Path):
 
 def _build_tao(llm_cfg) -> object:
     _section("TaoLoop 初始化")
+    from cache.config import CacheConfig
+    from config.react.memory.memory_config import MemoryConfig
     from config.react.tao_config import TaoConfig
     from llm_core.llm import LLM
     from react.action.manager import ToolManager
     from react.tao import TaoLoop
 
+    cache  = CacheConfig(root=str(paths.cache_root))
+    memory = (
+        MemoryConfig.from_yaml(str(paths.memory_config_yaml))
+        if paths.memory_config_yaml.exists()
+        else MemoryConfig()
+    )
+    cfg        = TaoConfig(cache=cache, memory=memory)
     llm        = LLM(llm_cfg)
     manager    = ToolManager()
     executor   = manager.build_executor()
     tool_descs = manager.primary_descriptions()
-    tao        = TaoLoop(
-        llm=llm,
-        executor=executor,
-        tool_descriptions=tool_descs,
-        cfg=TaoConfig(),
-    )
-    _ok("TaoLoop", f"工具 {len(tool_descs)} 个  max_steps={TaoConfig().max_steps}")
+    tao        = TaoLoop(llm=llm, executor=executor, tool_descriptions=tool_descs, cfg=cfg)
+    _ok("TaoLoop", f"工具 {len(tool_descs)} 个  max_steps={cfg.max_steps}")
     return tao
 
 
@@ -285,17 +294,17 @@ def main() -> None:
             "  python src/run.py --mode cli           # 交互式 CLI\n"
             "  python src/run.py --check              # 仅检查服务状态\n"
             "  python src/run.py --no-searxng         # 跳过 Docker/SearXNG\n"
-            "  python src/run.py --mode webui --host 0.0.0.0 --port 9000\n"
+            "  python src/run.py --mode webui --host 0.0.0.0 --port 8300\n"
         ),
     )
     parser.add_argument(
         "--mode", choices=["webui", "cli"], default="webui",
         help="启动模式（默认 webui）",
     )
-    parser.add_argument("--host", default="127.0.0.1",
+    parser.add_argument("--host", default=_run_cfg.webui.host,
                         help="WebUI 监听地址（默认 127.0.0.1）")
-    parser.add_argument("--port", type=int, default=8080,
-                        help="WebUI 监听端口（默认 8080）")
+    parser.add_argument("--port", type=int, default=_run_cfg.webui.port,
+                        help="WebUI 监听端口（默认 8300）")
     parser.add_argument(
         "--llm-config", type=Path, default=_DEFAULT_LLM_CONFIG,
         dest="llm_config", metavar="PATH",

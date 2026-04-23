@@ -6,28 +6,13 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import yaml
-
 from hf_download.download import download
+from config import paths
 from config.hf_download.config import DownloadConfig
-
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_YAML_PATH = os.path.join(_REPO_ROOT, "config", "hf_download", "run.yaml")
 
 
 def _load_yaml_config() -> DownloadConfig:
-    with open(_YAML_PATH, "r", encoding="utf-8") as f:
-        data: dict = yaml.safe_load(f) or {}
-    return DownloadConfig(
-        repo_id=data.get("repo_id", ""),
-        repo_type=data.get("repo_type", "model"),
-        revision=data.get("revision", "main"),
-        filename=data.get("filename", ""),
-        local_dir=data.get("local_dir", ""),
-        ignore_patterns=data.get("ignore_patterns") or [],
-        token=data.get("token", ""),
-        endpoint=data.get("endpoint", ""),
-    )
+    return DownloadConfig.from_yaml(str(paths.hf_download_yaml))
 
 
 def _parse_args() -> DownloadConfig:

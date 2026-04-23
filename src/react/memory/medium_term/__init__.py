@@ -1,3 +1,3 @@
-from .memory import MediumTermMemory
+from .memory import RecentHistoryMemory
 
-__all__ = ["MediumTermMemory"]
+__all__ = ["RecentHistoryMemory"]

@@ -756,6 +756,7 @@
     <div class="modal-tabs">
       <button class="tab-btn active" id="tab-btn-model"     onclick="setTab('model')">Model</button>
       <button class="tab-btn"        id="tab-btn-react-cfg" onclick="setTab('react-cfg')">ReAct</button>
+      <button class="tab-btn"        id="tab-btn-memory"    onclick="setTab('memory')">🧠 Memory</button>
       <button class="tab-btn"        id="tab-btn-persona"   onclick="setTab('persona')">🎭 Persona</button>
     </div>
 
@@ -821,6 +822,151 @@
         </div>
       </div>
 
+      <!-- Memory tab -->
+      <div id="tab-memory" class="hidden">
+
+        <!-- L1 短期记忆 -->
+        <div class="section-divider" style="margin-top:0">L1 短期记忆（当前 session 推理步骤）</div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">启用短期记忆</span>
+            <span class="toggle-desc">保留当前 session 最近 N 步的 Thought/Action/Observation 作为 scratchpad 注入 prompt。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-st-enabled" checked><span class="slider"></span></label>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>窗口步骤数 <span style="font-weight:400;color:var(--text3)">max_turns</span></label>
+            <input id="s-st-max-turns" type="number" value="10" min="1" max="100" />
+          </div>
+          <div class="form-group">
+            <label>窗口 Token 上限 <span style="font-weight:400;color:var(--text3)">max_tokens</span></label>
+            <input id="s-st-max-tokens" type="number" value="2048" min="256" />
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">启用步骤蒸馏</span>
+            <span class="toggle-desc">窗口溢出时用 LLM 压缩驱逐步骤，生成摘要注入当前 prompt，避免丢失推理上下文。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-st-distill" checked><span class="slider"></span></label>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>蒸馏触发步数 <span style="font-weight:400;color:var(--text3)">积累 N 步后触发</span></label>
+            <input id="s-st-distill-trigger" type="number" value="4" min="1" max="20" />
+          </div>
+          <div class="form-group">
+            <label>蒸馏 Token 上限 <span style="font-weight:400;color:var(--text3)">摘要长度</span></label>
+            <input id="s-st-distill-tokens" type="number" value="400" min="100" />
+          </div>
+        </div>
+
+        <!-- L2 中期记忆 -->
+        <div class="section-divider">L2 中期记忆（近期对话历史）</div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">启用近期历史</span>
+            <span class="toggle-desc">自动记录每轮对话的 Q&amp;A，下次启动时加载最近 N 天的记录注入 system prompt。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-mt-enabled" checked><span class="slider"></span></label>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>时间窗口（天）<span style="font-weight:400;color:var(--text3)">window_days</span></label>
+            <input id="s-mt-window-days" type="number" value="7" min="1" max="365" />
+          </div>
+          <div class="form-group">
+            <label>最大条目数 <span style="font-weight:400;color:var(--text3)">取最新 N 条</span></label>
+            <input id="s-mt-max-entries" type="number" value="30" min="1" max="200" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>注入字符上限 <span style="font-weight:400;color:var(--text3)">max_chars（超出保留最新部分）</span></label>
+          <input id="s-mt-max-chars" type="number" value="3000" min="500" />
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">启用滚动整合</span>
+            <span class="toggle-desc">超出最大条目数后，用 LLM 把最旧的一批条目蒸馏为摘要，每天最多自动整合一次。需 LLM 就绪。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-mt-consolidate" checked><span class="slider"></span></label>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>单批整合条目数 <span style="font-weight:400;color:var(--text3)">consolidate_batch</span></label>
+            <input id="s-mt-consolidate-batch" type="number" value="10" min="2" max="50" />
+          </div>
+          <div class="form-group">
+            <label>自动整合间隔（天）<span style="font-weight:400;color:var(--text3)">0 = 每次检查</span></label>
+            <input id="s-mt-consolidate-interval" type="number" value="1" min="0" max="30" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>摘要 Token 上限 <span style="font-weight:400;color:var(--text3)">max_consolidate_tokens</span></label>
+            <input id="s-mt-consolidate-tokens" type="number" value="500" min="100" />
+          </div>
+          <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:2px">
+            <button id="btn-consolidate" class="btn-secondary" style="width:100%" onclick="doConsolidate()">立即整理近期历史</button>
+          </div>
+        </div>
+        <div id="consolidate-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:-4px"></div>
+        <div class="section-divider">L3 长期记忆（FAISS 向量库，需 faiss-cpu）</div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">启用长期记忆</span>
+            <span class="toggle-desc">跨 session 向量化存储全部历史 Q&amp;A，每轮根据问题语义检索相关记忆注入 prompt。需安装 faiss-cpu 和 sentence-transformers。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-lt-enabled"><span class="slider"></span></label>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>检索条目数 <span style="font-weight:400;color:var(--text3)">top_k</span></label>
+            <input id="s-lt-top-k" type="number" value="5" min="1" max="20" />
+          </div>
+          <div class="form-group">
+            <label>召回字符上限 <span style="font-weight:400;color:var(--text3)">max_recall_chars</span></label>
+            <input id="s-lt-max-recall" type="number" value="3000" min="500" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>窗口整合轮数 <span style="font-weight:400;color:var(--text3)">consolidation_k（0 = 关闭）</span></label>
+          <input id="s-lt-consolidation" type="number" value="0" min="0" max="100" />
+        </div>
+
+        <!-- 里程碑 -->
+        <div class="section-divider">里程碑记忆（LLM 重要性评分，稍慢）</div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">启用里程碑</span>
+            <span class="toggle-desc">每轮对话结束后 LLM 评分，评分超过阈值的 Q&amp;A 写入里程碑库，按关键词检索注入 prompt。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-ms-enabled"><span class="slider"></span></label>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>重要性阈值 <span style="font-weight:400;color:var(--text3)">0–1，越高越严格</span></label>
+            <input id="s-ms-threshold" type="number" value="0.6" step="0.05" min="0" max="1" />
+          </div>
+          <div class="form-group">
+            <label>检索条目数 <span style="font-weight:400;color:var(--text3)">top_k_retrieve</span></label>
+            <input id="s-ms-top-k" type="number" value="2" min="1" max="10" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>最大存储条目 <span style="font-weight:400;color:var(--text3)">max_milestones</span></label>
+            <input id="s-ms-max" type="number" value="50" min="10" max="500" />
+          </div>
+          <div class="form-group" style="display:flex;align-items:center;gap:10px;padding-top:20px">
+            <label class="switch" style="margin:0"><input type="checkbox" id="s-ms-inject-detail" checked><span class="slider"></span></label>
+            <span style="font-size:13px;color:var(--text2)">注入详细内容</span>
+          </div>
+        </div>
+
+      </div>
+
       <!-- Persona tab -->
       <div id="tab-persona" class="hidden">
 
@@ -832,6 +978,13 @@
             <span class="toggle-desc">Agent 将维护持久化的人物画像，每轮对话结束后自动注入画像内容；状态栏会显示 🎭 Persona 标记。</span>
           </div>
           <label class="switch"><input type="checkbox" id="s-persona-enabled"><span class="slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">显示演化提示</span>
+            <span class="toggle-desc">每轮对话完成后在屏幕底部弹出"人格已演化"通知。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-persona-toast" checked><span class="slider"></span></label>
         </div>
 
         <!-- 人物画像 -->
@@ -927,6 +1080,7 @@
     history:         [],
     activeWs:        null,
     personaEnabled:  false,
+    personaToast:    localStorage.getItem('personaToast') !== 'false',
     showFullPrompt:  localStorage.getItem('showFullPrompt') === 'true',
     toolsEnabled:    localStorage.getItem('toolsEnabled') === 'true',
   };
@@ -1068,11 +1222,12 @@
   function overlayClick(e) { if (e.target === $('overlay')) closeSettings(); }
 
   function setTab(name) {
-    ['model', 'react-cfg', 'persona'].forEach(t => {
+    ['model', 'react-cfg', 'memory', 'persona'].forEach(t => {
       $(`tab-${t}`).classList.toggle('hidden', t !== name);
       $(`tab-btn-${t}`).classList.toggle('active', t === name);
     });
     if (name === 'persona') loadChronicle();
+    if (name === 'memory')  loadMemory();
   }
 
   function setModalMsg(msg, cls) {
@@ -1086,6 +1241,10 @@
     localStorage.setItem('showFullPrompt', S.showFullPrompt);
     document.querySelectorAll('.full-prompt-section').forEach(el => {
       el.classList.toggle('hidden', !S.showFullPrompt);
+      if (S.showFullPrompt) {
+        el.querySelector('.full-prompt-toggle')?.classList.add('open');
+        el.querySelector('.full-prompt-body')?.classList.remove('hidden');
+      }
     });
   }
 
@@ -1197,7 +1356,8 @@
 
     S.llmReady = true;
 
-    // ── Step 3: Save persona settings to disk ────────────────────────────────
+    // ── Step 3: Save memory + persona settings to disk ──────────────────────
+    await saveMemory();
     await savePersona();
 
     // ── Step 4: (Re-)initialize React ────────────────────────────────────────
@@ -1386,6 +1546,11 @@
             if (toggle) toggle.innerHTML =
               `<span class="chevron">▶</span>Full prompt (${d.messages.length} msg${d.messages.length !== 1 ? 's' : ''})`;
             if (body) body.innerHTML = buildFullPromptHtml(d.messages);
+            if (S.showFullPrompt) {
+              fpSection.classList.remove('hidden');
+              toggle?.classList.add('open');
+              body?.classList.remove('hidden');
+            }
           }
         }
 
@@ -1417,7 +1582,7 @@
         finalBubble.textContent = d.answer;
         finalBubble.classList.remove('hidden');
         scrollMsgs();
-        if (S.personaEnabled) showToast('🎭 人格已演化');
+        if (S.personaEnabled && S.personaToast) showToast('🎭 人格已演化');
         ws.close();
       }
     };
@@ -1450,10 +1615,10 @@
     if (msg.role === 'user') {
       const fpSection = msg.full_context
         ? `<div class="full-prompt-section${S.showFullPrompt ? '' : ' hidden'}">
-             <button class="full-prompt-toggle" onclick="toggleFullPrompt(this)">
+             <button class="full-prompt-toggle${S.showFullPrompt ? ' open' : ''}" onclick="toggleFullPrompt(this)">
                <span class="chevron">▶</span>Full prompt (${msg.full_context.length} msg${msg.full_context.length !== 1 ? 's' : ''})
              </button>
-             <div class="full-prompt-body hidden">${buildFullPromptHtml(msg.full_context)}</div>
+             <div class="full-prompt-body${S.showFullPrompt ? '' : ' hidden'}">${buildFullPromptHtml(msg.full_context)}</div>
            </div>`
         : '';
       el.innerHTML = `
@@ -1726,6 +1891,102 @@
   }
 
   /* ════════════════════════════════════
+     MEMORY
+  ════════════════════════════════════ */
+  async function loadMemory() {
+    const r = await fetch('/api/memory').catch(() => null);
+    if (!r?.ok) return;
+    const d = await r.json();
+
+    const st = d.short_term  || {};
+    const mt = d.medium_term || {};
+    const lt = d.long_term   || {};
+    const ms = d.milestone   || {};
+
+    $('s-st-enabled').checked        = st.enabled         ?? true;
+    $('s-st-max-turns').value        = st.max_turns        ?? 10;
+    $('s-st-max-tokens').value       = st.max_tokens       ?? 2048;
+    $('s-st-distill').checked        = st.distill_enabled  ?? true;
+    $('s-st-distill-trigger').value  = st.distill_trigger_steps ?? 4;
+    $('s-st-distill-tokens').value   = st.max_distillate_tokens ?? 400;
+
+    $('s-mt-enabled').checked        = mt.enabled     ?? true;
+    $('s-mt-window-days').value      = mt.window_days ?? 7;
+    $('s-mt-max-entries').value      = mt.max_entries ?? 30;
+    $('s-mt-max-chars').value        = mt.max_chars   ?? 3000;
+    $('s-mt-consolidate').checked        = mt.consolidate_enabled        ?? true;
+    $('s-mt-consolidate-batch').value    = mt.consolidate_batch          ?? 10;
+    $('s-mt-consolidate-interval').value = mt.consolidate_interval_days  ?? 1;
+    $('s-mt-consolidate-tokens').value   = mt.max_consolidate_tokens     ?? 500;
+
+    $('s-lt-enabled').checked        = lt.enabled          ?? false;
+    $('s-lt-top-k').value            = lt.top_k            ?? 5;
+    $('s-lt-max-recall').value       = lt.max_recall_chars ?? 3000;
+    $('s-lt-consolidation').value    = lt.consolidation_k  ?? 0;
+
+    $('s-ms-enabled').checked        = ms.enabled              ?? false;
+    $('s-ms-threshold').value        = ms.importance_threshold ?? 0.6;
+    $('s-ms-top-k').value            = ms.top_k_retrieve       ?? 2;
+    $('s-ms-max').value              = ms.max_milestones        ?? 50;
+    $('s-ms-inject-detail').checked  = ms.inject_detail        ?? true;
+  }
+
+  async function doConsolidate() {
+    const btn = $('btn-consolidate');
+    const msg = $('consolidate-msg');
+    btn.disabled = true;
+    msg.style.color = 'var(--text3)';
+    msg.textContent = '正在整合…';
+    const r = await fetch('/api/memory/consolidate', { method: 'POST' }).catch(() => null);
+    btn.disabled = false;
+    if (!r) { msg.style.color = 'var(--err)'; msg.textContent = '请求失败，请检查服务是否运行。'; return; }
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) {
+      msg.style.color = 'var(--accent)';
+      msg.textContent = d.message || '完成。';
+    } else {
+      msg.style.color = 'var(--err)';
+      msg.textContent = d.detail || '整合失败。';
+    }
+  }
+
+  async function saveMemory() {    const body = {
+      st_enabled:               $('s-st-enabled').checked,
+      st_max_turns:             parseInt($('s-st-max-turns').value)       || 10,
+      st_max_tokens:            parseInt($('s-st-max-tokens').value)      || 2048,
+      st_distill_enabled:       $('s-st-distill').checked,
+      st_distill_trigger_steps: parseInt($('s-st-distill-trigger').value) || 4,
+      st_max_distillate_tokens: parseInt($('s-st-distill-tokens').value)  || 400,
+
+      mt_enabled:     $('s-mt-enabled').checked,
+      mt_window_days: parseInt($('s-mt-window-days').value)  || 7,
+      mt_max_entries: parseInt($('s-mt-max-entries').value)  || 30,
+      mt_max_chars:   parseInt($('s-mt-max-chars').value)    || 3000,
+      mt_consolidate_enabled:       $('s-mt-consolidate').checked,
+      mt_consolidate_batch:         parseInt($('s-mt-consolidate-batch').value)    || 10,
+      mt_consolidate_interval_days: parseInt($('s-mt-consolidate-interval').value) ?? 1,
+      mt_max_consolidate_tokens:    parseInt($('s-mt-consolidate-tokens').value)   || 500,
+
+      lt_enabled:          $('s-lt-enabled').checked,
+      lt_top_k:            parseInt($('s-lt-top-k').value)         || 5,
+      lt_max_recall_chars: parseInt($('s-lt-max-recall').value)    || 3000,
+      lt_consolidation_k:  parseInt($('s-lt-consolidation').value) || 0,
+
+      ms_enabled:              $('s-ms-enabled').checked,
+      ms_importance_threshold: parseFloat($('s-ms-threshold').value) || 0.6,
+      ms_top_k_retrieve:       parseInt($('s-ms-top-k').value)       || 2,
+      ms_max_milestones:       parseInt($('s-ms-max').value)         || 50,
+      ms_inject_detail:        $('s-ms-inject-detail').checked,
+    };
+    const r = await fetch('/api/memory/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+    return r?.ok ?? false;
+  }
+
+  /* ════════════════════════════════════
      PERSONA
   ════════════════════════════════════ */
   async function loadPersona() {
@@ -1735,6 +1996,7 @@
 
     $('s-persona-enabled').checked   = d.enabled ?? false;
     $('s-chronicle-enabled').checked = d.chronicle_enabled ?? true;
+    $('s-persona-toast').checked     = S.personaToast;
     $('s-p-name').value        = d.profile?.name       ?? 'Assistant';
     $('s-p-background').value  = d.profile?.background ?? '';
     $('s-p-traits').value      = (d.profile?.traits ?? []).join(', ');
@@ -1772,6 +2034,8 @@
       body: JSON.stringify(body),
     }).catch(() => null);
     S.personaEnabled = body.enabled;
+    S.personaToast   = $('s-persona-toast').checked;
+    localStorage.setItem('personaToast', S.personaToast);
     updateTopbar();
   }
 

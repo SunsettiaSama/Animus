@@ -1,5 +1,5 @@
 from .long_term import LongTermMemory
-from .medium_term import MediumTermMemory
+from .medium_term import RecentHistoryMemory
 from .memory import Memory, Step
 from .milestone import MilestoneEntry, MilestoneMemory, MilestoneStore, make_milestone
 from .processor import MemoryProcessor, MemoryResult
@@ -9,7 +9,7 @@ __all__ = [
     "Memory",
     "Step",
     "ShortTermMemory",
-    "MediumTermMemory",
+    "RecentHistoryMemory",
     "LongTermMemory",
     "MilestoneEntry",
     "MilestoneMemory",

@@ -1,19 +1,19 @@
 # react/memory
 
-四级记忆系统，覆盖不同时间跨度与重要性的上下文保留需求，通过 `MemoryProcessor` 统一编排。
+四层记忆系统，覆盖不同时间跨度与重要性的上下文保留需求，通过 `MemoryProcessor` 统一编排。
 
 ```
 memory/
 ├── memory.py               # Step + Memory（无界基础记录）
-├── processor.py            # MemoryProcessor — 四级记忆统一入口
-├── short_term/             # 短期记忆：Token 滑动窗口
-├── medium_term/            # 中期记忆：知识蒸馏（Rolling Distillate）
+├── processor.py            # MemoryProcessor — 四层记忆统一入口
+├── short_term/             # L1 短期记忆：Token 滑动窗口 + session 内步骤蒸馏
+├── medium_term/            # L2 中期记忆：近期 Q&A 历史（JSONL 持久化 + 滚动整合）
 ├── milestone/              # 里程碑记忆：LLM 评分，关键对话永久留存
-└── long_term/              # 长期记忆：BGE Embedding + FAISS + RAG
-    ├── memory.py           # LongTermMemory（薄封装）
-    ├── store.py            # LongTermStore（向量库 + 持久化）
-    ├── init/               # 工厂函数：make_memory / load_store
-    └── retrieve/           # 检索器：Retriever + 四场景 + 自动触发
+└── long_term/              # L3 长期记忆：BGE Embedding + FAISS + RAG
+    ├── memory.py
+    ├── store.py
+    ├── init/
+    └── retrieve/
 ```
 
 ## 数据单元：`Step`
@@ -27,14 +27,15 @@ class Step:
     observation: str     # 工具返回结果
 ```
 
-## 四级记忆对比
+## 四层记忆对比
 
-| 层级 | 实现 | Token 占用 | 保留内容 |
-|---|---|---|---|
-| 短期 | 滑动窗口 | ≤ `max_tokens` | 最近 N 轮完整 Step |
-| 中期 | 滚动蒸馏 | 固定 ≤ `max_distillate_tokens` | 历史推理主线提炼 |
-| 里程碑 | LLM 重要性评分 + 关键词检索 | 按需检索，不占固定空间 | 用户关键事件 / 重要决策 |
-| 长期 | BGE + FAISS + RAG | 按需检索，不占固定空间 | 跨会话持久知识 |
+| 层级 | 实现类 | 存储位置 | 注入时机 | 保留内容 |
+|---|---|---|---|---|
+| L1 短期 | `ShortTermMemory` | 内存 | 每步 | 最近 N 步完整 Step |
+| L1 蒸馏 | `ShortTermMemory._distillate` | 内存 | 每步（窗口溢出时更新）| 被驱逐步骤的 LLM 摘要 |
+| L2 中期 | `RecentHistoryMemory` | JSONL 文件 | 每轮（session 启动时加载）| 最近 N 天的 Q&A 记录 |
+| 里程碑 | `MilestoneMemory` | JSON 文件 | 每轮（关键词检索）| 评分达标的重要对话 |
+| L3 长期 | `LongTermMemory` | FAISS + JSON | 每轮（语义检索）| 跨 session 向量化历史 |
 
 ## 统一入口：`MemoryProcessor`
 
@@ -47,90 +48,93 @@ processor = MemoryProcessor(cfg=MemoryConfig(), llm=llm)
 # 每个推理步骤结束后调用
 processor.add(step)
 
-# 构建 Prompt 时调用
-# include_long_term=False 跳过向量检索，适用于同一问题的第 2+ 步
+# 构建 Prompt 时调用；第 1+ 步复用 include_long_term=False 跳过向量检索
 result = processor.recall(query="用户问题", include_long_term=True)
-result.short_term   # list[Step]，注入完整对话历史
-result.medium_term  # str，注入蒸馏摘要
-result.long_term    # str，注入向量检索结果（include_long_term=False 时为 ""）
-result.milestone    # str，注入里程碑记忆（无匹配时为 ""）
 
-# 读取当前中期蒸馏文本（post_process 时用于构建静态 Prompt 缓存）
-processor.medium_distillate  # str
+result.short_term             # list[Step]      — 当前窗口内完整步骤
+result.short_term_distillate  # str             — 被驱逐步骤的蒸馏摘要
+result.medium_term            # str             — 近期 Q&A 历史（已加载）
+result.milestone              # str             — 里程碑检索结果
+result.long_term              # str             — 向量检索结果
+
+# 轮结束后落盘（后台线程中调用）
+processor.commit(question, answer)
 ```
 
 ### `recall()` 的 `include_long_term` 参数
 
-ReAct 链中同一问题可能执行多步推理。长期向量检索（BGE Embedding + FAISS）是相对耗时的操作，而检索结果在同一问题的多步推理中不会变化，因此：
+同一问题可能执行多步推理；向量检索（BGE + FAISS）只在第 0 步执行，结果缓存到局部变量 `_cached_lt`，后续步骤复用：
 
-- **第 0 步**：`include_long_term=True`，执行完整检索，缓存结果到局部变量 `_cached_lt`
-- **第 1+ 步**：`include_long_term=False`，跳过检索，直接复用 `_cached_lt`
-
-`MemoryProcessor` 内部的 `_is_session_start` 标志仅在 `include_long_term=True` 且实际调用 `smart_recall` 时更新，不受后续步骤影响。
-
-里程碑检索在每次 `recall()` 中均执行（无需跳过），因为其检索基于关键词匹配，开销极低。
+- **第 0 步**：`include_long_term=True`，执行向量检索
+- **第 1+ 步**：`include_long_term=False`，复用缓存结果
 
 ## 数据流
 
 ```
-Step 产生
+用户提问
     │
     ▼
-MemoryProcessor.add(step)
-    │
-    ▼
-ShortTermMemory.add(step)  →  evicted: list[Step]
-    │
-    ├─ evicted 为空 → 结束
-    └─ evicted 非空 → MediumTermMemory.absorb(evicted)
-                            │
-                            ├─ pending < distill_trigger_steps → 暂存
-                            └─ pending >= distill_trigger_steps → LLM 蒸馏（覆盖旧蒸馏文本）
+processor.recall(query, include_long_term=(i==0))
+    ├─ short_term:            ShortTermMemory.steps()
+    ├─ short_term_distillate: ShortTermMemory.distillate（溢出时由 LLM 更新）
+    ├─ medium_term:           RecentHistoryMemory.render()（从 JSONL 加载）
+    ├─ milestone:             MilestoneMemory.retrieve(query)
+    └─ long_term:             LongTermMemory.smart_recall(query)（仅 i==0）
+
+每步推理后：
+processor.add(step)
+    └─ ShortTermMemory.add(step)
+            ├─ 未溢出 → 直接入队
+            └─ 溢出   → 积累 pending，达 distill_trigger_steps 后 LLM 蒸馏
+
+Action == "finish" → FinishEvent 发送给客户端后，后台线程：
+processor.commit(question, answer)
+    ├─ ShortTermMemory.flush()          ← 强制蒸馏剩余 pending 步骤
+    ├─ RecentHistoryMemory.append()     ← 写入 JSONL，异步，用户无感知
+    │       └─ _maybe_consolidate()    ← 条目超限 + 间隔满足 → LLM 滚动整合
+    ├─ LongTermMemory.add() + save()    ← 写入 FAISS + memories.json
+    └─ MilestoneMemory.try_add()        ← LLM 评分达标则写入里程碑
+            └─ evicted → LongTermMemory.add()  ← 溢出里程碑迁移至 L3
 ```
-
-## commit() 与 post_process() 的关系
-
-`commit()` 由 `TaoLoop.post_process()` 在后台线程中调用（FinishEvent 发送给客户端后）：
-
-```
-post_process() [后台线程]
-  └─ processor.commit(question, answer)
-        ├─ medium.flush()                    ← 强制蒸馏剩余 pending steps
-        ├─ long.add(...) + long.save()       ← 写入 FAISS + memories.json
-        └─ milestone.try_add(...)            ← LLM 评分，达标则写入里程碑
-              └─ evicted → long.add(...)     ← 溢出里程碑迁移至 L3，防止丢失
-```
-
-commit 结束后，`post_process()` 通过 `processor.medium_distillate` 读取最新蒸馏文本，用于构建下一轮的静态 Prompt 缓存（`StaticPromptParts`）。
 
 ## 配置
 
-顶层配置类 `MemoryConfig` 聚合四层配置，支持字典或 YAML 构造：
+顶层 `MemoryConfig` 聚合四层配置，通过 `config/react/memory.yaml` 加载：
 
 ```python
-from config.react.memory.memory_config import MemoryConfig
+cfg = MemoryConfig.from_yaml("config/react/memory.yaml")
+```
 
-# 从 YAML 加载
-cfg = MemoryConfig.from_yaml("config/memory.yaml")
+```yaml
+# config/react/memory.yaml 示例
+short_term:
+  enabled: true
+  max_turns: 10
+  max_tokens: 2048
+  distill_enabled: true
+  distill_trigger_steps: 4
+  max_distillate_tokens: 400
 
-# 从字典构造
-cfg = MemoryConfig.from_dict({
-    "short_term":  {"enabled": True, "max_turns": 10, "max_tokens": 2048},
-    "medium_term": {"enabled": True, "distill_trigger_steps": 4, "max_distillate_tokens": 400},
-    "milestone": {
-        "enabled": True,
-        "milestone_dir": ".react/milestones",
-        "importance_threshold": 0.6,
-        "top_k_retrieve": 2,
-    },
-    "long_term": {
-        "enabled": True,
-        "load_from_disk": True,
-        "memory_dir": ".react/memory",
-        "model_name_or_path": "BAAI/bge-small-zh-v1.5",
-        "retrieve": {"heavy_top_k": 8, "heavy_min_score": 0.5},
-    },
-})
+medium_term:
+  enabled: true
+  window_days: 7
+  max_entries: 30
+  max_chars: 3000
+  consolidate_enabled: true
+  consolidate_batch: 10
+  consolidate_interval_days: 1
+  max_consolidate_tokens: 500
+
+milestone:
+  enabled: true
+  importance_threshold: 0.6
+  top_k_retrieve: 2
+  inject_detail: true
+
+long_term:
+  enabled: true
+  top_k: 5
+  max_recall_chars: 3000
 ```
 
 ## 子模块文档
