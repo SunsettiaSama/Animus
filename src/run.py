@@ -81,7 +81,6 @@ def _run_docker(*args: str, timeout: int = 10) -> subprocess.CompletedProcess | 
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
 
-
 def _docker_available() -> bool:
     result = _run_docker("info", timeout=20)
     return result is not None and result.returncode == 0

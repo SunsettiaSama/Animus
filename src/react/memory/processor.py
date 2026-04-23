@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -14,6 +13,19 @@ from react.memory.short_term.memory import ShortTermMemory
 if TYPE_CHECKING:
     from llm_core.llm import LLM
     from react.memory.milestone.memory import MilestoneMemory
+
+
+_LT_DISTILL_PROMPT = """\
+You are a knowledge distiller for a long-term memory system.
+Given the conversation below, extract only the most valuable and reusable \
+knowledge — key facts, conclusions, and insights — within {max_tokens} words. \
+Omit procedural steps, tool calls, and ephemeral details.
+
+Question: {question}
+
+Answer: {answer}
+
+Output only the distilled knowledge entry, no preamble."""
 
 
 @dataclass
@@ -32,8 +44,10 @@ class MemoryProcessor:
         llm: LLM | None = None,
         long_term: LongTermMemory | None = None,
         milestone: MilestoneMemory | None = None,
+        medium_term: RecentHistoryMemory | None = None,
     ):
         self._cfg = cfg
+        self._llm = llm
         self._trace: list[Step] = []
         self._is_session_start: bool = True
 
@@ -41,8 +55,10 @@ class MemoryProcessor:
         if cfg.short_term.enabled:
             self._short = ShortTermMemory(cfg.short_term, llm=llm)
 
-        self._medium: RecentHistoryMemory | None = None
-        if cfg.medium_term.enabled:
+        # Accept an externally managed instance (shared across turns in TaoLoop)
+        # or fall back to creating a new one if none is provided.
+        self._medium: RecentHistoryMemory | None = medium_term
+        if self._medium is None and cfg.medium_term.enabled:
             self._medium = RecentHistoryMemory(cfg.medium_term, llm=llm)
 
         self._long: LongTermMemory | None = long_term
@@ -95,19 +111,8 @@ class MemoryProcessor:
             self._medium.append(question, answer)
 
         if self._long is not None:
-            parts = [f"Q: {question}"]
-            if self._trace:
-                step_blocks = []
-                for s in self._trace:
-                    step_blocks.append(
-                        f"Thought: {s.thought}\n"
-                        f"Action: {s.action}\n"
-                        f"Action Input: {json.dumps(s.action_input, ensure_ascii=False)}\n"
-                        f"Observation: {s.observation}"
-                    )
-                parts.append("Steps:\n" + "\n---\n".join(step_blocks))
-            parts.append(f"A: {answer}")
-            self._long.add("\n".join(parts), question=question)
+            lt_text = self._build_lt_entry(question, answer)
+            self._long.add(lt_text, question=question)
             self._long.save()
 
         if self._milestone is not None:
@@ -119,6 +124,27 @@ class MemoryProcessor:
                     text = f"[迁移自里程碑] {e.summary}\n{e.detail}"
                     self._long.add(text, source="milestone", importance=e.importance)
                 self._long.save()
+
+    def _build_lt_entry(self, question: str, answer: str) -> str:
+        """Build the text to store in long-term memory for this turn.
+
+        - distill_enabled=False (default): store only the answer; the question
+          is kept as metadata so vector search can still match on it.
+        - distill_enabled=True + llm available: ask the LLM to extract a
+          concise knowledge summary from Q+A; fall back to answer-only on error.
+        """
+        cfg = self._cfg.long_term
+        if cfg.distill_enabled and self._llm is not None:
+            prompt = _LT_DISTILL_PROMPT.format(
+                max_tokens=cfg.max_distill_tokens,
+                question=question,
+                answer=answer,
+            )
+            distilled = self._llm.generate(prompt).strip()
+            if distilled:
+                return distilled
+        # Default / fallback: answer only
+        return answer
 
     def clear(self) -> None:
         self._trace.clear()

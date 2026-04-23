@@ -19,6 +19,10 @@ class LongTermMemoryConfig:
     consolidation_k: int = 0
     max_entry_chars: int = 2000
     max_recall_chars: int = 3000
+    # Distillation: if enabled, LLM extracts a knowledge summary before writing.
+    # If disabled, only the raw answer text is stored (question kept as metadata).
+    distill_enabled: bool = False
+    max_distill_tokens: int = 400
     retrieve: RetrieveConfig = field(default_factory=RetrieveConfig)
 
     @classmethod
@@ -45,6 +49,8 @@ class LongTermMemoryConfig:
             consolidation_k=int(d.get("consolidation_k", 0)),
             max_entry_chars=int(d.get("max_entry_chars", 2000)),
             max_recall_chars=int(d.get("max_recall_chars", 3000)),
+            distill_enabled=bool(d.get("distill_enabled", False)),
+            max_distill_tokens=int(d.get("max_distill_tokens", 400)),
             retrieve=RetrieveConfig.from_dict(retrieve_d),
         )
 

@@ -32,7 +32,6 @@
     ├── persona/                 # 人格数据（稳定层）
     │   ├── profile.json
     │   ├── skills.json
-    │   ├── chronicle.json
     │   ├── reflection.txt
     │   └── persona_config.json  # WebUI 人格开关（仅 WebUI 写入）
     └── traces/                  # 推理链存档
@@ -137,7 +136,7 @@
 
 | 项目 | 说明 |
 |---|---|
-| 写入模块 | `src/react/persona/profile/store.py`、`src/react/persona/chronicle/store.py`、`src/webui/app.py` |
+| 写入模块 | `src/react/persona/profile/store.py`、`src/webui/app.py` |
 | 路径配置字段 | `PersonaConfig.persona_dir` |
 | 默认值 | `".react/persona"`（相对于进程 CWD） |
 | WebUI 路径常量 | `_PERSONA_DIR = <repo>/.react/persona`（绝对路径） |
@@ -159,17 +158,7 @@
 | 内容 | Agent 积累的技能条目列表 |
 | 开关 | `PersonaConfig.skills_enabled`（默认 `True`） |
 
-#### 4.3 事件演化日志 `chronicle.json`
-
-| 项目 | 说明 |
-|---|---|
-| 写入类 | `ChronicleStore.save_chronicle()` |
-| 触发时机 | 每轮 `post_process()` 触发 `persona.evolve()` → 追加新条目 |
-| 内容 | 叙事风格的经历条目数组（时间戳 + 叙述文本） |
-| 最大条数 | `PersonaConfig.max_chronicle_entries`（默认 100） |
-| 开关 | `PersonaConfig.chronicle_enabled`（默认 `True`） |
-
-#### 4.4 自省记录 `reflection.txt`
+#### 4.3 自省记录 `reflection.txt`
 
 | 项目 | 说明 |
 |---|---|
@@ -178,15 +167,15 @@
 | 内容 | 纯文本，第一人称自我感知段落 |
 | 开关 | `PersonaConfig.reflection_enabled`（默认 `False`） |
 
-#### 4.5 WebUI 人格开关 `persona_config.json`
+#### 4.4 WebUI 人格开关 `persona_config.json`
 
 | 项目 | 说明 |
 |---|---|
 | 写入模块 | `src/webui/app.py`，`POST /api/persona/save` |
-| 内容 | WebUI 人格面板的开关与参数（`enabled`、`chronicle_enabled`、各长度上限等） |
+| 内容 | WebUI 人格面板的开关与参数（`enabled`、各长度上限等） |
 | 说明 | 仅 WebUI 写入，CLI 模式不使用此文件 |
 
-**仅当 `PersonaConfig.enabled = True` 时，演化类写入（chronicle、skills、reflection）才会触发。`profile.json` 在 `PersonaManager` 初始化时总会确保存在。**
+**仅当 `PersonaConfig.enabled = True` 时，演化类写入（skills、reflection）才会触发。`profile.json` 在 `PersonaManager` 初始化时总会确保存在。**
 
 > **短期偏好（`ShortTermPreference`）不持久化**，仅保存在 `PersonaManager` 内存中，会话结束即重置，无对应磁盘文件。
 
@@ -284,7 +273,6 @@ cfg = TraceConfig(trace_dir="/data/my_agent/traces")
                     └─ PersonaManager.evolve()
                          ├─ ProfileStore.save_profile()    → .react/persona/profile.json ✎
                          ├─ ProfileStore.save_skills()     → .react/persona/skills.json ✎
-                         ├─ ChronicleStore.save()          → .react/persona/chronicle.json ✎
                          ├─ ProfileStore.save_reflection() → .react/persona/reflection.txt ✎
                          └─ PreferenceUpdater.update()     （内存更新，不落盘）
 ```
