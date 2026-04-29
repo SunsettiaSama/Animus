@@ -3,15 +3,13 @@ from __future__ import annotations
 from config.react.persona_config import PersonaConfig
 from llm_core.llm import BaseLLM
 from react.memory.memory import Step
-from react.persona.chronicle.block import ChronicleBlock
-from react.persona.chronicle.chronicle import PersonaChronicle
-from react.persona.chronicle.store import ChronicleStore
-from react.persona.engine import EvolutionEngine, _build_template_narrative
+from react.persona.engine import EvolutionEngine
 from react.persona.preference.block import PreferenceBlock
 from react.persona.preference.recent import RecentPreference
 from react.persona.preference.store import PreferenceStore
 from react.persona.preference.updater import PreferenceUpdater
 from react.persona.profile.block import ProfileBlock, ReflectionBlock, SkillsBlock
+from react.persona.profile.evolver import PersonaEvolver
 from react.persona.profile.profile import PersonaProfile
 from react.persona.profile.skills import SkillsLibrary
 from react.persona.profile.store import ProfileStore
@@ -21,7 +19,7 @@ from react.prompt.block import PromptBlock
 class PersonaManager:
     """Persona 子系统的统一入口。
 
-    协调 profile/ chronicle/ preference/ 三个子模块，对外提供：
+    协调 profile/ preference/ 两个子模块，对外提供：
     - 各类 PromptBlock（供 TaoLoop 注入 system prompt）
     - evolve()（每轮对话结束后驱动演化引擎）
     """
@@ -31,14 +29,10 @@ class PersonaManager:
 
         # ── 存储层 ────────────────────────────────────────────────────────────
         self._profile_store = ProfileStore(cfg.persona_dir)
-        self._chronicle_store = ChronicleStore(cfg.persona_dir)
         self._preference_store = PreferenceStore(cfg.persona_dir)
 
         # ── 数据层 ────────────────────────────────────────────────────────────
         self._profile: PersonaProfile = self._profile_store.load_profile()
-        self._chronicle: PersonaChronicle = self._chronicle_store.load_chronicle(
-            cfg.max_chronicle_entries, cfg.max_chronicle_entry_chars
-        )
         self._skills: SkillsLibrary = (
             self._profile_store.load_skills(cfg.max_skills)
             if cfg.skills_enabled
@@ -54,13 +48,10 @@ class PersonaManager:
             EvolutionEngine(
                 llm=llm,
                 profile_store=self._profile_store,
-                chronicle_store=self._chronicle_store,
                 evolve_interval=cfg.evolve_interval,
                 skills_enabled=cfg.skills_enabled,
                 reflection_enabled=cfg.reflection_enabled,
                 reflect_interval=cfg.reflect_interval,
-                chronicle_enabled=cfg.chronicle_enabled,
-                max_chronicle_entry_chars=cfg.max_chronicle_entry_chars,
             )
             if cfg.evolution_enabled and llm is not None
             else None
@@ -91,10 +82,6 @@ class PersonaManager:
         return self._profile
 
     @property
-    def chronicle(self) -> PersonaChronicle:
-        return self._chronicle
-
-    @property
     def skills(self) -> SkillsLibrary:
         return self._skills
 
@@ -110,14 +97,6 @@ class PersonaManager:
 
     def profile_block(self) -> ProfileBlock:
         return ProfileBlock(self._profile, max_chars=self._cfg.max_profile_chars)
-
-    def chronicle_block(self, recent: int | None = None) -> ChronicleBlock:
-        n = recent if recent is not None else self._cfg.chronicle_recent_in_prompt
-        return ChronicleBlock(
-            self._chronicle,
-            recent=n,
-            max_render_chars=self._cfg.max_chronicle_render_chars,
-        )
 
     def skills_block(self) -> SkillsBlock:
         return SkillsBlock(
@@ -137,7 +116,7 @@ class PersonaManager:
 
     def all_blocks(self) -> list[PromptBlock]:
         """返回本轮应注入 Prompt 的全部 persona 块。"""
-        blocks: list[PromptBlock] = [self.profile_block(), self.chronicle_block()]
+        blocks: list[PromptBlock] = [self.profile_block()]
         if self._cfg.skills_enabled:
             blocks.append(self.skills_block())
         if self._cfg.reflection_enabled and self._reflection:
@@ -165,19 +144,11 @@ class PersonaManager:
                 answer=answer,
                 steps=steps,
                 profile=self._profile,
-                chronicle=self._chronicle,
                 skills=self._skills,
                 turn_count=self._turn_count,
             )
             if new_reflection is not None:
                 self._reflection = new_reflection
-        else:
-            if self._cfg.chronicle_enabled:
-                narrative = _build_template_narrative(
-                    self._profile.name, question, answer, steps
-                )
-                self._chronicle.append(narrative)
-                self._chronicle_store.save_chronicle(self._chronicle)
 
         # 近期偏好更新（每 N 轮触发一次）
         if (

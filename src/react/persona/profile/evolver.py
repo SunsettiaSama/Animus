@@ -8,7 +8,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from llm_core.llm import BaseLLM
 from react.memory.memory import Step
-from react.persona.chronicle.chronicle import PersonaChronicle
 from react.persona.profile.profile import PersonaProfile
 from react.persona.profile.skills import Skill, SkillsLibrary
 
@@ -34,7 +33,7 @@ _SKILLS_SYSTEM = """\
 - 严格输出 JSON，不要有任何其他文字"""
 
 _REFLECT_SYSTEM = """\
-你是一个自省系统。根据 AI 角色的人格画像、近期经历与技能库，\
+你是一个自省系统。根据 AI 角色的人格画像与技能库，\
 生成一段第一人称的自我感知表述，概括当前行为倾向与内在状态。
 
 规则：
@@ -155,48 +154,18 @@ class PersonaEvolver:
     def reflect(
         self,
         profile: PersonaProfile,
-        chronicle: PersonaChronicle,
         skills: SkillsLibrary,
     ) -> str:
-        recent_chronicle = chronicle.render(recent=6)
-        chronicle_section = f"\n近期经历：\n{recent_chronicle}" if recent_chronicle else ""
         skills_section = f"\n当前技能：\n{skills.render(top_k=5)}" if len(skills) > 0 else ""
 
         prompt = (
             f"角色画像：\n{profile.render()}"
-            f"{chronicle_section}"
             f"{skills_section}\n\n"
             "请以第一人称生成自我感知表述（60-150字）："
         )
         return self._llm.generate_messages(
             [SystemMessage(content=_REFLECT_SYSTEM), HumanMessage(content=prompt)]
         ).strip()
-
-    # ── Background events (bonus) ──────────────────────────────────────────────
-
-    def generate_background_events(
-        self,
-        profile: PersonaProfile,
-        chronicle: PersonaChronicle,
-    ) -> list[ProfileDelta]:
-        recent = chronicle.render(recent=8)
-        chronicle_section = f"\n近期经历：\n{recent}" if recent else ""
-        _bg_system = (
-            "你是一个人格演化系统。为AI角色生成它在日常时光中可能自然经历的事件，"
-            "像写小说一样真实贴合其性格与背景。\n\n规则：\n"
-            "- 生成 1-3 件事，每件事 narrative 用第三人称、小说笔触，60字以内\n"
-            "- 变化极其细微，大多数字段应为空列表或空字符串\n"
-            "- 严格输出 JSON 数组，不要有任何其他文字"
-        )
-        prompt = (
-            f"当前人格状态：\n{profile.render()}{chronicle_section}\n\n"
-            f"请生成 1-3 件这个角色在闲暇时光中可能自然经历的事情。\n"
-            f"输出 JSON 数组，每个元素结构如下：\n{_PROFILE_DELTA_SCHEMA}"
-        )
-        raw = self._llm.generate_messages(
-            [SystemMessage(content=_bg_system), HumanMessage(content=prompt)]
-        )
-        return self._parse_profile_delta_list(raw)
 
     # ── JSON parsing ───────────────────────────────────────────────────────────
 

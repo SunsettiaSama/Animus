@@ -9,6 +9,7 @@ from react.memory.milestone.entry import MilestoneEntry
 # 优先使用 jieba；未安装时自动降级为字符 bigram + 精确子串策略
 try:
     import jieba  # type: ignore
+    jieba.initialize()  # pre-build prefix dict at import time, not on first cut()
 
     def _tokenize(text: str) -> set[str]:
         return {w.strip() for w in jieba.cut(text) if w.strip()}

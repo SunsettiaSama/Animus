@@ -16,21 +16,10 @@ def load_store(cfg: LongTermMemoryConfig) -> LongTermStore:
         with open(json_path, encoding="utf-8") as f:
             entries = [MemoryEntry(**item) for item in json.load(f)]
 
-    store = LongTermStore(entries=entries, cfg=cfg)
-
     faiss_path = os.path.join(cfg.memory_dir, FAISS_INDEX_NAME + ".faiss")
-    if entries and os.path.exists(faiss_path):
-        from langchain_community.vectorstores import FAISS
+    pending_dir = cfg.memory_dir if (entries and os.path.exists(faiss_path)) else None
 
-        embeddings = store._get_embeddings()
-        store._vectorstore = FAISS.load_local(
-            cfg.memory_dir,
-            embeddings,
-            FAISS_INDEX_NAME,
-            allow_dangerous_deserialization=True,
-        )
-
-    return store
+    return LongTermStore(entries=entries, cfg=cfg, pending_faiss_dir=pending_dir)
 
 
 def init_empty_store(cfg: LongTermMemoryConfig) -> LongTermStore:

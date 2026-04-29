@@ -16,7 +16,7 @@ class CacheConfig:
         <root>/
         ├── history/   — 对话历史 JSON（仅 WebUI 写入）
         ├── memory/    — 长期记忆（memories.json + FAISS 索引）
-        ├── persona/   — 人格数据（profile / chronicle / skills / reflection）
+        ├── persona/   — 人格数据（profile / skills / reflection）
         └── traces/    — 推理链存档 JSON
     """
 

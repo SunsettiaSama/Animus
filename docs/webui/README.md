@@ -66,7 +66,6 @@ python run.py
 |---|---|---|
 | `/api/persona` | GET | 读取人格配置（画像 + 配置项）|
 | `/api/persona/save` | POST | 保存人格配置（画像 + 是否启用 + 各项参数）|
-| `/api/persona/chronicle` | GET | 读取人格事件日志 |
 
 ---
 
@@ -105,7 +104,7 @@ python run.py
 
 - **LLM 配置**：模型路径/名称、API Key、Base URL、参数（max_tokens、temperature、do_sample）、System Prompt
 - **ReAct 配置**：语言（中/英）、最大步数、主工具列表
-- **人格配置**：启用/禁用、画像编辑（姓名/背景/性格/价值观/风格）、事件日志参数
+- **人格配置**：启用/禁用、画像编辑（姓名/背景/性格/价值观/风格）、演化引擎参数
 - **"Show Full Input" 开关**：展开每条用户消息，显示完整的 Prompt 组装内容（系统提示、人格块、记忆块、历史对话、当前问题）
 
 ### 消息区域

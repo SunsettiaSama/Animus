@@ -28,6 +28,7 @@ def _parse_args() -> BuildConfig:
     p.add_argument("--no-fp16", action="store_true", help="disable fp16 (use fp32)")
     p.add_argument("--device", default="auto", help="cuda / cpu / auto")
     p.add_argument("--passage-prefix", default="", help="prefix prepended to every passage before encoding")
+    p.add_argument("--query-prefix", default="query: ", help="prefix prepended to queries at search time (must match build-time setting)")
     p.add_argument("--batch-size", type=int, default=64, help="embedding batch size")
     p.add_argument("--output-dir", default="knowledge_base", help="directory to write the index")
     p.add_argument("--index-filename", default="index.faiss")
@@ -44,6 +45,7 @@ def _parse_args() -> BuildConfig:
         use_fp16=not args.no_fp16,
         device=args.device,
         passage_prefix=args.passage_prefix,
+        query_prefix=args.query_prefix,
         batch_size=args.batch_size,
         output_dir=args.output_dir,
         index_filename=args.index_filename,

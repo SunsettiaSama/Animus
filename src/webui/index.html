@@ -605,16 +605,32 @@
     .section-divider { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text3); padding: 5px 0; border-bottom: 1px solid var(--border); margin: 14px 0 12px; }
     .section-divider:first-child { margin-top: 0; }
 
-    /* Chronicle list */
-    .chronicle-list { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r2); padding: 8px 10px; max-height: 130px; overflow-y: auto; }
-    .chronicle-entry { padding: 5px 0; border-bottom: 1px solid var(--border); }
-    .chronicle-entry:last-child { border-bottom: none; }
-    .ce-date { font-size: 11px; color: var(--text3); display: block; margin-bottom: 2px; }
-    .ce-text { font-size: 12px; color: var(--text); line-height: 1.45; }
-    .chronicle-empty { font-size: 12px; color: var(--text3); }
-
     /* Persona active badge in topbar */
     .persona-badge { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 20px; background: #fdf4ff; color: #7c3aed; flex-shrink: 0; }
+
+    /* Memory loading indicator in topbar */
+    .mem-loading-badge {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 9px;
+      border-radius: 20px;
+      background: #fefce8;
+      color: #a16207;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .mem-loading-badge .spin {
+      display: inline-block;
+      animation: badge-spin .9s linear infinite;
+      line-height: 1;
+    }
+    @keyframes badge-spin { to { transform: rotate(360deg); } }
+    #input-area.mem-loading textarea, #input-area.mem-loading #btn-send {
+      opacity: .45;
+      pointer-events: none;
+    }
 
     /* Toast notification */
     .toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(14px); background: #1f2937; color: #fff; font-size: 13px; padding: 9px 20px; border-radius: 20px; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; z-index: 500; white-space: nowrap; }
@@ -717,6 +733,7 @@
         <span id="tb-title">New Conversation</span>
         <button id="tb-mode" class="mode-badge" onclick="toggleMode()" title="Click to switch mode">Chat</button>
         <span id="tb-persona-badge" class="persona-badge hidden">🎭 Persona</span>
+        <span id="tb-mem-loading" class="mem-loading-badge hidden"><span class="spin">⟳</span>加载记忆中…</span>
       </div>
       <div class="topbar-right">
         <button class="icon-btn hidden" id="btn-clear-react" onclick="clearReactSession()" title="Clear ReAct dialogue history">🔄</button>
@@ -934,6 +951,17 @@
           <label>窗口整合轮数 <span style="font-weight:400;color:var(--text3)">consolidation_k（0 = 关闭）</span></label>
           <input id="s-lt-consolidation" type="number" value="0" min="0" max="100" />
         </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">启用知识蒸馏</span>
+            <span class="toggle-desc">每轮结束后调用 LLM 将 Q&amp;A 提炼为一条精炼知识摘要再写入向量库，减少噪声、提升检索质量。关闭时仅存原始答案文本。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-lt-distill"><span class="slider"></span></label>
+        </div>
+        <div class="form-group">
+          <label>蒸馏摘要字数上限 <span style="font-weight:400;color:var(--text3)">max_distill_tokens</span></label>
+          <input id="s-lt-distill-tokens" type="number" value="400" min="100" max="2000" />
+        </div>
 
         <!-- 里程碑 -->
         <div class="section-divider">里程碑记忆（LLM 重要性评分，稍慢）</div>
@@ -1012,45 +1040,12 @@
           <input id="s-p-style" type="text" placeholder="简洁直接，擅用类比" />
         </div>
 
-        <!-- 事件演化 -->
-        <div class="section-divider">事件演化</div>
-        <div class="toggle-row">
-          <div class="toggle-label">
-            <span class="toggle-title">记录事件演化</span>
-            <span class="toggle-desc">以叙事方式记录 Agent 每次推理行为，积累经历后注入 Prompt；关闭后仅保留静态画像。</span>
-          </div>
-          <label class="switch"><input type="checkbox" id="s-chronicle-enabled" checked><span class="slider"></span></label>
-        </div>
-        <div class="form-group">
-          <label>
-            近期经历（只读）
-            <button onclick="loadChronicle()" style="font-size:11px;color:var(--accent);margin-left:8px;font-weight:500;">↻ 刷新</button>
-          </label>
-          <div id="chronicle-list" class="chronicle-list">
-            <span class="chronicle-empty">暂无记录</span>
-          </div>
-        </div>
-
         <!-- 长度限制 -->
         <div class="section-divider">长度限制 <span style="font-weight:400;font-style:normal;letter-spacing:0">（0 = 不限制）</span></div>
         <div class="form-row">
           <div class="form-group">
             <label>画像渲染上限 <span style="font-weight:400;color:var(--text3)">参考 200–1000</span></label>
             <input id="s-p-max-profile" type="number" value="500" min="0" />
-          </div>
-          <div class="form-group">
-            <label>条目字符上限 <span style="font-weight:400;color:var(--text3)">超出整条丢弃</span></label>
-            <input id="s-p-max-entry" type="number" value="200" min="0" />
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>经历渲染上限 <span style="font-weight:400;color:var(--text3)">参考 300–2000</span></label>
-            <input id="s-p-max-render" type="number" value="800" min="0" />
-          </div>
-          <div class="form-group">
-            <label>注入条目数 <span style="font-weight:400;color:var(--text3)">最近 N 条经历</span></label>
-            <input id="s-p-recent" type="number" value="5" min="1" max="20" />
           </div>
         </div>
 
@@ -1200,8 +1195,41 @@
       body: JSON.stringify({ lang, max_steps: maxSteps, primary_tools: null }),
     }).catch(() => null);
     if (!r?.ok) return false;
-    S.reactReady = true;
-    return true;
+
+    const data = await r.json().catch(() => null);
+
+    // Fast path: already ready (should not happen with the new backend, but keep for safety).
+    if (data?.status === 'ready' || data?.status === 'ok') {
+      S.reactReady = true;
+      return true;
+    }
+
+    // Background init: show loading indicator and poll /api/react/status.
+    setMemLoading(true);
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+    for (let i = 0; i < 240; i++) {   // max ~120 s
+      await sleep(500);
+      const sr = await fetch('/api/react/status').catch(() => null);
+      if (!sr?.ok) continue;
+      const sd = await sr.json().catch(() => null);
+      if (sd?.status === 'ready') {
+        setMemLoading(false);
+        S.reactReady = true;
+        return true;
+      }
+      if (sd?.status === 'error') {
+        setMemLoading(false);
+        console.error('ReAct init error:', sd.detail);
+        return false;
+      }
+    }
+    setMemLoading(false);
+    return false;
+  }
+
+  function setMemLoading(on) {
+    $('tb-mem-loading').classList.toggle('hidden', !on);
+    $('input-area').classList.toggle('mem-loading', on);
   }
 
   async function clearReactSession() {
@@ -1923,6 +1951,8 @@
     $('s-lt-top-k').value            = lt.top_k            ?? 5;
     $('s-lt-max-recall').value       = lt.max_recall_chars ?? 3000;
     $('s-lt-consolidation').value    = lt.consolidation_k  ?? 0;
+    $('s-lt-distill').checked        = lt.distill_enabled    ?? false;
+    $('s-lt-distill-tokens').value   = lt.max_distill_tokens ?? 400;
 
     $('s-ms-enabled').checked        = ms.enabled              ?? false;
     $('s-ms-threshold').value        = ms.importance_threshold ?? 0.6;
@@ -1967,10 +1997,12 @@
       mt_consolidate_interval_days: parseInt($('s-mt-consolidate-interval').value) ?? 1,
       mt_max_consolidate_tokens:    parseInt($('s-mt-consolidate-tokens').value)   || 500,
 
-      lt_enabled:          $('s-lt-enabled').checked,
-      lt_top_k:            parseInt($('s-lt-top-k').value)         || 5,
-      lt_max_recall_chars: parseInt($('s-lt-max-recall').value)    || 3000,
-      lt_consolidation_k:  parseInt($('s-lt-consolidation').value) || 0,
+      lt_enabled:            $('s-lt-enabled').checked,
+      lt_top_k:              parseInt($('s-lt-top-k').value)         || 5,
+      lt_max_recall_chars:   parseInt($('s-lt-max-recall').value)    || 3000,
+      lt_consolidation_k:    parseInt($('s-lt-consolidation').value) || 0,
+      lt_distill_enabled:    $('s-lt-distill').checked,
+      lt_max_distill_tokens: parseInt($('s-lt-distill-tokens').value) || 400,
 
       ms_enabled:              $('s-ms-enabled').checked,
       ms_importance_threshold: parseFloat($('s-ms-threshold').value) || 0.6,
@@ -1995,17 +2027,13 @@
     const d = await r.json();
 
     $('s-persona-enabled').checked   = d.enabled ?? false;
-    $('s-chronicle-enabled').checked = d.chronicle_enabled ?? true;
     $('s-persona-toast').checked     = S.personaToast;
     $('s-p-name').value        = d.profile?.name       ?? 'Assistant';
     $('s-p-background').value  = d.profile?.background ?? '';
     $('s-p-traits').value      = (d.profile?.traits ?? []).join(', ');
     $('s-p-values').value      = (d.profile?.values ?? []).join(', ');
     $('s-p-style').value       = d.profile?.style      ?? '';
-    $('s-p-recent').value      = d.chronicle_recent_in_prompt ?? 5;
-    $('s-p-max-profile').value = d.max_profile_chars         ?? 500;
-    $('s-p-max-entry').value   = d.max_chronicle_entry_chars  ?? 200;
-    $('s-p-max-render').value  = d.max_chronicle_render_chars ?? 800;
+    $('s-p-max-profile').value = d.max_profile_chars   ?? 500;
 
     S.personaEnabled = d.enabled ?? false;
     updateTopbar();
@@ -2015,18 +2043,13 @@
     const traits = $('s-p-traits').value.split(',').map(s => s.trim()).filter(Boolean);
     const values = $('s-p-values').value.split(',').map(s => s.trim()).filter(Boolean);
     const body = {
-      enabled:                   $('s-persona-enabled').checked,
-      chronicle_enabled:         $('s-chronicle-enabled').checked,
-      name:                      $('s-p-name').value.trim() || 'Assistant',
-      background:                $('s-p-background').value.trim(),
+      enabled:           $('s-persona-enabled').checked,
+      name:              $('s-p-name').value.trim() || 'Assistant',
+      background:        $('s-p-background').value.trim(),
       traits,
       values,
-      style:                     $('s-p-style').value.trim(),
-      chronicle_recent_in_prompt: parseInt($('s-p-recent').value)      || 5,
-      max_chronicle_entries:     100,
-      max_profile_chars:         parseInt($('s-p-max-profile').value)  || 500,
-      max_chronicle_entry_chars: parseInt($('s-p-max-entry').value)    || 200,
-      max_chronicle_render_chars: parseInt($('s-p-max-render').value)  || 800,
+      style:             $('s-p-style').value.trim(),
+      max_profile_chars: parseInt($('s-p-max-profile').value) || 500,
     };
     await fetch('/api/persona/save', {
       method: 'POST',
@@ -2037,24 +2060,6 @@
     S.personaToast   = $('s-persona-toast').checked;
     localStorage.setItem('personaToast', S.personaToast);
     updateTopbar();
-  }
-
-  async function loadChronicle() {
-    const r = await fetch('/api/persona/chronicle').catch(() => null);
-    if (!r?.ok) return;
-    const d = await r.json();
-    const entries = d.entries || [];
-    const list = $('chronicle-list');
-    if (!list) return;
-    if (entries.length === 0) {
-      list.innerHTML = '<span class="chronicle-empty">暂无记录</span>';
-      return;
-    }
-    list.innerHTML = entries.slice(-8).reverse().map(e => `
-      <div class="chronicle-entry">
-        <span class="ce-date">${e.timestamp?.slice(0, 10) || ''}</span>
-        <span class="ce-text">${esc(e.narrative)}</span>
-      </div>`).join('');
   }
 
   function showToast(msg) {

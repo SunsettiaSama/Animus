@@ -41,14 +41,20 @@ def build(cfg: BuildConfig) -> None:
 
     device = _resolve_device(cfg.device)
     print(f"[3/4] embedding  model={cfg.model_name_or_path}  device={device}")
+
+    inner: dict = {"low_cpu_mem_usage": False}
+    if cfg.use_fp16 and device != "cpu":
+        inner["torch_dtype"] = torch.float16
+
     embeddings = HuggingFaceBgeEmbeddings(
         model_name=cfg.model_name_or_path,
-        model_kwargs={"device": device},
+        model_kwargs={"device": device, "model_kwargs": inner},
         encode_kwargs={
             "normalize_embeddings": True,
             "batch_size": cfg.batch_size,
         },
         embed_instruction=cfg.passage_prefix,
+        query_instruction=cfg.query_prefix,
     )
 
     print("[4/4] building FAISS index and saving")

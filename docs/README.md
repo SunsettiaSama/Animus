@@ -24,7 +24,6 @@ src/
 │   ├── prompt/              # 块驱动 Prompt 组装 + 静态缓存
 │   ├── persona/             # 人格演化（稳定层 + 动态层）
 │   │   ├── profile/         # 长期人格：画像 + 技能库 + 自省
-│   │   ├── chronicle/       # 事件日志：时序叙事
 │   │   └── preference/      # 近期偏好：情绪 / 话题兴趣 / 风格偏移（k 天滑动窗口）
 │   ├── trace/               # 推理链存档
 │   ├── loop.py              # ConvLoop — 外层多轮对话循环
@@ -50,7 +49,6 @@ src/
 | `react/memory/milestone` | ✅ | L2 里程碑，LLM 重要性评分，关键词精确匹配（jieba 可选），detail 注入，溢出迁移 L3 |
 | `react/prompt` | ✅ | 块驱动组装 + `StaticPromptParts` 静态缓存预热 |
 | `react/persona/profile` | ✅ | 人物画像 + 技能库 + 自省（IROTE），LLM 演化引擎 |
-| `react/persona/chronicle` | ✅ | 事件时序日志，叙事风格 |
 | `react/persona/preference` | ✅ | 短期偏好动态层（mood / 话题兴趣 / 风格偏移），影响 L3 检索偏置 |
 | `react/trace` | ✅ | 推理链存档（`.react/traces/`）|
 | `react/loop` | ✅ | ConvLoop + TaoLoop 两层循环，异步后台提交，Prompt 预热 |
@@ -79,7 +77,7 @@ TaoLoop.stream(question)
     │       └─ L2 里程碑 → 关键词检索，与 L3 合并注入
     │
     ├─ persona.all_blocks()
-    │       → [ProfileBlock, ChronicleBlock, SkillsBlock?,
+    │       → [ProfileBlock, SkillsBlock?,
     │           ReflectionBlock?, PreferenceBlock?]
     │
     ├─ build_messages(...)  →  LLM.stream()  →  parse()
@@ -93,7 +91,6 @@ TaoLoop.stream(question)
             │     └─ evicted milestones → L3.add()
             ├─ trace_store.write()
             ├─ persona.evolve()
-            │     ├─ 稳定层：profile / skills / chronicle / reflection 演化
             │     └─ 动态层：preference 更新 → PreferenceStore.save()（持久化）
             └─ build_static() → _static_cache（预热下轮）
 ```
@@ -119,7 +116,7 @@ TaoLoop.stream(question)
 
 | 层 | 名称 | 内容 | 持久化 | 影响 |
 |---|---|---|---|---|
-| 稳定层 | 长期人格 | 画像 / 技能库 / 事件日志 / 自省 | ✅ | Prompt 注入 |
+| 稳定层 | 长期人格 | 画像 / 技能库 / 自省 | ✅ | Prompt 注入 |
 | 动态层 | 近期偏好 | 情绪 / 话题兴趣 / 风格偏移（k 天滑动窗口）| ✅ `preference.json` | L3 检索偏置 + Prompt 注入 |
 
 **近期偏好**：每轮由 LLM 生成带时间戳的 `PreferenceEntry` 快照，滑动窗口（默认 7 天）自动剪枝过期条目，聚合后注入 Prompt；跨会话持久化，重启后自动恢复。

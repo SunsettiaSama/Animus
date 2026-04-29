@@ -13,6 +13,7 @@ from react.action.executor import ActionExecutor
 from react.action.tools.impl.memory_recall import MemoryRecallAction
 from react.memory.long_term.init import make_memory
 from react.memory.long_term.memory import LongTermMemory
+from react.memory.medium_term.memory import RecentHistoryMemory
 from react.memory.memory import Step
 from react.memory.milestone.init import make_milestone
 from react.memory.milestone.memory import MilestoneMemory
@@ -99,6 +100,11 @@ class TaoLoop:
             if cfg.memory.milestone.enabled
             else None
         )
+        self._medium_term: RecentHistoryMemory | None = (
+            RecentHistoryMemory(cfg.memory.medium_term, llm=self._llm)
+            if cfg.memory.medium_term.enabled
+            else None
+        )
 
         # Inject the recall tool when at least one memory backend is active.
         # We copy tool_descriptions to avoid mutating the caller's dict.
@@ -133,6 +139,7 @@ class TaoLoop:
             self._llm,
             long_term=self._long_term,
             milestone=self._milestone,
+            medium_term=self._medium_term,
         )
 
         # 短期偏好对 L3 的检索偏置（使用上一轮更新后的偏好，偏置当前轮召回）
@@ -280,6 +287,11 @@ class TaoLoop:
         )
 
     # ── Misc ─────────────────────────────────────────────────────────────────
+
+    def preload(self) -> None:
+        """触发长期记忆的后台预热（嵌入模型 + FAISS 索引）。"""
+        if self._long_term is not None:
+            self._long_term.store.preload()
 
     def update_llm(self, llm: LLM) -> None:
         """Swap the underlying LLM for every component in this TaoLoop.

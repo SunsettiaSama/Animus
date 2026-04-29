@@ -7,11 +7,6 @@ from dataclasses import dataclass, field
 class PersonaConfig:
     enabled: bool = False
     persona_dir: str = ""
-    chronicle_enabled: bool = True
-    max_chronicle_entries: int = 100
-    max_chronicle_entry_chars: int = 200
-    max_chronicle_render_chars: int = 800
-    chronicle_recent_in_prompt: int = 5
     max_profile_chars: int = 500
     evolution_enabled: bool = False
     evolve_interval: int = 1
@@ -33,11 +28,6 @@ class PersonaConfig:
         return cls(
             enabled=bool(d.get("enabled", False)),
             persona_dir=d.get("persona_dir", persona_dir),
-            chronicle_enabled=bool(d.get("chronicle_enabled", True)),
-            max_chronicle_entries=int(d.get("max_chronicle_entries", 100)),
-            max_chronicle_entry_chars=int(d.get("max_chronicle_entry_chars", 200)),
-            max_chronicle_render_chars=int(d.get("max_chronicle_render_chars", 800)),
-            chronicle_recent_in_prompt=int(d.get("chronicle_recent_in_prompt", 5)),
             max_profile_chars=int(d.get("max_profile_chars", 500)),
             evolution_enabled=bool(d.get("evolution_enabled", False)),
             evolve_interval=int(d.get("evolve_interval", 1)),

@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -36,6 +37,11 @@ _conv_loop: ConvLoop | None = None
 _llm_cfg: LLMConfig | None = None
 _tool_manager = ToolManager()
 _prompt_lang: str = "cn"          # tracks language chosen at react_init time
+
+# Background initialisation state for TaoLoop (memory loading can be slow).
+_react_init_event: threading.Event = threading.Event()
+_react_init_event.set()           # initially in a "ready / idle" state
+_react_init_error: str = ""
 
 _LLM_CONFIG_YAML    = str(paths.llm_config_yaml)
 _MEMORY_CONFIG_YAML = str(paths.memory_config_yaml)
@@ -124,6 +130,8 @@ class MemorySaveRequest(BaseModel):
     lt_top_k: int = 5
     lt_max_recall_chars: int = 3000
     lt_consolidation_k: int = 0
+    lt_distill_enabled: bool = False
+    lt_max_distill_tokens: int = 400
     # 里程碑
     ms_enabled: bool = False
     ms_max_milestones: int = 50
@@ -134,17 +142,12 @@ class MemorySaveRequest(BaseModel):
 
 class PersonaSaveRequest(BaseModel):
     enabled: bool = False
-    chronicle_enabled: bool = True
     name: str = "Assistant"
     background: str = ""
     traits: list[str] = []
     values: list[str] = []
     style: str = ""
-    chronicle_recent_in_prompt: int = 5
-    max_chronicle_entries: int = 100
     max_profile_chars: int = 500
-    max_chronicle_entry_chars: int = 200
-    max_chronicle_render_chars: int = 800
     # 演化引擎
     evolution_enabled: bool = False
     evolve_interval: int = 1
@@ -185,11 +188,6 @@ def _load_persona_config() -> PersonaConfig:
     return PersonaConfig(
         enabled=d.get("enabled", False),
         persona_dir=_PERSONA_DIR,
-        chronicle_enabled=d.get("chronicle_enabled", True),
-        max_chronicle_entries=d.get("max_chronicle_entries", 100),
-        max_chronicle_entry_chars=d.get("max_chronicle_entry_chars", 200),
-        max_chronicle_render_chars=d.get("max_chronicle_render_chars", 800),
-        chronicle_recent_in_prompt=d.get("chronicle_recent_in_prompt", 5),
         max_profile_chars=d.get("max_profile_chars", 500),
         evolution_enabled=d.get("evolution_enabled", False),
         evolve_interval=d.get("evolve_interval", 1),
@@ -264,10 +262,12 @@ def get_memory_config():
             "max_consolidate_tokens":    cfg.medium_term.max_consolidate_tokens,
         },
         "long_term": {
-            "enabled":          cfg.long_term.enabled,
-            "top_k":            cfg.long_term.top_k,
-            "max_recall_chars": cfg.long_term.max_recall_chars,
-            "consolidation_k":  cfg.long_term.consolidation_k,
+            "enabled":            cfg.long_term.enabled,
+            "top_k":              cfg.long_term.top_k,
+            "max_recall_chars":   cfg.long_term.max_recall_chars,
+            "consolidation_k":    cfg.long_term.consolidation_k,
+            "distill_enabled":    cfg.long_term.distill_enabled,
+            "max_distill_tokens": cfg.long_term.max_distill_tokens,
         },
         "milestone": {
             "enabled":               cfg.milestone.enabled,
@@ -310,10 +310,12 @@ def save_memory_config(req: MemorySaveRequest):
     }
     existing["long_term"] = {
         **existing.get("long_term", {}),
-        "enabled":          req.lt_enabled,
-        "top_k":            req.lt_top_k,
-        "max_recall_chars": req.lt_max_recall_chars,
-        "consolidation_k":  req.lt_consolidation_k,
+        "enabled":            req.lt_enabled,
+        "top_k":              req.lt_top_k,
+        "max_recall_chars":   req.lt_max_recall_chars,
+        "consolidation_k":    req.lt_consolidation_k,
+        "distill_enabled":    req.lt_distill_enabled,
+        "max_distill_tokens": req.lt_max_distill_tokens,
     }
     existing["milestone"] = {
         **existing.get("milestone", {}),
@@ -335,13 +337,7 @@ def consolidate_medium_term():
     """强制整合中期记忆（忽略每日节流限制）。供 WebUI「立即整理」按钮调用。"""
     if _conv_loop is None:
         return JSONResponse({"status": "error", "detail": "No active session."}, status_code=400)
-    loop = _conv_loop.tao_loop
-    if loop is None:
-        return JSONResponse({"status": "error", "detail": "TaoLoop not initialized."}, status_code=400)
-    proc: MemoryProcessor | None = getattr(loop, "_memory", None)
-    if proc is None:
-        return JSONResponse({"status": "error", "detail": "MemoryProcessor not found."}, status_code=400)
-    medium = getattr(proc, "_medium", None)
+    medium = getattr(_conv_loop._tao, "_medium_term", None)
     if medium is None:
         return JSONResponse({"status": "error", "detail": "Medium-term memory not enabled."}, status_code=400)
     did = medium.consolidate(force=True)
@@ -395,7 +391,7 @@ def chat(req: ChatRequest):
 
 @app.post("/api/react/init")
 def react_init(req: ReactInitRequest):
-    global _conv_loop, _prompt_lang
+    global _conv_loop, _prompt_lang, _react_init_event, _react_init_error
     if _llm is None:
         return JSONResponse(status_code=400, content={"error": "LLM not initialized."})
 
@@ -415,14 +411,37 @@ def react_init(req: ReactInitRequest):
         memory=_load_memory_config(),
         persona=_load_persona_config(),
     )
-    tao = TaoLoop(llm=_llm, executor=executor, tool_descriptions=tool_descriptions, cfg=cfg)
-    _conv_loop = ConvLoop(tao)
-    return {
-        "status": "ok",
-        "primary_tools": list(tool_descriptions.keys()),
-        "total_tools": len(_tool_manager.registry),
-        "lang": req.lang,
-    }
+
+    # Reset state and spin up a background thread so the heavy memory-loading
+    # (embedding model + FAISS index) does not block the HTTP response.
+    _react_init_event.clear()
+    _react_init_error = ""
+    _conv_loop = None
+
+    def _do_init():
+        global _conv_loop, _react_init_error
+        tao = None
+        try:
+            tao = TaoLoop(llm=_llm, executor=executor, tool_descriptions=tool_descriptions, cfg=cfg)
+            _conv_loop = ConvLoop(tao)
+        except Exception as exc:
+            _react_init_error = str(exc)
+        finally:
+            _react_init_event.set()
+        if tao is not None:
+            threading.Thread(target=tao.preload, daemon=True).start()
+
+    threading.Thread(target=_do_init, daemon=True).start()
+    return {"status": "initializing"}
+
+
+@app.get("/api/react/status")
+def react_status():
+    if not _react_init_event.is_set():
+        return {"status": "initializing"}
+    if _react_init_error:
+        return {"status": "error", "detail": _react_init_error}
+    return {"status": "ready"}
 
 
 @app.post("/api/react/restore")
@@ -520,22 +539,17 @@ def get_persona():
     profile = store.load_profile()
     d = _load_persona_cfg_dict()
     return {
-        "enabled":                    d.get("enabled", False),
-        "chronicle_enabled":          d.get("chronicle_enabled", True),
-        "profile":                    profile.to_dict(),
-        "chronicle_recent_in_prompt": d.get("chronicle_recent_in_prompt", 5),
-        "max_chronicle_entries":      d.get("max_chronicle_entries", 100),
-        "max_profile_chars":          d.get("max_profile_chars", 500),
-        "max_chronicle_entry_chars":  d.get("max_chronicle_entry_chars", 200),
-        "max_chronicle_render_chars": d.get("max_chronicle_render_chars", 800),
-        "evolution_enabled":          d.get("evolution_enabled", False),
-        "evolve_interval":            d.get("evolve_interval", 1),
-        "skills_enabled":             d.get("skills_enabled", True),
-        "max_skills_in_prompt":       d.get("max_skills_in_prompt", 5),
-        "max_skills_chars":           d.get("max_skills_chars", 600),
-        "reflection_enabled":         d.get("reflection_enabled", False),
-        "reflect_interval":           d.get("reflect_interval", 3),
-        "max_reflection_chars":       d.get("max_reflection_chars", 400),
+        "enabled":           d.get("enabled", False),
+        "profile":           profile.to_dict(),
+        "max_profile_chars": d.get("max_profile_chars", 500),
+        "evolution_enabled": d.get("evolution_enabled", False),
+        "evolve_interval":   d.get("evolve_interval", 1),
+        "skills_enabled":    d.get("skills_enabled", True),
+        "max_skills_in_prompt": d.get("max_skills_in_prompt", 5),
+        "max_skills_chars":  d.get("max_skills_chars", 600),
+        "reflection_enabled": d.get("reflection_enabled", False),
+        "reflect_interval":  d.get("reflect_interval", 3),
+        "max_reflection_chars": d.get("max_reflection_chars", 400),
     }
 
 
@@ -553,34 +567,20 @@ def save_persona(req: PersonaSaveRequest):
         style=req.style,
     ))
     cfg_data = {
-        "enabled":                    req.enabled,
-        "chronicle_enabled":          req.chronicle_enabled,
-        "chronicle_recent_in_prompt": req.chronicle_recent_in_prompt,
-        "max_chronicle_entries":      req.max_chronicle_entries,
-        "max_profile_chars":          req.max_profile_chars,
-        "max_chronicle_entry_chars":  req.max_chronicle_entry_chars,
-        "max_chronicle_render_chars": req.max_chronicle_render_chars,
-        "evolution_enabled":          req.evolution_enabled,
-        "evolve_interval":            req.evolve_interval,
-        "skills_enabled":             req.skills_enabled,
-        "max_skills_in_prompt":       req.max_skills_in_prompt,
-        "max_skills_chars":           req.max_skills_chars,
-        "reflection_enabled":         req.reflection_enabled,
-        "reflect_interval":           req.reflect_interval,
-        "max_reflection_chars":       req.max_reflection_chars,
+        "enabled":              req.enabled,
+        "max_profile_chars":    req.max_profile_chars,
+        "evolution_enabled":    req.evolution_enabled,
+        "evolve_interval":      req.evolve_interval,
+        "skills_enabled":       req.skills_enabled,
+        "max_skills_in_prompt": req.max_skills_in_prompt,
+        "max_skills_chars":     req.max_skills_chars,
+        "reflection_enabled":   req.reflection_enabled,
+        "reflect_interval":     req.reflect_interval,
+        "max_reflection_chars": req.max_reflection_chars,
     }
     with open(_PERSONA_CFG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg_data, f, ensure_ascii=False, indent=2)
     return {"status": "ok"}
-
-
-@app.get("/api/persona/chronicle")
-def get_persona_chronicle():
-    from react.persona.chronicle.store import ChronicleStore
-    d = _load_persona_cfg_dict()
-    store = ChronicleStore(_PERSONA_DIR)
-    chronicle = store.load_chronicle(d.get("max_chronicle_entries", 100))
-    return {"entries": chronicle.to_dict().get("entries", [])}
 
 
 # ── Conversation history ───────────────────────────────────────────────────────
