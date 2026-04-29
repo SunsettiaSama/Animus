@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from cache.config import CacheConfig
+from storage.config import StorageConfig
 from config import paths
 from config.knowledge.config import KnowledgeConfig
 from config.llm_core.config import LLMConfig
@@ -52,7 +52,7 @@ _react_init_error: str = ""
 
 _LLM_CONFIG_YAML    = str(paths.llm_config_yaml)
 _MEMORY_CONFIG_YAML = str(paths.memory_config_yaml)
-_CACHE              = CacheConfig(root=str(paths.cache_root))
+_CACHE              = StorageConfig(root=str(paths.cache_root))
 _HISTORY_DIR        = _CACHE.history_dir
 _PERSONA_DIR        = _CACHE.persona_dir
 _PERSONA_CFG_FILE   = os.path.join(_PERSONA_DIR, "persona_config.json")
@@ -414,7 +414,7 @@ def react_init(req: ReactInitRequest):
 
     cfg = TaoConfig(
         max_steps=req.max_steps,
-        cache=_CACHE,
+        storage=_CACHE,
         prompt=PromptConfig(lang=req.lang),
         memory=_load_memory_config(),
         persona=_load_persona_config(),
@@ -485,6 +485,17 @@ def react_memory_clear():
         return JSONResponse(status_code=400, content={"error": "ReAct not initialized."})
     _conv_loop._tao.clear_memory()
     return {"status": "ok", "message": "所有记忆已清空。"}
+
+
+@app.post("/api/react/persona/clear")
+def react_persona_clear():
+    """Delete persona drift files (profile/skills/reflection/preference) and reset state."""
+    if _conv_loop is None:
+        return JSONResponse(status_code=400, content={"error": "ReAct not initialized."})
+    if _conv_loop._tao._persona is None:
+        return JSONResponse(status_code=400, content={"error": "Persona not enabled."})
+    _conv_loop._tao.clear_persona()
+    return {"status": "ok", "message": "人格漂移数据已清空。"}
 
 
 @app.post("/api/react/run")
@@ -832,11 +843,17 @@ def kb_list_documents():
 
 
 @app.get("/api/kb/search")
-def kb_search(q: str, top_k: int = 5):
+def kb_search(q: str, top_k: int = 5, top_k_each: int = 3, mode: str = "hybrid"):
     kb = _get_kb()
-    results = kb.search(q, top_k=top_k)
+    if mode == "keyword":
+        results = kb.search_keyword(q, top_k=top_k)
+    elif mode == "semantic":
+        results = kb.search_semantic(q, top_k=top_k)
+    else:
+        results = kb.hybrid_search(q, top_k_each=top_k_each)
     return {
-        "query":   q,
+        "query":  q,
+        "mode":   mode,
         "results": [
             {
                 "chunk_id": r.chunk_id,
@@ -900,6 +917,9 @@ class TTSConfigSaveRequest(BaseModel):
     openai_api_key: str = ""
     kokoro_model_path: str = ""
     kokoro_device: str = "auto"
+    kokoro_hf_repo_id: str = "hexgrad/Kokoro-82M"
+    hf_endpoint: str = ""
+    hf_token: str = ""
 
 
 class STTConfigSaveRequest(BaseModel):
@@ -912,6 +932,9 @@ class STTConfigSaveRequest(BaseModel):
     local_model_path: str = ""
     local_device: str = "auto"
     local_compute_type: str = "int8"
+    local_hf_repo_id: str = ""
+    hf_endpoint: str = ""
+    hf_token: str = ""
 
 
 def _get_tts():
@@ -961,6 +984,9 @@ def get_tts_config():
         "openai_api_key":    cfg.openai_api_key,
         "kokoro_model_path": cfg.kokoro_model_path,
         "kokoro_device":     cfg.kokoro_device,
+        "kokoro_hf_repo_id": cfg.kokoro_hf_repo_id,
+        "hf_endpoint":       cfg.hf_endpoint,
+        "hf_token":          cfg.hf_token,
     }
 
 
@@ -979,10 +1005,12 @@ def save_tts_config(req: TTSConfigSaveRequest):
         "openai_api_key":    req.openai_api_key,
         "kokoro_model_path": req.kokoro_model_path,
         "kokoro_device":     req.kokoro_device,
+        "kokoro_hf_repo_id": req.kokoro_hf_repo_id,
+        "hf_endpoint":       req.hf_endpoint,
+        "hf_token":          req.hf_token,
     }
     with open(paths.tts_config_yaml, "w", encoding="utf-8") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
-    # Reset cached engine so next call picks up new config
     global _tts_engine
     _tts_engine = None
     return {"status": "ok"}
@@ -1006,6 +1034,9 @@ def get_stt_config():
         "local_model_path":   cfg.local_model_path,
         "local_device":       cfg.local_device,
         "local_compute_type": cfg.local_compute_type,
+        "local_hf_repo_id":   cfg.local_hf_repo_id,
+        "hf_endpoint":        cfg.hf_endpoint,
+        "hf_token":           cfg.hf_token,
     }
 
 
@@ -1023,10 +1054,12 @@ def save_stt_config(req: STTConfigSaveRequest):
         "local_model_path":   req.local_model_path,
         "local_device":       req.local_device,
         "local_compute_type": req.local_compute_type,
+        "local_hf_repo_id":   req.local_hf_repo_id,
+        "hf_endpoint":        req.hf_endpoint,
+        "hf_token":           req.hf_token,
     }
     with open(paths.stt_config_yaml, "w", encoding="utf-8") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
-    # Reset cached engine so next call picks up new config
     global _stt_engine
     _stt_engine = None
     return {"status": "ok"}
@@ -1061,6 +1094,84 @@ async def stt_transcribe(audio: UploadFile = File(...)):
     mime = audio.content_type or "audio/webm"
     text = await engine.transcribe(data, mime)
     return {"text": text}
+
+
+@app.get("/api/tts/download")
+def tts_download():
+    """Stream Kokoro model download progress as SSE."""
+    from config.tts.tts_config import TTSConfig
+    cfg = (
+        TTSConfig.from_yaml(str(paths.tts_config_yaml))
+        if paths.tts_config_yaml.exists()
+        else TTSConfig()
+    )
+    repo_id  = cfg.kokoro_hf_repo_id or "hexgrad/Kokoro-82M"
+    safe     = repo_id.replace("/", "--")
+    local_dir = os.path.join("models", "kokoro", safe)
+
+    def generate():
+        import queue, threading
+        q: queue.Queue = queue.Queue()
+
+        def _dl():
+            from huggingface_hub import snapshot_download
+            kw: dict = {"local_dir": local_dir}
+            if cfg.hf_endpoint:
+                kw["endpoint"] = cfg.hf_endpoint
+            if cfg.hf_token:
+                kw["token"] = cfg.hf_token
+            q.put(json.dumps({"status": "start", "repo": repo_id, "local_dir": local_dir}))
+            path = snapshot_download(repo_id=repo_id, **kw)
+            q.put(json.dumps({"status": "done", "path": path}))
+
+        threading.Thread(target=_dl, daemon=True).start()
+        while True:
+            msg = q.get()
+            yield f"data: {msg}\n\n"
+            if json.loads(msg).get("status") in ("done", "error"):
+                break
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/stt/download")
+def stt_download():
+    """Stream faster-whisper model download progress as SSE."""
+    from config.tts.stt_config import STTConfig
+    cfg = (
+        STTConfig.from_yaml(str(paths.stt_config_yaml))
+        if paths.stt_config_yaml.exists()
+        else STTConfig()
+    )
+    repo_id  = cfg.local_hf_repo_id or f"Systran/faster-whisper-{cfg.local_model_size}"
+    safe     = repo_id.replace("/", "--")
+    local_dir = os.path.join("models", "whisper", safe)
+
+    def generate():
+        import queue, threading
+        q: queue.Queue = queue.Queue()
+
+        def _dl():
+            from huggingface_hub import snapshot_download
+            kw: dict = {"local_dir": local_dir}
+            if cfg.hf_endpoint:
+                kw["endpoint"] = cfg.hf_endpoint
+            if cfg.hf_token:
+                kw["token"] = cfg.hf_token
+            q.put(json.dumps({"status": "start", "repo": repo_id, "local_dir": local_dir}))
+            path = snapshot_download(repo_id=repo_id, **kw)
+            q.put(json.dumps({"status": "done", "path": path}))
+
+        threading.Thread(target=_dl, daemon=True).start()
+        while True:
+            msg = q.get()
+            yield f"data: {msg}\n\n"
+            if json.loads(msg).get("status") in ("done", "error"):
+                break
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.websocket("/ws/stt")

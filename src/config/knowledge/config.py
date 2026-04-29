@@ -1,13 +1,33 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
+
+
+def _env(key: str, fallback: str) -> str:
+    return os.environ.get(key, fallback)
 
 
 @dataclass
 class KnowledgeConfig:
-    mysql_url: str = "mysql+pymysql://root:password@localhost:3306/knowledge"
-    redis_url: str = "redis://localhost:6379/0"
-    qdrant_path: str = ".react/knowledge_base/qdrant"
+    mysql_url: str = field(
+        default_factory=lambda: _env(
+            "MYSQL_URL",
+            "mysql+pymysql://root:password@localhost:3306/knowledge",
+        )
+    )
+    redis_url: str = field(
+        default_factory=lambda: _env(
+            "REDIS_URL",
+            "redis://localhost:6379/0",
+        )
+    )
+    qdrant_path: str = field(
+        default_factory=lambda: _env(
+            "QDRANT_PATH",
+            ".react/knowledge_base/qdrant",
+        )
+    )
     collection_name: str = "knowledge"
 
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
@@ -34,9 +54,18 @@ class KnowledgeConfig:
     @classmethod
     def from_dict(cls, d: dict) -> KnowledgeConfig:
         return cls(
-            mysql_url=d.get("mysql_url", "mysql+pymysql://root:password@localhost:3306/knowledge"),
-            redis_url=d.get("redis_url", "redis://localhost:6379/0"),
-            qdrant_path=d.get("qdrant_path", ".react/knowledge_base/qdrant"),
+            mysql_url=d.get("mysql_url") or _env(
+                "MYSQL_URL",
+                "mysql+pymysql://root:password@localhost:3306/knowledge",
+            ),
+            redis_url=d.get("redis_url") or _env(
+                "REDIS_URL",
+                "redis://localhost:6379/0",
+            ),
+            qdrant_path=d.get("qdrant_path") or _env(
+                "QDRANT_PATH",
+                ".react/knowledge_base/qdrant",
+            ),
             collection_name=d.get("collection_name", "knowledge"),
             embedding_model=d.get("embedding_model", "BAAI/bge-small-zh-v1.5"),
             device=d.get("device", "auto"),

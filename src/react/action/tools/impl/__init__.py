@@ -5,6 +5,9 @@ from .knowledge_list import KnowledgeListAction
 from .knowledge_save import KnowledgeSaveAction
 from .memory_recall import MemoryRecallAction
 from .random_tool import GenerateUUIDAction, RandomChoiceAction, RandomNumberAction
+from .scheduler_add import SchedulerAddAction
+from .scheduler_cancel import SchedulerCancelAction
+from .scheduler_list import SchedulerListAction
 from .string_tool import Base64Action, HashAction, StringTransformAction
 from .unit_converter import UnitConverterAction
 from .weather import WeatherAction
@@ -23,6 +26,9 @@ __all__ = [
     "MemoryRecallAction",
     "RandomChoiceAction",
     "RandomNumberAction",
+    "SchedulerAddAction",
+    "SchedulerCancelAction",
+    "SchedulerListAction",
     "Base64Action",
     "HashAction",
     "StringTransformAction",

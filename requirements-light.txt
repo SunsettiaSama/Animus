@@ -1,27 +1,42 @@
 # =============================================================================
-# requirements-light.txt — API 部署专用（无本地 GPU 推理）
+# requirements-light.txt — Docker 默认构建（API 推理模式）
 #
-# 适用场景：通过 OpenAI / 兼容 API 调用 LLM，不在本地运行 HuggingFace 模型。
-# 比完整 requirements.txt 少约 4 GB（省去 torch / transformers / faiss-cpu）。
+# 与 requirements.txt 的区别：
+#   - 去除 faiss-cpu    （LTM 已迁移至 Qdrant；离线 CSV 建库工具不含在容器中）
+#   - 去除 accelerate   （本地 LLM 加速库，API 模式下无需）
+#   - transformers 由 sentence-transformers 自动拉取，不再显式列出
 #
-# 若需要长期记忆（本地向量库），取消注释 faiss-cpu / sentence-transformers。
+# 若需在容器内运行本地 HuggingFace LLM，切换到完整依赖：
+#   docker build --build-arg REQUIREMENTS=requirements.txt ...
 # =============================================================================
 
-# ── Web 服务 ───────────────────────────────────────────────────────────────
+# Web server
 fastapi
 uvicorn[standard]
 pydantic
 
-# ── LangChain ──────────────────────────────────────────────────────────────
+# LangChain core
 langchain-core
 langchain-community
 langchain-openai
 
-# ── 长期记忆向量库（可选，默认关闭） ──────────────────────────────────────
-# faiss-cpu
-# sentence-transformers
+# Embeddings（知识库 + 长期记忆均使用本地 BGE 向量化）
+torch
+sentence-transformers
 
-# ── 工具与网络 ─────────────────────────────────────────────────────────────
+# HuggingFace Hub
+huggingface-hub
+
+# Utilities
 pyyaml
 numpy
 httpx
+html2text
+
+# Knowledge base
+pymysql
+redis
+qdrant-client
+
+# TTS (default provider)
+edge-tts

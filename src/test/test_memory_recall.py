@@ -98,13 +98,21 @@ for _name in ("AIMessage", "HumanMessage", "SystemMessage", "BaseMessage"):
 # react.action 包：跳过 __init__.py（它会触发 ToolManager → manager.py 的完整导入链）
 _pkg_stub("react.action", REACT_DIR / "action")
 
-_lc_comm = _pkg_stub("langchain_community")
-_lc_emb  = _mod_stub("langchain_community.embeddings")
-_lc_vs   = _mod_stub("langchain_community.vectorstores")
-_lc_emb.HuggingFaceBgeEmbeddings = MagicMock(name="HuggingFaceBgeEmbeddings")
-_lc_vs.FAISS                      = MagicMock(name="FAISS")
-_lc_comm.embeddings               = _lc_emb
-_lc_comm.vectorstores             = _lc_vs
+# qdrant_client：桩住 store.py 依赖的 QdrantClient 和 models
+_qdrant = _pkg_stub("qdrant_client")
+_qdrant_models = _mod_stub("qdrant_client.models")
+_qdrant.QdrantClient = MagicMock(name="QdrantClient")
+for _mn in ("Distance", "FieldCondition", "Filter", "FilterSelector",
+            "MatchValue", "PointIdsList", "PointStruct", "VectorParams"):
+    setattr(_qdrant_models, _mn, MagicMock(name=_mn))
+_qdrant.models = _qdrant_models
+
+# embedding.embedder：桩住 Embedder 和 infer_dim
+_emb_pkg = _pkg_stub("embedding")
+_emb_embedder = _mod_stub("embedding.embedder")
+_emb_embedder.Embedder = MagicMock(name="Embedder")
+_emb_embedder.infer_dim = MagicMock(name="infer_dim", return_value=512)
+_emb_pkg.embedder = _emb_embedder
 
 # ─────────────────────────────────────────────────────────────────────────────
 

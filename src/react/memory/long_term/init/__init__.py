@@ -5,21 +5,16 @@ import os
 
 from config.react.memory.memory_config import LongTermMemoryConfig
 from react.memory.long_term.memory import LongTermMemory
-from react.memory.long_term.store import FAISS_INDEX_NAME, MEMORIES_FILE, LongTermStore, MemoryEntry
+from react.memory.long_term.store import MEMORIES_FILE, LongTermStore, MemoryEntry
 
 
 def load_store(cfg: LongTermMemoryConfig) -> LongTermStore:
-    json_path = os.path.join(cfg.memory_dir, MEMORIES_FILE)
-
     entries: list[MemoryEntry] = []
+    json_path = os.path.join(cfg.memory_dir, MEMORIES_FILE)
     if os.path.exists(json_path):
         with open(json_path, encoding="utf-8") as f:
             entries = [MemoryEntry(**item) for item in json.load(f)]
-
-    faiss_path = os.path.join(cfg.memory_dir, FAISS_INDEX_NAME + ".faiss")
-    pending_dir = cfg.memory_dir if (entries and os.path.exists(faiss_path)) else None
-
-    return LongTermStore(entries=entries, cfg=cfg, pending_faiss_dir=pending_dir)
+    return LongTermStore(entries=entries, cfg=cfg)
 
 
 def init_empty_store(cfg: LongTermMemoryConfig) -> LongTermStore:

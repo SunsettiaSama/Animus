@@ -9,6 +9,8 @@ from config.react.memory.retrieve_config import RetrieveConfig
 class LongTermMemoryConfig:
     enabled: bool = False
     memory_dir: str = ""
+    qdrant_path: str = ".react/memory/qdrant"
+    collection_name: str = "long_term_memory"
     load_from_disk: bool = True
     top_k: int = 5
     model_name_or_path: str = "BAAI/bge-small-zh-v1.5"
@@ -19,8 +21,6 @@ class LongTermMemoryConfig:
     consolidation_k: int = 0
     max_entry_chars: int = 2000
     max_recall_chars: int = 3000
-    # Distillation: if enabled, LLM extracts a knowledge summary before writing.
-    # If disabled, only the raw answer text is stored (question kept as metadata).
     distill_enabled: bool = False
     max_distill_tokens: int = 400
     retrieve: RetrieveConfig = field(default_factory=RetrieveConfig)
@@ -39,6 +39,8 @@ class LongTermMemoryConfig:
         return cls(
             enabled=bool(d.get("enabled", False)),
             memory_dir=d.get("memory_dir", ""),
+            qdrant_path=d.get("qdrant_path", ".react/memory/qdrant"),
+            collection_name=d.get("collection_name", "long_term_memory"),
             load_from_disk=bool(d.get("load_from_disk", True)),
             top_k=int(d.get("top_k", 5)),
             model_name_or_path=d.get("model_name_or_path", "BAAI/bge-small-zh-v1.5"),

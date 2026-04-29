@@ -162,3 +162,38 @@ class PersonaManager:
 
     def save_profile(self) -> None:
         self._profile_store.save_profile(self._profile)
+
+    def clear_drift(self) -> None:
+        """删除所有演化漂移文件（profile/skills/reflection/preference），并重置内存状态。
+
+        不删除 persona_config.json（用户手动配置的基础人格设定）。
+        """
+        import os
+        store = self._profile_store
+        pref_store = self._preference_store
+
+        for path in (
+            store._profile_path,
+            store._skills_path,
+            store._reflection_path,
+        ):
+            if path.exists():
+                os.remove(path)
+
+        pref_path = pref_store._path
+        if os.path.exists(pref_path):
+            os.remove(pref_path)
+
+        # Reset in-memory objects
+        from react.persona.profile.profile import PersonaProfile
+        from react.persona.profile.skills import SkillsLibrary
+        from react.persona.preference.recent import RecentPreference
+
+        self._profile = PersonaProfile()
+        self._skills = SkillsLibrary()
+        self._reflection = ""
+        self._recent_preference = RecentPreference(
+            window_days=self._cfg.preference_window_days,
+            max_topics=self._cfg.max_preference_topics,
+        )
+        self._turn_count = 0

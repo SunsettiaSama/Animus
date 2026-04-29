@@ -156,6 +156,22 @@ class TaoLoop:
             self._executor.register_instance(skill)
             effective_descriptions[skill.name] = skill.description
 
+        # Inject scheduler tools when a scheduler config is provided.
+        self._scheduler_engine = None
+        if cfg.scheduler is not None:
+            from scheduler.engine import SchedulerEngine
+            from react.action.tools.impl.scheduler_add import SchedulerAddAction
+            from react.action.tools.impl.scheduler_list import SchedulerListAction
+            from react.action.tools.impl.scheduler_cancel import SchedulerCancelAction
+            self._scheduler_engine = SchedulerEngine(cfg.scheduler)
+            for action in (
+                SchedulerAddAction(engine=self._scheduler_engine),
+                SchedulerListAction(engine=self._scheduler_engine),
+                SchedulerCancelAction(engine=self._scheduler_engine),
+            ):
+                self._executor.register_instance(action)
+                effective_descriptions[action.name] = action.description
+
         self._manager = PromptManager(effective_descriptions, cfg.prompt, tool_category_summary)
 
         # Pre-assembled static prompt parts for the next turn.
@@ -422,6 +438,12 @@ class TaoLoop:
             self._milestone._store._entries.clear()
         if self._medium_term is not None:
             self._medium_term._entries.clear()
+
+    def clear_persona(self) -> None:
+        """删除人格漂移数据（profile / skills / reflection / preference），重置内存状态。"""
+        if self._persona is None:
+            raise RuntimeError("Persona not enabled.")
+        self._persona.clear_drift()
 
     def run(self, question: str) -> str:
         for event in self.stream(question):

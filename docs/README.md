@@ -10,10 +10,23 @@
 src/
 ├── config/                  # 所有模块的配置 dataclass
 │   ├── llm_core/            # LLM 核心配置
+│   ├── knowledge/           # 知识库配置（MySQL / Redis / Qdrant / 嵌入）
+│   ├── tts/                 # TTS / STT 配置
 │   └── react/               # ReAct 各子模块配置
 │       ├── memory/          # 记忆模块配置（short/medium/long/milestone）
 │       └── persona_config   # 人格配置（含近期偏好字段）
 ├── llm_core/                # LLM 抽象层（本地 + OpenAI API）
+├── knowledge/               # 知识库（MySQL + Redis + Qdrant）
+│   ├── store.py             # MySQL CRUD（documents / content_blobs / doc_chunks）
+│   ├── vector_store.py      # Qdrant 向量索引
+│   ├── cache.py             # Redis 缓存（查询 / chunk / 版本）
+│   ├── embedder.py          # BGE 嵌入模型（懒加载，线程安全）
+│   ├── ingestion.py         # 写入：分块 → 嵌入 → MySQL + Qdrant
+│   ├── retriever.py         # 检索：keyword / semantic / hybrid
+│   └── schema.sql           # MySQL 建表脚本
+├── tts/                     # 语音合成 / 识别
+│   ├── tts/                 # TTSEngine + Edge / OpenAI / Kokoro providers
+│   └── stt/                 # STTEngine + OpenAI / faster-whisper providers
 ├── react/                   # ReAct 核心框架
 │   ├── action/              # 动作空间（工具 + MCP + Skill）
 │   ├── memory/              # 三层记忆系统
@@ -30,7 +43,7 @@ src/
 │   ├── tao.py               # TaoLoop  — 内层 TAO 推理循环
 │   └── parser.py            # LLM 输出解析
 ├── embedding/               # BGE 嵌入模型（FAISS 索引构建辅助）
-├── cache/                   # 缓存根目录配置（CacheConfig）
+├── storage/                 # 本地文件存储根目录配置（StorageConfig）
 ├── webui/                   # Web 前端（FastAPI + 单页 HTML）
 └── test/                    # 测试套件
 ```
@@ -52,7 +65,9 @@ src/
 | `react/persona/preference` | ✅ | 短期偏好动态层（mood / 话题兴趣 / 风格偏移），影响 L3 检索偏置 |
 | `react/trace` | ✅ | 推理链存档（`.react/traces/`）|
 | `react/loop` | ✅ | ConvLoop + TaoLoop 两层循环，异步后台提交，Prompt 预热 |
-| `webui` | ✅ | ReAct + 普通对话双模式，Prompt 预览，人格配置，历史管理 |
+| `knowledge` | ✅ | MySQL 文档存储 + Qdrant 向量索引 + Redis 缓存，keyword / semantic / hybrid 三种检索 |
+| `tts` | ✅ | TTS（Edge / OpenAI / Kokoro）+ STT（OpenAI / faster-whisper）语音模块 |
+| `webui` | ✅ | ReAct + 普通对话双模式，知识库独立面板，TTS/STT，Prompt 预览，历史管理 |
 | `test` | ✅ | 记忆模块 27 用例（含时序检索 + 模式检测）+ 工具测试 |
 
 ---
@@ -162,10 +177,12 @@ python src/run.py --port 8080
 |---|---|
 | [react/README.md](./react/README.md) | 完整链路：两层循环、三层记忆、Prompt、Persona、Trace |
 | [react/persona/README.md](./react/persona/README.md) | 人格演化引擎详解（稳定层 + 动态层）|
-| [cache/README.md](./cache/README.md) | 本地文件缓存管理（目录结构、路径配置、写入时序）|
 | [react/action/README.md](./react/action/README.md) | 工具注册与 Pydantic 校验 |
 | [react/memory/README.md](./react/memory/README.md) | 三层记忆系统（含 L2 里程碑）|
 | [react/prompt/README.md](./react/prompt/README.md) | 块驱动 Prompt 组装 |
+| [knowledge/README.md](./knowledge/README.md) | 知识库：MySQL + Redis + Qdrant，三种检索模式 |
+| [tts/README.md](./tts/README.md) | TTS / STT 引擎与 Provider 配置 |
 | [llm_core/README.md](./llm_core/README.md) | LLM 抽象层 |
 | [webui/README.md](./webui/README.md) | Web 界面与 API |
+| [cache/README.md](./cache/README.md) | 本地文件缓存管理 |
 | [test/README.md](./test/README.md) | 测试覆盖说明 |

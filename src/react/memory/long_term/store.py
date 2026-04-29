@@ -7,14 +7,20 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_core.documents import Document
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PointStruct,
+    VectorParams,
+)
 
 from config.react.memory.memory_config import LongTermMemoryConfig
+from embedding.embedder import Embedder, infer_dim
 
 MEMORIES_FILE = "memories.json"
-FAISS_INDEX_NAME = "memory_index"
 
 
 def _trunc(text: str, limit: int) -> str:
@@ -22,7 +28,6 @@ def _trunc(text: str, limit: int) -> str:
 
 
 def _fmt_ts(iso: str) -> str:
-    """Convert ISO timestamp to human-readable '[YYYY-MM-DD HH:MM UTC]'."""
     return iso[:16].replace("T", " ") + " UTC"
 
 
@@ -44,158 +49,161 @@ class MemoryEntry:
 
 
 class LongTermStore:
-    """线程安全的长期记忆存储。
+    """线程安全的长期记忆存储，向量后端为 Qdrant（本地嵌入式）。
 
-    内部持有一把 RLock，保护以下共享状态：
-    - _embeddings       （lazy 初始化，防止多线程双重构造）
-    - _vectorstore      （FAISS index，add / search / save 均需持锁）
-    - _entries          （条目列表，add / save 均需持锁）
-    - _pending_faiss_dir（懒加载路径；首次 add/search 时才真正加载 FAISS 索引）
+    懒加载设计：init 阶段仅记录配置，不加载嵌入模型；首次 add/search 时
+    才真正初始化 Embedder 和 QdrantClient。
 
-    懒加载设计：init 阶段仅记录磁盘路径，不加载嵌入模型；首次使用时
-    调用 _maybe_load_faiss() 完成真正的 FAISS + embeddings 初始化，从而
-    避免在 TaoLoop 构造期间同步阻塞数十秒。
-
-    典型并发场景：
-    - 后台 post_process 线程调用 add() + save()
-    - asyncio/stream 线程调用 recall() / search_with_scores()
-    RLock 保证两者不交错执行，且同线程内 add() → _get_embeddings() 不死锁。
+    _entries 列表维护插入顺序，用于时间线回溯（recall_timeline）；
+    Qdrant 集合负责语义向量检索，自动持久化到 cfg.qdrant_path。
     """
 
     def __init__(
         self,
         entries: list[MemoryEntry],
         cfg: LongTermMemoryConfig,
-        vectorstore: FAISS | None = None,
-        pending_faiss_dir: str | None = None,
     ):
         self._entries = entries
         self._cfg = cfg
-        self._vectorstore: FAISS | None = vectorstore
-        self._embeddings: HuggingFaceBgeEmbeddings | None = None
-        self._pending_faiss_dir: str | None = pending_faiss_dir
+        self._embedder: Embedder | None = None
+        self._client: QdrantClient | None = None
+        self._collection_ready = False
         self._lock = threading.RLock()
 
-    # ── Embeddings (lazy, thread-safe) ────────────────────────────────────────
+    # ── Lazy init ─────────────────────────────────────────────────────────────
 
-    def _get_embeddings(self) -> HuggingFaceBgeEmbeddings:
+    def _get_embedder(self) -> Embedder:
         with self._lock:
-            if self._embeddings is None:
-                import torch
-
-                device = self._cfg.device
-                if device == "auto":
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-                # `low_cpu_mem_usage` and `torch_dtype` must be nested inside
-                # model_kwargs["model_kwargs"] — SentenceTransformer forwards
-                # that dict to AutoModel.from_pretrained, while the outer
-                # model_kwargs is unpacked directly as ST.__init__() kwargs.
-                inner: dict = {"low_cpu_mem_usage": False}
-                if self._cfg.use_fp16 and device != "cpu":
-                    inner["torch_dtype"] = torch.float16
-
-                self._embeddings = HuggingFaceBgeEmbeddings(
+            if self._embedder is None:
+                self._embedder = Embedder(
                     model_name=self._cfg.model_name_or_path,
-                    model_kwargs={"device": device, "model_kwargs": inner},
-                    encode_kwargs={"normalize_embeddings": True},
-                    embed_instruction=self._cfg.passage_prefix,
-                    query_instruction=self._cfg.query_prefix,
+                    device=self._cfg.device,
+                    use_fp16=self._cfg.use_fp16,
+                    batch_size=32,
+                    query_prefix=self._cfg.query_prefix,
+                    passage_prefix=self._cfg.passage_prefix,
                 )
-            return self._embeddings
+        return self._embedder
 
-    # ── Lazy FAISS loading ────────────────────────────────────────────────────
+    def _get_client(self) -> QdrantClient:
+        with self._lock:
+            if self._client is None:
+                os.makedirs(self._cfg.qdrant_path, exist_ok=True)
+                self._client = QdrantClient(path=self._cfg.qdrant_path)
+        return self._client
 
-    def _maybe_load_faiss(self) -> None:
-        """若存在挂起的 FAISS 路径且尚未加载，则在持锁状态下完成懒加载。
+    def _ensure_collection(self) -> None:
+        client = self._get_client()
+        with self._lock:
+            if self._collection_ready:
+                return
+            existing = {c.name for c in client.get_collections().collections}
+            if self._cfg.collection_name not in existing:
+                dim = infer_dim(self._cfg.model_name_or_path)
+                client.create_collection(
+                    collection_name=self._cfg.collection_name,
+                    vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
+                )
+            self._collection_ready = True
 
-        调用方必须已持有 self._lock（RLock 可重入，此处不会死锁）。
-        """
-        if self._pending_faiss_dir is None or self._vectorstore is not None:
-            return
-        faiss_path = os.path.join(self._pending_faiss_dir, FAISS_INDEX_NAME + ".faiss")
-        if not os.path.exists(faiss_path):
-            self._pending_faiss_dir = None
-            return
-        embeddings = self._get_embeddings()
-        self._vectorstore = FAISS.load_local(
-            self._pending_faiss_dir,
-            embeddings,
-            FAISS_INDEX_NAME,
-            allow_dangerous_deserialization=True,
-        )
-        self._pending_faiss_dir = None
+    # ── Preload ───────────────────────────────────────────────────────────────
 
     def preload(self) -> None:
-        """后台预热：主动触发 FAISS 懒加载和嵌入模型初始化。
-
-        在 init 完成后由后台线程调用，确保首条用户消息到达时模型已就绪。
-        """
-        with self._lock:
-            self._maybe_load_faiss()
-            if self._entries:
-                self._get_embeddings()
-
-    # ── Index ──────────────────────────────────────────────────────────────────
-
-    def rebuild_index(self) -> None:
+        """后台预热：初始化 Embedder 和 Qdrant，检测数据一致性并在必要时重建。"""
+        self._ensure_collection()
+        client = self._get_client()
         with self._lock:
             if not self._entries:
-                self._vectorstore = None
                 return
-            embeddings = self._get_embeddings()
-            docs = [
-                Document(
-                    page_content=e.text,
-                    metadata={"id": e.id, "created_at": e.created_at, **e.meta},
-                )
-                for e in self._entries
-            ]
-            self._vectorstore = FAISS.from_documents(docs, embeddings)
+            info = client.get_collection(self._cfg.collection_name)
+            stored = info.points_count or 0
+        if stored != len(self._entries):
+            self.rebuild_index()
+        else:
+            self._get_embedder()
+
+    # ── Index ─────────────────────────────────────────────────────────────────
+
+    def rebuild_index(self) -> None:
+        """将 _entries 全量重新写入 Qdrant 集合。"""
+        with self._lock:
+            entries = list(self._entries)
+        if not entries:
+            return
+        self._ensure_collection()
+        embedder = self._get_embedder()
+        client = self._get_client()
+        texts = [e.text for e in entries]
+        vectors = embedder.embed_documents(texts)
+        points = [
+            PointStruct(
+                id=e.id,
+                vector=vec,
+                payload={"text": e.text, "created_at": e.created_at, **e.meta},
+            )
+            for e, vec in zip(entries, vectors)
+        ]
+        client.upsert(collection_name=self._cfg.collection_name, points=points)
 
     # ── Write ──────────────────────────────────────────────────────────────────
 
     def add(self, text: str, **meta) -> MemoryEntry:
         text = _trunc(text, self._cfg.max_entry_chars)
         entry = MemoryEntry.new(text, **meta)
-        doc = Document(
-            page_content=text,
-            metadata={"id": entry.id, "created_at": entry.created_at, **meta},
+        self._ensure_collection()
+        embedder = self._get_embedder()
+        vector = embedder.embed_documents([text])[0]
+        point = PointStruct(
+            id=entry.id,
+            vector=vector,
+            payload={"text": text, "created_at": entry.created_at, **meta},
         )
         with self._lock:
             self._entries.append(entry)
-            self._maybe_load_faiss()
-            embeddings = self._get_embeddings()
-            if self._vectorstore is None:
-                self._vectorstore = FAISS.from_documents([doc], embeddings)
-            else:
-                self._vectorstore.add_documents([doc])
+            self._get_client().upsert(
+                collection_name=self._cfg.collection_name, points=[point]
+            )
         return entry
 
     # ── Search ─────────────────────────────────────────────────────────────────
 
     def search_with_scores(self, query: str, top_k: int) -> list[tuple[float, str]]:
         with self._lock:
-            self._maybe_load_faiss()
-            if self._vectorstore is None or not self._entries:
+            if not self._entries:
                 return []
-            results = self._vectorstore.similarity_search_with_relevance_scores(
-                query, k=top_k
-            )
+        self._ensure_collection()
+        vector = self._get_embedder().embed_query(query)
+        hits = self._get_client().query_points(
+            collection_name=self._cfg.collection_name,
+            query=vector,
+            limit=top_k,
+            with_payload=True,
+        ).points
         return [
-            (float(score), f"[{_fmt_ts(doc.metadata.get('created_at', ''))}]\n{doc.page_content}")
-            for doc, score in results
+            (
+                float(hit.score),
+                f"[{_fmt_ts((hit.payload or {}).get('created_at', ''))}]\n"
+                f"{(hit.payload or {}).get('text', '')}",
+            )
+            for hit in hits
         ]
 
     def recall(self, query: str) -> str:
         with self._lock:
-            self._maybe_load_faiss()
-            if self._vectorstore is None or not self._entries:
+            if not self._entries:
                 return ""
-            results = self._vectorstore.similarity_search(query, k=self._cfg.top_k)
+        self._ensure_collection()
+        vector = self._get_embedder().embed_query(query)
+        hits = self._get_client().query_points(
+            collection_name=self._cfg.collection_name,
+            query=vector,
+            limit=self._cfg.top_k,
+            with_payload=True,
+        ).points
         text = "\n\n".join(
-            f"[{_fmt_ts(doc.metadata.get('created_at', ''))}]\n{doc.page_content}"
-            for doc in results
+            f"[{_fmt_ts((hit.payload or {}).get('created_at', ''))}]\n"
+            f"{(hit.payload or {}).get('text', '')}"
+            for hit in hits
         )
         return _trunc(text, self._cfg.max_recall_chars)
 
@@ -206,8 +214,6 @@ class LongTermStore:
             os.makedirs(self._cfg.memory_dir, exist_ok=True)
             json_path = os.path.join(self._cfg.memory_dir, MEMORIES_FILE)
             snapshot = list(self._entries)
-            vectorstore = self._vectorstore
-
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(
                 [asdict(e) for e in snapshot],
@@ -215,16 +221,10 @@ class LongTermStore:
                 ensure_ascii=False,
                 indent=2,
             )
-        if vectorstore is not None:
-            vectorstore.save_local(self._cfg.memory_dir, FAISS_INDEX_NAME)
 
     # ── Timeline ───────────────────────────────────────────────────────────────
 
     def recall_timeline(self, n: int = 5) -> list[tuple[str, str]]:
-        """Return the n most recent entries as (created_at, text), oldest-first.
-
-        Bypasses FAISS — directly reads the insertion-ordered ``_entries`` list.
-        """
         with self._lock:
             recent = list(self._entries[-n:]) if n > 0 else list(self._entries)
         return [(e.created_at, e.text) for e in recent]

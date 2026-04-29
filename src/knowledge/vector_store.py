@@ -16,11 +16,7 @@ from qdrant_client.models import (
 )
 
 from config.knowledge.config import KnowledgeConfig
-
-_BGE_DIMS: dict[str, int] = {
-    "large": 1024,
-    "base": 768,
-}
+from embedding.embedder import infer_dim
 
 
 @dataclass
@@ -42,13 +38,7 @@ class KnowledgeVectorStore:
 
     def _get_dim(self) -> int:
         if self._dim is None:
-            model = self._cfg.embedding_model.lower()
-            for key, dim in _BGE_DIMS.items():
-                if key in model:
-                    self._dim = dim
-                    break
-            else:
-                self._dim = 512
+            self._dim = infer_dim(self._cfg.embedding_model)
         return self._dim
 
     def ensure_collection(self) -> None:
@@ -98,13 +88,13 @@ class KnowledgeVectorStore:
             query_filter = Filter(
                 must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id_filter))]
             )
-        hits = self._client.search(
+        hits = self._client.query_points(
             collection_name=self._cfg.collection_name,
-            query_vector=vector,
+            query=vector,
             limit=top_k,
             query_filter=query_filter,
             with_payload=True,
-        )
+        ).points
         results = []
         for hit in hits:
             payload = hit.payload or {}

@@ -3,29 +3,29 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from cache.config import CacheConfig
+from storage.config import StorageConfig
 from config.llm_core.config import LLMConfig
 from config.react.tao_config import TaoConfig
 
 
 @dataclass
 class AppConfig:
-    cache: CacheConfig = field(default_factory=CacheConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
     llm: LLMConfig = field(default_factory=lambda: LLMConfig(model=""))
     react: TaoConfig = field(default_factory=TaoConfig)
 
     @classmethod
     def from_dict(cls, data: dict, base_dir: str | None = None) -> AppConfig:
-        cache_data = dict(data.get("cache", {}))
-        root = cache_data.get("root", ".react")
+        storage_data = dict(data.get("cache", {}))
+        root = storage_data.get("root", ".react")
         if base_dir and not os.path.isabs(root):
             root = os.path.join(base_dir, root)
-        cache_data["root"] = root
-        cache = CacheConfig.from_dict(cache_data)
+        storage_data["root"] = root
+        storage = StorageConfig.from_dict(storage_data)
 
         llm = LLMConfig.from_dict(data.get("llm", {}))
-        react = TaoConfig.from_dict(data.get("react", {}), cache=cache)
-        return cls(cache=cache, llm=llm, react=react)
+        react = TaoConfig.from_dict(data.get("react", {}), storage=storage)
+        return cls(storage=storage, llm=llm, react=react)
 
     @classmethod
     def load(cls, path: str, base_dir: str | None = None) -> AppConfig:

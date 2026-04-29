@@ -21,9 +21,9 @@
   ├── recall 返回三层聚合结果
   └── commit 写入长期并 save
 
-不依赖任何外部服务（无 LLM API、无 FAISS/BGE、无磁盘写入）。
+不依赖任何外部服务（无 LLM API、无 Qdrant/BGE、无磁盘写入）。
 运行方式：
-  cd G:/ReAct
+  cd E:/ReAct
   python -m pytest src/test/test_memory.py -v
   # 或直接：
   python src/test/test_memory.py
@@ -43,12 +43,13 @@ from unittest.mock import MagicMock
 # 问题：react/__init__.py 会 import TaoLoop，这触发了
 #   tao.py → react.parser → langchain_core → transformers → (torch check)
 # 以及
-#   long_term/store.py → langchain_community（未安装）
+#   long_term/store.py → qdrant_client / embedding.embedder（重型依赖）
 #
 # 解决：
 #   1. 把 react 本身替换为一个"有路径的空壳包"，让 Python 跳过 __init__.py，
 #      但仍能通过 __path__ 找到真正的子模块。
-#   2. 对 langchain_community 打最小化的桩，让 store.py 顶层导入不崩溃。
+#   2. 对 qdrant_client 和 embedding.embedder 打最小化的桩，让 store.py 顶层
+#      导入不崩溃。
 # ────────────────────────────────────────────────────────────────────────────────
 
 SRC = Path(__file__).resolve().parent.parent
@@ -80,14 +81,21 @@ def _mod_stub(dotted_name: str) -> types.ModuleType:
 # 1. react 包：跳过 __init__.py，但保留真实 __path__ 让子模块可寻
 _pkg_stub("react", REACT_DIR)
 
-# 2. langchain_community：未安装，桩住 store.py 依赖的两个子模块
-_lc_comm = _pkg_stub("langchain_community")
-_lc_emb  = _mod_stub("langchain_community.embeddings")
-_lc_vs   = _mod_stub("langchain_community.vectorstores")
-_lc_emb.HuggingFaceBgeEmbeddings = MagicMock(name="HuggingFaceBgeEmbeddings")
-_lc_vs.FAISS                      = MagicMock(name="FAISS")
-_lc_comm.embeddings               = _lc_emb
-_lc_comm.vectorstores             = _lc_vs
+# 2. qdrant_client：桩住 store.py 依赖的 QdrantClient 和 models
+_qdrant = _pkg_stub("qdrant_client")
+_qdrant_models = _mod_stub("qdrant_client.models")
+_qdrant.QdrantClient = MagicMock(name="QdrantClient")
+for _mn in ("Distance", "FieldCondition", "Filter", "FilterSelector",
+            "MatchValue", "PointIdsList", "PointStruct", "VectorParams"):
+    setattr(_qdrant_models, _mn, MagicMock(name=_mn))
+_qdrant.models = _qdrant_models
+
+# 3. embedding.embedder：桩住 Embedder 和 infer_dim
+_emb_pkg = _pkg_stub("embedding")
+_emb_embedder = _mod_stub("embedding.embedder")
+_emb_embedder.Embedder = MagicMock(name="Embedder")
+_emb_embedder.infer_dim = MagicMock(name="infer_dim", return_value=512)
+_emb_pkg.embedder = _emb_embedder
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -127,12 +135,12 @@ def make_short_only_cfg(max_turns: int = 5, max_tokens: int = 4096) -> MemoryCon
 def make_short_medium_cfg(
     max_turns: int = 3,
     max_tokens: int = 4096,
-    distill_trigger: int = 2,
+    distill_on_write: bool = False,
 ) -> MemoryConfig:
-    """启用短期 + 中期记忆的配置（中期蒸馏触发步数较小，便于测试）。"""
+    """启用短期 + 中期记忆的配置。distill_on_write 默认关闭，使中期不依赖 LLM。"""
     return MemoryConfig(
         short_term=ShortTermMemoryConfig(enabled=True, max_turns=max_turns, max_tokens=max_tokens),
-        medium_term=MediumTermMemoryConfig(enabled=True, distill_trigger_steps=distill_trigger),
+        medium_term=MediumTermMemoryConfig(enabled=True, distill_on_write=distill_on_write),
         long_term=LongTermMemoryConfig(enabled=False),
     )
 
@@ -149,6 +157,13 @@ def make_mock_long_term(recall_text: str = "[long-term recall]") -> MagicMock:
     lt = MagicMock()
     lt.smart_recall.return_value = recall_text
     return lt
+
+
+def make_mock_medium(distillate: str = "") -> MagicMock:
+    """返回带 append / render 的 mock RecentHistoryMemory。"""
+    medium = MagicMock()
+    medium.render.return_value = distillate
+    return medium
 
 
 # ─────────────────────────────────────────────
@@ -288,10 +303,11 @@ def test_processor_trace_accumulates():
 # ─────────────────────────────────────────────
 
 def test_processor_medium_absorbs_evicted():
-    """短期驱逐的步骤应进入中期记忆的 pending 队列。"""
+    """短期窗口滑动后，添加期间不调用 LLM；commit 前 medium.append 不被调用。"""
     mock_llm = make_mock_llm()
-    cfg = make_short_medium_cfg(max_turns=2, distill_trigger=100)  # trigger 高→不蒸馏
-    proc = MemoryProcessor(cfg, llm=mock_llm)
+    mock_medium = make_mock_medium()
+    cfg = make_short_medium_cfg(max_turns=2)
+    proc = MemoryProcessor(cfg, llm=mock_llm, medium_term=mock_medium)
 
     for i in range(4):
         proc.add(make_step(i))
@@ -301,26 +317,27 @@ def test_processor_medium_absorbs_evicted():
     assert len(result.short_term) == 2
     assert result.short_term[0].thought == "thought_2"
 
-    # LLM 尚未被调用（trigger 未达到）
+    # commit 未调用 → LLM 未被调用、medium.append 未被调用
     mock_llm.generate.assert_not_called()
+    mock_medium.append.assert_not_called()
     print("[OK] test_processor_medium_absorbs_evicted")
 
 
 def test_processor_medium_distills_when_triggered():
-    """驱逐步骤达到 distill_trigger_steps 后，LLM 应被调用进行蒸馏。"""
-    mock_llm = make_mock_llm("[distilled summary]")
-    cfg = make_short_medium_cfg(max_turns=2, distill_trigger=2)
-    proc = MemoryProcessor(cfg, llm=mock_llm)
+    """commit 时 medium.append 被调用一次；mock render 返回摘要，recall 中可取到。"""
+    mock_medium = make_mock_medium("[distilled summary]")
+    cfg = make_short_medium_cfg(max_turns=2)
+    proc = MemoryProcessor(cfg, llm=make_mock_llm(), medium_term=mock_medium)
 
-    # 添加 4 步：驱逐 step_0/step_1（共 2 步）→ 触发蒸馏
     for i in range(4):
         proc.add(make_step(i))
 
-    # LLM generate 应被调用
-    assert mock_llm.generate.call_count >= 1, "LLM should have been called to distill"
-    print(f"  LLM.generate called {mock_llm.generate.call_count} time(s)")
+    proc.commit("question", "answer")
 
-    # medium_term 蒸馏结果应出现在 recall 中
+    # commit → medium.append 被调用一次
+    mock_medium.append.assert_called_once_with("question", "answer")
+
+    # recall 中包含 medium_term render 的返回值
     result = proc.recall("q")
     assert result.medium_term == "[distilled summary]", (
         f"Expected distillate, got: {result.medium_term!r}"
@@ -329,21 +346,21 @@ def test_processor_medium_distills_when_triggered():
 
 
 def test_processor_commit_flushes_medium():
-    """commit 时应 flush 中期记忆（若有 pending 步骤则触发蒸馏）。"""
-    mock_llm = make_mock_llm("[flushed distillate]")
-    cfg = make_short_medium_cfg(max_turns=2, distill_trigger=100)  # 不自动触发
-    proc = MemoryProcessor(cfg, llm=mock_llm)
+    """commit 应调用 medium.append 将本轮 Q&A 写入中期记忆。"""
+    mock_medium = make_mock_medium()
+    cfg = make_short_medium_cfg(max_turns=2)
+    proc = MemoryProcessor(cfg, llm=make_mock_llm(), medium_term=mock_medium)
 
-    # 添加 3 步：step_0 被驱逐进中期 pending，但未达 trigger
+    # 添加 3 步，commit 前不写中期
     for i in range(3):
         proc.add(make_step(i))
 
-    assert mock_llm.generate.call_count == 0, "Should not distill before commit"
+    mock_medium.append.assert_not_called()
 
     proc.commit("my question", "my answer")
 
-    # commit → flush → LLM 被调用
-    assert mock_llm.generate.call_count >= 1, "commit should flush and call LLM"
+    # commit → medium.append 被调用，传入本轮 Q&A
+    mock_medium.append.assert_called_once_with("my question", "my answer")
     print("[OK] test_processor_commit_flushes_medium")
 
 
@@ -373,7 +390,8 @@ def test_processor_recall_includes_long_term():
 
 
 def test_processor_commit_writes_long_term():
-    """commit 应向 LongTermMemory.add 写入摘要并调用 save。"""
+    """commit 应向 LongTermMemory.add 写入 answer（distill_enabled=False 默认行为），
+    question 以 metadata 方式传入，并调用 save。"""
     mock_lt = make_mock_long_term()
     cfg = make_short_only_cfg()
     proc = MemoryProcessor(cfg, llm=None, long_term=mock_lt)
@@ -384,9 +402,12 @@ def test_processor_commit_writes_long_term():
 
     mock_lt.add.assert_called_once()
     written_text: str = mock_lt.add.call_args.args[0]
-    assert "用户问了什么" in written_text, "question should appear in long-term entry"
+    # distill_enabled=False 时写入内容为 answer 原文
     assert "Agent 回答了什么" in written_text, "answer should appear in long-term entry"
-    assert "thought_0" in written_text, "step thought should be included in trace"
+    # question 以 metadata 方式传入，不在正文中
+    assert mock_lt.add.call_args.kwargs.get("question") == "用户问了什么", (
+        "question should be passed as metadata kwarg"
+    )
 
     mock_lt.save.assert_called_once()
     print("[OK] test_processor_commit_writes_long_term")
@@ -441,13 +462,15 @@ def test_full_interaction_scenario():
     模拟一个 Agent 完整推理会话：
       Round 1: 3 步 → commit
       Round 2: 2 步 → commit
-    验证长期记忆写入两次、各含正确内容。
+    验证长期记忆写入两次（answer 为正文、question 为 metadata），
+    中期 append 每轮各调用一次。
     """
     mock_llm = make_mock_llm("[medium distillate]")
     mock_lt  = make_mock_long_term("[recalled from past]")
+    mock_medium = make_mock_medium("[medium render]")
 
-    cfg = make_short_medium_cfg(max_turns=3, distill_trigger=100)
-    proc = MemoryProcessor(cfg, llm=mock_llm, long_term=mock_lt)
+    cfg = make_short_medium_cfg(max_turns=3)
+    proc = MemoryProcessor(cfg, llm=mock_llm, long_term=mock_lt, medium_term=mock_medium)
 
     # ── Round 1 ──────────────────────────
     for i in range(3):
@@ -461,8 +484,10 @@ def test_full_interaction_scenario():
     assert mock_lt.add.call_count == 1
     assert mock_lt.save.call_count == 1
     entry_r1: str = mock_lt.add.call_args_list[0].args[0]
-    assert "round-1 question" in entry_r1
+    # distill_enabled=False → answer only in body
     assert "round-1 answer" in entry_r1
+    assert mock_lt.add.call_args_list[0].kwargs.get("question") == "round-1 question"
+    mock_medium.append.assert_called_once_with("round-1 question", "round-1 answer")
 
     proc.clear()
 
@@ -482,8 +507,9 @@ def test_full_interaction_scenario():
     assert mock_lt.add.call_count == 2
     assert mock_lt.save.call_count == 2
     entry_r2: str = mock_lt.add.call_args_list[1].args[0]
-    assert "round-2 question" in entry_r2
     assert "round-2 answer" in entry_r2
+    assert mock_lt.add.call_args_list[1].kwargs.get("question") == "round-2 question"
+    assert mock_medium.append.call_count == 2
 
     print("[OK] test_full_interaction_scenario")
 
@@ -493,11 +519,11 @@ def test_full_interaction_scenario():
 # ─────────────────────────────────────────────
 
 def _make_long_term_store():
-    """构建一个不依赖 FAISS / BGE 的 LongTermStore（vectorstore=None）。"""
+    """构建一个不依赖 Qdrant / BGE 的 LongTermStore（懒加载，不触发网络/磁盘）。"""
     from config.react.memory.memory_config import LongTermMemoryConfig
     from react.memory.long_term.store import LongTermStore
     cfg = LongTermMemoryConfig(enabled=True, load_from_disk=False, memory_dir=".test_mem")
-    return LongTermStore(entries=[], cfg=cfg, vectorstore=None)
+    return LongTermStore(entries=[], cfg=cfg)
 
 
 def _inject_entries(store, texts: list[str]) -> None:
@@ -560,7 +586,7 @@ def _make_long_term_memory():
     from react.memory.long_term.store import LongTermStore
     from react.memory.long_term.memory import LongTermMemory
     cfg = LongTermMemoryConfig(enabled=True, load_from_disk=False, memory_dir=".test_mem")
-    store = LongTermStore(entries=[], cfg=cfg, vectorstore=None)
+    store = LongTermStore(entries=[], cfg=cfg)
     return LongTermMemory(store=store, cfg=cfg), store
 
 

@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+from datetime import datetime, timedelta, timezone
+
+from scheduler.config import SchedulerConfig
+from scheduler.store import TaskStore
+from scheduler.task import ScheduledTask, TaskStatus
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_result(task: ScheduledTask, answer: str, scheduler_dir: str) -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"{task.id[:8]}_{ts}.json"
+    path = os.path.join(scheduler_dir, "results", filename)
+    payload = {
+        "task_id": task.id,
+        "task_name": task.name,
+        "instruction": task.instruction,
+        "executed_at": _utcnow_iso(),
+        "answer": answer,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return path
+
+
+class TaskRunner:
+    def __init__(self, cfg: SchedulerConfig):
+        self._cfg = cfg
+
+    async def run(self, task: ScheduledTask, store: TaskStore) -> None:
+        store.update(task.id, status=TaskStatus.running, last_run_at=_utcnow_iso())
+
+        tao_cfg = self._cfg.profiles.get(task.config_profile) or self._cfg.profiles.get("minimal")
+
+        answer = ""
+        error: str | None = None
+
+        def _run_sync() -> None:
+            nonlocal answer, error
+            from config.llm_core.config import LLMConfig
+            from llm_core.llm import LLM
+            from react.action.executor import ActionExecutor
+            from react.tao import FinishEvent, TaoLoop
+
+            llm = LLM(LLMConfig.from_yaml(self._cfg.llm_cfg_path))
+            executor = ActionExecutor()
+            tao = TaoLoop(llm, executor, tool_descriptions={}, cfg=tao_cfg)
+            for event in tao.stream(task.instruction):
+                if isinstance(event, FinishEvent):
+                    answer = event.answer
+            tao.post_process()
+
+        await asyncio.to_thread(_run_sync)
+
+        result_path = _write_result(task, answer, self._cfg.scheduler_dir)
+
+        if task.trigger.type == "interval" and task.trigger.interval_seconds:
+            next_run = datetime.now(timezone.utc) + timedelta(seconds=task.trigger.interval_seconds)
+            store.update(
+                task.id,
+                status=TaskStatus.pending,
+                next_run_at=next_run.isoformat(),
+                last_result_path=result_path,
+            )
+        else:
+            store.update(task.id, status=TaskStatus.done, last_result_path=result_path)

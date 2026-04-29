@@ -205,20 +205,20 @@ def check_llm(config_path: Path):
 
 def _build_tao(llm_cfg) -> object:
     _section("TaoLoop 初始化")
-    from cache.config import CacheConfig
+    from storage.config import StorageConfig
     from config.react.memory.memory_config import MemoryConfig
     from config.react.tao_config import TaoConfig
     from llm_core.llm import LLM
     from react.action.manager import ToolManager
     from react.tao import TaoLoop
 
-    cache  = CacheConfig(root=str(paths.cache_root))
+    storage = StorageConfig(root=str(paths.cache_root))
     memory = (
         MemoryConfig.from_yaml(str(paths.memory_config_yaml))
         if paths.memory_config_yaml.exists()
         else MemoryConfig()
     )
-    cfg        = TaoConfig(cache=cache, memory=memory)
+    cfg        = TaoConfig(storage=storage, memory=memory)
     llm        = LLM(llm_cfg)
     manager    = ToolManager()
     executor   = manager.build_executor()

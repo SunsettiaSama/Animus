@@ -27,6 +27,9 @@ from react.action.tools.impl.web_fetch import WebFetchAction
 from react.action.tools.impl.knowledge_hybrid_search import KnowledgeHybridSearchAction
 from react.action.tools.impl.knowledge_save import KnowledgeSaveAction
 from react.action.tools.impl.knowledge_list import KnowledgeListAction
+from react.action.tools.impl.scheduler_add import SchedulerAddAction
+from react.action.tools.impl.scheduler_list import SchedulerListAction
+from react.action.tools.impl.scheduler_cancel import SchedulerCancelAction
 
 if TYPE_CHECKING:
     from react.action.mcp.registry import MCPRegistry, MCPToolInfo
@@ -62,6 +65,9 @@ def _build_default_registry() -> ToolRegistry:
     reg.add(KnowledgeHybridSearchAction, category="knowledge", tags=["知识库", "混合检索", "语义搜索", "关键词", "hybrid", "knowledge"])
     reg.add(KnowledgeSaveAction,   category="knowledge",  tags=["知识库", "保存", "写入", "学习"])
     reg.add(KnowledgeListAction,   category="knowledge",  tags=["知识库", "列表", "领域", "已知边界"])
+    reg.add(SchedulerAddAction,    category="scheduler",  tags=["调度", "预约", "时间轴", "定时", "scheduler", "once", "interval"])
+    reg.add(SchedulerListAction,   category="scheduler",  tags=["调度", "时间轴", "列表", "查看", "scheduler"])
+    reg.add(SchedulerCancelAction, category="scheduler",  tags=["调度", "取消", "时间轴", "cancel", "scheduler"])
     return reg
 
 

@@ -1,22 +1,68 @@
 # =============================================================================
 # docker-compose.yml — ReAct Agent 完整服务栈
 #
-# 在项目根目录执行（通过 -f 指定此文件）：
-#   docker compose -f docker/docker-compose.yml up -d
-#   docker compose -f docker/docker-compose.yml logs -f react
-#   docker compose -f docker/docker-compose.yml down
+# 快速上手：
+#   docker compose -f docker/docker-compose.yml up -d          # 后台启动全栈
+#   docker compose -f docker/docker-compose.yml logs -f react  # 跟踪 Agent 日志
+#   docker compose -f docker/docker-compose.yml down           # 停止并移除容器
+#   docker compose -f docker/docker-compose.yml down -v        # 同时删除数据卷
 #
-# 注意：volume 路径中的 ../ 均相对于本 compose 文件所在目录（docker/）
+# volume 路径中的 ../ 均相对于本文件所在目录（docker/）
 # =============================================================================
 
 services:
 
-  # ── SearXNG 元搜索引擎 ──────────────────────────────────────────────────
+  # ── MySQL 8.0 ──────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: react-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: knowledge
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_unicode_ci
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - react-mysql-data:/var/lib/mysql
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-ppassword"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+    networks:
+      - react-net
+
+  # ── Redis 7 ────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: react-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - react-redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+    networks:
+      - react-net
+
+  # ── SearXNG 元搜索引擎 ──────────────────────────────────────────────────────
   searxng:
     image: searxng/searxng:latest
     container_name: react-searxng
     restart: unless-stopped
-    # 仅绑定本机回环地址，不对外暴露
     ports:
       - "127.0.0.1:8888:8080"
     volumes:
@@ -35,14 +81,12 @@ services:
       start_period: 10s
       retries: 5
 
-  # ── ReAct Agent ─────────────────────────────────────────────────────────
+  # ── ReAct Agent ─────────────────────────────────────────────────────────────
   react:
     build:
-      # 构建上下文为项目根目录
       context: ..
-      # dockerfile 路径相对于 context（项目根）
       dockerfile: docker/Dockerfile
-      # 如需本地 LLM 推理（torch CPU），取消以下注释：
+      # 本地 LLM 推理模式（torch CPU + faiss）：
       # args:
       #   REQUIREMENTS: requirements.txt
       #   TORCH_EXTRA: "--index-url https://download.pytorch.org/whl/cpu"
@@ -52,21 +96,34 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      # LLM 配置含密钥，只做卷挂载，不打入镜像
+      # LLM 配置含 API Key，只挂载不打入镜像
       - ../config/llm_core:/app/config/llm_core:ro
-      # 运行时数据：记忆、人格、轨迹
+      # 可选：覆盖 Agent 运行时配置（记忆、检索策略等），不挂载时使用镜像默认值
+      # - ../config/react:/app/config/react:ro
+      # 运行时数据：长期记忆（Qdrant + JSON）、人格、轨迹、知识库 Qdrant 索引
       - ../.react:/app/.react
-      # 本地模型目录（不使用本地模型时可删除此行）
-      - ../models:/app/models:ro
+      # 本地模型目录（不使用本地 LLM / embedding 模型时可删除此行）
+      # - ../models:/app/models:ro
     environment:
+      # 容器内通过 compose 服务名访问各依赖
       SEARXNG_URL: http://searxng:8080
-      # 可选：直接通过环境变量覆盖 LLM 密钥（优先于 config.yaml）
+      MYSQL_URL: mysql+pymysql://root:password@mysql:3306/knowledge
+      REDIS_URL: redis://redis:6379/0
+      # 可选：直接通过环境变量注入 LLM API Key（优先于 config.yaml）
       # LLM_API_KEY: your_key_here
     depends_on:
       searxng:
         condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - react-net
+
+volumes:
+  react-mysql-data:
+  react-redis-data:
 
 networks:
   react-net:

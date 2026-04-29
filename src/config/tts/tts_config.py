@@ -17,6 +17,10 @@ class TTSConfig:
 
     kokoro_model_path: str = ""
     kokoro_device: str = "auto"
+    # HuggingFace download settings for Kokoro local model
+    kokoro_hf_repo_id: str = "hexgrad/Kokoro-82M"
+    hf_endpoint: str = ""   # e.g. https://hf-mirror.com
+    hf_token: str = ""
 
     @classmethod
     def from_yaml(cls, path: str) -> TTSConfig:
@@ -39,4 +43,7 @@ class TTSConfig:
             openai_api_key=d.get("openai_api_key", ""),
             kokoro_model_path=d.get("kokoro_model_path", ""),
             kokoro_device=d.get("kokoro_device", "auto"),
+            kokoro_hf_repo_id=d.get("kokoro_hf_repo_id", "hexgrad/Kokoro-82M"),
+            hf_endpoint=d.get("hf_endpoint", ""),
+            hf_token=d.get("hf_token", ""),
         )

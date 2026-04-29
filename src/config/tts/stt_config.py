@@ -17,6 +17,11 @@ class STTConfig:
     local_model_path: str = ""
     local_device: str = "auto"
     local_compute_type: str = "int8"
+    # HuggingFace download settings for faster-whisper local model
+    # Leave empty to auto-derive from local_model_size (Systran/faster-whisper-{size})
+    local_hf_repo_id: str = ""
+    hf_endpoint: str = ""   # e.g. https://hf-mirror.com
+    hf_token: str = ""
 
     @classmethod
     def from_yaml(cls, path: str) -> STTConfig:
@@ -39,4 +44,7 @@ class STTConfig:
             local_model_path=d.get("local_model_path", ""),
             local_device=d.get("local_device", "auto"),
             local_compute_type=d.get("local_compute_type", "int8"),
+            local_hf_repo_id=d.get("local_hf_repo_id", ""),
+            hf_endpoint=d.get("hf_endpoint", ""),
+            hf_token=d.get("hf_token", ""),
         )

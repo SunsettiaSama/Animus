@@ -61,23 +61,29 @@ exit /b 1
 :: 打印版本
 for /f "tokens=*" %%v in ('"%PYTHON%" --version 2^>^&1') do echo  [  ]  版本: %%v
 
-:: ── 2. 检查依赖（仅首次或 requirements.txt 更新后需要） ──────────────
+:: ── 2. 检查依赖（requirements.txt 哈希变化时自动重装） ───────────────
 set "FLAG=%ROOT%\.react\.deps_installed"
 set "REQ=%ROOT%\requirements.txt"
 
-:: 若标记文件比 requirements.txt 旧或不存在，则重新安装
-set "DO_INSTALL=0"
-if not exist "%FLAG%" set "DO_INSTALL=1"
-if exist "%FLAG%" (
-    :: forfiles: 若 requirements.txt 比 flag 文件新则重新安装
-    forfiles /p "%ROOT%" /m "requirements.txt" /d +0 >nul 2>&1
-    :: 简化判断：若 flag 存在则跳过（手动删除 .react\.deps_installed 可强制重装）
-    set "DO_INSTALL=0"
+:: 计算 requirements.txt 的 MD5 哈希（certutil 内置，无需额外工具）
+set "CURRENT_HASH="
+for /f "skip=1 tokens=*" %%h in ('certutil -hashfile "%REQ%" MD5 2^>nul') do (
+    if not defined CURRENT_HASH set "CURRENT_HASH=%%h"
 )
+
+:: 读取上次安装时存入的哈希
+set "STORED_HASH="
+if exist "%FLAG%" (
+    set /p STORED_HASH=<"%FLAG%"
+)
+
+:: 哈希不同（或 flag 不存在）则重新安装
+set "DO_INSTALL=0"
+if not "!CURRENT_HASH!"=="!STORED_HASH!" set "DO_INSTALL=1"
 
 if !DO_INSTALL! == 1 (
     echo.
-    echo  [..] 首次运行，正在安装依赖，请稍候...
+    echo  [..] 检测到依赖变更，正在安装，请稍候...
     "%PYTHON%" -m pip install -r "%REQ%" --quiet
     if !errorlevel! neq 0 (
         echo  [!!] 依赖安装失败，请检查网络或手动运行:
@@ -86,11 +92,58 @@ if !DO_INSTALL! == 1 (
         exit /b 1
     )
     if not exist "%ROOT%\.react" mkdir "%ROOT%\.react"
-    echo installed > "%FLAG%"
+    echo !CURRENT_HASH!> "%FLAG%"
     echo  [OK]  依赖安装完成
 )
 
-:: ── 3. 询问是否跳过 SearXNG（Docker） ───────────────────────────────
+:: ── 3. 询问是否用 Docker 启动数据库（MySQL + Redis） ────────────────
+echo.
+echo  知识库功能依赖 MySQL 和 Redis（需要 Docker）。
+echo  若不使用知识库，或已有在运行的实例，可选择跳过。
+echo.
+set /p "START_DB=  用 Docker 启动 MySQL + Redis？[Y/n] "
+if /i "!START_DB!"=="n" (
+    echo  [  ]  已跳过数据库启动。
+) else (
+    where docker >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo  [!!] 未检测到 Docker，跳过数据库启动。
+        echo  [  ]  若需知识库功能，请先安装 Docker Desktop。
+    ) else (
+        echo  [>>] 正在启动 MySQL 和 Redis 容器...
+        docker compose -f "%ROOT%\docker\docker-compose-db.yml" up -d
+        if !errorlevel! neq 0 (
+            echo  [!!] 数据库容器启动失败，请检查 Docker 是否正常运行。
+        ) else (
+            echo  [OK] MySQL + Redis 容器已启动，等待就绪...
+            :: 等待 MySQL 健康（最多 60 秒）
+            set "DB_READY=0"
+            for /l %%i in (1,1,12) do (
+                if "!DB_READY!"=="0" (
+                    docker exec react-mysql mysqladmin ping -h localhost -uroot -ppassword --silent >nul 2>&1
+                    if !errorlevel! == 0 (
+                        set "DB_READY=1"
+                        echo  [OK] MySQL 已就绪。
+                    ) else (
+                        timeout /t 5 /nobreak >nul
+                    )
+                )
+            )
+            if "!DB_READY!"=="0" (
+                echo  [!!] MySQL 未能在 60 秒内就绪，请手动检查容器状态。
+            )
+            :: 检查 Redis
+            docker exec react-redis redis-cli ping >nul 2>&1
+            if !errorlevel! == 0 (
+                echo  [OK] Redis 已就绪。
+            ) else (
+                echo  [!!] Redis 未就绪，请手动检查容器状态。
+            )
+        )
+    )
+)
+
+:: ── 4. 询问是否跳过 SearXNG（Docker） ───────────────────────────────
 echo.
 echo  SearXNG 是本地搜索引擎（需要 Docker）。
 echo  若未安装 Docker 或希望跳过，输入 N；否则直接回车。
@@ -104,7 +157,7 @@ if /i "!SKIP_SEARXNG!"=="y" (
     echo  [  ]  已设置: 尝试启动 SearXNG Docker 容器。
 )
 
-:: ── 4. 启动服务器 ────────────────────────────────────────────────────
+:: ── 5. 启动服务器 ────────────────────────────────────────────────────
 echo.
 echo  [>>] 正在启动 ReAct Agent...
 echo  [  ]  访问地址: %URL%

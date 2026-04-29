@@ -90,7 +90,7 @@ class AppConfig:
 
     @classmethod
     def from_disk(cls, root: Path | str | None = None) -> AppConfig:
-        from cache.config import CacheConfig
+        from storage.config import StorageConfig
         from config.llm_core.config import LLMConfig
         from config.react.memory.memory_config import MemoryConfig, LongTermMemoryConfig
         from config.react.memory.embedding_config import EmbeddingConfig
@@ -100,7 +100,7 @@ class AppConfig:
 
         llm = LLMConfig.from_yaml(str(p.llm_config_yaml)) if p.llm_config_yaml.exists() else LLMConfig()
 
-        cache = CacheConfig(root=str(p.cache_root))
+        storage = StorageConfig(root=str(p.cache_root))
         memory = (
             MemoryConfig.from_yaml(str(p.memory_config_yaml))
             if p.memory_config_yaml.exists()
@@ -116,7 +116,7 @@ class AppConfig:
             lt.device = emb.device
             lt.query_prefix = emb.query_prefix
             lt.passage_prefix = emb.passage_prefix
-        tao = TaoConfig(cache=cache, memory=memory)
+        tao = TaoConfig(storage=storage, memory=memory)
 
         return cls(paths=p, llm=llm, tao=tao)
 

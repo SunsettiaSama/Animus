@@ -411,6 +411,32 @@
     /* -- ReAct steps -- */
     .react-steps { margin-bottom: 6px; }
 
+    /* Activity strip — spinner + current status, visible during streaming */
+    .react-activity {
+      display: flex; align-items: center; gap: 9px;
+      padding: 8px 13px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--r2);
+      font-size: 13px;
+      color: var(--text2);
+      margin-bottom: 6px;
+    }
+    .ra-spinner {
+      width: 15px; height: 15px; flex-shrink: 0;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: ra-spin .65s linear infinite;
+    }
+    @keyframes ra-spin { to { transform: rotate(360deg); } }
+    .ra-text { flex: 1; color: var(--text2); font-size: 13px; }
+    .ra-tag {
+      font-size: 11px; padding: 2px 7px; border-radius: 4px;
+      background: #fef3c7; color: #b45309; font-weight: 600;
+      white-space: nowrap; flex-shrink: 0;
+    }
+
     .steps-toggle {
       display: flex;
       align-items: center;
@@ -431,6 +457,7 @@
 
     .react-steps-body { margin-top: 6px; display: flex; flex-direction: column; gap: 8px; }
 
+    /* Step card — collapsed by default; header click expands detail */
     .step-card {
       background: var(--bg);
       border: 1px solid var(--border);
@@ -447,7 +474,13 @@
       font-weight: 600;
       font-size: 12px;
       color: var(--text2);
+      cursor: pointer;
+      user-select: none;
+      transition: background .12s;
     }
+    .step-hdr:hover { background: #e5e7eb; }
+    .step-hdr .chevron { color: var(--text3); font-size: 10px; }
+    .step-hdr.open .chevron { transform: rotate(90deg); }
     .step-action-tag {
       font-size: 11px;
       padding: 2px 6px;
@@ -456,7 +489,12 @@
       color: #b45309;
       font-weight: 600;
     }
+    .step-done { font-size: 11px; color: #10b981; font-weight: 700; margin-left: auto; flex-shrink: 0; }
     .step-streaming-label { font-size: 11px; color: var(--text3); font-weight: 400; }
+
+    /* Step detail body (collapsed by default) */
+    .step-detail { display: none; }
+    .step-detail.open { display: block; }
 
     .retry-warning {
       margin: 4px 12px 6px;
@@ -726,28 +764,79 @@
       width: 36px; height: 36px;
       border-radius: var(--r2);
       display: flex; align-items: center; justify-content: center;
-      font-size: 17px; flex-shrink: 0;
+      flex-shrink: 0;
       color: var(--text2);
-      transition: background .15s, color .15s;
+      transition: background .15s, color .15s, box-shadow .15s;
     }
     #btn-mic:hover { background: var(--bg3); color: var(--text); }
     #btn-mic.recording {
-      background: #fee2e2; color: #ef4444;
-      animation: mic-pulse .9s ease-in-out infinite;
+      background: rgba(239,68,68,.1); color: #ef4444;
+      animation: mic-pulse 1.2s ease-in-out infinite;
     }
     @keyframes mic-pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.4); }
-      50%       { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.35); }
+      55%       { box-shadow: 0 0 0 7px rgba(239,68,68,0); }
     }
 
+    /* ── shared sound-wave bar component ── */
+    .sound-wave {
+      display: flex; align-items: center; gap: 2.5px; height: 20px;
+    }
+    .sound-wave b {
+      display: block; width: 3px; border-radius: 3px;
+      background: currentColor; transition: height .15s;
+    }
+    /* static idle profile (sine-shaped) */
+    .sound-wave b:nth-child(1) { height: 4px;  }
+    .sound-wave b:nth-child(2) { height: 9px;  }
+    .sound-wave b:nth-child(3) { height: 15px; }
+    .sound-wave b:nth-child(4) { height: 18px; }
+    .sound-wave b:nth-child(5) { height: 15px; }
+    .sound-wave b:nth-child(6) { height: 9px;  }
+    .sound-wave b:nth-child(7) { height: 4px;  }
+
+    /* recording animation — STT */
+    #btn-mic.recording .sound-wave b:nth-child(1) { animation: sw1 .48s ease-in-out infinite alternate; }
+    #btn-mic.recording .sound-wave b:nth-child(2) { animation: sw2 .62s ease-in-out infinite alternate; }
+    #btn-mic.recording .sound-wave b:nth-child(3) { animation: sw3 .40s ease-in-out infinite alternate; }
+    #btn-mic.recording .sound-wave b:nth-child(4) { animation: sw4 .55s ease-in-out infinite alternate; }
+    #btn-mic.recording .sound-wave b:nth-child(5) { animation: sw5 .44s ease-in-out infinite alternate; }
+    #btn-mic.recording .sound-wave b:nth-child(6) { animation: sw6 .67s ease-in-out infinite alternate; }
+    #btn-mic.recording .sound-wave b:nth-child(7) { animation: sw7 .50s ease-in-out infinite alternate; }
+
+    /* playing animation — TTS */
+    .msg-tts-btn.playing .sound-wave b:nth-child(1) { animation: sw1 .56s ease-in-out infinite alternate; }
+    .msg-tts-btn.playing .sound-wave b:nth-child(2) { animation: sw3 .44s ease-in-out infinite alternate; }
+    .msg-tts-btn.playing .sound-wave b:nth-child(3) { animation: sw2 .60s ease-in-out infinite alternate; }
+    .msg-tts-btn.playing .sound-wave b:nth-child(4) { animation: sw5 .38s ease-in-out infinite alternate; }
+    .msg-tts-btn.playing .sound-wave b:nth-child(5) { animation: sw4 .52s ease-in-out infinite alternate; }
+
+    @keyframes sw1 { from { height:  3px; } to { height: 12px; } }
+    @keyframes sw2 { from { height:  7px; } to { height:  3px; } }
+    @keyframes sw3 { from { height:  4px; } to { height: 18px; } }
+    @keyframes sw4 { from { height: 12px; } to { height:  3px; } }
+    @keyframes sw5 { from { height:  3px; } to { height: 14px; } }
+    @keyframes sw6 { from { height:  9px; } to { height:  3px; } }
+    @keyframes sw7 { from { height:  3px; } to { height: 11px; } }
+
     .msg-tts-btn {
-      font-size: 13px; padding: 1px 5px; border-radius: 4px;
+      width: 26px; height: 22px;
+      padding: 0 3px;
+      border-radius: 4px;
+      display: inline-flex; align-items: center; justify-content: center;
       color: var(--text3); line-height: 1;
       transition: background .12s, color .12s;
     }
     .msg-tts-btn:hover { background: var(--bg3); color: var(--accent); }
-    .msg-tts-btn.playing { color: var(--accent); animation: tts-spin .9s linear infinite; }
-    @keyframes tts-spin { to { transform: rotate(360deg); } }
+    .msg-tts-btn.playing { color: var(--accent); }
+    /* TTS wave is slightly smaller */
+    .msg-tts-btn .sound-wave { gap: 2px; height: 16px; }
+    .msg-tts-btn .sound-wave b { width: 2.5px; }
+    .msg-tts-btn .sound-wave b:nth-child(1) { height: 3px;  }
+    .msg-tts-btn .sound-wave b:nth-child(2) { height: 7px;  }
+    .msg-tts-btn .sound-wave b:nth-child(3) { height: 12px; }
+    .msg-tts-btn .sound-wave b:nth-child(4) { height: 7px;  }
+    .msg-tts-btn .sound-wave b:nth-child(5) { height: 3px;  }
 
     /* provider-specific field groups in voice tab */
     .voice-provider-section { display: none; }
@@ -837,6 +926,7 @@
       <div class="sidebar-hdr-actions">
         <button class="icon-btn" onclick="startNewKeepMode()" title="New conversation">＋</button>
         <button class="icon-btn danger" onclick="confirmClearAllHistory()" title="Clear all history">🗑</button>
+        <button class="icon-btn" onclick="openKBPanel()" title="知识库">📚</button>
         <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
       </div>
     </div>
@@ -868,9 +958,68 @@
     <div id="input-area">
       <div class="input-wrapper">
         <textarea id="msg-input" rows="1" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
-        <button id="btn-mic" onclick="toggleMic()" title="语音输入（点击开始录音，再次点击停止）">🎤</button>
+        <button id="btn-mic" onclick="toggleMic()" title="语音输入（点击开始录音，再次点击停止）"><span class="sound-wave"><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span></button>
         <button id="btn-send" onclick="sendMessage()">↑</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Knowledge Base Panel -->
+  <div id="kb-panel" class="hidden" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+    <div style="height:52px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px;flex-shrink:0;gap:10px">
+      <span style="font-weight:600;font-size:15px">📚 知识库</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn-secondary" style="height:32px;font-size:13px" onclick="fixKBIndex()">修复索引</button>
+        <button class="btn-secondary" style="height:32px;font-size:13px" onclick="closeKBPanel()">← 返回聊天</button>
+      </div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:0">
+
+      <div class="section-divider" style="margin-top:0">搜索</div>
+      <div class="form-row" style="align-items:flex-end;gap:8px">
+        <div class="form-group" style="flex:1;margin-bottom:0">
+          <label>搜索内容</label>
+          <input id="kb-search-input2" type="text" placeholder="输入关键词或问题…" onkeydown="if(event.key==='Enter')doKBSearch2()" />
+        </div>
+        <div class="form-group" style="width:130px;margin-bottom:0">
+          <label>模式</label>
+          <select id="kb-search-mode">
+            <option value="hybrid">混合 hybrid</option>
+            <option value="semantic">语义 semantic</option>
+            <option value="keyword">关键词 keyword</option>
+          </select>
+        </div>
+        <button class="btn-secondary" style="flex-shrink:0;height:36px;align-self:flex-end" onclick="doKBSearch2()">搜索</button>
+      </div>
+      <div id="kb-search-results2" style="font-size:13px;color:var(--text2);margin-top:8px"></div>
+
+      <div class="section-divider">手动写入</div>
+      <div class="form-group">
+        <label>内容</label>
+        <textarea id="kb-ingest-text2" rows="3" placeholder="要写入知识库的内容…"></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>标题</label>
+          <input id="kb-ingest-title2" type="text" placeholder="可选" />
+        </div>
+        <div class="form-group">
+          <label>领域</label>
+          <input id="kb-ingest-domain2" type="text" placeholder="如 quantum_computing" />
+        </div>
+        <div class="form-group">
+          <label>概念</label>
+          <input id="kb-ingest-concept2" type="text" placeholder="如 superposition" />
+        </div>
+      </div>
+      <button class="btn-primary" style="width:100%;margin-bottom:8px" onclick="doKBIngest2()">写入知识库</button>
+      <div id="kb-ingest-msg2" style="font-size:12px;color:var(--text3);min-height:16px"></div>
+
+      <div class="section-divider">文档列表</div>
+      <button class="btn-secondary" style="margin-bottom:8px" onclick="loadKBDocuments2()">刷新列表</button>
+      <div id="kb-doc-list2" style="font-size:13px;color:var(--text2)"></div>
+
     </div>
   </div>
 
@@ -889,11 +1038,9 @@
     </div>
 
     <div class="modal-tabs">
-      <button class="tab-btn active" id="tab-btn-model"     onclick="setTab('model')">Model</button>
-      <button class="tab-btn"        id="tab-btn-react-cfg" onclick="setTab('react-cfg')">ReAct</button>
+      <button class="tab-btn active" id="tab-btn-model"     onclick="setTab('model')">Core</button>
       <button class="tab-btn"        id="tab-btn-memory"    onclick="setTab('memory')">🧠 Memory</button>
       <button class="tab-btn"        id="tab-btn-persona"   onclick="setTab('persona')">🎭 Persona</button>
-      <button class="tab-btn"        id="tab-btn-knowledge" onclick="setTab('knowledge')">📚 Knowledge</button>
       <button class="tab-btn"        id="tab-btn-voice"     onclick="setTab('voice')">🔊 Voice</button>
     </div>
 
@@ -933,10 +1080,8 @@
           </div>
           <label class="switch"><input type="checkbox" id="s-show-full-prompt" onchange="onToggleFullPrompt()"><span class="slider"></span></label>
         </div>
-      </div>
 
-      <!-- ReAct tab -->
-      <div id="tab-react-cfg" class="hidden">
+        <div class="section-divider">ReAct Agent</div>
         <div class="toggle-row" style="margin-bottom:16px">
           <div class="toggle-label">
             <span class="toggle-title">启用工具层（Agent 模式）</span>
@@ -945,17 +1090,19 @@
           <label class="switch"><input type="checkbox" id="s-tools-enabled" onchange="onToggleTools()"><span class="slider"></span></label>
         </div>
         <div id="react-cfg-fields">
-        <div class="form-group">
-          <label>Prompt Language</label>
-          <select id="s-lang">
-            <option value="cn">中文 (CN)</option>
-            <option value="en">English (EN)</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Max Steps</label>
-          <input id="s-maxsteps" type="number" value="10" min="1" max="50" />
-        </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Prompt Language</label>
+              <select id="s-lang">
+                <option value="cn">中文 (CN)</option>
+                <option value="en">English (EN)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Max Steps</label>
+              <input id="s-maxsteps" type="number" value="10" min="1" max="50" />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1179,45 +1326,16 @@
           </div>
         </div>
 
-      </div>
-
-      <!-- Knowledge tab -->
-      <div id="tab-knowledge" class="hidden">
-        <div class="section-divider" style="margin-top:0">语义搜索</div>
-        <div class="form-row" style="align-items:flex-end">
-          <div class="form-group" style="flex:1">
-            <label>搜索内容</label>
-            <input id="kb-search-input" type="text" placeholder="输入关键词或问题…" />
-          </div>
-          <button class="btn-secondary" style="flex-shrink:0;height:36px" onclick="doKBSearch()">搜索</button>
+        <!-- 清空人格漂移数据 -->
+        <div class="section-divider" style="margin-top:4px;border-color:#fca5a5;color:#ef4444">危险操作</div>
+        <div style="padding:4px 0 12px">
+          <p style="font-size:12px;color:var(--text2);margin-bottom:10px">
+            清空所有演化漂移数据（画像 / 技能库 / 自省摘要 / 近期偏好），人格将还原至手动配置的基础设定，操作不可逆。
+          </p>
+          <button class="btn-danger" style="width:100%" onclick="doClearPersona()">🗑 清空人格漂移数据</button>
+          <div id="clear-persona-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
         </div>
-        <div id="kb-search-results" style="font-size:13px;color:var(--text2);margin-top:6px;max-height:200px;overflow-y:auto"></div>
 
-        <div class="section-divider">手动写入</div>
-        <div class="form-group">
-          <label>内容</label>
-          <textarea id="kb-ingest-text" rows="3" placeholder="要写入知识库的内容…"></textarea>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>标题</label>
-            <input id="kb-ingest-title" type="text" placeholder="可选" />
-          </div>
-          <div class="form-group">
-            <label>领域</label>
-            <input id="kb-ingest-domain" type="text" placeholder="如 quantum_computing" />
-          </div>
-          <div class="form-group">
-            <label>概念</label>
-            <input id="kb-ingest-concept" type="text" placeholder="如 superposition" />
-          </div>
-        </div>
-        <button class="btn-primary" style="width:100%;margin-bottom:8px" onclick="doKBIngest()">写入知识库</button>
-        <div id="kb-ingest-msg" style="font-size:12px;color:var(--text3);min-height:16px"></div>
-
-        <div class="section-divider">文档列表</div>
-        <button class="btn-secondary" style="margin-bottom:8px" onclick="loadKBDocuments()">刷新列表</button>
-        <div id="kb-doc-list" style="font-size:13px;color:var(--text2);max-height:240px;overflow-y:auto"></div>
       </div>
 
       <!-- Voice tab -->
@@ -1293,8 +1411,8 @@
         <!-- Kokoro fields -->
         <div id="tts-kokoro-fields" class="voice-provider-section">
           <div class="form-group">
-            <label>模型路径 <span style="font-weight:400;color:var(--text3)">kokoro_model_path</span></label>
-            <input id="s-tts-kokoro-path" type="text" placeholder="/path/to/kokoro-model" />
+            <label>本地模型路径 <span style="font-weight:400;color:var(--text3)">已下载则填；留空将自动从 HF 拉取</span></label>
+            <input id="s-tts-kokoro-path" type="text" placeholder="models/kokoro/hexgrad--Kokoro-82M" />
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -1310,6 +1428,23 @@
               <input id="s-tts-kokoro-voice" type="text" placeholder="af_bella" />
             </div>
           </div>
+          <div class="section-divider" style="margin:10px 0 8px">HuggingFace 拉取设置</div>
+          <div class="form-group">
+            <label>HF Repo ID <span style="font-weight:400;color:var(--text3)">Kokoro 模型仓库</span></label>
+            <input id="s-tts-kokoro-hf-repo" type="text" placeholder="hexgrad/Kokoro-82M" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>HF 镜像站 <span style="font-weight:400;color:var(--text3)">国内可填 https://hf-mirror.com</span></label>
+              <input id="s-tts-hf-endpoint" type="text" placeholder="https://hf-mirror.com" />
+            </div>
+            <div class="form-group">
+              <label>HF Token <span style="font-weight:400;color:var(--text3)">私有模型时填写</span></label>
+              <input id="s-tts-hf-token" type="password" placeholder="hf_…" />
+            </div>
+          </div>
+          <button class="btn-secondary" style="width:100%;margin-top:2px" onclick="doDownloadModel('tts')">⬇ 从 HuggingFace 下载 Kokoro 模型</button>
+          <div id="tts-dl-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:5px"></div>
         </div>
 
         <!-- STT -->
@@ -1344,9 +1479,13 @@
 
         <!-- STT local fields -->
         <div id="stt-local-fields" class="voice-provider-section">
+          <div class="form-group">
+            <label>本地模型路径 <span style="font-weight:400;color:var(--text3)">已下载则填；留空将自动拉取</span></label>
+            <input id="s-stt-local-path" type="text" placeholder="models/whisper/Systran--faster-whisper-base" />
+          </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Model Size</label>
+              <label>Model Size <span style="font-weight:400;color:var(--text3)">无本地路径时生效</span></label>
               <select id="s-stt-local-size">
                 <option value="tiny">tiny</option>
                 <option value="base" selected>base</option>
@@ -1364,20 +1503,31 @@
               </select>
             </div>
           </div>
+          <div class="form-group">
+            <label>Compute Type</label>
+            <select id="s-stt-local-compute">
+              <option value="int8" selected>int8</option>
+              <option value="float16">float16</option>
+              <option value="float32">float32</option>
+            </select>
+          </div>
+          <div class="section-divider" style="margin:10px 0 8px">HuggingFace 拉取设置</div>
+          <div class="form-group">
+            <label>HF Repo ID <span style="font-weight:400;color:var(--text3)">留空则使用 Systran/faster-whisper-{size}</span></label>
+            <input id="s-stt-local-hf-repo" type="text" placeholder="Systran/faster-whisper-base" />
+          </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Compute Type</label>
-              <select id="s-stt-local-compute">
-                <option value="int8" selected>int8</option>
-                <option value="float16">float16</option>
-                <option value="float32">float32</option>
-              </select>
+              <label>HF 镜像站 <span style="font-weight:400;color:var(--text3)">国内可填 https://hf-mirror.com</span></label>
+              <input id="s-stt-hf-endpoint" type="text" placeholder="https://hf-mirror.com" />
             </div>
             <div class="form-group">
-              <label>模型路径 <span style="font-weight:400;color:var(--text3)">留空自动下载</span></label>
-              <input id="s-stt-local-path" type="text" placeholder="" />
+              <label>HF Token <span style="font-weight:400;color:var(--text3)">私有模型时填写</span></label>
+              <input id="s-stt-hf-token" type="password" placeholder="hf_…" />
             </div>
           </div>
+          <button class="btn-secondary" style="width:100%;margin-top:2px" onclick="doDownloadModel('stt')">⬇ 从 HuggingFace 下载 Whisper 模型</button>
+          <div id="stt-dl-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:5px"></div>
         </div>
 
       </div>
@@ -1456,18 +1606,21 @@
 
     if (tr?.ok) {
       const t = await tr.json();
-      $('s-tts-provider').value          = t.provider       || 'edge';
-      $('s-tts-voice').value             = t.voice          || 'zh-CN-XiaoxiaoNeural';
-      $('s-tts-rate').value              = t.rate           || '+0%';
-      $('s-tts-volume').value            = t.volume         || '+0%';
-      $('s-tts-format').value            = t.output_format  || 'mp3';
-      $('s-tts-openai-model').value      = t.openai_model   || 'tts-1';
-      $('s-tts-openai-voice').value      = t.voice          || 'alloy';
-      $('s-tts-openai-base-url').value   = t.openai_base_url || '';
-      $('s-tts-openai-api-key').value    = t.openai_api_key  || '';
+      $('s-tts-provider').value          = t.provider          || 'edge';
+      $('s-tts-voice').value             = t.voice             || 'zh-CN-XiaoxiaoNeural';
+      $('s-tts-rate').value              = t.rate              || '+0%';
+      $('s-tts-volume').value            = t.volume            || '+0%';
+      $('s-tts-format').value            = t.output_format     || 'mp3';
+      $('s-tts-openai-model').value      = t.openai_model      || 'tts-1';
+      $('s-tts-openai-voice').value      = t.provider === 'openai' ? (t.voice || 'alloy') : 'alloy';
+      $('s-tts-openai-base-url').value   = t.openai_base_url   || '';
+      $('s-tts-openai-api-key').value    = t.openai_api_key    || '';
       $('s-tts-kokoro-path').value       = t.kokoro_model_path || '';
-      $('s-tts-kokoro-device').value     = t.kokoro_device  || 'auto';
-      $('s-tts-kokoro-voice').value      = t.voice          || 'af_bella';
+      $('s-tts-kokoro-device').value     = t.kokoro_device     || 'auto';
+      $('s-tts-kokoro-voice').value      = t.provider === 'kokoro' ? (t.voice || 'af_bella') : 'af_bella';
+      $('s-tts-kokoro-hf-repo').value    = t.kokoro_hf_repo_id || 'hexgrad/Kokoro-82M';
+      $('s-tts-hf-endpoint').value       = t.hf_endpoint       || '';
+      $('s-tts-hf-token').value          = t.hf_token          || '';
       onTTSProviderChange();
     }
     if (sr?.ok) {
@@ -1481,6 +1634,9 @@
       $('s-stt-local-path').value        = s.local_model_path   || '';
       $('s-stt-local-device').value      = s.local_device       || 'auto';
       $('s-stt-local-compute').value     = s.local_compute_type || 'int8';
+      $('s-stt-local-hf-repo').value     = s.local_hf_repo_id  || '';
+      $('s-stt-hf-endpoint').value       = s.hf_endpoint        || '';
+      $('s-stt-hf-token').value          = s.hf_token           || '';
       onSTTProviderChange();
     }
     $('s-tts-autoplay').checked = S.ttsAutoplay;
@@ -1491,7 +1647,6 @@
     localStorage.setItem('ttsAutoplay', S.ttsAutoplay);
 
     const provider = $('s-tts-provider')?.value || 'edge';
-    // pick voice field per provider
     let voice = $('s-tts-voice')?.value || 'zh-CN-XiaoxiaoNeural';
     if (provider === 'openai')  voice = $('s-tts-openai-voice')?.value || 'alloy';
     if (provider === 'kokoro')  voice = $('s-tts-kokoro-voice')?.value || 'af_bella';
@@ -1499,14 +1654,17 @@
     const ttsBody = {
       provider,
       voice,
-      rate:              $('s-tts-rate')?.value           || '+0%',
-      volume:            $('s-tts-volume')?.value         || '+0%',
-      output_format:     $('s-tts-format')?.value         || 'mp3',
-      openai_model:      $('s-tts-openai-model')?.value   || 'tts-1',
-      openai_base_url:   $('s-tts-openai-base-url')?.value || '',
-      openai_api_key:    $('s-tts-openai-api-key')?.value  || '',
-      kokoro_model_path: $('s-tts-kokoro-path')?.value    || '',
-      kokoro_device:     $('s-tts-kokoro-device')?.value  || 'auto',
+      rate:              $('s-tts-rate')?.value              || '+0%',
+      volume:            $('s-tts-volume')?.value            || '+0%',
+      output_format:     $('s-tts-format')?.value            || 'mp3',
+      openai_model:      $('s-tts-openai-model')?.value      || 'tts-1',
+      openai_base_url:   $('s-tts-openai-base-url')?.value   || '',
+      openai_api_key:    $('s-tts-openai-api-key')?.value    || '',
+      kokoro_model_path: $('s-tts-kokoro-path')?.value       || '',
+      kokoro_device:     $('s-tts-kokoro-device')?.value     || 'auto',
+      kokoro_hf_repo_id: $('s-tts-kokoro-hf-repo')?.value    || 'hexgrad/Kokoro-82M',
+      hf_endpoint:       $('s-tts-hf-endpoint')?.value       || '',
+      hf_token:          $('s-tts-hf-token')?.value          || '',
     };
     const sttBody = {
       provider:           $('s-stt-provider')?.value          || 'openai',
@@ -1518,11 +1676,44 @@
       local_model_path:   $('s-stt-local-path')?.value        || '',
       local_device:       $('s-stt-local-device')?.value      || 'auto',
       local_compute_type: $('s-stt-local-compute')?.value     || 'int8',
+      local_hf_repo_id:   $('s-stt-local-hf-repo')?.value     || '',
+      hf_endpoint:        $('s-stt-hf-endpoint')?.value       || '',
+      hf_token:           $('s-stt-hf-token')?.value          || '',
     };
     await Promise.all([
       fetch('/api/tts/config/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ttsBody) }).catch(() => null),
       fetch('/api/stt/config/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sttBody) }).catch(() => null),
     ]);
+  }
+
+  async function doDownloadModel(kind) {
+    const msgEl = $(`${kind}-dl-msg`);
+    msgEl.style.color = 'var(--text3)';
+    msgEl.textContent = '连接中…';
+
+    const es = new EventSource(`/api/${kind}/download`);
+    es.onmessage = (e) => {
+      const d = JSON.parse(e.data);
+      if (d.status === 'start') {
+        msgEl.textContent = `下载中: ${d.repo} → ${d.local_dir}`;
+      } else if (d.status === 'done') {
+        msgEl.style.color = '#16a34a';
+        msgEl.textContent = `✓ 下载完成: ${d.path}`;
+        es.close();
+        // Update model path field to point at the downloaded dir
+        if (kind === 'tts') $('s-tts-kokoro-path').value = d.path;
+        if (kind === 'stt') $('s-stt-local-path').value  = d.path;
+      } else if (d.status === 'error') {
+        msgEl.style.color = '#ef4444';
+        msgEl.textContent = `✗ 下载失败: ${d.detail || '未知错误'}`;
+        es.close();
+      }
+    };
+    es.onerror = () => {
+      msgEl.style.color = '#ef4444';
+      msgEl.textContent = '✗ 连接失败，请检查服务是否运行。';
+      es.close();
+    };
   }
 
   /* ════════════════════════════════════
@@ -1777,14 +1968,13 @@
   function overlayClick(e) { if (e.target === $('overlay')) closeSettings(); }
 
   function setTab(name) {
-    ['model', 'react-cfg', 'memory', 'persona', 'knowledge', 'voice'].forEach(t => {
+    ['model', 'memory', 'persona', 'voice'].forEach(t => {
       $(`tab-${t}`).classList.toggle('hidden', t !== name);
       $(`tab-btn-${t}`).classList.toggle('active', t === name);
     });
-    if (name === 'persona')   loadPersona();
-    if (name === 'memory')    loadMemory();
-    if (name === 'knowledge') loadKBDocuments();
-    if (name === 'voice')     loadVoiceConfig();
+    if (name === 'persona') loadPersona();
+    if (name === 'memory')  loadMemory();
+    if (name === 'voice')   loadVoiceConfig();
   }
 
   function setModalMsg(msg, cls) {
@@ -2074,12 +2264,38 @@
 
     const asstMsg = { role: 'assistant', content: '', steps: [], timestamp: now() };
     S.messages.push(asstMsg);
-    const msgEl       = renderMessage(asstMsg, true);
-    const stepBody    = msgEl.querySelector('.react-steps-body');
-    const stepToggle  = msgEl.querySelector('.steps-toggle');
-    const finalBubble = msgEl.querySelector('.msg-bubble');
+    const msgEl        = renderMessage(asstMsg, true);
+    const stepBody     = msgEl.querySelector('.react-steps-body');
+    const stepToggle   = msgEl.querySelector('.steps-toggle');
+    const finalBubble  = msgEl.querySelector('.msg-bubble');
+    const reactActivity = msgEl.querySelector('.react-activity');
 
     const localStepEls = {};
+
+    // Extract "Action: xxx" from partial raw LLM text
+    function parseAction(raw) {
+      const m = raw.match(/^Action\s*[：:]\s*(\S+)/mi);
+      return m ? m[1].trim() : null;
+    }
+
+    function setActivity(stepIdx, action, done) {
+      if (!reactActivity) return;
+      reactActivity.classList.remove('hidden');
+      const spinner = reactActivity.querySelector('.ra-spinner');
+      const text    = reactActivity.querySelector('.ra-text');
+      const tag     = reactActivity.querySelector('.ra-tag');
+      if (done) {
+        if (spinner) spinner.style.borderTopColor = '#10b981';
+      } else {
+        if (spinner) spinner.style.borderTopColor = '';
+      }
+      if (text) text.textContent = `步骤 ${stepIdx + 1}`;
+      if (tag) {
+        tag.textContent = action || '思考中…';
+        tag.style.background = action ? '#fef3c7' : 'var(--bg3)';
+        tag.style.color       = action ? '#b45309' : 'var(--text3)';
+      }
+    }
 
     const ws = new WebSocket(wsUrl('/ws/react/run'));
     S.activeWs = ws;
@@ -2095,8 +2311,6 @@
       }
 
       if (d.type === 'prompt_preview') {
-        // Replace the basic chat context with the actual assembled prompt from the server.
-        // Always update the DOM content so the correct data is shown when the toggle is enabled.
         if (userMsg) userMsg.full_context = d.messages;
         if (userMsgEl) {
           const fpSection = userMsgEl.querySelector('.full-prompt-section');
@@ -2124,34 +2338,44 @@
           stepToggle.querySelector('.step-count').textContent =
             `${asstMsg.steps.length} step${asstMsg.steps.length > 1 ? 's' : ''}`;
         }
-        scrollMsgs();
+        // Build activity tag element if missing
+        if (reactActivity && !reactActivity.querySelector('.ra-tag')) {
+          reactActivity.innerHTML = `<span class="ra-spinner"></span><span class="ra-text">步骤 ${d.index + 1}</span><span class="ra-tag">思考中…</span>`;
+        }
+        setActivity(d.index, null, false);
 
       } else if (d.type === 'retry') {
-        // Append a lightweight warning to the current step's raw output area.
         const rawEl = localStepEls[d.index]?.querySelector('.step-raw');
         if (rawEl) {
           const warn = document.createElement('div');
           warn.className = 'retry-warning';
           warn.textContent = `⚠ 格式异常，正在重试… (${d.reason})`;
           rawEl.parentElement.appendChild(warn);
-          scrollMsgs();
         }
 
       } else if (d.type === 'chunk') {
         const step = asstMsg.steps.find(s => s.index === d.index);
         if (step) step.raw = (step.raw || '') + d.chunk;
         const rawEl = localStepEls[d.index]?.querySelector('.step-raw');
-        if (rawEl) { rawEl.textContent += d.chunk; scrollMsgs(); }
+        if (rawEl) rawEl.textContent += d.chunk;
+        // Update activity with extracted action name
+        if (step) {
+          const action = parseAction(step.raw);
+          if (action) setActivity(d.index, action, false);
+        }
+        scrollMsgs();
 
       } else if (d.type === 'step') {
         const step = asstMsg.steps.find(s => s.index === d.index);
         if (step) Object.assign(step, d);
         upgradeStepEl(localStepEls[d.index], d);
+        setActivity(d.index, d.action, true);
 
       } else if (d.type === 'finish') {
         asstMsg.content = d.answer;
         setMdContent(finalBubble, d.answer);
         finalBubble.classList.remove('hidden');
+        if (reactActivity) reactActivity.classList.add('hidden');
         scrollMsgs();
         if (S.personaEnabled && S.personaToast) showToast('🎭 人格已演化');
         if (S.ttsAutoplay && d.answer) speakText(d.answer);
@@ -2161,6 +2385,7 @@
     ws.onerror = () => {
       finalBubble.textContent = '[Connection error]';
       finalBubble.classList.remove('hidden');
+      if (reactActivity) reactActivity.classList.add('hidden');
     };
     ws.onclose = async () => {
       S.streaming = false;
@@ -2206,16 +2431,19 @@
 
       let stepsSection = '';
       if (isReact) {
-        const bodyHidden   = isStreaming ? '' : 'hidden';
-        const toggleHidden = (isStreaming || (msg.steps && msg.steps.length > 0)) ? '' : 'hidden';
+        const toggleHidden = (msg.steps && msg.steps.length > 0) ? '' : 'hidden';
         const count        = msg.steps?.length || 0;
         stepsSection = `
           <div class="react-steps">
+            <div class="react-activity hidden">
+              <span class="ra-spinner"></span>
+              <span class="ra-text">思考中…</span>
+            </div>
             <button class="steps-toggle ${toggleHidden}" onclick="toggleSteps(this)">
               <span class="chevron">▶</span>
               <span class="step-count">${count} step${count !== 1 ? 's' : ''}</span>
             </button>
-            <div class="react-steps-body ${bodyHidden}">${stepsHtml}</div>
+            <div class="react-steps-body hidden">${stepsHtml}</div>
           </div>`;
       }
 
@@ -2227,7 +2455,7 @@
           <div class="msg-bubble ${bubbleHidden}">${isStreaming ? '' : md(msg.content)}</div>
           <div style="display:flex;align-items:center;gap:6px">
             <span class="msg-time">${relTime(msg.timestamp)}</span>
-            <button class="msg-tts-btn" onclick="speakMessage(this)" title="朗读此消息">🔊</button>
+            <button class="msg-tts-btn" onclick="speakMessage(this)" title="朗读此消息"><span class="sound-wave"><b></b><b></b><b></b><b></b><b></b></span></button>
           </div>
         </div>`;
 
@@ -2236,9 +2464,8 @@
         el.querySelector('.msg-bubble')?.classList.add('md-rendered');
       }
 
-      // For loaded history with steps: keep body hidden, show toggle
+      // For loaded history with steps: ensure toggle is visible
       if (!isStreaming && msg.steps && msg.steps.length > 0) {
-        el.querySelector('.react-steps-body')?.classList.add('hidden');
         el.querySelector('.steps-toggle')?.classList.remove('hidden');
       }
     }
@@ -2253,35 +2480,50 @@
     btn.parentElement.querySelector('.react-steps-body')?.classList.toggle('hidden', !isOpen);
   }
 
+  function toggleStepCard(hdr) {
+    const isOpen = hdr.classList.toggle('open');
+    const detail = hdr.nextElementSibling;
+    if (detail) detail.classList.toggle('open', isOpen);
+  }
+
   function buildStepsHtml(steps) {
     return steps.map(s => {
       if (s.thought) {
         return `
           <div class="step-card">
-            <div class="step-hdr">
-              <span>Step ${(s.index ?? 0) + 1}</span>
+            <div class="step-hdr" onclick="toggleStepCard(this)">
+              <span class="chevron">▶</span>
+              <span>步骤 ${(s.index ?? 0) + 1}</span>
               <span class="step-action-tag">${esc(s.action)}</span>
+              <span class="step-done">✓</span>
             </div>
-            <div class="step-sections">
-              <div class="step-sec thought">
-                <div class="sec-lbl">Thought</div>
-                <div class="sec-content">${esc(s.thought)}</div>
-              </div>
-              <div class="step-sec action-sec">
-                <div class="sec-lbl">Action · ${esc(s.action)}</div>
-                <code class="code-val">${esc(JSON.stringify(s.action_input, null, 2))}</code>
-              </div>
-              <div class="step-sec observation">
-                <div class="sec-lbl">Observation</div>
-                <div class="sec-content">${esc(s.observation)}</div>
+            <div class="step-detail">
+              <div class="step-sections">
+                <div class="step-sec thought">
+                  <div class="sec-lbl">Thought</div>
+                  <div class="sec-content">${esc(s.thought)}</div>
+                </div>
+                <div class="step-sec action-sec">
+                  <div class="sec-lbl">Action · ${esc(s.action)}</div>
+                  <code class="code-val">${esc(JSON.stringify(s.action_input, null, 2))}</code>
+                </div>
+                <div class="step-sec observation">
+                  <div class="sec-lbl">Observation</div>
+                  <div class="sec-content">${esc(s.observation)}</div>
+                </div>
               </div>
             </div>
           </div>`;
       }
       return `
         <div class="step-card">
-          <div class="step-hdr"><span>Step ${(s.index ?? 0) + 1}</span></div>
-          <div class="step-raw">${esc(s.raw || '')}</div>
+          <div class="step-hdr" onclick="toggleStepCard(this)">
+            <span class="chevron">▶</span>
+            <span>步骤 ${(s.index ?? 0) + 1}</span>
+          </div>
+          <div class="step-detail">
+            <div class="step-raw">${esc(s.raw || '')}</div>
+          </div>
         </div>`;
     }).join('');
   }
@@ -2290,33 +2532,41 @@
     const el = document.createElement('div');
     el.className = 'step-card';
     el.innerHTML = `
-      <div class="step-hdr">
-        <span>Step ${index + 1}</span>
+      <div class="step-hdr" onclick="toggleStepCard(this)">
+        <span class="chevron">▶</span>
+        <span>步骤 ${index + 1}</span>
         <span class="step-streaming-label">thinking…</span>
       </div>
-      <div class="step-raw"></div>`;
+      <div class="step-detail">
+        <div class="step-raw"></div>
+      </div>`;
     return el;
   }
 
   function upgradeStepEl(el, data) {
     if (!el) return;
+    const wasOpen = el.querySelector('.step-hdr')?.classList.contains('open');
     el.innerHTML = `
-      <div class="step-hdr">
-        <span>Step ${data.index + 1}</span>
+      <div class="step-hdr${wasOpen ? ' open' : ''}" onclick="toggleStepCard(this)">
+        <span class="chevron">▶</span>
+        <span>步骤 ${data.index + 1}</span>
         <span class="step-action-tag">${esc(data.action)}</span>
+        <span class="step-done">✓</span>
       </div>
-      <div class="step-sections">
-        <div class="step-sec thought">
-          <div class="sec-lbl">Thought</div>
-          <div class="sec-content">${esc(data.thought)}</div>
-        </div>
-        <div class="step-sec action-sec">
-          <div class="sec-lbl">Action · ${esc(data.action)}</div>
-          <code class="code-val">${esc(JSON.stringify(data.action_input, null, 2))}</code>
-        </div>
-        <div class="step-sec observation">
-          <div class="sec-lbl">Observation</div>
-          <div class="sec-content">${esc(data.observation)}</div>
+      <div class="step-detail${wasOpen ? ' open' : ''}">
+        <div class="step-sections">
+          <div class="step-sec thought">
+            <div class="sec-lbl">Thought</div>
+            <div class="sec-content">${esc(data.thought)}</div>
+          </div>
+          <div class="step-sec action-sec">
+            <div class="sec-lbl">Action · ${esc(data.action)}</div>
+            <code class="code-val">${esc(JSON.stringify(data.action_input, null, 2))}</code>
+          </div>
+          <div class="step-sec observation">
+            <div class="sec-lbl">Observation</div>
+            <div class="sec-content">${esc(data.observation)}</div>
+          </div>
         </div>
       </div>`;
   }
@@ -2670,15 +2920,47 @@
     setTimeout(() => { msg.textContent = ''; }, 3000);
   }
 
+  async function doClearPersona() {
+    if (!confirm('确定要清空所有人格漂移数据？画像将还原至基础设定，此操作不可撤销。')) return;
+    const msg = $('clear-persona-msg');
+    msg.textContent = '正在清空…';
+    const r = await fetch('/api/react/persona/clear', { method: 'POST' }).catch(() => null);
+    if (r?.ok) {
+      msg.textContent = '人格漂移数据已清空。';
+    } else {
+      const detail = r ? (await r.json().catch(() => ({}))).error || '清空失败' : '网络错误';
+      msg.textContent = detail;
+    }
+    setTimeout(() => { msg.textContent = ''; }, 3000);
+  }
+
   /* ════════════════════════════════════
-     KNOWLEDGE BASE
+     KNOWLEDGE BASE PANEL
   ════════════════════════════════════ */
-  async function doKBSearch() {
-    const q = $('kb-search-input').value.trim();
+  function openKBPanel() {
+    $('main-area').classList.add('hidden');
+    $('kb-panel').classList.remove('hidden');
+    loadKBDocuments2();
+  }
+
+  function closeKBPanel() {
+    $('kb-panel').classList.add('hidden');
+    $('main-area').classList.remove('hidden');
+  }
+
+  async function fixKBIndex() {
+    const r = await fetch('/api/kb/fix-index', { method: 'POST' }).catch(() => null);
+    alert(r?.ok ? '索引修复成功' : '修复失败（知识库可能未初始化）');
+  }
+
+  async function doKBSearch2() {
+    const q = $('kb-search-input2').value.trim();
     if (!q) return;
-    const el = $('kb-search-results');
+    const el = $('kb-search-results2');
     el.textContent = '搜索中…';
-    const r = await fetch(`/api/kb/search?q=${encodeURIComponent(q)}&top_k=5`).catch(() => null);
+    const mode = $('kb-search-mode').value;
+    const url = `/api/kb/search?q=${encodeURIComponent(q)}&top_k=5&top_k_each=3&mode=${mode}`;
+    const r = await fetch(url).catch(() => null);
     if (!r?.ok) { el.textContent = '搜索失败（知识库可能未初始化）'; return; }
     const data = await r.json();
     if (!data.results?.length) { el.textContent = '未找到相关内容。'; return; }
@@ -2686,39 +2968,39 @@
       `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
         <span style="font-weight:600;color:var(--accent)">${i+1}.</span>
         <span style="color:var(--text3)">[${res.score.toFixed(3)} | ${res.source}]</span>
-        <span>${res.content.slice(0, 200)}…</span>
+        <div style="margin-top:3px">${res.content.slice(0, 300)}${res.content.length > 300 ? '…' : ''}</div>
       </div>`
     ).join('');
   }
 
-  async function doKBIngest() {
-    const text = $('kb-ingest-text').value.trim();
+  async function doKBIngest2() {
+    const text = $('kb-ingest-text2').value.trim();
     if (!text) return;
-    const msg = $('kb-ingest-msg');
+    const msg = $('kb-ingest-msg2');
     msg.textContent = '写入中…';
     const r = await fetch('/api/kb/ingest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text,
-        title:   $('kb-ingest-title').value.trim(),
-        domain:  $('kb-ingest-domain').value.trim(),
-        concept: $('kb-ingest-concept').value.trim(),
+        title:   $('kb-ingest-title2').value.trim(),
+        domain:  $('kb-ingest-domain2').value.trim(),
+        concept: $('kb-ingest-concept2').value.trim(),
       }),
     }).catch(() => null);
     if (r?.ok) {
       const d = await r.json();
       msg.textContent = `写入成功：doc_id = ${d.doc_id}`;
-      $('kb-ingest-text').value = '';
-      loadKBDocuments();
+      $('kb-ingest-text2').value = '';
+      loadKBDocuments2();
     } else {
       msg.textContent = '写入失败（知识库可能未初始化）';
     }
     setTimeout(() => { msg.textContent = ''; }, 4000);
   }
 
-  async function loadKBDocuments() {
-    const el = $('kb-doc-list');
+  async function loadKBDocuments2() {
+    const el = $('kb-doc-list2');
     el.textContent = '加载中…';
     const r = await fetch('/api/kb/documents').catch(() => null);
     if (!r?.ok) { el.textContent = '加载失败（知识库可能未初始化）'; return; }
@@ -2740,7 +3022,7 @@
   async function deleteKBDoc(docId) {
     if (!confirm('确定删除此文档？')) return;
     const r = await fetch(`/api/kb/documents/${docId}`, { method: 'DELETE' }).catch(() => null);
-    if (r?.ok) loadKBDocuments();
+    if (r?.ok) loadKBDocuments2();
   }
 
   /* ════════════════════════════════════
