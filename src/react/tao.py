@@ -11,6 +11,12 @@ from llm_core.handle import LLMHandle
 from llm_core.llm import LLM
 from react.action.executor import ActionExecutor
 from react.action.tools.impl.memory_recall import MemoryRecallAction
+from react.action.tools.impl.knowledge_hybrid_search import KnowledgeHybridSearchAction
+from react.action.tools.impl.knowledge_save import KnowledgeSaveAction
+from react.action.tools.impl.knowledge_list import KnowledgeListAction
+from react.action.skill.domain_learning import DomainLearningSkill
+from react.action.tools.impl.web_fetch import WebFetchAction
+from react.action.tools.impl.web_search import WebSearchAction
 from react.memory.long_term.init import make_memory
 from react.memory.long_term.memory import LongTermMemory
 from react.memory.medium_term.memory import RecentHistoryMemory
@@ -19,7 +25,8 @@ from react.memory.milestone.init import make_milestone
 from react.memory.milestone.memory import MilestoneMemory
 from react.memory.processor import MemoryProcessor, MemoryResult
 from react.prompt.block import MemoryBlock, PromptBlock
-from react.prompt.parser import parse_llm_output
+from react.prompt.parser import ParseQuality, diagnose, parse_llm_output
+from react.prompt.repair import repair
 from react.persona import PersonaManager
 from react.prompt.manager import PromptManager, StaticPromptParts
 from react.trace import TraceStore
@@ -57,7 +64,13 @@ class PromptPreviewEvent:
     messages: list[dict] = field(default_factory=list)
 
 
-TaoEvent = Union[StepStartEvent, ChunkEvent, StepEvent, FinishEvent, PromptPreviewEvent]
+@dataclass
+class RetryEvent:
+    index: int
+    reason: str
+
+
+TaoEvent = Union[StepStartEvent, ChunkEvent, StepEvent, FinishEvent, PromptPreviewEvent, RetryEvent]
 
 
 # ── Pending finish state (stored between stream() and post_process()) ─────────
@@ -79,6 +92,7 @@ class TaoLoop:
         executor: ActionExecutor,
         tool_descriptions: dict[str, str],
         cfg: TaoConfig,
+        tool_category_summary: str = "",
     ):
         self._llm = LLMHandle(llm)   # shared handle — update_llm() swaps the inner LLM
         self._executor = executor
@@ -117,7 +131,32 @@ class TaoLoop:
             self._executor.register_instance(recall)
             effective_descriptions[recall.name] = recall.description
 
-        self._manager = PromptManager(effective_descriptions, cfg.prompt)
+        # Inject KB tools when a knowledge config is provided.
+        self._kb = None
+        if cfg.knowledge is not None:
+            from knowledge import KnowledgeBase
+            self._kb = KnowledgeBase.from_config(cfg.knowledge)
+            self._kb.setup()
+
+            kb_search = KnowledgeHybridSearchAction(kb=self._kb)
+            kb_save   = KnowledgeSaveAction(kb=self._kb)
+            kb_list   = KnowledgeListAction(kb=self._kb)
+            for action in (kb_search, kb_save, kb_list):
+                self._executor.register_instance(action)
+                effective_descriptions[action.name] = action.description
+
+            web_search_inst = WebSearchAction()
+            web_fetch_inst  = WebFetchAction()
+            skill = DomainLearningSkill(
+                llm=self._llm,
+                kb=self._kb,
+                web_search=web_search_inst,
+                web_fetch=web_fetch_inst,
+            )
+            self._executor.register_instance(skill)
+            effective_descriptions[skill.name] = skill.description
+
+        self._manager = PromptManager(effective_descriptions, cfg.prompt, tool_category_summary)
 
         # Pre-assembled static prompt parts for the next turn.
         # None on first turn; rebuilt in post_process() after each commit.
@@ -125,6 +164,11 @@ class TaoLoop:
 
         # Commit payload set inside stream() and consumed by post_process().
         self._pending_finish: _PendingFinish | None = None
+
+        # Repair LLM: falls back to the main LLM when no dedicated config is given.
+        self._repair_llm = (
+            LLMHandle(LLM(cfg.repair_llm)) if cfg.repair_llm is not None else self._llm
+        )
 
     @staticmethod
     def _trunc(text: str, limit: int) -> str:
@@ -214,7 +258,51 @@ class TaoLoop:
                 raw_output += chunk
                 yield ChunkEvent(index=i, chunk=chunk)
 
-            result = parse_llm_output(raw_output)
+            # ── Three-layer parse robustness ──────────────────────────────────
+            # tool_names is passed to the parser to enable lenient inference.
+            tool_names = frozenset(self._executor.available_actions)
+            result = parse_llm_output(raw_output, tool_names=tool_names)
+
+            # Layer 2: repair LLM — only triggered on a hard FAILED parse that
+            # is NOT already being treated as an implicit finish.
+            if (
+                result.quality == ParseQuality.FAILED
+                and not result.is_finish
+                and self._cfg.prompt.repair_enabled
+            ):
+                _diagnosis = diagnose(result)
+                _repaired = repair(
+                    self._repair_llm,
+                    raw_output,
+                    _diagnosis,
+                    list(tool_names),
+                )
+                if _repaired:
+                    result = parse_llm_output(_repaired, tool_names=tool_names)
+
+            # Layer 0: inject a correction message and retry the main LLM.
+            # Only runs when both Layer 1 and Layer 2 failed to recover.
+            if result.quality == ParseQuality.FAILED and not result.is_finish:
+                for _attempt in range(self._cfg.prompt.retry_on_bad_parse):
+                    yield RetryEvent(index=i, reason=diagnose(result))
+                    correction_msgs = messages + [
+                        AIMessage(content=raw_output),
+                        HumanMessage(content=(
+                            "格式有误，请严格按照以下格式重新输出：\n"
+                            "Thought: <思考过程>\n"
+                            "Action: <工具名>\n"
+                            'Action Input: {"key": "value"}'
+                        )),
+                    ]
+                    raw_output = ""
+                    for chunk in self._llm.stream_generate_messages(correction_msgs):
+                        raw_output += chunk
+                        yield ChunkEvent(index=i, chunk=chunk)
+                    result = parse_llm_output(raw_output, tool_names=tool_names)
+                    if result.quality != ParseQuality.FAILED or result.is_finish:
+                        break
+                # All three layers exhausted — result is an implicit finish
+                # (action="" path in the parser), which is the safest degradation.
 
             if result.is_finish:
                 answer = result.action_input.get("answer", raw_output)
@@ -305,6 +393,35 @@ class TaoLoop:
         self._manager.clear_history()
         self._static_cache = None
         self._pending_finish = None
+
+    def clear_memory(self) -> None:
+        """Wipe all persistent memory tiers and reset in-memory state."""
+        import os
+
+        self.reset()
+
+        memory_dir    = self._cfg.memory.long_term.memory_dir
+        medium_dir    = self._cfg.memory.medium_term.memory_dir
+        milestone_dir = self._cfg.memory.milestone.milestone_dir
+
+        targets = [
+            os.path.join(memory_dir,    "memories.json"),
+            os.path.join(memory_dir,    "memory_index.faiss"),
+            os.path.join(medium_dir,    "medium_term.jsonl"),
+            os.path.join(milestone_dir, "milestones.json"),
+        ]
+        for fpath in targets:
+            if fpath and os.path.exists(fpath):
+                os.remove(fpath)
+
+        # Reset in-memory state of live objects
+        if self._long_term is not None:
+            self._long_term.store._entries.clear()
+            self._long_term.store._vectorstore = None
+        if self._milestone is not None:
+            self._milestone._store._entries.clear()
+        if self._medium_term is not None:
+            self._medium_term._entries.clear()
 
     def run(self, question: str) -> str:
         for event in self.stream(question):

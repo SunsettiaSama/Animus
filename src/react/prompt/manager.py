@@ -39,12 +39,15 @@ class PromptManager:
         self,
         tool_descriptions: dict[str, str],
         cfg: PromptConfig | None = None,
+        tool_category_summary: str = "",
     ) -> None:
         self._tpl = get_template((cfg or PromptConfig()).lang)
 
         tool_list = "\n".join(
             f"- {name}: {desc}" for name, desc in tool_descriptions.items()
         )
+        if tool_category_summary:
+            tool_list += f"\n\n{tool_category_summary}"
         self._base_system: str = self._tpl.system.format(tool_list=tool_list)
         # Pre-render the role block once; prepended to every system message.
         self._role_prefix: str = self._tpl.react_role.render(separator=self._tpl.separator) or ""

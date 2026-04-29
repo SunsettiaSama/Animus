@@ -223,7 +223,8 @@ def _build_tao(llm_cfg) -> object:
     manager    = ToolManager()
     executor   = manager.build_executor()
     tool_descs = manager.primary_descriptions()
-    tao        = TaoLoop(llm=llm, executor=executor, tool_descriptions=tool_descs, cfg=cfg)
+    cat_summary = manager.category_summary()
+    tao        = TaoLoop(llm=llm, executor=executor, tool_descriptions=tool_descs, cfg=cfg, tool_category_summary=cat_summary)
     _ok("TaoLoop", f"工具 {len(tool_descs)} 个  max_steps={cfg.max_steps}")
     return tao
 

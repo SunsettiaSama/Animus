@@ -1,0 +1,14 @@
+# Optional heavy dependencies for local voice inference.
+# Install with: pip install -r requirements-voice-local.txt
+
+# Local STT: faster-whisper (CTranslate2-based, much faster than openai-whisper)
+faster-whisper
+
+# Local TTS: Kokoro
+# Choose one of the following depending on your environment:
+kokoro-onnx        # ONNX runtime version (CPU/GPU, lighter)
+# kokoro           # PyTorch version (heavier, requires torch)
+
+# Audio I/O for Kokoro WAV output
+soundfile
+numpy

@@ -4,6 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ReAct Agent</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/bash.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/json.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/sql.min.js"></script>
   <style>
     :root {
       --bg:          #ffffff;
@@ -337,6 +345,61 @@
       color: var(--text);
       border-bottom-left-radius: 3px;
     }
+    /* When MD is rendered, disable pre-wrap so block elements layout correctly */
+    .message.assistant .msg-bubble.md-rendered { white-space: normal; }
+
+    /* ── Markdown content styles ── */
+    .msg-bubble.md-rendered p          { margin: 0 0 .65em; }
+    .msg-bubble.md-rendered p:last-child { margin-bottom: 0; }
+    .msg-bubble.md-rendered h1,
+    .msg-bubble.md-rendered h2,
+    .msg-bubble.md-rendered h3,
+    .msg-bubble.md-rendered h4         { margin: .9em 0 .4em; font-weight: 700; line-height: 1.3; }
+    .msg-bubble.md-rendered h1         { font-size: 1.25em; }
+    .msg-bubble.md-rendered h2         { font-size: 1.1em; }
+    .msg-bubble.md-rendered h3         { font-size: 1em; }
+    .msg-bubble.md-rendered ul,
+    .msg-bubble.md-rendered ol         { padding-left: 1.4em; margin: .4em 0 .65em; }
+    .msg-bubble.md-rendered li         { margin: .2em 0; }
+    .msg-bubble.md-rendered li > p     { margin: 0; }
+    .msg-bubble.md-rendered blockquote {
+      border-left: 3px solid var(--border);
+      margin: .6em 0;
+      padding: .3em .8em;
+      color: var(--text2);
+    }
+    .msg-bubble.md-rendered pre {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--r2);
+      padding: 10px 12px;
+      overflow-x: auto;
+      margin: .6em 0;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .msg-bubble.md-rendered code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12.5px;
+    }
+    .msg-bubble.md-rendered :not(pre) > code {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    .msg-bubble.md-rendered pre code   { background: none; border: none; padding: 0; }
+    .msg-bubble.md-rendered table      { border-collapse: collapse; margin: .6em 0; width: 100%; font-size: 13px; }
+    .msg-bubble.md-rendered th,
+    .msg-bubble.md-rendered td         { border: 1px solid var(--border); padding: 5px 10px; text-align: left; }
+    .msg-bubble.md-rendered th         { background: var(--bg3); font-weight: 600; }
+    .msg-bubble.md-rendered tr:hover td { background: var(--bg2); }
+    .msg-bubble.md-rendered a          { color: var(--accent); text-decoration: none; }
+    .msg-bubble.md-rendered a:hover    { text-decoration: underline; }
+    .msg-bubble.md-rendered hr         { border: none; border-top: 1px solid var(--border); margin: .8em 0; }
+    .msg-bubble.md-rendered strong     { font-weight: 700; }
+    .msg-bubble.md-rendered em         { font-style: italic; }
+
     .msg-bubble.streaming::after {
       content: '▋';
       animation: blink .7s step-start infinite;
@@ -394,6 +457,16 @@
       font-weight: 600;
     }
     .step-streaming-label { font-size: 11px; color: var(--text3); font-weight: 400; }
+
+    .retry-warning {
+      margin: 4px 12px 6px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      color: #b45309;
+      background: #fef3c7;
+      border: 1px solid #fde68a;
+    }
 
     .step-raw {
       padding: 10px 12px;
@@ -579,6 +652,18 @@
     }
     .btn-secondary:hover { background: var(--bg3); }
 
+    .btn-danger {
+      padding: 8px 16px;
+      background: #fee2e2;
+      color: #dc2626;
+      border: 1px solid #fca5a5;
+      border-radius: var(--r2);
+      font-size: 14px;
+      font-weight: 600;
+      transition: background .15s;
+    }
+    .btn-danger:hover { background: #fecaca; }
+
     /* -- Scrollbar -- */
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -635,6 +720,38 @@
     /* Toast notification */
     .toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(14px); background: #1f2937; color: #fff; font-size: 13px; padding: 9px 20px; border-radius: 20px; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; z-index: 500; white-space: nowrap; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── Voice / TTS / STT ── */
+    #btn-mic {
+      width: 36px; height: 36px;
+      border-radius: var(--r2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 17px; flex-shrink: 0;
+      color: var(--text2);
+      transition: background .15s, color .15s;
+    }
+    #btn-mic:hover { background: var(--bg3); color: var(--text); }
+    #btn-mic.recording {
+      background: #fee2e2; color: #ef4444;
+      animation: mic-pulse .9s ease-in-out infinite;
+    }
+    @keyframes mic-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.4); }
+      50%       { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+    }
+
+    .msg-tts-btn {
+      font-size: 13px; padding: 1px 5px; border-radius: 4px;
+      color: var(--text3); line-height: 1;
+      transition: background .12s, color .12s;
+    }
+    .msg-tts-btn:hover { background: var(--bg3); color: var(--accent); }
+    .msg-tts-btn.playing { color: var(--accent); animation: tts-spin .9s linear infinite; }
+    @keyframes tts-spin { to { transform: rotate(360deg); } }
+
+    /* provider-specific field groups in voice tab */
+    .voice-provider-section { display: none; }
+    .voice-provider-section.active { display: block; }
 
     /* Full prompt section */
     .full-prompt-section { margin-top: 5px; align-self: flex-end; width: 100%; }
@@ -751,6 +868,7 @@
     <div id="input-area">
       <div class="input-wrapper">
         <textarea id="msg-input" rows="1" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
+        <button id="btn-mic" onclick="toggleMic()" title="语音输入（点击开始录音，再次点击停止）">🎤</button>
         <button id="btn-send" onclick="sendMessage()">↑</button>
       </div>
     </div>
@@ -775,6 +893,8 @@
       <button class="tab-btn"        id="tab-btn-react-cfg" onclick="setTab('react-cfg')">ReAct</button>
       <button class="tab-btn"        id="tab-btn-memory"    onclick="setTab('memory')">🧠 Memory</button>
       <button class="tab-btn"        id="tab-btn-persona"   onclick="setTab('persona')">🎭 Persona</button>
+      <button class="tab-btn"        id="tab-btn-knowledge" onclick="setTab('knowledge')">📚 Knowledge</button>
+      <button class="tab-btn"        id="tab-btn-voice"     onclick="setTab('voice')">🔊 Voice</button>
     </div>
 
     <div class="modal-body">
@@ -993,6 +1113,16 @@
           </div>
         </div>
 
+        <!-- 清空记忆 -->
+        <div class="section-divider" style="margin-top:4px;border-color:#fca5a5;color:#ef4444">危险操作</div>
+        <div style="padding:4px 0 12px">
+          <p style="font-size:12px;color:var(--text2);margin-bottom:10px">
+            清空所有记忆层（L1 短期 / L2 中期 / L3 长期 / 里程碑），操作不可逆。
+          </p>
+          <button class="btn-danger" style="width:100%" onclick="doClearMemory()">🗑 清空所有记忆</button>
+          <div id="clear-memory-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
+        </div>
+
       </div>
 
       <!-- Persona tab -->
@@ -1050,7 +1180,209 @@
         </div>
 
       </div>
-    </div>
+
+      <!-- Knowledge tab -->
+      <div id="tab-knowledge" class="hidden">
+        <div class="section-divider" style="margin-top:0">语义搜索</div>
+        <div class="form-row" style="align-items:flex-end">
+          <div class="form-group" style="flex:1">
+            <label>搜索内容</label>
+            <input id="kb-search-input" type="text" placeholder="输入关键词或问题…" />
+          </div>
+          <button class="btn-secondary" style="flex-shrink:0;height:36px" onclick="doKBSearch()">搜索</button>
+        </div>
+        <div id="kb-search-results" style="font-size:13px;color:var(--text2);margin-top:6px;max-height:200px;overflow-y:auto"></div>
+
+        <div class="section-divider">手动写入</div>
+        <div class="form-group">
+          <label>内容</label>
+          <textarea id="kb-ingest-text" rows="3" placeholder="要写入知识库的内容…"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>标题</label>
+            <input id="kb-ingest-title" type="text" placeholder="可选" />
+          </div>
+          <div class="form-group">
+            <label>领域</label>
+            <input id="kb-ingest-domain" type="text" placeholder="如 quantum_computing" />
+          </div>
+          <div class="form-group">
+            <label>概念</label>
+            <input id="kb-ingest-concept" type="text" placeholder="如 superposition" />
+          </div>
+        </div>
+        <button class="btn-primary" style="width:100%;margin-bottom:8px" onclick="doKBIngest()">写入知识库</button>
+        <div id="kb-ingest-msg" style="font-size:12px;color:var(--text3);min-height:16px"></div>
+
+        <div class="section-divider">文档列表</div>
+        <button class="btn-secondary" style="margin-bottom:8px" onclick="loadKBDocuments()">刷新列表</button>
+        <div id="kb-doc-list" style="font-size:13px;color:var(--text2);max-height:240px;overflow-y:auto"></div>
+      </div>
+
+      <!-- Voice tab -->
+      <div id="tab-voice" class="hidden">
+
+        <!-- TTS -->
+        <div class="section-divider" style="margin-top:0">TTS 语音合成</div>
+        <div class="toggle-row" style="padding-top:0;padding-bottom:12px">
+          <div class="toggle-label">
+            <span class="toggle-title">自动朗读助手回复</span>
+            <span class="toggle-desc">每条助手消息生成完毕后自动调用 TTS 播放，也可点击消息旁的 🔊 手动播放。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-tts-autoplay"><span class="slider"></span></label>
+        </div>
+        <div class="form-group">
+          <label>Provider</label>
+          <select id="s-tts-provider" onchange="onTTSProviderChange()">
+            <option value="edge">Edge TTS（免费，联网）</option>
+            <option value="openai">OpenAI TTS</option>
+            <option value="kokoro">Kokoro（本地）</option>
+          </select>
+        </div>
+
+        <!-- Edge fields -->
+        <div id="tts-edge-fields" class="voice-provider-section active">
+          <div class="form-row">
+            <div class="form-group">
+              <label>语音名称 <span style="font-weight:400;color:var(--text3)">voice</span></label>
+              <input id="s-tts-voice" type="text" placeholder="zh-CN-XiaoxiaoNeural" />
+            </div>
+            <div class="form-group">
+              <label>格式 <span style="font-weight:400;color:var(--text3)">output_format</span></label>
+              <select id="s-tts-format">
+                <option value="mp3">mp3</option>
+                <option value="wav">wav</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>语速 <span style="font-weight:400;color:var(--text3)">rate，如 +0% / +20%</span></label>
+              <input id="s-tts-rate" type="text" placeholder="+0%" />
+            </div>
+            <div class="form-group">
+              <label>音量 <span style="font-weight:400;color:var(--text3)">volume，如 +0%</span></label>
+              <input id="s-tts-volume" type="text" placeholder="+0%" />
+            </div>
+          </div>
+        </div>
+
+        <!-- OpenAI fields -->
+        <div id="tts-openai-fields" class="voice-provider-section">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Model</label>
+              <input id="s-tts-openai-model" type="text" placeholder="tts-1" />
+            </div>
+            <div class="form-group">
+              <label>语音名称 <span style="font-weight:400;color:var(--text3)">voice</span></label>
+              <input id="s-tts-openai-voice" type="text" placeholder="alloy" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Base URL <span style="font-weight:400;color:var(--text3)">可选</span></label>
+            <input id="s-tts-openai-base-url" type="text" placeholder="https://api.openai.com/v1" />
+          </div>
+          <div class="form-group">
+            <label>API Key</label>
+            <input id="s-tts-openai-api-key" type="password" placeholder="sk-…" />
+          </div>
+        </div>
+
+        <!-- Kokoro fields -->
+        <div id="tts-kokoro-fields" class="voice-provider-section">
+          <div class="form-group">
+            <label>模型路径 <span style="font-weight:400;color:var(--text3)">kokoro_model_path</span></label>
+            <input id="s-tts-kokoro-path" type="text" placeholder="/path/to/kokoro-model" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Device</label>
+              <select id="s-tts-kokoro-device">
+                <option value="auto">auto</option>
+                <option value="cpu">cpu</option>
+                <option value="cuda">cuda</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>语音名称 <span style="font-weight:400;color:var(--text3)">voice</span></label>
+              <input id="s-tts-kokoro-voice" type="text" placeholder="af_bella" />
+            </div>
+          </div>
+        </div>
+
+        <!-- STT -->
+        <div class="section-divider">STT 语音识别</div>
+        <div class="form-group">
+          <label>Provider</label>
+          <select id="s-stt-provider" onchange="onSTTProviderChange()">
+            <option value="openai">OpenAI Whisper（API）</option>
+            <option value="faster_whisper">faster-whisper（本地）</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>语言 <span style="font-weight:400;color:var(--text3)">language，如 zh / en</span></label>
+          <input id="s-stt-language" type="text" placeholder="zh" />
+        </div>
+
+        <!-- STT OpenAI fields -->
+        <div id="stt-openai-fields" class="voice-provider-section active">
+          <div class="form-group">
+            <label>Model</label>
+            <input id="s-stt-openai-model" type="text" placeholder="whisper-1" />
+          </div>
+          <div class="form-group">
+            <label>Base URL <span style="font-weight:400;color:var(--text3)">可选</span></label>
+            <input id="s-stt-openai-base-url" type="text" placeholder="https://api.openai.com/v1" />
+          </div>
+          <div class="form-group">
+            <label>API Key</label>
+            <input id="s-stt-openai-api-key" type="password" placeholder="sk-…" />
+          </div>
+        </div>
+
+        <!-- STT local fields -->
+        <div id="stt-local-fields" class="voice-provider-section">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Model Size</label>
+              <select id="s-stt-local-size">
+                <option value="tiny">tiny</option>
+                <option value="base" selected>base</option>
+                <option value="small">small</option>
+                <option value="medium">medium</option>
+                <option value="large-v3">large-v3</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Device</label>
+              <select id="s-stt-local-device">
+                <option value="auto">auto</option>
+                <option value="cpu">cpu</option>
+                <option value="cuda">cuda</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Compute Type</label>
+              <select id="s-stt-local-compute">
+                <option value="int8" selected>int8</option>
+                <option value="float16">float16</option>
+                <option value="float32">float32</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>模型路径 <span style="font-weight:400;color:var(--text3)">留空自动下载</span></label>
+              <input id="s-stt-local-path" type="text" placeholder="" />
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div><!-- /modal-body -->
 
     <div class="modal-footer">
       <span id="modal-msg"></span>
@@ -1078,6 +1410,13 @@
     personaToast:    localStorage.getItem('personaToast') !== 'false',
     showFullPrompt:  localStorage.getItem('showFullPrompt') === 'true',
     toolsEnabled:    localStorage.getItem('toolsEnabled') === 'true',
+    ttsAutoplay:     localStorage.getItem('ttsAutoplay') === 'true',
+    // STT state
+    _micRecorder:    null,
+    _micChunks:      [],
+    _micMime:        'audio/webm',
+    // TTS state
+    _ttsAudio:       null,
   };
 
   /* ════════════════════════════════════
@@ -1090,6 +1429,194 @@
     $('s-tools-enabled').checked = S.toolsEnabled;
     updateStartCard();
     renderLandingRecent();
+  }
+
+  /* ════════════════════════════════════
+     VOICE CONFIG
+  ════════════════════════════════════ */
+  function onTTSProviderChange() {
+    const p = $('s-tts-provider').value;
+    ['edge', 'openai', 'kokoro'].forEach(name => {
+      const el = $(`tts-${name}-fields`);
+      if (el) el.classList.toggle('active', name === p);
+    });
+  }
+
+  function onSTTProviderChange() {
+    const p = $('s-stt-provider').value;
+    $('stt-openai-fields').classList.toggle('active', p === 'openai');
+    $('stt-local-fields').classList.toggle('active',  p === 'faster_whisper');
+  }
+
+  async function loadVoiceConfig() {
+    const [tr, sr] = await Promise.all([
+      fetch('/api/tts/config').catch(() => null),
+      fetch('/api/stt/config').catch(() => null),
+    ]);
+
+    if (tr?.ok) {
+      const t = await tr.json();
+      $('s-tts-provider').value          = t.provider       || 'edge';
+      $('s-tts-voice').value             = t.voice          || 'zh-CN-XiaoxiaoNeural';
+      $('s-tts-rate').value              = t.rate           || '+0%';
+      $('s-tts-volume').value            = t.volume         || '+0%';
+      $('s-tts-format').value            = t.output_format  || 'mp3';
+      $('s-tts-openai-model').value      = t.openai_model   || 'tts-1';
+      $('s-tts-openai-voice').value      = t.voice          || 'alloy';
+      $('s-tts-openai-base-url').value   = t.openai_base_url || '';
+      $('s-tts-openai-api-key').value    = t.openai_api_key  || '';
+      $('s-tts-kokoro-path').value       = t.kokoro_model_path || '';
+      $('s-tts-kokoro-device').value     = t.kokoro_device  || 'auto';
+      $('s-tts-kokoro-voice').value      = t.voice          || 'af_bella';
+      onTTSProviderChange();
+    }
+    if (sr?.ok) {
+      const s = await sr.json();
+      $('s-stt-provider').value          = s.provider           || 'openai';
+      $('s-stt-language').value          = s.language           || 'zh';
+      $('s-stt-openai-model').value      = s.openai_model       || 'whisper-1';
+      $('s-stt-openai-base-url').value   = s.openai_base_url    || '';
+      $('s-stt-openai-api-key').value    = s.openai_api_key     || '';
+      $('s-stt-local-size').value        = s.local_model_size   || 'base';
+      $('s-stt-local-path').value        = s.local_model_path   || '';
+      $('s-stt-local-device').value      = s.local_device       || 'auto';
+      $('s-stt-local-compute').value     = s.local_compute_type || 'int8';
+      onSTTProviderChange();
+    }
+    $('s-tts-autoplay').checked = S.ttsAutoplay;
+  }
+
+  async function saveVoiceConfig() {
+    S.ttsAutoplay = $('s-tts-autoplay')?.checked ?? false;
+    localStorage.setItem('ttsAutoplay', S.ttsAutoplay);
+
+    const provider = $('s-tts-provider')?.value || 'edge';
+    // pick voice field per provider
+    let voice = $('s-tts-voice')?.value || 'zh-CN-XiaoxiaoNeural';
+    if (provider === 'openai')  voice = $('s-tts-openai-voice')?.value || 'alloy';
+    if (provider === 'kokoro')  voice = $('s-tts-kokoro-voice')?.value || 'af_bella';
+
+    const ttsBody = {
+      provider,
+      voice,
+      rate:              $('s-tts-rate')?.value           || '+0%',
+      volume:            $('s-tts-volume')?.value         || '+0%',
+      output_format:     $('s-tts-format')?.value         || 'mp3',
+      openai_model:      $('s-tts-openai-model')?.value   || 'tts-1',
+      openai_base_url:   $('s-tts-openai-base-url')?.value || '',
+      openai_api_key:    $('s-tts-openai-api-key')?.value  || '',
+      kokoro_model_path: $('s-tts-kokoro-path')?.value    || '',
+      kokoro_device:     $('s-tts-kokoro-device')?.value  || 'auto',
+    };
+    const sttBody = {
+      provider:           $('s-stt-provider')?.value          || 'openai',
+      language:           $('s-stt-language')?.value          || 'zh',
+      openai_model:       $('s-stt-openai-model')?.value      || 'whisper-1',
+      openai_base_url:    $('s-stt-openai-base-url')?.value   || '',
+      openai_api_key:     $('s-stt-openai-api-key')?.value    || '',
+      local_model_size:   $('s-stt-local-size')?.value        || 'base',
+      local_model_path:   $('s-stt-local-path')?.value        || '',
+      local_device:       $('s-stt-local-device')?.value      || 'auto',
+      local_compute_type: $('s-stt-local-compute')?.value     || 'int8',
+    };
+    await Promise.all([
+      fetch('/api/tts/config/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ttsBody) }).catch(() => null),
+      fetch('/api/stt/config/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sttBody) }).catch(() => null),
+    ]);
+  }
+
+  /* ════════════════════════════════════
+     TTS PLAYBACK
+  ════════════════════════════════════ */
+  function speakMessage(btn) {
+    // Find the nearest assistant message bubble
+    const bubble = btn.closest('.msg-body')?.querySelector('.msg-bubble');
+    const text = bubble?.innerText?.trim();
+    if (!text) return;
+    speakText(text, btn);
+  }
+
+  async function speakText(text, btn) {
+    // Stop any currently playing audio
+    if (S._ttsAudio) {
+      S._ttsAudio.pause();
+      S._ttsAudio = null;
+      // Un-mark all playing buttons
+      document.querySelectorAll('.msg-tts-btn.playing').forEach(b => b.classList.remove('playing'));
+    }
+    if (btn) btn.classList.add('playing');
+
+    const r = await fetch('/api/tts/synthesize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }).catch(() => null);
+
+    if (!r?.ok) {
+      if (btn) btn.classList.remove('playing');
+      showToast('⚠ TTS 合成失败，请检查 Voice 设置');
+      return;
+    }
+
+    const blob = await r.blob();
+    const url  = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    S._ttsAudio = audio;
+    audio.onended = () => {
+      if (btn) btn.classList.remove('playing');
+      URL.revokeObjectURL(url);
+      S._ttsAudio = null;
+    };
+    audio.onerror = () => {
+      if (btn) btn.classList.remove('playing');
+      S._ttsAudio = null;
+    };
+    audio.play();
+  }
+
+  /* ════════════════════════════════════
+     STT RECORDING
+  ════════════════════════════════════ */
+  async function toggleMic() {
+    if (S._micRecorder && S._micRecorder.state === 'recording') {
+      S._micRecorder.stop();
+      return;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+    if (!stream) { showToast('⚠ 无法访问麦克风，请检查浏览器权限'); return; }
+
+    // Pick supported mime type
+    const mimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+    S._micMime = mimes.find(m => MediaRecorder.isTypeSupported(m)) || 'audio/webm';
+
+    S._micChunks   = [];
+    const recorder = new MediaRecorder(stream, { mimeType: S._micMime });
+    S._micRecorder = recorder;
+
+    recorder.ondataavailable = e => { if (e.data.size > 0) S._micChunks.push(e.data); };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      $('btn-mic').classList.remove('recording');
+      S._micRecorder = null;
+
+      const blob = new Blob(S._micChunks, { type: S._micMime });
+      const formData = new FormData();
+      formData.append('audio', blob, 'recording.webm');
+
+      const r = await fetch('/api/stt/transcribe', { method: 'POST', body: formData }).catch(() => null);
+      if (!r?.ok) { showToast('⚠ 语音识别失败，请检查 Voice 设置'); return; }
+      const d = await r.json().catch(() => ({}));
+      const text = (d.text || '').trim();
+      if (text) {
+        const inp = $('msg-input');
+        inp.value += (inp.value ? ' ' : '') + text;
+        autoResize(inp);
+        inp.focus();
+      }
+    };
+
+    recorder.start();
+    $('btn-mic').classList.add('recording');
   }
 
   async function loadStatus() {
@@ -1250,12 +1777,14 @@
   function overlayClick(e) { if (e.target === $('overlay')) closeSettings(); }
 
   function setTab(name) {
-    ['model', 'react-cfg', 'memory', 'persona'].forEach(t => {
+    ['model', 'react-cfg', 'memory', 'persona', 'knowledge', 'voice'].forEach(t => {
       $(`tab-${t}`).classList.toggle('hidden', t !== name);
       $(`tab-btn-${t}`).classList.toggle('active', t === name);
     });
-    if (name === 'persona') loadChronicle();
-    if (name === 'memory')  loadMemory();
+    if (name === 'persona')   loadPersona();
+    if (name === 'memory')    loadMemory();
+    if (name === 'knowledge') loadKBDocuments();
+    if (name === 'voice')     loadVoiceConfig();
   }
 
   function setModalMsg(msg, cls) {
@@ -1384,9 +1913,10 @@
 
     S.llmReady = true;
 
-    // ── Step 3: Save memory + persona settings to disk ──────────────────────
+    // ── Step 3: Save memory + persona + voice settings to disk ──────────────
     await saveMemory();
     await savePersona();
+    await saveVoiceConfig();
 
     // ── Step 4: (Re-)initialize React ────────────────────────────────────────
     // TaoLoop stores a direct reference to the _llm object at construction time.
@@ -1526,6 +2056,7 @@
     };
     ws.onclose = async () => {
       bubbleEl.classList.remove('streaming');
+      if (asstMsg.content) setMdContent(bubbleEl, asstMsg.content);
       S.streaming = false;
       S.activeWs  = null;
       setSendDisabled(false);
@@ -1533,6 +2064,7 @@
       await saveConv();
       renderSidebar();
       focusInput();
+      if (S.ttsAutoplay && asstMsg.content) speakText(asstMsg.content);
     };
   }
 
@@ -1594,6 +2126,17 @@
         }
         scrollMsgs();
 
+      } else if (d.type === 'retry') {
+        // Append a lightweight warning to the current step's raw output area.
+        const rawEl = localStepEls[d.index]?.querySelector('.step-raw');
+        if (rawEl) {
+          const warn = document.createElement('div');
+          warn.className = 'retry-warning';
+          warn.textContent = `⚠ 格式异常，正在重试… (${d.reason})`;
+          rawEl.parentElement.appendChild(warn);
+          scrollMsgs();
+        }
+
       } else if (d.type === 'chunk') {
         const step = asstMsg.steps.find(s => s.index === d.index);
         if (step) step.raw = (step.raw || '') + d.chunk;
@@ -1607,10 +2150,11 @@
 
       } else if (d.type === 'finish') {
         asstMsg.content = d.answer;
-        finalBubble.textContent = d.answer;
+        setMdContent(finalBubble, d.answer);
         finalBubble.classList.remove('hidden');
         scrollMsgs();
         if (S.personaEnabled && S.personaToast) showToast('🎭 人格已演化');
+        if (S.ttsAutoplay && d.answer) speakText(d.answer);
         ws.close();
       }
     };
@@ -1680,9 +2224,17 @@
         <div class="msg-avatar">⚡</div>
         <div class="msg-body">
           ${stepsSection}
-          <div class="msg-bubble ${bubbleHidden}">${esc(msg.content)}</div>
-          <div class="msg-time">${relTime(msg.timestamp)}</div>
+          <div class="msg-bubble ${bubbleHidden}">${isStreaming ? '' : md(msg.content)}</div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="msg-time">${relTime(msg.timestamp)}</span>
+            <button class="msg-tts-btn" onclick="speakMessage(this)" title="朗读此消息">🔊</button>
+          </div>
         </div>`;
+
+      // Mark as md-rendered for loaded history (non-streaming assistant messages)
+      if (!isStreaming && msg.content) {
+        el.querySelector('.msg-bubble')?.classList.add('md-rendered');
+      }
 
       // For loaded history with steps: keep body hidden, show toggle
       if (!isStreaming && msg.steps && msg.steps.length > 0) {
@@ -1887,6 +2439,34 @@
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  /* Render Markdown to safe HTML. Falls back to escaped plain text if marked is unavailable. */
+  (function _setupMarked() {
+    if (typeof marked === 'undefined') return;
+    // marked.setOptions works in v4; for v5+ we pass options per-call in md()
+    if (typeof marked.setOptions === 'function') {
+      marked.setOptions({ gfm: true, breaks: true });
+    }
+  })();
+
+  function md(text) {
+    const raw = String(text ?? '');
+    if (typeof marked === 'undefined') return esc(raw);
+    // Pass options explicitly for v5+ compatibility
+    const opts = { gfm: true, breaks: true };
+    return typeof marked.parse === 'function'
+      ? marked.parse(raw, opts)
+      : marked(raw, opts);
+  }
+
+  function setMdContent(el, text) {
+    el.innerHTML = md(text);
+    el.classList.add('md-rendered');
+    // Apply syntax highlighting to all code blocks inside this element
+    if (typeof hljs !== 'undefined') {
+      el.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
+    }
+  }
+
   function wsUrl(path) {
     return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`;
   }
@@ -2072,6 +2652,95 @@
       t.classList.remove('show');
       setTimeout(() => t.remove(), 300);
     }, 2600);
+  }
+
+  /* ════════════════════════════════════
+     CLEAR MEMORY
+  ════════════════════════════════════ */
+  async function doClearMemory() {
+    if (!confirm('确定要清空所有记忆？此操作不可撤销。')) return;
+    const msg = $('clear-memory-msg');
+    msg.textContent = '正在清空…';
+    const r = await fetch('/api/react/memory/clear', { method: 'POST' }).catch(() => null);
+    if (r?.ok) {
+      msg.textContent = '记忆已清空。';
+    } else {
+      msg.textContent = r ? '清空失败（ReAct 未初始化）' : '网络错误';
+    }
+    setTimeout(() => { msg.textContent = ''; }, 3000);
+  }
+
+  /* ════════════════════════════════════
+     KNOWLEDGE BASE
+  ════════════════════════════════════ */
+  async function doKBSearch() {
+    const q = $('kb-search-input').value.trim();
+    if (!q) return;
+    const el = $('kb-search-results');
+    el.textContent = '搜索中…';
+    const r = await fetch(`/api/kb/search?q=${encodeURIComponent(q)}&top_k=5`).catch(() => null);
+    if (!r?.ok) { el.textContent = '搜索失败（知识库可能未初始化）'; return; }
+    const data = await r.json();
+    if (!data.results?.length) { el.textContent = '未找到相关内容。'; return; }
+    el.innerHTML = data.results.map((res, i) =>
+      `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
+        <span style="font-weight:600;color:var(--accent)">${i+1}.</span>
+        <span style="color:var(--text3)">[${res.score.toFixed(3)} | ${res.source}]</span>
+        <span>${res.content.slice(0, 200)}…</span>
+      </div>`
+    ).join('');
+  }
+
+  async function doKBIngest() {
+    const text = $('kb-ingest-text').value.trim();
+    if (!text) return;
+    const msg = $('kb-ingest-msg');
+    msg.textContent = '写入中…';
+    const r = await fetch('/api/kb/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        title:   $('kb-ingest-title').value.trim(),
+        domain:  $('kb-ingest-domain').value.trim(),
+        concept: $('kb-ingest-concept').value.trim(),
+      }),
+    }).catch(() => null);
+    if (r?.ok) {
+      const d = await r.json();
+      msg.textContent = `写入成功：doc_id = ${d.doc_id}`;
+      $('kb-ingest-text').value = '';
+      loadKBDocuments();
+    } else {
+      msg.textContent = '写入失败（知识库可能未初始化）';
+    }
+    setTimeout(() => { msg.textContent = ''; }, 4000);
+  }
+
+  async function loadKBDocuments() {
+    const el = $('kb-doc-list');
+    el.textContent = '加载中…';
+    const r = await fetch('/api/kb/documents').catch(() => null);
+    if (!r?.ok) { el.textContent = '加载失败（知识库可能未初始化）'; return; }
+    const data = await r.json();
+    const docs = data.documents || [];
+    if (!docs.length) { el.textContent = '知识库为空。'; return; }
+    el.innerHTML = docs.map(d =>
+      `<div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div>
+          <span style="font-weight:600">${d.title || '(无标题)'}</span>
+          <span style="color:var(--text3);font-size:12px;margin-left:6px">${d.source_type}</span>
+          ${d.meta?.domain ? `<span style="color:var(--accent);font-size:12px;margin-left:4px">${d.meta.domain}</span>` : ''}
+        </div>
+        <button class="icon-btn danger" title="删除" onclick="deleteKBDoc('${d.id}')">🗑</button>
+      </div>`
+    ).join('');
+  }
+
+  async function deleteKBDoc(docId) {
+    if (!confirm('确定删除此文档？')) return;
+    const r = await fetch(`/api/kb/documents/${docId}`, { method: 'DELETE' }).catch(() => null);
+    if (r?.ok) loadKBDocuments();
   }
 
   /* ════════════════════════════════════

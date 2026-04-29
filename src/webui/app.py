@@ -9,14 +9,15 @@ from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from cache.config import CacheConfig
 from config import paths
+from config.knowledge.config import KnowledgeConfig
 from config.llm_core.config import LLMConfig
 from config.react.memory.memory_config import MemoryConfig
 from config.react.persona_config import PersonaConfig
@@ -27,7 +28,7 @@ from react.action.executor import ActionExecutor
 from react.action.manager import ToolManager
 from react.loop import ConvLoop
 from react.memory.processor import MemoryProcessor
-from react.tao import ChunkEvent, FinishEvent, PromptPreviewEvent, StepEvent, StepStartEvent, TaoLoop
+from react.tao import ChunkEvent, FinishEvent, PromptPreviewEvent, RetryEvent, StepEvent, StepStartEvent, TaoLoop
 from react.prompt.template import get_template as _get_prompt_template
 
 app = FastAPI()
@@ -37,6 +38,12 @@ _conv_loop: ConvLoop | None = None
 _llm_cfg: LLMConfig | None = None
 _tool_manager = ToolManager()
 _prompt_lang: str = "cn"          # tracks language chosen at react_init time
+
+_kb = None                        # KnowledgeBase | None, lazy-initialized
+_kb_cfg: KnowledgeConfig = KnowledgeConfig()
+
+_tts_engine = None                # TTSEngine | None, lazy-initialized
+_stt_engine = None                # STTEngine | None, lazy-initialized
 
 # Background initialisation state for TaoLoop (memory loading can be slow).
 _react_init_event: threading.Event = threading.Event()
@@ -91,6 +98,7 @@ class ReactInitRequest(BaseModel):
     lang: str = "cn"
     max_steps: int = 10
     primary_tools: list[str] | None = None
+    enable_kb: bool = False
 
 
 class ReactRunRequest(BaseModel):
@@ -410,7 +418,10 @@ def react_init(req: ReactInitRequest):
         prompt=PromptConfig(lang=req.lang),
         memory=_load_memory_config(),
         persona=_load_persona_config(),
+        knowledge=_kb_cfg if req.enable_kb else None,
     )
+
+    category_summary = _tool_manager.category_summary()
 
     # Reset state and spin up a background thread so the heavy memory-loading
     # (embedding model + FAISS index) does not block the HTTP response.
@@ -422,7 +433,13 @@ def react_init(req: ReactInitRequest):
         global _conv_loop, _react_init_error
         tao = None
         try:
-            tao = TaoLoop(llm=_llm, executor=executor, tool_descriptions=tool_descriptions, cfg=cfg)
+            tao = TaoLoop(
+                llm=_llm,
+                executor=executor,
+                tool_descriptions=tool_descriptions,
+                cfg=cfg,
+                tool_category_summary=category_summary,
+            )
             _conv_loop = ConvLoop(tao)
         except Exception as exc:
             _react_init_error = str(exc)
@@ -459,6 +476,15 @@ def react_reset():
         return JSONResponse(status_code=400, content={"error": "ReAct not initialized."})
     _conv_loop.reset()
     return {"status": "ok"}
+
+
+@app.post("/api/react/memory/clear")
+def react_memory_clear():
+    """Wipe all persistent memory tiers and reset in-memory state."""
+    if _conv_loop is None:
+        return JSONResponse(status_code=400, content={"error": "ReAct not initialized."})
+    _conv_loop._tao.clear_memory()
+    return {"status": "ok", "message": "所有记忆已清空。"}
 
 
 @app.post("/api/react/run")
@@ -718,6 +744,8 @@ async def ws_react_run(websocket: WebSocket):
                 msg = {"type": "prompt_preview", "messages": event.messages}
             elif isinstance(event, StepStartEvent):
                 msg = {"type": "step_start", "index": event.index}
+            elif isinstance(event, RetryEvent):
+                msg = {"type": "retry", "index": event.index, "reason": event.reason}
             elif isinstance(event, ChunkEvent):
                 msg = {"type": "chunk", "index": event.index, "chunk": event.chunk}
             elif isinstance(event, StepEvent):
@@ -762,6 +790,298 @@ async def ws_react_run(websocket: WebSocket):
     post_fut = loop.run_in_executor(None, _conv_loop.post_process)
     post_fut.add_done_callback(lambda f: f.exception())
 
+    await websocket.close()
+
+
+# ── Knowledge Base API ────────────────────────────────────────────────────────
+
+class KBIngestRequest(BaseModel):
+    text: str
+    title: str = ""
+    domain: str = ""
+    concept: str = ""
+
+
+def _get_kb():
+    global _kb
+    if _kb is None:
+        from knowledge import KnowledgeBase
+        _kb = KnowledgeBase.from_config(_kb_cfg)
+        _kb.setup()
+    return _kb
+
+
+@app.get("/api/kb/documents")
+def kb_list_documents():
+    kb = _get_kb()
+    docs = kb.store.list_documents(include_deleted=False)
+    return {
+        "documents": [
+            {
+                "id":          d.id,
+                "source":      d.source,
+                "source_type": d.source_type,
+                "title":       d.title or "",
+                "status":      d.status,
+                "meta":        d.meta or {},
+                "created_at":  str(d.created_at),
+            }
+            for d in docs
+        ]
+    }
+
+
+@app.get("/api/kb/search")
+def kb_search(q: str, top_k: int = 5):
+    kb = _get_kb()
+    results = kb.search(q, top_k=top_k)
+    return {
+        "query":   q,
+        "results": [
+            {
+                "chunk_id": r.chunk_id,
+                "doc_id":   r.doc_id,
+                "score":    r.score,
+                "source":   r.source,
+                "content":  r.content,
+                "meta":     r.meta,
+            }
+            for r in results
+        ],
+    }
+
+
+@app.post("/api/kb/ingest")
+def kb_ingest(req: KBIngestRequest):
+    kb = _get_kb()
+    meta: dict = {}
+    if req.domain:
+        meta["domain"] = req.domain
+    if req.concept:
+        meta["concept"] = req.concept
+    doc_id = kb.ingest_text(
+        req.text,
+        source="webui",
+        source_type="manual",
+        title=req.title or (f"{req.domain}/{req.concept}" if req.domain else "manual"),
+        meta=meta if meta else None,
+    )
+    return {"status": "ok", "doc_id": doc_id}
+
+
+@app.delete("/api/kb/documents/{doc_id}")
+def kb_delete_document(doc_id: str):
+    kb = _get_kb()
+    kb.delete(doc_id)
+    return {"status": "ok"}
+
+
+@app.post("/api/kb/repair")
+def kb_repair():
+    kb = _get_kb()
+    count = kb.repair()
+    return {"status": "ok", "repaired": count}
+
+
+# ── TTS / STT ─────────────────────────────────────────────────────────────────
+
+class TTSSynthesizeRequest(BaseModel):
+    text: str
+
+
+class TTSConfigSaveRequest(BaseModel):
+    provider: str = "edge"
+    voice: str = "zh-CN-XiaoxiaoNeural"
+    rate: str = "+0%"
+    volume: str = "+0%"
+    output_format: str = "mp3"
+    openai_model: str = "tts-1"
+    openai_base_url: str = ""
+    openai_api_key: str = ""
+    kokoro_model_path: str = ""
+    kokoro_device: str = "auto"
+
+
+class STTConfigSaveRequest(BaseModel):
+    provider: str = "openai"
+    language: str = "zh"
+    openai_model: str = "whisper-1"
+    openai_base_url: str = ""
+    openai_api_key: str = ""
+    local_model_size: str = "base"
+    local_model_path: str = ""
+    local_device: str = "auto"
+    local_compute_type: str = "int8"
+
+
+def _get_tts():
+    global _tts_engine
+    if _tts_engine is None:
+        from tts import TTSEngine
+        from config.tts.tts_config import TTSConfig
+        cfg = (
+            TTSConfig.from_yaml(str(paths.tts_config_yaml))
+            if paths.tts_config_yaml.exists()
+            else TTSConfig()
+        )
+        _tts_engine = TTSEngine.from_config(cfg)
+    return _tts_engine
+
+
+def _get_stt():
+    global _stt_engine
+    if _stt_engine is None:
+        from tts import STTEngine
+        from config.tts.stt_config import STTConfig
+        cfg = (
+            STTConfig.from_yaml(str(paths.stt_config_yaml))
+            if paths.stt_config_yaml.exists()
+            else STTConfig()
+        )
+        _stt_engine = STTEngine.from_config(cfg)
+    return _stt_engine
+
+
+@app.get("/api/tts/config")
+def get_tts_config():
+    from config.tts.tts_config import TTSConfig
+    cfg = (
+        TTSConfig.from_yaml(str(paths.tts_config_yaml))
+        if paths.tts_config_yaml.exists()
+        else TTSConfig()
+    )
+    return {
+        "provider":          cfg.provider,
+        "voice":             cfg.voice,
+        "rate":              cfg.rate,
+        "volume":            cfg.volume,
+        "output_format":     cfg.output_format,
+        "openai_model":      cfg.openai_model,
+        "openai_base_url":   cfg.openai_base_url,
+        "openai_api_key":    cfg.openai_api_key,
+        "kokoro_model_path": cfg.kokoro_model_path,
+        "kokoro_device":     cfg.kokoro_device,
+    }
+
+
+@app.post("/api/tts/config/save")
+def save_tts_config(req: TTSConfigSaveRequest):
+    import yaml
+    os.makedirs(paths.tts_config_yaml.parent, exist_ok=True)
+    data = {
+        "provider":          req.provider,
+        "voice":             req.voice,
+        "rate":              req.rate,
+        "volume":            req.volume,
+        "output_format":     req.output_format,
+        "openai_model":      req.openai_model,
+        "openai_base_url":   req.openai_base_url,
+        "openai_api_key":    req.openai_api_key,
+        "kokoro_model_path": req.kokoro_model_path,
+        "kokoro_device":     req.kokoro_device,
+    }
+    with open(paths.tts_config_yaml, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
+    # Reset cached engine so next call picks up new config
+    global _tts_engine
+    _tts_engine = None
+    return {"status": "ok"}
+
+
+@app.get("/api/stt/config")
+def get_stt_config():
+    from config.tts.stt_config import STTConfig
+    cfg = (
+        STTConfig.from_yaml(str(paths.stt_config_yaml))
+        if paths.stt_config_yaml.exists()
+        else STTConfig()
+    )
+    return {
+        "provider":           cfg.provider,
+        "language":           cfg.language,
+        "openai_model":       cfg.openai_model,
+        "openai_base_url":    cfg.openai_base_url,
+        "openai_api_key":     cfg.openai_api_key,
+        "local_model_size":   cfg.local_model_size,
+        "local_model_path":   cfg.local_model_path,
+        "local_device":       cfg.local_device,
+        "local_compute_type": cfg.local_compute_type,
+    }
+
+
+@app.post("/api/stt/config/save")
+def save_stt_config(req: STTConfigSaveRequest):
+    import yaml
+    os.makedirs(paths.stt_config_yaml.parent, exist_ok=True)
+    data = {
+        "provider":           req.provider,
+        "language":           req.language,
+        "openai_model":       req.openai_model,
+        "openai_base_url":    req.openai_base_url,
+        "openai_api_key":     req.openai_api_key,
+        "local_model_size":   req.local_model_size,
+        "local_model_path":   req.local_model_path,
+        "local_device":       req.local_device,
+        "local_compute_type": req.local_compute_type,
+    }
+    with open(paths.stt_config_yaml, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
+    # Reset cached engine so next call picks up new config
+    global _stt_engine
+    _stt_engine = None
+    return {"status": "ok"}
+
+
+@app.post("/api/tts/synthesize")
+async def tts_synthesize(req: TTSSynthesizeRequest):
+    engine = _get_tts()
+    audio = await engine.synthesize(req.text)
+    return Response(content=audio, media_type="audio/mpeg")
+
+
+@app.websocket("/ws/tts")
+async def ws_tts(websocket: WebSocket):
+    await websocket.accept()
+    data = await websocket.receive_json()
+    text = data.get("text", "")
+    if not text:
+        await websocket.send_json({"error": "No text provided."})
+        await websocket.close()
+        return
+    engine = _get_tts()
+    async for chunk in engine.stream(text):
+        await websocket.send_bytes(chunk)
+    await websocket.close()
+
+
+@app.post("/api/stt/transcribe")
+async def stt_transcribe(audio: UploadFile = File(...)):
+    engine = _get_stt()
+    data = await audio.read()
+    mime = audio.content_type or "audio/webm"
+    text = await engine.transcribe(data, mime)
+    return {"text": text}
+
+
+@app.websocket("/ws/stt")
+async def ws_stt(websocket: WebSocket):
+    await websocket.accept()
+    chunks: list[bytes] = []
+    mime_type = "audio/webm"
+    while True:
+        msg = await websocket.receive()
+        if "bytes" in msg:
+            chunks.append(msg["bytes"])
+        elif "text" in msg:
+            import json as _json
+            payload = _json.loads(msg["text"])
+            if payload.get("done"):
+                mime_type = payload.get("mime_type", mime_type)
+                break
+    audio = b"".join(chunks)
+    engine = _get_stt()
+    text = await engine.transcribe(audio, mime_type)
+    await websocket.send_json({"text": text})
     await websocket.close()
 
 

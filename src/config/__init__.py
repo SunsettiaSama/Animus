@@ -52,6 +52,14 @@ class AppPaths:
     def run_config_yaml(self) -> Path:
         return self.root / "config" / "react" / "run.yaml"
 
+    @property
+    def tts_config_yaml(self) -> Path:
+        return self.root / "config" / "tts" / "tts.yaml"
+
+    @property
+    def stt_config_yaml(self) -> Path:
+        return self.root / "config" / "tts" / "stt.yaml"
+
     # ── Runtime cache dirs ────────────────────────────────────────────────────
 
     @property

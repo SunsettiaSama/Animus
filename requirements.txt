@@ -24,3 +24,12 @@ huggingface-hub
 pyyaml
 numpy
 httpx
+html2text
+
+# Knowledge base
+pymysql
+redis
+qdrant-client
+
+# TTS (default provider)
+edge-tts

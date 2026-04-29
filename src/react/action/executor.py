@@ -75,6 +75,26 @@ class ActionExecutor:
         action_name: str = payload["action"]
         raw_args: dict = payload.get("args", {})
 
+        # ── Name resolution (fuzzy fallback for typos) ────────────────────────
+        # Only attempt fuzzy matching when the exact name is unknown across all
+        # three lookup tables, to avoid silent misrouting of valid names.
+        if (
+            action_name not in self._instances
+            and action_name not in self._lc_tools
+            and action_name not in self._registry
+        ):
+            import difflib
+            candidates = difflib.get_close_matches(
+                action_name, self.available_actions, n=1, cutoff=0.75
+            )
+            if candidates:
+                action_name = candidates[0]
+            else:
+                return (
+                    f"[工具执行错误] 未知工具: {action_name!r}。"
+                    f"可用工具: {self.available_actions}"
+                )
+
         if action_name in self._instances:
             instance = self._instances[action_name]
             args = self._coerce(instance, raw_args, source="instance")
@@ -89,12 +109,6 @@ class ActionExecutor:
                 return str(result)
             except Exception as exc:
                 return f"[工具执行错误] {type(exc).__name__}: {exc}"
-
-        if action_name not in self._registry:
-            return (
-                f"[工具执行错误] 未知工具: {action_name!r}。"
-                f"可用工具: {self.available_actions}"
-            )
 
         action_cls = self._registry[action_name]
         args = self._coerce(action_cls, raw_args, source="class")

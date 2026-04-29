@@ -23,6 +23,10 @@ from react.action.tools import (
     WebSearchAction,
     WordCountAction,
 )
+from react.action.tools.impl.web_fetch import WebFetchAction
+from react.action.tools.impl.knowledge_hybrid_search import KnowledgeHybridSearchAction
+from react.action.tools.impl.knowledge_save import KnowledgeSaveAction
+from react.action.tools.impl.knowledge_list import KnowledgeListAction
 
 if TYPE_CHECKING:
     from react.action.mcp.registry import MCPRegistry, MCPToolInfo
@@ -46,6 +50,7 @@ def _build_default_registry() -> ToolRegistry:
     reg.add(GetWeekdayAction,      category="time",       tags=["星期", "日期", "weekday"])
     reg.add(WeatherAction,         category="search",     tags=["天气", "weather", "城市"])
     reg.add(WebSearchAction,       category="search",     tags=["搜索", "互联网", "duckduckgo", "查询"])
+    reg.add(WebFetchAction,        category="search",     tags=["网页", "抓取", "全文", "url", "fetch"])
     reg.add(UnitConverterAction,   category="conversion", tags=["换算", "单位", "长度", "重量", "温度", "面积"])
     reg.add(WordCountAction,       category="text",       tags=["字数", "统计", "文本", "字符"])
     reg.add(StringTransformAction, category="text",       tags=["字符串", "大小写", "反转", "文本处理"])
@@ -54,6 +59,9 @@ def _build_default_registry() -> ToolRegistry:
     reg.add(RandomNumberAction,    category="random",     tags=["随机", "随机数", "random"])
     reg.add(RandomChoiceAction,    category="random",     tags=["随机", "选择", "抽签"])
     reg.add(GenerateUUIDAction,    category="random",     tags=["uuid", "唯一标识符", "随机"])
+    reg.add(KnowledgeHybridSearchAction, category="knowledge", tags=["知识库", "混合检索", "语义搜索", "关键词", "hybrid", "knowledge"])
+    reg.add(KnowledgeSaveAction,   category="knowledge",  tags=["知识库", "保存", "写入", "学习"])
+    reg.add(KnowledgeListAction,   category="knowledge",  tags=["知识库", "列表", "领域", "已知边界"])
     return reg
 
 
@@ -214,6 +222,32 @@ class ToolManager:
         tools = self._registry.as_langchain_tools(self._primary_names)
         tools.append(ToolSearchAction(manager=self))
         return tools
+
+    # --- 工具目录摘要（注入 prompt 用） ---
+
+    def category_summary(self) -> str:
+        """
+        返回按 category 分组的工具目录摘要字符串，用于注入系统提示词。
+
+        示例输出：
+            [可用工具目录 — 共N个]
+            search(3): web_search, web_fetch, weather
+            knowledge(3): knowledge_hybrid_search, knowledge_save, knowledge_list
+            → 使用 tool_search(query) 查看任意工具详细说明
+        """
+        from collections import defaultdict
+
+        groups: dict[str, list[str]] = defaultdict(list)
+        for meta in self._registry.all():
+            groups[meta.category].append(meta.name)
+
+        total = sum(len(names) for names in groups.values())
+        lines = [f"[可用工具目录 — 共 {total} 个]"]
+        for category in sorted(groups):
+            names = groups[category]
+            lines.append(f"  {category}({len(names)}): {', '.join(names)}")
+        lines.append("→ 使用 tool_search(query) 查看任意工具的详细说明")
+        return "\n".join(lines)
 
     # --- 工具信息（API 层使用） ---
 

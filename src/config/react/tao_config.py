@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from cache.config import CacheConfig
 from config.react.memory.memory_config import MemoryConfig
 from config.react.persona_config import PersonaConfig
 from config.react.prompt_config import PromptConfig
 from config.react.trace_config import TraceConfig
+
+if TYPE_CHECKING:
+    from config.knowledge.config import KnowledgeConfig
+    from config.llm_core.config import LLMConfig
 
 
 @dataclass
@@ -17,6 +22,8 @@ class TaoConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     persona: PersonaConfig = field(default_factory=PersonaConfig)
     trace: TraceConfig = field(default_factory=TraceConfig)
+    knowledge: KnowledgeConfig | None = field(default=None)
+    repair_llm: LLMConfig | None = field(default=None)
 
     def __post_init__(self) -> None:
         self._propagate_dirs()
