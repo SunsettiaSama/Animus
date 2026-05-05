@@ -239,21 +239,39 @@ export function appendReactMsg(id) {
       const secs = document.createElement('div');
       secs.className = 'step-sections';
 
-      const mkSec = (cls, label, content) => {
+      const mkSec = (cls, label, content, { markdown = false, code = false } = {}) => {
         const sec = document.createElement('div');
         sec.className = `step-sec ${cls}`;
-        sec.innerHTML = `<div class="sec-lbl">${label}</div><div class="sec-content">${_esc(content)}</div>`;
+        const lbl = document.createElement('div');
+        lbl.className = 'sec-lbl';
+        lbl.textContent = label;
+        const cont = document.createElement('div');
+        cont.className = 'sec-content';
+        if (code) {
+          const pre = document.createElement('pre');
+          const codeEl = document.createElement('code');
+          codeEl.className = 'language-json';
+          codeEl.textContent = content;
+          if (typeof hljs !== 'undefined') hljs.highlightElement(codeEl);
+          pre.appendChild(codeEl);
+          cont.appendChild(pre);
+        } else if (markdown) {
+          renderMarkdown(cont, content);
+        } else {
+          cont.textContent = content;
+        }
+        sec.append(lbl, cont);
         return sec;
       };
-      if (stepObj.thought) secs.appendChild(mkSec('thought', 'Thought', stepObj.thought));
+      if (stepObj.thought) secs.appendChild(mkSec('thought', 'Thought', stepObj.thought, { markdown: true }));
       if (stepObj.action)  secs.appendChild(mkSec('action-sec', 'Action', stepObj.action));
       if (stepObj.action_input) {
         const ai = typeof stepObj.action_input === 'string'
           ? stepObj.action_input
           : JSON.stringify(stepObj.action_input, null, 2);
-        secs.appendChild(mkSec('action-sec', 'Input', ai));
+        secs.appendChild(mkSec('action-sec', 'Input', ai, { code: true }));
       }
-      if (stepObj.observation) secs.appendChild(mkSec('observation', 'Observation', stepObj.observation));
+      if (stepObj.observation) secs.appendChild(mkSec('observation', 'Observation', stepObj.observation, { markdown: true }));
       s.detail.appendChild(secs);
 
       // Mark step done
@@ -301,16 +319,33 @@ export function appendReactMsg(id) {
       if (!_subBlock) return;
       const row = document.createElement('div');
       row.className = 'sub-step-row' + (stepObj.is_error ? ' sub-step-error' : '');
-      const mkPart = (label, val) => {
-        if (!val) return '';
+
+      const mkPart = (label, val, { markdown = false } = {}) => {
+        if (!val) return null;
         const v = typeof val === 'string' ? val : JSON.stringify(val, null, 2);
-        return `<div class="sub-sec"><span class="sub-sec-lbl">${label}</span><span class="sub-sec-val">${_esc(v)}</span></div>`;
+        const wrap = document.createElement('div');
+        wrap.className = 'sub-sec';
+        const lbl = document.createElement('span');
+        lbl.className = 'sub-sec-lbl';
+        lbl.textContent = label;
+        const valEl = document.createElement('span');
+        valEl.className = 'sub-sec-val';
+        if (markdown) {
+          renderMarkdown(valEl, v);
+        } else {
+          valEl.textContent = v;
+        }
+        wrap.append(lbl, valEl);
+        return wrap;
       };
-      row.innerHTML =
-        mkPart('Thought', stepObj.thought) +
-        mkPart('Action', stepObj.action) +
-        mkPart('Input', stepObj.action_input) +
-        mkPart('Observation', stepObj.observation);
+
+      [
+        mkPart('Thought', stepObj.thought, { markdown: true }),
+        mkPart('Action', stepObj.action),
+        mkPart('Input', stepObj.action_input),
+        mkPart('Observation', stepObj.observation, { markdown: true }),
+      ].forEach(el => el && row.appendChild(el));
+
       _subBlock.body.querySelector('.sub-stream')?.remove();
       _subBlock.body.appendChild(row);
       scrollBottom();

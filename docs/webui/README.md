@@ -41,6 +41,8 @@
 | `src/webui/static/js/modules/knowledge.js` | 知识库面板 |
 | `src/webui/routers/plan.py` | Plan 模式编排控制（运行 / 状态 / SSE 流 / 快照 / 回滚 / 日志 / 暂停 / 跳步）|
 | `src/webui/static/js/modules/plan.js` | Plan 模式前端（BFS DAG 布局、SVG 渲染、SSE 实时更新、影子编辑器、快照列表、日志尾流）|
+| `src/webui/routers/benchmark.py` | Benchmark Suite 后端（场景列表 / 运行 SSE / 报告读写 / 历史 / 清除）|
+| `src/webui/static/js/modules/benchmark.js` | Benchmark Suite 前端（场景选择、SSE 进度、结果表格、漂移对比）|
 
 ## 启动
 
@@ -217,6 +219,184 @@ python src/webui/run.py
 | `/api/plan/resume` | POST | 恢复计划执行 |
 | `/api/plan/skip/{task_id}` | POST | 跳过指定任务 |
 
+### Benchmark Suite
+
+| 路由 | 方法 | 说明 |
+|---|---|---|
+| `/api/benchmark/scenarios` | GET | 返回 YAML 场景名称列表 |
+| `/api/benchmark/report` | GET | 读取 `.react/benchmark/report.json`，不存在返回空 |
+| `/api/benchmark/history` | GET | 读取 `.react/benchmark/history.json`，不存在返回空 |
+| `/api/benchmark/run` | POST | `{ scenarios: [...] }` → SSE 流，每场景结束推一条 JSON；全部完成后写入报告和历史 |
+| `/api/benchmark/report` | DELETE | 删除 `report.json` 与 `history.json` |
+
+---
+
+## 初始化链
+
+### LLM 初始化
+
+```
+Settings → Save（saveModelTab）
+   │  POST /api/config/save  → 写 config/llm_core/config.yaml
+   │  POST /api/init         → llm.py: init_llm()
+   │     state.llm = LLM(cfg)
+   │     state.llm_cfg = cfg
+   └── 若 tools_enabled: reactMod.init(payload) → ReAct 初始化链
+```
+
+### ReAct 初始化链（完整）
+
+```
+前端触发
+  settings.js:saveModelTab() 或 reactMod.init(payload)
+      │
+      ▼
+POST /api/react/reinit  (react.py:201)
+  ├─ 校验：state.llm 是否存在（否 → 400 "LLM not initialized."）
+  ├─ 校验：is_streaming（是 → 409）
+  ├─ state.react_init_event.clear()
+  ├─ state.conv_loop = None
+  └─ task_runner.submit("react_init", _do_react_init)  ← 后台线程
+          │
+          ▼
+      _do_react_init(req, state)  (react.py:107)
+          │
+          ├─ 取消旧 scheduler（若存在）
+          ├─ 等待旧 preload_future（最多 120s）
+          ├─ old_tao.close()
+          │
+          ├─ executor = state.tool_manager.build_executor()
+          ├─ TaoConfig(
+          │      max_steps=req.max_steps,
+          │      storage=state.cache,           # StorageConfig(.react/)
+          │      prompt=PromptConfig(lang=req.lang),
+          │      memory=MemoryConfig.from_yaml(...),
+          │      persona=PersonaConfig(...),
+          │      scheduler=SchedulerConfig(...),
+          │      agent=SubAgentConfig(...),
+          │      plan=PlanConfig(...)
+          │  )
+          │
+          ├─ TaoLoop(llm, executor, tool_descriptions, cfg)
+          │      │  内部构建顺序（src/agent/react/tao.py）：
+          │      ├─ LLMHandle(llm)
+          │      ├─ TraceStore / PersonaManager / TimelineStore
+          │      ├─ make_memory / make_milestone / RecentHistoryMemory
+          │      ├─ 注册工具：recall → scratchpad → sandbox → KB → scheduler → delegate → plan
+          │      ├─ executor.set_event_sink(timeline.make_tool_sink())
+          │      └─ PromptManager(effective_descriptions, cfg.prompt)  ← 必须在所有工具注册后
+          │
+          ├─ state.active_tao = tao
+          ├─ state.conv_loop = ConvLoop(tao)
+          ├─ state.react_init_event.set()
+          ├─ task_runner.submit("preload", tao.preload)
+          └─ asyncio.run_coroutine_threadsafe(scheduler_engine.start(), main_event_loop)
+
+前端轮询
+  reactMod.init() 内：pollUntilReady()
+      └─ 每 500ms GET /api/react/status
+             ├─ "ready"  → set('reactReady', true)
+             ├─ "error"  → 抛出异常，toast 显示错误
+             └─ 超时（120s）→ 抛出 "ReAct init timed out"
+
+GET /api/react/status  (react.py:233)
+  ├─ react_init_event.is_set() == False → "initializing"
+  ├─ react_init_error 非空              → "error"
+  └─ 其他                               → "ready"
+```
+
+> **⚠️ 已知语义陷阱**：`AppState.__post_init__` 在启动时即执行 `react_init_event.set()`（含义：初始空闲），导致未调用 `reinit` 时 `GET /api/react/status` 也返回 `ready`，前端 `reactReady` 会被设为 `true`。但此时 `conv_loop is None`，用户发消息时 WebSocket 仍会返回 `"ReAct not initialized."`。  
+> **解法**：首次使用前务必在 Settings 保存配置并开启工具，或点击 "New ReAct Session" 触发 reinit。
+
+---
+
+## 对话交互链
+
+### ReAct 模式（/ws/react/run）
+
+```
+用户点击 Send（main.js:handleSend）
+    │
+    ├─ 检查 S.reactReady（否 → toast "ReAct not initialized"，返回）
+    ├─ setState('streaming', { mode: 'react' })
+    └─ streaming.js: ReactSession.run(question)
+            │
+            ├─ wsFactory('/ws/react/run') → WebSocket 连接
+            ├─ send({ question, gen_id })
+            │
+            │  后端 ws_react_run (react.py:352)
+            │      ├─ 接收 question / gen_id
+            │      ├─ conv_loop is None → send error, close
+            │      ├─ state.set_streaming(True, gen_id)
+            │      ├─ 线程: _produce()
+            │      │      for event in conv_loop.stream(question):
+            │      │           → ConvLoop.stream → TaoLoop.stream(question)
+            │      │           → _event_to_dict(event) → queue.put(msg)
+            │      └─ 线程: _receive_client()
+            │             处理 abort / approval_response
+            │
+            │  TaoLoop.stream 每轮 yield：
+            │      PromptPreviewEvent(step=0)
+            │      StepStartEvent(index=i)
+            │      ChunkEvent(index=i, chunk=...)   ← LLM 流式 token
+            │      RetryEvent(index=i, reason=...)  ← 解析失败重试
+            │      ApprovalRequestEvent(...)         ← 高风险工具审批
+            │      StepEvent(thought, action, observation)
+            │      FinishEvent(answer=...)
+            │
+            │  前端收到事件 (streaming.js:onmessage)
+            │      chunk    → render.appendChunk()
+            │      step     → render.appendReactStep()
+            │      finish   → resolve Promise, setState('idle')
+            │      error    → reject Promise, setState('error')
+            │
+            └─ finish 后：
+                   后端: task_runner.submit("post_process", conv_loop.post_process)
+                       → TaoLoop.post_process()（后台线程）
+                           processor.commit(q, a)
+                           timeline.append("conversation", ...)
+                           persona.evolve(q, a)
+                           manager.add_turn(q, a)
+                           _maybe_consolidate()
+                           static_cache = manager.build_static()
+
+### Chat 模式（/ws/chat）
+
+```
+用户点击 Send（mode = 'chat'）
+    └─ streaming.js: ChatSession.run(question, history)
+            ├─ wsFactory('/ws/chat')
+            ├─ send({ question, history, gen_id })
+            └─ 仅收 chunk / finish / error（无 step 类事件）
+```
+
+### 中止
+
+```
+用户点击 ⊘（Abort）
+    ├─ 方式 A：通过 WebSocket 发 { type:"abort", gen_id }
+    │        → _receive_client() 匹配 gen_id → conv_loop._tao.abort()
+    │          → TaoLoop._stop_event.set() → stream() 在下个 chunk 边界 return
+    └─ 方式 B：POST /api/react/abort（WS 断开备用）
+```
+
+---
+
+## 配置文件路径
+
+| 用途 | 路径（相对仓库根） |
+|---|---|
+| LLM 配置 | `config/llm_core/config.yaml` |
+| vLLM 配置 | `config/llm_core/vllm.yaml` |
+| Memory 配置 | `config/agent/memory.yaml` |
+| 长期记忆细分 | `config/agent/memory/long_term.yaml` |
+| Embedding 模型 | `config/embedding/model.yaml` |
+| Sandbox 配置 | `config/infra/sandbox.yaml` |
+| WebUI 偏好设置 | `config/webui/settings.json` |
+| 启动端口等 | `config/agent/run.yaml` |
+| 人格运行时 | `.react/persona/persona_config.json` |
+| 运行时数据根 | `.react/`（由 `StorageConfig.root` 决定）|
+
 ---
 
 ## WebSocket 事件流
@@ -269,26 +449,37 @@ python src/webui/run.py
 
 ### 工作站主页（`#s-landing`）
 
-应用启动后默认显示工作站仪表板。页面分为四个区块：
+应用启动后默认显示工作站仪表板，包含五个顶层导航入口：
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  ⚡ ReAct Workstation               [↻ Refresh] [⚙] │
-├─────────────────────────────────────────────────────┤
-│  Infrastructure Services                            │
-│  [vLLM ●] [SearXNG ●] [Sandbox ●] [TTS ●] [STT ●] │
-├──────────────┬──────────────┬──────────────────────┤
-│ LLM Core     │ ReAct Agent  │ Memory               │
-│ Persona      │ Voice        │ Scheduler & Crew     │
-│ [Configure]  │ [Configure]  │ [Configure]           │
-│                                                     │
-│              [📋 Plan Mode]                         │
-├──────────────┴──────────────┴──────────────────────┤
-│  Quick Start                                        │
-│  [💬 New Chat]  [⚡ New ReAct Session]             │
-│  Recent conversations（最多 6 条）                   │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  ⚡ ReAct Workstation                    [↻ Refresh] [⚙]   │
+├─────────────────────────────────────────────────────────────┤
+│  Infrastructure Services                                    │
+│  [vLLM ●] [SearXNG ●] [Sandbox ●] [TTS ●] [STT ●]         │
+├───────────┬───────────┬──────────┬───────────┬─────────────┤
+│ LLM Core  │ ReAct     │ Memory   │ Persona   │ Voice       │
+│           │ Agent     │          │           │             │
+├───────────┴───────────┴──────────┴───────────┴─────────────┤
+│  Scheduler & Crew   │  Benchmark                           │
+│  (只读摘要)         │  (只读摘要：通过率 / 最后运行时间)   │
+├─────────────────────────────────────────────────────────────┤
+│  Quick Start                                                │
+│  [💬 New Chat]  [⚡ New ReAct Session]  [🗂 Plan Mode]     │
+│  [🧪 Benchmark Suite]  [🗓 Scheduler]                       │
+│  Recent conversations（最多 6 条）                          │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+**五个顶层屏幕（`_showScreen` 管理）：**
+
+| 屏幕 ID | 入口 | 说明 |
+|---|---|---|
+| `s-landing` | 应用启动 / Home 按钮 | 工作站仪表板 |
+| `s-workspace` | New Chat / New ReAct Session | Chat & ReAct 对话区 |
+| `s-plan` | Plan Mode 按钮 | 多智能体编排可视化 |
+| `s-benchmark` | Benchmark Suite 按钮 | CI 性能基准套件 |
+| `s-scheduler` | Scheduler 按钮 | 定时任务管理 + 时间轴 |
 
 #### Infrastructure Services 行
 
@@ -304,7 +495,7 @@ python src/webui/run.py
 
 #### Modules 卡片网格
 
-6 张卡片 3 列网格，展示各模块实时摘要，双击卡片直接跳转到对应 Settings Tab：
+7 张只读状态卡，展示各模块实时摘要；支持双击卡片直接跳转到对应 Settings Tab（无 `data-tab` 的卡片不支持双击）：
 
 | 卡片 | 展示内容 | Settings Tab |
 |---|---|---|
@@ -313,7 +504,8 @@ python src/webui/run.py
 | Memory | L1 / L2 / L3 / MS 开关徽章 | memory |
 | Persona | 人格名称、演化开关；active/disabled 徽章 | persona |
 | Voice | TTS provider + 状态；STT provider + 状态 | voice |
-| Scheduler & Crew | Engine 状态、Crew 可用性 | model |
+| Scheduler & Crew | 任务总数 / pending / running；只读摘要 | — |
+| Benchmark | 通过率 / 场景数 / 最近运行场景；只读摘要 | — |
 
 #### 工作站数据加载
 
@@ -328,7 +520,8 @@ python src/webui/run.py
 | `GET /api/memory` | Memory 卡片层级开关 |
 | `GET /api/persona` | Persona 卡片信息 |
 | `GET /api/react/tools` | ReAct Agent 工具总数与分类 |
-| `GET /api/scheduler/tasks` | 调度器任务表 |
+| `GET /api/scheduler/tasks` | 调度器任务（Scheduler 卡片摘要） |
+| `GET /api/benchmark/report` | Benchmark 最新报告（Benchmark 卡片摘要） |
 | `GET /api/history` | 最近对话列表 |
 
 ### 对话区（`#s-workspace`）
@@ -420,4 +613,55 @@ Settings 按钮（⚙）打开模态框，包含 6 个 Tab：
 
 - 从 `/api/plan/logs` 获取最近 N 条 JSONL 结构化日志（默认 50 条）。
 - 支持按 `task_id` 过滤，展示事件类型、时间戳、消息与附加字段。
+
+### Benchmark Suite 界面（`#s-benchmark`）
+
+点击工作站主页 **[🧪 Benchmark Suite]** 进入，独立全屏。
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  ◀ Home   Benchmark Suite  [status]  [▶ Run All] [Run Sel] [Clear] │
+├───────────────────────────┬──────────────────────────────────┤
+│  Scenarios                │  Results                         │
+│  ☑ simple_qa              │  ┌──────┬──┬───────┬─────┬───┐  │
+│  ☑ tool_use               │  │场景  │OK│Tokens │Wall │Qty│  │
+│  ☑ plan_exec              │  ├──────┼──┼───────┼─────┼───┤  │
+│                           │  │ ...  │✓ │  200  │12ms │—  │  │
+│  Progress（运行时追加）    │  └──────┴──┴───────┴─────┴───┘  │
+│  ✓ simple_qa              ├──────────────────────────────────┤
+│  ✓ tool_use               │  History Drift                   │
+│                           │  ┌──────────┬──────────────────┐ │
+│                           │  │场景      │Token Δ vs prev   │ │
+│                           │  │simple_qa │▲ +5.2%           │ │
+│                           │  └──────────┴──────────────────┘ │
+└───────────────────────────┴──────────────────────────────────┘
+```
+
+- **左侧**：场景 checkbox 列表（全选 / 按需选）+ 实时运行进度（SSE 驱动，每场景完成后追加一行）
+- **右侧上**：结果表格（场景名 / 成功标志 / Tokens / Wall 时间 / Quality Score）
+- **右侧下**：与上次运行的 Token 漂移对比（超过 20% 标红）
+- 数据持久化于 `.react/benchmark/report.json`（报告）和 `.react/benchmark/history.json`（历史）
+
+### Scheduler 界面（`#s-scheduler`）
+
+点击工作站主页 **[🗓 Scheduler]** 进入，独立全屏。
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  ◀ Home   Scheduler  [—]        [+ New Task] [↺ Refresh]    │
+├───────────────────────────┬──────────────────────────────────┤
+│  Task Table               │  Timeline — Today                │
+│  ┌────┬──────┬───────┬──┐ │  ┌──────────────────────────┐   │
+│  │Name│Profil│Trigger│..│ │  │08:30  conversation  ...  │   │
+│  ├────┼──────┼───────┼──┤ │  │09:12  tool_call  search  │   │
+│  │daily│mini │interval│ │ │  │10:05  plan_event  task_a  │   │
+│  └────┴──────┴───────┴──┘ │  └──────────────────────────┘   │
+│                           │  （今日事件，时间倒序，来自       │
+│  [New Task Form（折叠）]   │   GET /api/timeline）            │
+└───────────────────────────┴──────────────────────────────────┘
+```
+
+- **左侧**：当前任务列表（调用 `GET /api/scheduler/tasks`）+ 新建表单（+ New Task 按钮展开）
+- **右侧**：今日时间轴（调用 `GET /api/timeline`，展示 `TimelineStore` 写入的所有事件，时间倒序）
+- 时间轴事件类型包括：`conversation`（对话完成）、`tool_call`（工具调用）、`plan_event`（Plan 编排事件）等
 

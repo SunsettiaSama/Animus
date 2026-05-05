@@ -47,10 +47,11 @@ _pkg_stub("agent.react", REACT_DIR)
 _lc = _pkg_stub("langchain_community")
 _lce = _mod_stub("langchain_community.embeddings")
 _lcv = _mod_stub("langchain_community.vectorstores")
-_lce.HuggingFaceBgeEmbeddings = MagicMock()
 _lcv.FAISS = MagicMock()
 _lc.embeddings = _lce
 _lc.vectorstores = _lcv
+_lc_hf = _pkg_stub("langchain_huggingface")
+_lc_hf.HuggingFaceEmbeddings = MagicMock(name="HuggingFaceEmbeddings")
 
 # html2text — 测试环境未安装，提供最小 stub
 _html2text = _mod_stub("html2text")

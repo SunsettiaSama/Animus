@@ -126,6 +126,7 @@ export async function pollUntilReady(intervalMs = 500, timeoutMs = 120_000) {
     const { status, detail } = await http.get(PATHS.react.status);
     if (status === 'ready') return;
     if (status === 'error') throw new Error(detail ?? 'ReAct init failed');
+    if (status === 'not_initialized') throw new Error('ReAct not initialized — configure LLM first');
     await new Promise(r => setTimeout(r, intervalMs));
   }
   throw new Error('ReAct init timed out');

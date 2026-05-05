@@ -131,7 +131,7 @@ if /i "!START_DB!"=="n" (
         echo  [!!] 未检测到 Docker，跳过数据库启动。
         echo  [  ]  若需知识库功能，请先安装 Docker Desktop。
     ) else (
-        echo  [>>] 正在启动 MySQL 和 Redis 容器...
+        echo  [^>^>] 正在启动 MySQL 和 Redis 容器...
         docker compose -f "%ROOT%\docker\docker-compose-db.yml" up -d
         if !errorlevel! neq 0 (
             echo  [!!] 数据库容器启动失败，请检查 Docker 是否正常运行。
@@ -187,7 +187,7 @@ if not errorlevel 1 set "DOUBLE_CLICK=1"
 
 :: ── 6. 启动服务器 ────────────────────────────────────────────────────
 echo.
-echo  [>>] 正在启动 ReAct Agent...
+echo  [^>^>] 正在启动 ReAct Agent...
 echo  [  ]  访问地址: %URL%
 echo  ──────────────────────────────────────────
 echo  [  ]  按 Ctrl+C 停止服务

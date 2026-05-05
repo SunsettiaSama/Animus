@@ -58,9 +58,10 @@ _pkg_stub("agent.react", REACT_DIR)
 _lc_comm = _pkg_stub("langchain_community")
 _lc_emb  = _mod_stub("langchain_community.embeddings")
 _lc_vs   = _mod_stub("langchain_community.vectorstores")
-_lc_emb.HuggingFaceBgeEmbeddings = MagicMock(name="HuggingFaceBgeEmbeddings")
 _lc_vs.FAISS                      = MagicMock(name="FAISS")
 _lc_comm.embeddings               = _lc_emb
+_lc_hf = _pkg_stub("langchain_huggingface")
+_lc_hf.HuggingFaceEmbeddings = MagicMock(name="HuggingFaceEmbeddings")
 _lc_comm.vectorstores             = _lc_vs
 
 sys.path.insert(0, str(SRC))

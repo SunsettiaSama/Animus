@@ -74,6 +74,17 @@ class MemoryProcessor:
         if self._short is not None:
             self._short.add(step)
 
+    def recall_short_term(self) -> MemoryResult:
+        """Return only short-term memory — no I/O, no vector search, no LLM calls.
+
+        Used on steps > 0 when long-term / milestone / medium-term are already
+        cached from step 0.  Short-term is the only tier that grows during a
+        question's step loop (tool observations are appended via add()).
+        """
+        short_steps = self._short.steps() if self._short is not None else []
+        short_distillate = self._short.distillate if self._short is not None else ""
+        return MemoryResult(short_term=short_steps, short_term_distillate=short_distillate)
+
     def recall(self, query: str = "", include_long_term: bool = True) -> MemoryResult:
         short_steps = self._short.steps() if self._short is not None else []
         short_distillate = self._short.distillate if self._short is not None else ""

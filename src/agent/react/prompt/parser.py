@@ -66,6 +66,30 @@ _RE_LENIENT_VERB = re.compile(
     re.IGNORECASE,
 )
 
+# ── Finish answer cleanup ─────────────────────────────────────────────────────
+
+# Strips "I now know the final answer" / "我现在知道最终答案了" reasoning preambles
+# from the start of a fallback answer, and drops trailing ReAct structure markers.
+_RE_REASONING_PREAMBLE = re.compile(
+    r"^(?:"
+    r"I(?:'ve| have)? (?:now )?(?:know|found|determined|concluded)[^.!?]*[.!?]\s*"
+    r"|我(?:现在)?(?:知道|找到|确定|得出)[^。！？]*[。！？]\s*"
+    r")+",
+    re.IGNORECASE,
+)
+_RE_TRAILING_MARKERS = re.compile(
+    r"\n+(?:Thought|Action|Observation)[ \t]*[:：].*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _clean_finish_answer(text: str) -> str:
+    """Strip LLM reasoning boilerplate from a fallback finish answer."""
+    text = _RE_REASONING_PREAMBLE.sub("", text).strip()
+    text = _RE_TRAILING_MARKERS.sub("", text).strip()
+    return text
+
+
 # ── JSON extraction ───────────────────────────────────────────────────────────
 
 _RE_CODE_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.DOTALL)
@@ -284,8 +308,14 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
                     quality=quality,
                 )
 
-            # (c) Fall back to thought content, then raw text
-            answer = thought or text
+            # (c) Fall back: check Answer: label first, then thought, then raw text
+            answer_label_m = _RE_ANSWER.search(text)
+            if answer_label_m:
+                answer = answer_label_m.group(1).strip()
+            else:
+                answer = _clean_finish_answer(thought) if thought else _clean_finish_answer(text)
+                if not answer:
+                    answer = thought or text
             return ParseResult(
                 thought=thought,
                 action="finish",
@@ -305,9 +335,9 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
             if answer_m:
                 answer_text = answer_m.group(1).strip()
             elif thought:
-                answer_text = thought
+                answer_text = _clean_finish_answer(thought) or thought
             else:
-                answer_text = text
+                answer_text = _clean_finish_answer(text) or text
             return ParseResult(
                 thought=thought,
                 action="finish",

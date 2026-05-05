@@ -13,7 +13,7 @@
  */
 
 import { S, setState, set, isBusy }      from './state.js';
-import { http, PATHS }                   from './api.js';
+import { http, PATHS, pollUntilReady }   from './api.js';
 import * as render                        from './render.js';
 import * as history                       from './history.js';
 import * as streaming                     from './streaming.js';
@@ -112,6 +112,7 @@ function goScheduler() {
 // ── New conversation ───────────────────────────────────────────────────────────
 
 function startNew() {
+  streaming.abortCurrent();   // D2: cancel any in-progress stream before resetting UI
   set('convId', null);
   set('convTitle', 'New Conversation');
   history.clearMessages();
@@ -161,14 +162,15 @@ async function _runReact(question) {
   set('genId', genId);
   setState('streaming');
 
-  const ctrl   = render.appendReactMsg();
-  let   _stepI = -1;
+  const ctrl          = render.appendReactMsg();
+  let   _stepI        = -1;
+  const _stepHistory  = [];   // collect completed steps for persistence
 
   const session = new streaming.ReactSession(question, genId, {
-    onPromptPreview: msgs => ctrl.showPrompt(msgs),   // Issue 6
+    onPromptPreview: msgs => ctrl.showPrompt(msgs),
     onStepStart: i  => { _stepI = i; ctrl.showActivity(`Step ${i + 1}…`); },
     onChunk:    (i, chunk) => ctrl.appendChunk(i, chunk),
-    onStep:      step  => ctrl.addStep(step),
+    onStep:      step  => { ctrl.addStep(step); _stepHistory.push(step); },
     onRetry:    (i, reason) => _showToast(`Retry ${i}: ${reason}`),
     onApprovalRequest: (reqId, tool, args) => _promptApproval(session, reqId, tool, args),
     onSubStart:  (action, instr) => ctrl.openSubAgent(action, instr),
@@ -176,10 +178,11 @@ async function _runReact(question) {
     onSubStep:   step            => ctrl.addSubStep(step),
     onSubFinish: answer          => ctrl.closeSubAgent(answer, false),
     onSubError:  error           => ctrl.closeSubAgent(error, true),
+    onMaxSteps: n => _showToast(`⚠ 已达最大步数限制（${n} 步）`),
     onFinish:   (answer, aborted) => {
       ctrl.finalize(answer, aborted);
       if (!aborted && answer) {
-        history.pushMessage({ role: 'assistant', content: answer });
+        history.pushMessage({ role: 'assistant', content: answer, steps: _stepHistory });
         history.saveConversation();
         _updateTitle(answer);
       }
@@ -248,9 +251,17 @@ function _rebuildFromHistory(messages) {
     if (m.role === 'user') {
       render.appendUserMsg(m.content);
     } else if (m.role === 'assistant') {
-      const ctrl = render.appendAssistantMsg();
-      ctrl.append(m.content);
-      ctrl.finalize(false);
+      if (m.steps && m.steps.length > 0) {
+        // ReAct message — restore step cards then show final answer
+        const ctrl = render.appendReactMsg();
+        m.steps.forEach(step => ctrl.addStep(step));
+        ctrl.finalize(m.content, false);
+      } else {
+        // Chat / old ReAct without step data
+        const ctrl = render.appendAssistantMsg();
+        ctrl.append(m.content);
+        ctrl.finalize(false);
+      }
     }
   });
   render.scrollBottom();
@@ -473,6 +484,15 @@ async function boot() {
   const reactStatus = await reactMod.fetchStatus().catch(() => null);
   if (reactStatus?.status === 'ready') {
     set('reactReady', true);
+  } else if (reactStatus?.status === 'initializing') {
+    _showToast('ReAct initializing…');
+    pollUntilReady()
+      .then(() => {
+        set('reactReady', true);
+        _updateReactBadge();
+        _showToast('ReAct ready');
+      })
+      .catch(() => {});
   }
 
   _updateReactBadge();

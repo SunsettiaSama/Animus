@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import torch
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 
@@ -42,19 +42,25 @@ def build(cfg: BuildConfig) -> None:
     device = _resolve_device(cfg.device)
     print(f"[3/4] embedding  model={cfg.model_name_or_path}  device={device}")
 
-    inner: dict = {"low_cpu_mem_usage": False}
+    # model_kwargs keys → **kwargs to SentenceTransformer.__init__.
+    # HF model-level params (torch_dtype) must be nested under "model_kwargs"
+    # so SentenceTransformer passes them to AutoModel.from_pretrained.
+    model_kwargs: dict = {"device": device}
     if cfg.use_fp16 and device != "cpu":
-        inner["torch_dtype"] = torch.float16
+        model_kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
 
-    embeddings = HuggingFaceBgeEmbeddings(
+    encode_kwargs: dict = {"normalize_embeddings": True, "batch_size": cfg.batch_size}
+    if cfg.passage_prefix:
+        encode_kwargs["prompt"] = cfg.passage_prefix
+    query_encode_kwargs: dict = {"normalize_embeddings": True, "batch_size": cfg.batch_size}
+    if cfg.query_prefix:
+        query_encode_kwargs["prompt"] = cfg.query_prefix
+
+    embeddings = HuggingFaceEmbeddings(
         model_name=cfg.model_name_or_path,
-        model_kwargs={"device": device, "model_kwargs": inner},
-        encode_kwargs={
-            "normalize_embeddings": True,
-            "batch_size": cfg.batch_size,
-        },
-        embed_instruction=cfg.passage_prefix,
-        query_instruction=cfg.query_prefix,
+        model_kwargs=model_kwargs,
+        encode_kwargs=encode_kwargs,
+        query_encode_kwargs=query_encode_kwargs,
     )
 
     print("[4/4] building FAISS index and saving")

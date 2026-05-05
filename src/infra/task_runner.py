@@ -42,6 +42,10 @@ class BackgroundTaskRunner:
             exc = f.exception()
             if exc is not None and on_error is not None:
                 on_error(exc)
+            # Auto-evict to prevent unbounded growth of completed futures.
+            with self._lock:
+                if self._tasks.get(name) is f:
+                    self._tasks.pop(name, None)
 
         future.add_done_callback(_done)
 
@@ -51,6 +55,11 @@ class BackgroundTaskRunner:
         return future
 
     # ── Introspection ─────────────────────────────────────────────────────────
+
+    def get_future(self, name: str) -> Future | None:
+        """Return the most recently submitted future for *name*, or None."""
+        with self._lock:
+            return self._tasks.get(name)
 
     def status(self) -> dict[str, str]:
         with self._lock:

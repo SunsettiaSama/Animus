@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import os
 
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 
 
 def build_faiss_index(
     docs: list[Document],
-    embeddings: HuggingFaceBgeEmbeddings,
+    embeddings: HuggingFaceEmbeddings,
 ) -> FAISS:
     return FAISS.from_documents(docs, embeddings)
 
@@ -25,7 +25,7 @@ def save(
 
 def load(
     output_dir: str,
-    embeddings: HuggingFaceBgeEmbeddings,
+    embeddings: HuggingFaceEmbeddings,
     index_name: str = "index",
 ) -> FAISS:
     return FAISS.load_local(

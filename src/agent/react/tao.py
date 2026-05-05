@@ -72,6 +72,16 @@ class PromptPreviewEvent:
 
 
 @dataclass
+class MaxStepsEvent:
+    """Yielded when the step loop exhausts max_steps without a finish action.
+
+    Distinct from an error so the frontend can display a clear "step limit
+    reached" message instead of showing the generic "⊘ aborted" state.
+    """
+    max_steps: int
+
+
+@dataclass
 class RetryEvent:
     index: int
     reason: str
@@ -427,23 +437,42 @@ class TaoLoop:
             else question
         )
 
-        # Long-term recall result cached after step 0 (expensive vector search
-        # is only run once per question, reused for subsequent ReAct steps).
+        # ── Per-question caches ───────────────────────────────────────────────
+        # These three tiers don't change while a question's step loop is running
+        # (updates only happen in post_process() after the turn ends).
+        # Caching them here avoids repeated vector searches, JSONL reads, and
+        # persona file I/O on every step.
         _cached_lt: str = ""
         _cached_milestone: str = ""
+        _cached_medium: str = ""
+
+        # Persona blocks are also stable across steps.
+        persona_blocks: list[PromptBlock] | None = (
+            self._persona.all_blocks() if self._persona is not None else None
+        )
 
         for i in range(self._cfg.max_steps):
             # ── Memory recall ────────────────────────────────────────────────
-            # Long-term search only at step 0; subsequent steps reuse the result.
-            result = processor.recall(recall_query, include_long_term=(i == 0))
             if i == 0:
-                _cached_lt = result.long_term
+                # Full recall on step 0: long-term vector search + milestone
+                # retrieval + medium-term render.  Results are cached for
+                # all subsequent steps in this question.
+                result = processor.recall(recall_query, include_long_term=True)
+                _cached_lt        = result.long_term
                 _cached_milestone = result.milestone
-
-            # ── Persona blocks ───────────────────────────────────────────────
-            persona_blocks: list[PromptBlock] | None = (
-                self._persona.all_blocks() if self._persona is not None else None
-            )
+                _cached_medium    = result.medium_term
+            else:
+                # Steps > 0: only short-term memory grows (new tool observations
+                # are appended via processor.add()).  Reuse cached values for the
+                # other tiers to skip repeated vector searches and file reads.
+                _short = processor.recall_short_term()
+                result = MemoryResult(
+                    short_term=_short.short_term,
+                    short_term_distillate=_short.short_term_distillate,
+                    medium_term=_cached_medium,
+                    long_term=_cached_lt,
+                    milestone=_cached_milestone,
+                )
 
             # ── Message assembly ─────────────────────────────────────────────
             # Each memory tier is passed as a separate labeled slot; the
@@ -473,57 +502,59 @@ class TaoLoop:
                 )
 
             # ── Prompt preview (step 0 only) ─────────────────────────────────
+            # Build the preview payload eagerly but defer the yield until after
+            # the first LLM chunk arrives.  This ensures TTFB is not blocked by
+            # serialising a potentially large system message over WebSocket.
             if i == 0:
-                preview: list[dict] = []
+                _preview: list[dict] = []
                 for msg in messages:
                     if isinstance(msg, SystemMessage):
-                        preview.append({"role": "system", "content": msg.content})
+                        _preview.append({"role": "system", "content": msg.content})
                     elif isinstance(msg, HumanMessage):
-                        preview.append({"role": "user", "content": msg.content})
+                        _preview.append({"role": "user", "content": msg.content})
                     elif isinstance(msg, AIMessage):
-                        preview.append({"role": "assistant", "content": msg.content})
-                yield PromptPreviewEvent(messages=preview)
+                        _preview.append({"role": "assistant", "content": msg.content})
+            else:
+                _preview = []
 
             yield StepStartEvent(index=i)
 
             # ── LLM generation ───────────────────────────────────────────────
             raw_output = ""
+            _preview_sent = (i != 0)   # only step 0 has a preview to send
             for chunk in self._llm.stream_generate_messages(messages):
                 if self._stop_event.is_set():
                     return
                 raw_output += chunk
+                if not _preview_sent:
+                    # First token is now in-flight — safe to send the preview.
+                    yield PromptPreviewEvent(messages=_preview)
+                    _preview_sent = True
                 yield ChunkEvent(index=i, chunk=chunk)
 
-            # ── Three-layer parse robustness ──────────────────────────────────
-            # tool_names is passed to the parser to enable lenient inference.
+            # ── Parse robustness — escalation chain ───────────────────────────
+            # Escalation order (cheapest → most expensive):
+            #   L1  strict regex + L1b lenient inference  (parser, free)
+            #   L2  in-context correction retry            (main LLM, 1 call per attempt)
+            #   L3  isolated repair LLM                   (separate call, no conversation ctx)
+            #   L4  safe degradation → implicit finish
             tool_names = frozenset(self._executor.available_actions)
             result = parse_llm_output(raw_output, tool_names=tool_names)
 
-            # Layer 2: repair LLM — only triggered on a hard FAILED parse that
-            # is NOT already being treated as an implicit finish.
-            if (
-                result.quality == ParseQuality.FAILED
-                and not result.is_finish
-                and self._cfg.prompt.repair_enabled
-            ):
-                _diagnosis = diagnose(result)
-                _repaired = repair(
-                    self._repair_llm,
-                    raw_output,
-                    _diagnosis,
-                    list(tool_names),
-                )
-                if _repaired:
-                    result = parse_llm_output(_repaired, tool_names=tool_names)
-
-            # Layer 0: inject a correction message and retry the main LLM.
-            # Only runs when both Layer 1 and Layer 2 failed to recover.
+            # L2: in-context correction — inject a bilingual format reminder into
+            # the existing conversation and retry the main LLM.  Runs first
+            # because the model already has full context and self-correction is
+            # cheapest before we resort to an isolated repair call.
             if result.quality == ParseQuality.FAILED and not result.is_finish:
                 for _attempt in range(self._cfg.prompt.retry_on_bad_parse):
                     yield RetryEvent(index=i, reason=diagnose(result))
                     correction_msgs = messages + [
                         AIMessage(content=raw_output),
                         HumanMessage(content=(
+                            "Your output format is incorrect. Please rewrite strictly following this format:\n"
+                            "Thought: <your reasoning>\n"
+                            "Action: <tool_name>\n"
+                            'Action Input: {"key": "value"}\n\n'
                             "格式有误，请严格按照以下格式重新输出：\n"
                             "Thought: <思考过程>\n"
                             "Action: <工具名>\n"
@@ -539,8 +570,29 @@ class TaoLoop:
                     result = parse_llm_output(raw_output, tool_names=tool_names)
                     if result.quality != ParseQuality.FAILED or result.is_finish:
                         break
-                # All three layers exhausted — result is an implicit finish
-                # (action="" path in the parser), which is the safest degradation.
+
+            # L3: isolated repair LLM — only reached when all in-context retries
+            # failed.  Calls the repair model with a focused reformat prompt
+            # (no conversation history) and verifies the result re-parses before
+            # accepting it.
+            if (
+                result.quality == ParseQuality.FAILED
+                and not result.is_finish
+                and self._cfg.prompt.repair_enabled
+            ):
+                _diagnosis = diagnose(result)
+                _repaired = repair(
+                    self._repair_llm,
+                    raw_output,
+                    _diagnosis,
+                    list(tool_names),
+                )
+                if _repaired:
+                    result = parse_llm_output(_repaired, tool_names=tool_names)
+
+            # L4: all layers exhausted — the parser's implicit-finish path
+            # (action="" branch) is the safest degradation; the LLM's raw
+            # output (or thought) is surfaced as the answer.
 
             if result.is_finish:
                 answer = result.action_input.get("answer", raw_output)
@@ -624,7 +676,7 @@ class TaoLoop:
                 observation=observation,
             )
 
-        raise RuntimeError(f"TaoLoop exceeded max_steps={self._cfg.max_steps} without finishing")
+        yield MaxStepsEvent(max_steps=self._cfg.max_steps)
 
     # ── Post-processing (runs in background after FinishEvent is delivered) ───
 
@@ -739,7 +791,11 @@ class TaoLoop:
             if isinstance(event, FinishEvent):
                 self.post_process()
                 return event.answer
-        raise RuntimeError(f"TaoLoop exceeded max_steps={self._cfg.max_steps} without finishing")
+            if isinstance(event, MaxStepsEvent):
+                raise RuntimeError(
+                    f"TaoLoop exceeded max_steps={event.max_steps} without finishing"
+                )
+        raise RuntimeError(f"TaoLoop exhausted stream without FinishEvent")
 
     # ── Long-term memory consolidation ───────────────────────────────────────
 

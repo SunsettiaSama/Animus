@@ -45,18 +45,34 @@ for _r in [
 
 @app.on_event("startup")
 def _startup():
-    from config.llm_core.config import LLMConfig
-    from llm_core.llm import LLM
     state = get_state()
     state.main_event_loop = asyncio.get_event_loop()
-    if not os.path.exists(state.llm_config_yaml):
-        return
-    cfg = LLMConfig.from_yaml(state.llm_config_yaml)
-    state.llm_cfg = cfg
-    if not cfg.model:
-        return
-    state.llm = LLM(cfg)
-    print(f"[webui] LLM auto-loaded  model={cfg.model!r}")
+
+    def _bg() -> None:
+        if not os.path.exists(state.llm_config_yaml):
+            return
+        from config.llm_core.config import LLMConfig
+        from llm_core.llm import LLM
+        cfg = LLMConfig.from_yaml(state.llm_config_yaml)
+        state.llm_cfg = cfg
+        if not cfg.model:
+            return
+        state.llm = LLM(cfg)
+        print(f"[webui] LLM auto-loaded  model={cfg.model!r}")
+
+        from routers.react import ReactInitRequest, _do_react_init
+        state.react_init_event.clear()
+        state.react_init_error = ""
+        state.conv_loop = None
+        _do_react_init(ReactInitRequest(), state)
+
+    def _on_error(exc: BaseException) -> None:
+        state.react_init_error = str(exc)
+        state.react_init_event.set()
+        print(f"[webui] Startup init error: {exc}")
+
+    state.task_runner.submit("startup_init", _bg, on_error=_on_error)
+    print("[webui] Background startup init submitted")
 
 
 @app.on_event("shutdown")

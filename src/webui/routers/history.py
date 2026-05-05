@@ -15,10 +15,10 @@ router = APIRouter()
 class SaveConvRequest(BaseModel):
     id: str
     title: str
-    mode: str
-    messages: list
-    created_at: str
-    updated_at: str
+    mode: str = "react"
+    messages: list = []
+    created_at: str = ""
+    updated_at: str = ""
 
 
 @router.get("/api/history")

@@ -81,7 +81,9 @@ def stub_react_and_langchain() -> None:
     lc_comm = pkg_stub("langchain_community")
     lc_emb  = mod_stub("langchain_community.embeddings")
     lc_vs   = mod_stub("langchain_community.vectorstores")
-    lc_emb.HuggingFaceBgeEmbeddings = MagicMock(name="HuggingFaceBgeEmbeddings")
     lc_vs.FAISS = MagicMock(name="FAISS")
-    lc_comm.embeddings  = lc_emb
+    lc_comm.embeddings   = lc_emb
     lc_comm.vectorstores = lc_vs
+
+    lc_hf = pkg_stub("langchain_huggingface")
+    lc_hf.HuggingFaceEmbeddings = MagicMock(name="HuggingFaceEmbeddings")

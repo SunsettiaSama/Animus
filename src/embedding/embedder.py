@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import threading
-import warnings
 
 import torch
-
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 BGE_DIMS: dict[str, int] = {
     "large": 1024,
@@ -40,27 +36,39 @@ class Embedder:
         self._batch_size = batch_size
         self._query_prefix = query_prefix
         self._passage_prefix = passage_prefix
-        self._embeddings: HuggingFaceBgeEmbeddings | None = None
+        self._embeddings: HuggingFaceEmbeddings | None = None
         self._lock = threading.Lock()
 
-    def _get(self) -> HuggingFaceBgeEmbeddings:
+    def _get(self) -> HuggingFaceEmbeddings:
         with self._lock:
             if self._embeddings is None:
                 device = self._device
                 if device == "auto":
                     device = "cuda" if torch.cuda.is_available() else "cpu"
-                inner: dict = {"low_cpu_mem_usage": False}
+                # model_kwargs keys are forwarded as **kwargs to SentenceTransformer.__init__.
+                # Parameters for the underlying HuggingFace model (e.g. torch_dtype)
+                # must be nested under the "model_kwargs" key, which SentenceTransformer
+                # then passes to AutoModel.from_pretrained(**model_kwargs).
+                model_kwargs: dict = {"device": device}
                 if self._use_fp16 and device != "cpu":
-                    inner["torch_dtype"] = torch.float16
-                self._embeddings = HuggingFaceBgeEmbeddings(
+                    model_kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
+                encode_kwargs: dict = {
+                    "normalize_embeddings": True,
+                    "batch_size": self._batch_size,
+                }
+                if self._passage_prefix:
+                    encode_kwargs["prompt"] = self._passage_prefix
+                query_encode_kwargs: dict = {
+                    "normalize_embeddings": True,
+                    "batch_size": self._batch_size,
+                }
+                if self._query_prefix:
+                    query_encode_kwargs["prompt"] = self._query_prefix
+                self._embeddings = HuggingFaceEmbeddings(
                     model_name=self._model_name,
-                    model_kwargs={"device": device, "model_kwargs": inner},
-                    encode_kwargs={
-                        "normalize_embeddings": True,
-                        "batch_size": self._batch_size,
-                    },
-                    embed_instruction=self._passage_prefix,
-                    query_instruction=self._query_prefix,
+                    model_kwargs=model_kwargs,
+                    encode_kwargs=encode_kwargs,
+                    query_encode_kwargs=query_encode_kwargs,
                 )
         return self._embeddings
 

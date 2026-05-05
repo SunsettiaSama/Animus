@@ -84,11 +84,12 @@ _qdrant.QdrantClient = MagicMock(name="QdrantClient")
 # langchain_community
 _lc = _pkg_stub("langchain_community")
 _lc_emb = _mod_stub("langchain_community.embeddings")
-_lc_emb.HuggingFaceBgeEmbeddings = MagicMock(name="HuggingFaceBgeEmbeddings")
 _lc.embeddings = _lc_emb
 _lc_vs = _mod_stub("langchain_community.vectorstores")
 _lc_vs.FAISS = MagicMock(name="FAISS")
 _lc.vectorstores = _lc_vs
+_lc_hf = _pkg_stub("langchain_huggingface")
+_lc_hf.HuggingFaceEmbeddings = MagicMock(name="HuggingFaceEmbeddings")
 
 # langchain_core
 _lc_core = _pkg_stub("langchain_core")
@@ -204,7 +205,7 @@ def _make_mock_embeddings(vector=None):
     emb = MagicMock()
     emb.embed_documents = MagicMock(return_value=[vec])
     emb.embed_query = MagicMock(return_value=vec)
-    _lc_emb.HuggingFaceBgeEmbeddings.return_value = emb
+    _lc_hf.HuggingFaceEmbeddings.return_value = emb
     # KnowledgeEmbedder 使用 embedding.embedder.Embedder，也需要 stub
     _emb_embedder.Embedder.return_value = emb
     return emb

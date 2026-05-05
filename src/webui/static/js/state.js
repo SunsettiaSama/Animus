@@ -49,6 +49,9 @@ export const S = {
   /** True when ReAct backend is ready. */
   reactReady:  false,
 
+  /** Active conversation mode: 'react' | 'plan' | 'chat'. */
+  convMode:    'react',
+
   /** Active persona name, or null. */
   personaName: null,
 

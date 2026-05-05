@@ -79,6 +79,20 @@ class AppState:
             self._is_streaming = val
             self.current_gen_id = gen_id if val else None
 
+    def try_start_streaming(self, gen_id: str) -> bool:
+        """Atomically check-and-set streaming state.
+
+        Returns True (and acquires the streaming slot) only when no other
+        stream is active.  The caller must call set_streaming(False) to
+        release the slot when the stream ends.
+        """
+        with self._streaming_lock:
+            if self._is_streaming:
+                return False
+            self._is_streaming = True
+            self.current_gen_id = gen_id
+            return True
+
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _init_paths(self) -> None:

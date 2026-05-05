@@ -121,10 +121,11 @@ _lc_core.messages = _lc_msgs_mod
 _lc_comm = _pkg_stub("langchain_community")
 _lce = _mod_stub("langchain_community.embeddings")
 _lcv = _mod_stub("langchain_community.vectorstores")
-_lce.HuggingFaceBgeEmbeddings = MagicMock()
 _lcv.FAISS = MagicMock()
 _lc_comm.embeddings   = _lce
 _lc_comm.vectorstores = _lcv
+_lc_hf = _pkg_stub("langchain_huggingface")
+_lc_hf.HuggingFaceEmbeddings = MagicMock(name="HuggingFaceEmbeddings")
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Step 3 — Stub ALL module-level imports in agent/react/tao.py

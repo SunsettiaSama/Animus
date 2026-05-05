@@ -65,6 +65,7 @@ def _event_to_dict(event) -> dict | None:
         ApprovalRequestEvent,
         ChunkEvent,
         FinishEvent,
+        MaxStepsEvent,
         PromptPreviewEvent,
         RetryEvent,
         StepEvent,
@@ -89,6 +90,8 @@ def _event_to_dict(event) -> dict | None:
         }
     if isinstance(event, FinishEvent):
         return {"type": "finish", "answer": event.answer}
+    if isinstance(event, MaxStepsEvent):
+        return {"type": "max_steps", "max_steps": event.max_steps}
     if isinstance(event, ApprovalRequestEvent):
         return {
             "type": "approval_request",
@@ -233,10 +236,12 @@ def react_init(req: ReactInitRequest):
 @router.get("/api/react/status")
 def react_status():
     state = get_state()
-    if not state.react_init_event.is_set():
-        return {"status": "initializing"}
     if state.react_init_error:
         return {"status": "error", "detail": state.react_init_error}
+    if state.conv_loop is None:
+        if not state.react_init_event.is_set():
+            return {"status": "initializing"}
+        return {"status": "not_initialized"}
     return {"status": "ready", "is_streaming": state.is_streaming}
 
 
@@ -362,21 +367,60 @@ async def ws_react_run(websocket: WebSocket):
         await websocket.close()
         return
 
-    state.set_streaming(True, gen_id)
+    # B2: atomic check-and-set — reject concurrent streams immediately.
+    if not state.try_start_streaming(gen_id):
+        await websocket.send_json({"type": "error", "message": "Already streaming."})
+        await websocket.close()
+        return
 
-    loop:  asyncio.AbstractEventLoop = asyncio.get_event_loop()
+    # B4: get_running_loop() is the correct API inside a coroutine (3.10+).
+    loop:  asyncio.AbstractEventLoop = asyncio.get_running_loop()
     queue: asyncio.Queue             = asyncio.Queue()
 
     def _produce():
+        # B1: Wait for any in-flight post_process from the previous turn to
+        # finish before reading shared TaoLoop state (_manager, _static_cache).
+        pp = state.task_runner.get_future("post_process")
+        if pp is not None and not pp.done():
+            pp.result(timeout=30)
+
         if state.active_tao is not None:
             state.active_tao.sub_event_sink = lambda ev: (
                 (msg := _sub_event_to_dict(ev)) and
                 loop.call_soon_threadsafe(queue.put_nowait, msg)
             )
+
+        # Chunk batching: accumulate consecutive ChunkEvents from the same step
+        # and flush them as a single WebSocket frame.  This cuts per-token overhead
+        # (call_soon_threadsafe + queue + send_json) by an order of magnitude for
+        # local models that emit many small tokens.
+        _chunk_buf: list[str] = []
+        _chunk_idx: int = -1
+
+        def _flush_chunks() -> None:
+            nonlocal _chunk_buf, _chunk_idx
+            if _chunk_buf:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {"type": "chunk", "index": _chunk_idx, "chunk": "".join(_chunk_buf)},
+                )
+                _chunk_buf = []
+                _chunk_idx = -1
+
+        from agent.react.tao import ChunkEvent
         for event in state.conv_loop.stream(question):
-            msg = _event_to_dict(event)
-            if msg:
-                loop.call_soon_threadsafe(queue.put_nowait, msg)
+            if isinstance(event, ChunkEvent):
+                if event.index != _chunk_idx:
+                    _flush_chunks()
+                    _chunk_idx = event.index
+                _chunk_buf.append(event.chunk)
+            else:
+                _flush_chunks()
+                msg = _event_to_dict(event)
+                if msg:
+                    loop.call_soon_threadsafe(queue.put_nowait, msg)
+
+        _flush_chunks()
         if state.active_tao is not None:
             state.active_tao.sub_event_sink = None
         loop.call_soon_threadsafe(queue.put_nowait, None)
@@ -389,21 +433,28 @@ async def ws_react_run(websocket: WebSocket):
         )
         loop.call_soon_threadsafe(queue.put_nowait, None)
 
-    state.task_runner.submit("ws_react_produce", _produce, on_error=_on_produce_error)
+    # B2: task name includes gen_id to avoid name collisions if a connection
+    # somehow overlaps (defense in depth on top of the try_start_streaming gate).
+    state.task_runner.submit(f"ws_produce_{gen_id}", _produce, on_error=_on_produce_error)
 
+    # B3: wrap _receive_client in try/except so WebSocketDisconnect and other
+    # transport errors are silently absorbed — the producer thread handles cleanup.
     async def _receive_client():
-        while True:
-            msg = await websocket.receive_json()
-            mtype = msg.get("type")
-            if mtype == "approval_response" and state.conv_loop is not None:
-                state.conv_loop._tao.resolve_approval(
-                    msg.get("request_id", ""),
-                    bool(msg.get("approved", False)),
-                )
-            elif mtype == "abort":
-                if msg.get("gen_id") == state.current_gen_id:
-                    if state.conv_loop is not None:
-                        state.conv_loop._tao.abort()
+        try:
+            while True:
+                msg = await websocket.receive_json()
+                mtype = msg.get("type")
+                if mtype == "approval_response" and state.conv_loop is not None:
+                    state.conv_loop._tao.resolve_approval(
+                        msg.get("request_id", ""),
+                        bool(msg.get("approved", False)),
+                    )
+                elif mtype == "abort":
+                    if msg.get("gen_id") == state.current_gen_id:
+                        if state.conv_loop is not None:
+                            state.conv_loop._tao.abort()
+        except Exception:
+            pass  # WebSocketDisconnect or connection drop — handled by producer
 
     receive_task = asyncio.create_task(_receive_client())
 
@@ -414,6 +465,12 @@ async def ws_react_run(websocket: WebSocket):
         await websocket.send_json(item)
 
     receive_task.cancel()
+    # B3: suppress the CancelledError stored in the task to prevent
+    # "Task exception was never retrieved" log noise.
+    try:
+        await asyncio.shield(receive_task)
+    except Exception:
+        pass
 
     was_aborted = (
         state.conv_loop is not None
