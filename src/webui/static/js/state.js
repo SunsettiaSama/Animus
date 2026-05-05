@@ -13,7 +13,6 @@
  *
  * ── Field ownership ───────────────────────────────────────────────────────
  *
- *   S.mode         – 'chat' | 'react'          (set by main.js on session start)
  *   S.genId        – UUID string                (set by streaming.js per session)
  *   S.convId       – UUID string | null         (set by history.js / main.js)
  *   S.convTitle    – string                     (set by history.js / main.js)
@@ -37,9 +36,6 @@ const _VALID_TRANSITIONS = {
 export const S = {
   /** @type {LifecycleState} */
   lifecycle:   'idle',
-
-  /** 'chat' | 'react' */
-  mode:        'chat',
 
   /** Per-generation UUID, used to validate abort signals. */
   genId:       '',

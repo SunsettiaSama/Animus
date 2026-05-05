@@ -21,7 +21,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 SRC = Path(__file__).resolve().parent.parent.parent
-REACT_DIR = SRC / "react"
+REACT_DIR = SRC / "agent" / "react"
 
 
 def _pkg_stub(dotted_name: str, path: Path | None = None) -> types.ModuleType:
@@ -44,7 +44,7 @@ def _mod_stub(dotted_name: str) -> types.ModuleType:
     return m
 
 
-_pkg_stub("react", REACT_DIR)
+_pkg_stub("agent.react", REACT_DIR)
 _lc = _pkg_stub("langchain_community")
 _lce = _mod_stub("langchain_community.embeddings")
 _lcv = _mod_stub("langchain_community.vectorstores")
@@ -56,7 +56,7 @@ _lc.vectorstores = _lcv
 sys.path.insert(0, str(SRC))
 
 import pytest
-from react.action.tools.impl.scratchpad import (
+from agent.react.action.tools.impl.scratchpad import (
     NoteDeleteAction,
     NoteReadAction,
     NoteWriteAction,

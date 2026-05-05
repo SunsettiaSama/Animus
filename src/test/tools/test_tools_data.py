@@ -21,7 +21,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 SRC = Path(__file__).resolve().parent.parent.parent
-REACT_DIR = SRC / "react"
+REACT_DIR = SRC / "agent" / "react"
 
 
 def _pkg_stub(dotted_name: str, path: Path | None = None) -> types.ModuleType:
@@ -44,7 +44,7 @@ def _mod_stub(dotted_name: str) -> types.ModuleType:
     return m
 
 
-_pkg_stub("react", REACT_DIR)
+_pkg_stub("agent.react", REACT_DIR)
 
 _lc_comm = _pkg_stub("langchain_community")
 _lc_emb  = _mod_stub("langchain_community.embeddings")
@@ -99,7 +99,7 @@ sys.path.insert(0, str(SRC))
 
 import pytest
 
-from react.action.tools.impl.data_tool import (
+from agent.react.action.tools.impl.data_tool import (
     JsonQueryAction,
     RegexExtractAction,
     TextDiffAction,
@@ -253,8 +253,8 @@ class TestTextDiff:
 
 class TestToolSearch:
     def setup_method(self):
-        from react.action.tools.tool_search import ToolSearchAction
-        from react.action.tools.registry import ToolMeta
+        from agent.react.action.tools.tool_search import ToolSearchAction
+        from agent.react.action.tools.registry import ToolMeta
 
         self.ToolMeta = ToolMeta
 

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from state import get_state
@@ -84,10 +83,6 @@ class SaveConfigRequest(BaseModel):
     show_full_prompt: bool = False
     prompt_lang: str = "cn"
     max_steps: int = 10
-
-
-class ChatRequest(BaseModel):
-    prompt: str
 
 
 # ── LLM config ────────────────────────────────────────────────────────────────
@@ -224,84 +219,3 @@ def status():
     }
 
 
-# ── Chat (SSE legacy) ─────────────────────────────────────────────────────────
-
-@router.post("/api/chat")
-def chat(req: ChatRequest):
-    state = get_state()
-    if state.llm is None:
-        return JSONResponse(status_code=400, content={"error": "LLM not initialized."})
-
-    def generate():
-        for chunk in state.llm.stream_generate(req.prompt):
-            yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
-        yield 'data: {"done": true}\n\n'
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-# ── WebSocket chat ────────────────────────────────────────────────────────────
-
-from fastapi import WebSocket
-
-@router.websocket("/ws/chat")
-async def ws_chat(websocket: WebSocket):
-    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-    from react.prompt.template import get_template as _get_prompt_template
-
-    state = get_state()
-    await websocket.accept()
-    data    = await websocket.receive_json()
-    prompt  = data.get("prompt", "")
-    history = data.get("history", [])
-
-    if state.llm is None:
-        await websocket.send_json({"error": "LLM not initialized."})
-        await websocket.close()
-        return
-
-    messages = []
-    _tpl = _get_prompt_template(state.prompt_lang)
-    role_text = _tpl.chat_role.render(
-        content=state.llm_cfg.system_prompt.strip()
-        if state.llm_cfg and state.llm_cfg.system_prompt else "",
-        separator=_tpl.separator,
-    )
-    if role_text:
-        messages.append(SystemMessage(content=role_text))
-    for h in history:
-        role    = h.get("role", "")
-        content = h.get("content", "").strip()
-        if not content:
-            continue
-        if role == "user":
-            messages.append(HumanMessage(content=content))
-        elif role == "assistant":
-            messages.append(AIMessage(content=content))
-    messages.append(HumanMessage(content=prompt))
-
-    loop:  asyncio.AbstractEventLoop = asyncio.get_event_loop()
-    queue: asyncio.Queue             = asyncio.Queue()
-
-    def _produce():
-        for chunk in state.llm.stream_generate_messages(messages):
-            loop.call_soon_threadsafe(queue.put_nowait, chunk)
-        loop.call_soon_threadsafe(queue.put_nowait, None)
-
-    def _on_error(exc: BaseException) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, None)
-
-    state.task_runner.submit("ws_chat_produce", _produce, on_error=_on_error)
-
-    while True:
-        item = await queue.get()
-        if item is None:
-            break
-        await websocket.send_json({"chunk": item})
-
-    await websocket.send_json({"done": True})
-    await websocket.close()

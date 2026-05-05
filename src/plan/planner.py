@@ -70,12 +70,12 @@ class PlannerAgent(AgentBase):
 
     def _run_auto_sync(self, instruction: str) -> PlanDocument:
         from config.llm_core.config import LLMConfig
-        from config.react.tao_config import TaoConfig
-        from config.react.prompt_config import PromptConfig
-        from config.react.memory.memory_config import MemoryConfig
+        from config.agent.tao_config import TaoConfig
+        from config.agent.prompt_config import PromptConfig
+        from config.agent.memory.memory_config import MemoryConfig
         from llm_core.llm import LLM
-        from react.action.manager import ToolManager
-        from react.tao import FinishEvent, TaoLoop
+        from agent.react.action.manager import ToolManager
+        from agent.react.tao import FinishEvent, TaoLoop
 
         llm = LLM(LLMConfig.from_yaml(self._llm_cfg_path))
         tool_manager = ToolManager()
@@ -166,13 +166,13 @@ class ConvPlanner:
 
     def _build_loop(self) -> Any:
         from config.llm_core.config import LLMConfig
-        from config.react.tao_config import TaoConfig
-        from config.react.prompt_config import PromptConfig
-        from config.react.memory.memory_config import MemoryConfig
+        from config.agent.tao_config import TaoConfig
+        from config.agent.prompt_config import PromptConfig
+        from config.agent.memory.memory_config import MemoryConfig
         from llm_core.llm import LLM
-        from react.action.manager import ToolManager
-        from react.tao import TaoLoop
-        from react.loop import ConvLoop
+        from agent.react.action.manager import ToolManager
+        from agent.react.tao import TaoLoop
+        from agent.react.loop import ConvLoop
 
         llm = LLM(LLMConfig.from_yaml(self._llm_cfg_path))
         tool_manager = ToolManager()
@@ -228,7 +228,7 @@ class ConvPlanner:
         return response_text, None
 
     def _chat_sync(self, message: str) -> tuple[str, bool]:
-        from react.tao import FinishEvent
+        from agent.react.tao import FinishEvent
 
         answer = ""
         for event in self.loop.stream(message):

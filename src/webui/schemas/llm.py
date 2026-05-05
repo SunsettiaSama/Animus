@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any, Literal
-
 from pydantic import BaseModel
 
 
@@ -28,11 +26,6 @@ class PatchLLMRequest(BaseModel):
     streaming: bool | None = None
 
 
-class ChatRequest(BaseModel):
-    prompt: str
-    history: list[dict] = []
-
-
 # ── REST response bodies ──────────────────────────────────────────────────────
 
 class LLMStatusResponse(BaseModel):
@@ -51,11 +44,3 @@ class LLMConfigResponse(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     streaming: bool | None = None
-
-
-# ── WS chat messages ──────────────────────────────────────────────────────────
-
-class ChatChunk(BaseModel):
-    chunk: str | None = None
-    done: bool = False
-    error: str | None = None

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import threading
+import warnings
 
 import torch
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    from langchain_community.embeddings import HuggingFaceBgeEmbeddings
 
 BGE_DIMS: dict[str, int] = {
     "large": 1024,

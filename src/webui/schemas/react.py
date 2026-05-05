@@ -59,6 +59,38 @@ class ErrorMsg(BaseModel):
     message: str
 
 
+class SubAgentStartMsg(BaseModel):
+    type: Literal["sub_start"]
+    action: str
+    instruction: str
+
+
+class SubAgentChunkMsg(BaseModel):
+    type: Literal["sub_chunk"]
+    index: int
+    chunk: str
+
+
+class SubAgentStepMsg(BaseModel):
+    type: Literal["sub_step"]
+    index: int
+    thought: str
+    action: str
+    action_input: dict
+    observation: str
+    is_error: bool = False
+
+
+class SubAgentFinishMsg(BaseModel):
+    type: Literal["sub_finish"]
+    answer: str
+
+
+class SubAgentErrorMsg(BaseModel):
+    type: Literal["sub_error"]
+    error: str
+
+
 ReactServerMsg = Annotated[
     Union[
         PromptPreviewMsg,
@@ -69,6 +101,11 @@ ReactServerMsg = Annotated[
         FinishMsg,
         ApprovalRequestMsg,
         ErrorMsg,
+        SubAgentStartMsg,
+        SubAgentChunkMsg,
+        SubAgentStepMsg,
+        SubAgentFinishMsg,
+        SubAgentErrorMsg,
     ],
     Field(discriminator="type"),
 ]

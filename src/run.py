@@ -24,13 +24,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from config import paths  # noqa: E402 — must come after sys.path setup
-from config.react.run_config import RunConfig  # noqa: E402
+from config.agent.run_config import RunConfig  # noqa: E402
 from infra.searxng_manager import SearXNGManager  # noqa: E402
 
 # ── 路径常量（统一从 AppPaths 获取，不再硬编码） ──────────────────────────────
 _DEFAULT_LLM_CONFIG = paths.llm_config_yaml
 
-# 从 config/react/run.yaml 加载运行时默认值
+# 从 config/agent/run.yaml 加载运行时默认值
 _run_cfg = RunConfig.load()
 
 
@@ -144,12 +144,12 @@ def check_llm(config_path: Path):
 
 def _build_tao(llm_cfg) -> object:
     _section("TaoLoop 初始化")
-    from storage.config import StorageConfig
-    from config.react.memory.memory_config import MemoryConfig
-    from config.react.tao_config import TaoConfig
+    from config.storage import StorageConfig
+    from config.agent.memory.memory_config import MemoryConfig
+    from config.agent.tao_config import TaoConfig
     from llm_core.llm import LLM
-    from react.action.manager import ToolManager
-    from react.tao import TaoLoop
+    from agent.react.action.manager import ToolManager
+    from agent.react.tao import TaoLoop
 
     storage = StorageConfig(root=str(paths.cache_root))
     memory = (

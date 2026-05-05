@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 # ─────────────────────────────────────────────────────────────────────────────
 
 SRC = Path(__file__).resolve().parent.parent.parent
-REACT_DIR = SRC / "react"
+REACT_DIR = SRC / "agent" / "react"
 
 
 def _pkg_stub(dotted_name: str, path: Path | None = None) -> types.ModuleType:
@@ -52,7 +52,7 @@ def _mod_stub(dotted_name: str) -> types.ModuleType:
 
 
 # react 包：跳过 __init__.py，子模块仍可按路径寻址
-_pkg_stub("react", REACT_DIR)
+_pkg_stub("agent.react", REACT_DIR)
 
 # langchain_community：桩住 store.py 依赖的子模块
 _lc_comm = _pkg_stub("langchain_community")
@@ -71,18 +71,18 @@ import pytest
 
 # ── 导入所有工具 ──────────────────────────────────────────────────────────────
 
-from react.action.tools.impl.calculator import CalculatorAction
-from react.action.tools.impl.datetime_tool import GetDatetimeAction, GetWeekdayAction
-from react.action.tools.impl.random_tool import (
+from agent.react.action.tools.impl.calculator import CalculatorAction
+from agent.react.action.tools.impl.datetime_tool import GetDatetimeAction, GetWeekdayAction
+from agent.react.action.tools.impl.random_tool import (
     GenerateUUIDAction,
     RandomChoiceAction,
     RandomNumberAction,
 )
-from react.action.tools.impl.string_tool import Base64Action, HashAction, StringTransformAction
-from react.action.tools.impl.unit_converter import UnitConverterAction
-from react.action.tools.impl.weather import WeatherAction
-from react.action.tools.impl.web_search import WebSearchAction
-from react.action.tools.impl.word_count import WordCountAction
+from agent.react.action.tools.impl.string_tool import Base64Action, HashAction, StringTransformAction
+from agent.react.action.tools.impl.unit_converter import UnitConverterAction
+from agent.react.action.tools.impl.weather import WeatherAction
+from agent.react.action.tools.impl.web_search import WebSearchAction
+from agent.react.action.tools.impl.word_count import WordCountAction
 
 
 # ═════════════════════════════════════════════════════════════════════════════

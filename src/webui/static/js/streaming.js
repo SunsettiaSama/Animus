@@ -37,61 +37,6 @@ class BaseSession {
   }
 }
 
-// ── Chat session ──────────────────────────────────────────────────────────────
-
-/**
- * Streams a plain LLM chat turn.
- *
- * @param {string}   question
- * @param {string}   genId
- * @param {object}   [opts]
- * @param {Function} [opts.onChunk]   (chunk: string) => void
- * @param {Function} [opts.onFinish]  (fullText: string, aborted: bool) => void
- * @param {Function} [opts.onError]   (err: Error) => void
- */
-export class ChatSession extends BaseSession {
-  constructor(question, genId, opts = {}) {
-    super(PATHS.llm.chat, genId);
-    this._question = question;
-    this._onChunk  = opts.onChunk  ?? (() => {});
-    this._onFinish = opts.onFinish ?? (() => {});
-    this._onError  = opts.onError  ?? (() => {});
-  }
-
-  async run() {
-    await this._open();
-    this._ws.send(JSON.stringify({ question: this._question, gen_id: this._genId }));
-
-    let buffer  = '';
-    let aborted = false;
-
-    await new Promise(resolve => {
-      this._ws.onmessage = evt => {
-        const msg = JSON.parse(evt.data);
-        if (msg.type === 'chunk') {
-          buffer += msg.chunk;
-          this._onChunk(msg.chunk);
-        } else if (msg.type === 'finish') {
-          aborted = msg.aborted ?? false;
-          resolve();
-        } else if (msg.type === 'error') {
-          this._onError(new Error(msg.message));
-          resolve();
-        }
-      };
-      this._ws.onclose = resolve;
-    });
-
-    this._onFinish(buffer, aborted);
-  }
-
-  abort() {
-    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-      this._ws.send(JSON.stringify({ type: 'abort', gen_id: this._genId }));
-    }
-  }
-}
-
 // ── ReAct session ─────────────────────────────────────────────────────────────
 
 /**
@@ -121,6 +66,11 @@ export class ReactSession extends BaseSession {
     this._onApprovalRequest = opts.onApprovalRequest ?? (() => {});
     this._onFinish          = opts.onFinish          ?? (() => {});
     this._onError           = opts.onError           ?? (() => {});
+    this._onSubStart        = opts.onSubStart        ?? (() => {});
+    this._onSubChunk        = opts.onSubChunk        ?? (() => {});
+    this._onSubStep         = opts.onSubStep         ?? (() => {});
+    this._onSubFinish       = opts.onSubFinish       ?? (() => {});
+    this._onSubError        = opts.onSubError        ?? (() => {});
     this._aborted           = false;
   }
 
@@ -152,6 +102,21 @@ export class ReactSession extends BaseSession {
             break;
           case 'approval_request':
             this._onApprovalRequest(msg.request_id, msg.tool, msg.args ?? {});
+            break;
+          case 'sub_start':
+            this._onSubStart(msg.action, msg.instruction);
+            break;
+          case 'sub_chunk':
+            this._onSubChunk(msg.index, msg.chunk);
+            break;
+          case 'sub_step':
+            this._onSubStep(msg);
+            break;
+          case 'sub_finish':
+            this._onSubFinish(msg.answer);
+            break;
+          case 'sub_error':
+            this._onSubError(msg.error);
             break;
           case 'finish':
             finalAnswer       = msg.answer ?? '';

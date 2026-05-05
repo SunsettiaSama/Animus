@@ -61,10 +61,10 @@ def _mod_stub(name: str) -> types.ModuleType:
 
 
 # Stub react 包体系（阻止 tao.py / memory / embedding / torch 加载）
-_react = _pkg_stub("react")
-_react_action = _pkg_stub("react.action")
-_react_action_tools = _pkg_stub("react.action.tools")
-_react_action_tools_impl = _pkg_stub("react.action.tools.impl")
+_react = _pkg_stub("agent.react")
+_react_action = _pkg_stub("agent.react.action")
+_react_action_tools = _pkg_stub("agent.react.action.tools")
+_react_action_tools_impl = _pkg_stub("agent.react.action.tools.impl")
 
 _react_action_base = _mod_stub("react.action.base")
 
@@ -112,15 +112,15 @@ def _load_tool_file(dotted_name: str, file_path: Path):
     return mod
 
 
-_TOOLS_DIR = SRC / "react" / "action" / "tools" / "impl"
+_TOOLS_DIR = SRC / "agent" / "react" / "action" / "tools" / "impl"
 _sa_mod  = _load_tool_file("react.action.tools.impl.scheduler_add",    _TOOLS_DIR / "scheduler_add.py")
 _sl_mod  = _load_tool_file("react.action.tools.impl.scheduler_list",   _TOOLS_DIR / "scheduler_list.py")
 _sc_mod  = _load_tool_file("react.action.tools.impl.scheduler_cancel", _TOOLS_DIR / "scheduler_cancel.py")
 
-from scheduler.config import SchedulerConfig
-from scheduler.task import ScheduledTask, TaskStatus, Trigger
-from scheduler.store import TaskStore
-from scheduler.engine import SchedulerEngine
+from agent.scheduler.config import SchedulerConfig
+from agent.scheduler.task import ScheduledTask, TaskStatus, Trigger
+from agent.scheduler.store import TaskStore
+from agent.scheduler.engine import SchedulerEngine
 
 
 # ─────────────────────────────────────────────────────────────────────────────

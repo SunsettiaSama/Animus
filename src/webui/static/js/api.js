@@ -16,7 +16,6 @@ export const PATHS = {
     init:   '/api/init',
     patch:  '/api/llm',
     status: '/api/status',
-    chat:   '/ws/chat',
   },
   react: {
     init:    '/api/react/init',
@@ -83,6 +82,13 @@ export const PATHS = {
     item: id => `/api/history/${id}`,
   },
   timeline: '/api/timeline',
+  benchmark: {
+    scenarios: '/api/benchmark/scenarios',
+    report:    '/api/benchmark/report',
+    history:   '/api/benchmark/history',
+    run:       '/api/benchmark/run',
+    clear:     '/api/benchmark/report',
+  },
 };
 
 // ── HTTP utilities ────────────────────────────────────────────────────────────

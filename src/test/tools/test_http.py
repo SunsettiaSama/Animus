@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 SRC = Path(__file__).resolve().parent.parent.parent
-REACT_DIR = SRC / "react"
+REACT_DIR = SRC / "agent" / "react"
 
 
 def _pkg_stub(dotted_name: str, path: Path | None = None) -> types.ModuleType:
@@ -43,7 +43,7 @@ def _mod_stub(dotted_name: str) -> types.ModuleType:
     return m
 
 
-_pkg_stub("react", REACT_DIR)
+_pkg_stub("agent.react", REACT_DIR)
 _lc = _pkg_stub("langchain_community")
 _lce = _mod_stub("langchain_community.embeddings")
 _lcv = _mod_stub("langchain_community.vectorstores")
@@ -70,12 +70,12 @@ sys.path.insert(0, str(SRC))
 
 import pytest
 
-from react.action.tools.impl.web_fetch import WebFetchAction
-from react.action.tools.impl.http_request import HttpRequestAction
+from agent.react.action.tools.impl.web_fetch import WebFetchAction
+from agent.react.action.tools.impl.http_request import HttpRequestAction
 
 # 保留对两个模块的直接引用，供 monkeypatch 使用
-import react.action.tools.impl.web_fetch as _wf_mod
-import react.action.tools.impl.http_request as _hr_mod
+import agent.react.action.tools.impl.web_fetch as _wf_mod
+import agent.react.action.tools.impl.http_request as _hr_mod
 
 
 # ── 辅助：构造 httpx Response mock ──────────────────────────────────────────

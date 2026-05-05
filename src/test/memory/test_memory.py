@@ -53,7 +53,7 @@ from unittest.mock import MagicMock
 # ────────────────────────────────────────────────────────────────────────────────
 
 SRC = Path(__file__).resolve().parent.parent.parent
-REACT_DIR = SRC / "react"
+REACT_DIR = SRC / "agent" / "react"
 
 
 def _pkg_stub(dotted_name: str, path: Path | None = None) -> types.ModuleType:
@@ -79,7 +79,7 @@ def _mod_stub(dotted_name: str) -> types.ModuleType:
 
 
 # 1. react 包：跳过 __init__.py，但保留真实 __path__ 让子模块可寻
-_pkg_stub("react", REACT_DIR)
+_pkg_stub("agent.react", REACT_DIR)
 
 # 2. qdrant_client：桩住 store.py 依赖的 QdrantClient 和 models
 _qdrant = _pkg_stub("qdrant_client")
@@ -101,12 +101,12 @@ _emb_pkg.embedder = _emb_embedder
 
 sys.path.insert(0, str(SRC))
 
-from config.react.memory.short_term_config import ShortTermMemoryConfig
-from config.react.memory.medium_term_config import MediumTermMemoryConfig
-from config.react.memory.memory_config import MemoryConfig, LongTermMemoryConfig
-from react.memory.memory import Step
-from react.memory.short_term.memory import ShortTermMemory
-from react.memory.processor import MemoryProcessor
+from config.agent.memory.short_term_config import ShortTermMemoryConfig
+from config.agent.memory.medium_term_config import MediumTermMemoryConfig
+from config.agent.memory.memory_config import MemoryConfig, LongTermMemoryConfig
+from agent.react.memory.memory import Step
+from agent.react.memory.short_term.memory import ShortTermMemory
+from agent.react.memory.processor import MemoryProcessor
 
 
 # ─────────────────────────────────────────────
@@ -520,15 +520,15 @@ def test_full_interaction_scenario():
 
 def _make_long_term_store():
     """构建一个不依赖 Qdrant / BGE 的 LongTermStore（懒加载，不触发网络/磁盘）。"""
-    from config.react.memory.memory_config import LongTermMemoryConfig
-    from react.memory.long_term.store import LongTermStore
+    from config.agent.memory.memory_config import LongTermMemoryConfig
+    from agent.react.memory.long_term.store import LongTermStore
     cfg = LongTermMemoryConfig(enabled=True, load_from_disk=False, memory_dir=".test_mem")
     return LongTermStore(entries=[], cfg=cfg)
 
 
 def _inject_entries(store, texts: list[str]) -> None:
     """直接向 _entries 插入带伪造时间戳的 MemoryEntry，不经过 FAISS。"""
-    from react.memory.long_term.store import MemoryEntry
+    from agent.react.memory.long_term.store import MemoryEntry
     from datetime import datetime, timezone, timedelta
     base = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
     for i, text in enumerate(texts):
@@ -582,9 +582,9 @@ def test_recall_timeline_has_created_at():
 # ─────────────────────────────────────────────
 
 def _make_long_term_memory():
-    from config.react.memory.memory_config import LongTermMemoryConfig
-    from react.memory.long_term.store import LongTermStore
-    from react.memory.long_term.memory import LongTermMemory
+    from config.agent.memory.memory_config import LongTermMemoryConfig
+    from agent.react.memory.long_term.store import LongTermStore
+    from agent.react.memory.long_term.memory import LongTermMemory
     cfg = LongTermMemoryConfig(enabled=True, load_from_disk=False, memory_dir=".test_mem")
     store = LongTermStore(entries=[], cfg=cfg)
     return LongTermMemory(store=store, cfg=cfg), store
@@ -616,9 +616,9 @@ def test_long_term_memory_recall_timeline_empty():
 
 def test_detect_mode_timeline_keywords():
     """含时态关键词的查询应触发 TIMELINE 模式。"""
-    from config.react.memory.retrieve_config import RetrieveConfig
-    from react.memory.long_term.retrieve.triggers import detect_mode
-    from react.memory.long_term.retrieve.base import RetrieveMode
+    from config.agent.memory.retrieve_config import RetrieveConfig
+    from agent.react.memory.long_term.retrieve.triggers import detect_mode
+    from agent.react.memory.long_term.retrieve.base import RetrieveMode
 
     cfg = RetrieveConfig()
     for kw in ["最近发生了什么", "这周有什么进展", "recently what happened", "last week"]:
@@ -631,9 +631,9 @@ def test_detect_mode_timeline_keywords():
 
 def test_detect_mode_heavy_keywords():
     """含历史回忆关键词的查询应触发 HEAVY 模式（优先级低于 TIMELINE）。"""
-    from config.react.memory.retrieve_config import RetrieveConfig
-    from react.memory.long_term.retrieve.triggers import detect_mode
-    from react.memory.long_term.retrieve.base import RetrieveMode
+    from config.agent.memory.retrieve_config import RetrieveConfig
+    from agent.react.memory.long_term.retrieve.triggers import detect_mode
+    from agent.react.memory.long_term.retrieve.base import RetrieveMode
 
     cfg = RetrieveConfig()
     for kw in ["你还记得上次我说的", "as i mentioned earlier"]:
@@ -646,9 +646,9 @@ def test_detect_mode_heavy_keywords():
 
 def test_detect_mode_profile_on_session_start():
     """会话启动时应触发 PROFILE 模式，无论查询内容如何。"""
-    from config.react.memory.retrieve_config import RetrieveConfig
-    from react.memory.long_term.retrieve.triggers import detect_mode
-    from react.memory.long_term.retrieve.base import RetrieveMode
+    from config.agent.memory.retrieve_config import RetrieveConfig
+    from agent.react.memory.long_term.retrieve.triggers import detect_mode
+    from agent.react.memory.long_term.retrieve.base import RetrieveMode
 
     cfg = RetrieveConfig()
     mode = detect_mode("最近发生了什么", cfg, is_session_start=True)
@@ -658,9 +658,9 @@ def test_detect_mode_profile_on_session_start():
 
 def test_detect_mode_light_default():
     """普通查询、无历史/时态关键词时应触发 LIGHT 模式。"""
-    from config.react.memory.retrieve_config import RetrieveConfig
-    from react.memory.long_term.retrieve.triggers import detect_mode
-    from react.memory.long_term.retrieve.base import RetrieveMode
+    from config.agent.memory.retrieve_config import RetrieveConfig
+    from agent.react.memory.long_term.retrieve.triggers import detect_mode
+    from agent.react.memory.long_term.retrieve.base import RetrieveMode
 
     cfg = RetrieveConfig(supplement_context_min_len=0)  # 关闭 SUPPLEMENT 触发
     mode = detect_mode("如何用 Python 读取文件", cfg)

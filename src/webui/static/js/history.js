@@ -43,7 +43,6 @@ export async function saveConversation() {
   await http.post(PATHS.history.item(convId), {
     id:         convId,
     title,
-    mode:       S.mode,
     messages:   _messages,
     created_at: S._createdAt ?? now,
     updated_at: now,
@@ -59,9 +58,8 @@ export async function loadConversation(convId) {
   const data = await http.get(PATHS.history.item(convId));
   set('convId',    data.id);
   set('convTitle', data.title);
-  set('mode',      data.mode ?? 'chat');
   _messages = data.messages ?? [];
-  _cb.onLoad(_messages, S.mode);
+  _cb.onLoad(_messages);
 }
 
 export async function deleteConversation(convId) {

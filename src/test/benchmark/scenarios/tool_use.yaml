@@ -1,0 +1,26 @@
+name: tool_web_search
+description: "Single web_search tool call followed by a final answer"
+prompt: "今天北京天气如何？"
+
+llm_script:
+  - |
+    Thought: 需要查询实时天气，应该调用搜索工具获取最新信息。
+    Action: web_search
+    Action Input: {"query": "北京今日天气"}
+  - |
+    Thought: 根据搜索结果，可以回答用户的问题了。
+    Final Answer: 今天北京天气晴，最高气温 25°C，最低 16°C，湿度约 40%。
+
+tool_script:
+  web_search:
+    - "北京今日晴，最高 25°C，最低 16°C，湿度 40%，微风。"
+
+expected:
+  final_output_contains: ["北京", "天气"]
+  tool_calls_required: ["web_search"]
+  max_steps: 3
+  max_wall_ms: 5000
+
+thresholds:
+  max_total_tokens: 800
+  max_wall_ms: 10000

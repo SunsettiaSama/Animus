@@ -83,14 +83,35 @@ if not "!CURRENT_HASH!"=="!STORED_HASH!" set "DO_INSTALL=1"
 
 if !DO_INSTALL! == 1 (
     echo.
-    echo  [..] 检测到依赖变更，正在安装，请稍候...
-    "%PYTHON%" -m pip install -r "%REQ%" --quiet
-    if !errorlevel! neq 0 (
-        echo  [!!] 依赖安装失败，请检查网络或手动运行:
-        echo       pip install -r requirements.txt
-        pause
-        exit /b 1
+    echo  [..] 检测到依赖变更，正在安装...
+
+    :: 优先使用 uv（更快、更安全的包管理器）
+    set "UV_OK=0"
+    where uv >nul 2>&1
+    if !errorlevel! == 0 (
+        echo  [  ]  使用 uv 安装依赖...
+        uv pip install -r "%REQ%" --python "%PYTHON%" -q
+        if !errorlevel! == 0 (
+            set "UV_OK=1"
+        ) else (
+            echo  [!!]  uv 安装失败，降级到 pip...
+        )
+    ) else (
+        echo  [  ]  未检测到 uv，使用 pip 安装依赖...
     )
+
+    :: uv 失败或不存在时回退 pip
+    if !UV_OK! == 0 (
+        "%PYTHON%" -m pip install -r "%REQ%" --quiet
+        if !errorlevel! neq 0 (
+            echo  [!!] 依赖安装失败，请检查网络或手动运行:
+            echo       uv pip install -r requirements.txt
+            echo       pip install -r requirements.txt
+            pause
+            exit /b 1
+        )
+    )
+
     if not exist "%ROOT%\.react" mkdir "%ROOT%\.react"
     echo !CURRENT_HASH!> "%FLAG%"
     echo  [OK]  依赖安装完成
@@ -157,28 +178,55 @@ if /i "!SKIP_SEARXNG!"=="y" (
     echo  [  ]  已设置: 尝试启动 SearXNG Docker 容器。
 )
 
-:: ── 5. 启动服务器 ────────────────────────────────────────────────────
+:: ── 5. 判断启动来源（双击 vs 命令行） ─────────────────────────────
+:: 双击时 Windows 以 cmd.exe /c "script.bat" 运行，cmdcmdline 含 /c 标志
+:: 命令行直接调用时 cmdcmdline 不含 /c
+set "DOUBLE_CLICK=0"
+echo.%cmdcmdline%. | find /i "/c" >nul 2>&1
+if not errorlevel 1 set "DOUBLE_CLICK=1"
+
+:: ── 6. 启动服务器 ────────────────────────────────────────────────────
 echo.
 echo  [>>] 正在启动 ReAct Agent...
 echo  [  ]  访问地址: %URL%
-echo  [  ]  按 Ctrl+C 可停止服务
+echo  ──────────────────────────────────────────
+echo  [  ]  按 Ctrl+C 停止服务
+echo  [  ]  关闭此窗口也会立即终止服务
 echo  ──────────────────────────────────────────
 echo.
 
 :: 在后台轮询服务就绪后自动打开浏览器（单行，避免 ^ 续行解析错误）
 start "" /b powershell -NoProfile -WindowStyle Hidden -Command "do { Start-Sleep 1 } until (try{(Invoke-WebRequest '%URL%' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200}catch{$false}); Start-Process '%URL%'"
 
-:: 前台运行服务（stderr 合并到 stdout，日志全部显示在此窗口）
+:: 用子程序 call 包裹服务器进程——Ctrl+C 只中断子程序内部，
+:: 不会触发 CMD 的 "Terminate batch job (Y/N)?" 提示，
+:: 使脚本可以继续执行到退出处理段落。
 cd /d "%ROOT%"
+call :_run_server
+goto :_after_server
+
+:_run_server
 "%PYTHON%" src\run.py %SEARXNG_FLAG% 2>&1
 set "EXIT_CODE=!errorlevel!"
+goto :eof
 
-:: 服务退出后显示原因
+:_after_server
+:: ── 7. 退出处理 ───────────────────────────────────────────────────────
 echo.
-if !EXIT_CODE! neq 0 (
-    echo  [!!] 服务异常退出，退出码: !EXIT_CODE!
+echo  ══════════════════════════════════════════
+if !EXIT_CODE! == 0 (
+    echo  [  ]  服务已正常停止。
 ) else (
-    echo  [  ] 服务已正常停止。
+    echo  [!!]  服务异常退出，退出码: !EXIT_CODE!
+    echo  [  ]  请检查上方日志排查原因。
 )
-pause
+echo  ══════════════════════════════════════════
+echo.
+
+:: 双击启动：窗口本次会关闭，强制保留直到用户确认
+:: 命令行启动：终端不会关闭，无需 pause 阻塞
+if "!DOUBLE_CLICK!"=="1" (
+    echo  按任意键关闭此窗口...
+    pause >nul
+)
 endlocal

@@ -189,6 +189,7 @@ export function appendReactMsg(id) {
   const _steps = {};   // index → { card, rawEl, sections, streamed }
   let   _stepI = -1;
   let   _ansText = '';
+  let   _subBlock = null;   // current active sub-agent block element
 
   function _ensureStep(index) {
     if (_steps[index]) return _steps[index];
@@ -260,6 +261,73 @@ export function appendReactMsg(id) {
       doneEl.className = 'step-done';
       doneEl.textContent = '✓';
       s.hdr.appendChild(doneEl);
+      scrollBottom();
+    },
+    openSubAgent(action, instruction) {
+      const lastStep = _steps[_stepI];
+      const container = lastStep ? lastStep.detail : stepsWrap;
+      const block = document.createElement('div');
+      block.className = 'sub-agent-block';
+      const hdr = document.createElement('div');
+      hdr.className = 'sub-agent-hdr';
+      hdr.innerHTML = `<span class="sub-chevron">▶</span> <span class="sub-label">Sub-agent: ${_esc(action)}</span>`;
+      const body = document.createElement('div');
+      body.className = 'sub-agent-body';
+      const instrEl = document.createElement('div');
+      instrEl.className = 'sub-instr';
+      instrEl.textContent = instruction.slice(0, 120) + (instruction.length > 120 ? '…' : '');
+      body.appendChild(instrEl);
+      hdr.addEventListener('click', () => {
+        body.classList.toggle('open');
+        hdr.classList.toggle('open');
+      });
+      block.append(hdr, body);
+      container.appendChild(block);
+      _subBlock = { block, body, hdr };
+      scrollBottom();
+    },
+    addSubChunk(index, chunk) {
+      if (!_subBlock) return;
+      let streamEl = _subBlock.body.querySelector('.sub-stream');
+      if (!streamEl) {
+        streamEl = document.createElement('div');
+        streamEl.className = 'sub-stream';
+        _subBlock.body.appendChild(streamEl);
+      }
+      streamEl.textContent = (streamEl.textContent || '') + chunk;
+      scrollBottom();
+    },
+    addSubStep(stepObj) {
+      if (!_subBlock) return;
+      const row = document.createElement('div');
+      row.className = 'sub-step-row' + (stepObj.is_error ? ' sub-step-error' : '');
+      const mkPart = (label, val) => {
+        if (!val) return '';
+        const v = typeof val === 'string' ? val : JSON.stringify(val, null, 2);
+        return `<div class="sub-sec"><span class="sub-sec-lbl">${label}</span><span class="sub-sec-val">${_esc(v)}</span></div>`;
+      };
+      row.innerHTML =
+        mkPart('Thought', stepObj.thought) +
+        mkPart('Action', stepObj.action) +
+        mkPart('Input', stepObj.action_input) +
+        mkPart('Observation', stepObj.observation);
+      _subBlock.body.querySelector('.sub-stream')?.remove();
+      _subBlock.body.appendChild(row);
+      scrollBottom();
+    },
+    closeSubAgent(answerOrError, isError = false) {
+      if (!_subBlock) return;
+      const badge = document.createElement('span');
+      badge.className = 'sub-done-badge' + (isError ? ' sub-done-error' : '');
+      badge.textContent = isError ? '✗ error' : '✓ done';
+      _subBlock.hdr.appendChild(badge);
+      if (answerOrError) {
+        const summary = document.createElement('div');
+        summary.className = isError ? 'sub-error-banner' : 'sub-answer';
+        summary.textContent = answerOrError.slice(0, 300) + (answerOrError.length > 300 ? '…' : '');
+        _subBlock.body.appendChild(summary);
+      }
+      _subBlock = null;
       scrollBottom();
     },
     appendAnswer(chunk) {

@@ -25,15 +25,15 @@ if str(SRC) not in sys.path:
 
 import pytest
 
-from config.react.risk_config import RiskConfig
-from react.action.risk.level import OperationRisk, RiskLevel
-from react.action.risk.allow_list import AllowList
-from react.action.risk.assessor import (
+from config.agent.risk_config import RiskConfig
+from agent.react.action.risk.level import OperationRisk, RiskLevel
+from agent.react.action.risk.allow_list import AllowList
+from agent.react.action.risk.assessor import (
     ExternalAPIAssessor,
     RuleBasedAssessor,
 )
-from react.action.risk.gate import RiskGate
-import react.action.risk.assessor as _assessor_mod
+from agent.react.action.risk.gate import RiskGate
+import agent.react.action.risk.assessor as _assessor_mod
 
 
 # ═════════════════════════════════════════════════════════════════════════════

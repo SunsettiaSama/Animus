@@ -83,7 +83,7 @@ class AppState:
 
     def _init_paths(self) -> None:
         from config import paths
-        from storage.config import StorageConfig
+        from config.storage import StorageConfig
 
         self.llm_config_yaml     = str(paths.llm_config_yaml)
         self.vllm_config_yaml    = str(paths.vllm_config_yaml)
@@ -101,9 +101,9 @@ class AppState:
         from infra.searxng_manager import SearXNGManager
         from infra.sandbox import SandboxManager
         from infra.service_registry import ServiceRegistry
-        from react.action.manager import ToolManager
+        from agent.react.action.manager import ToolManager
         from config.knowledge.config import KnowledgeConfig
-        from config.react.run_config import RunConfig
+        from config.agent.run_config import RunConfig
         from config.infra.sandbox_config import SandboxConfig
         from config import paths
 

@@ -25,13 +25,14 @@ import * as personaMod                    from './modules/persona.js';
 import * as schedulerMod                  from './modules/scheduler.js';
 import * as voiceMod                      from './modules/voice.js';
 import * as infraMod                      from './modules/infra.js';
+import * as benchMod                      from './modules/benchmark.js';
 import { renderRecentLanding }            from './history.js';
 
 // ── Module callback wiring ────────────────────────────────────────────────────
 
 const _toast = text => _showToast(text);
 
-[llmMod, reactMod, memoryMod, personaMod, schedulerMod, voiceMod, infraMod].forEach(m => {
+[llmMod, reactMod, memoryMod, personaMod, schedulerMod, voiceMod, infraMod, benchMod].forEach(m => {
   if (m.setCallbacks) m.setCallbacks({ onToast: _toast });
 });
 reactMod.setCallbacks({
@@ -42,7 +43,7 @@ reactMod.setCallbacks({
 });
 history.setCallbacks({
   onToast: _toast,
-  onLoad:  (msgs, mode) => { set('mode', mode); _rebuildFromHistory(msgs); },
+  onLoad:  (msgs) => { _rebuildFromHistory(msgs); },
 });
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ window.addEventListener('react:state', e => {
 // ── Screen navigation ─────────────────────────────────────────────────────────
 
 function _showScreen(id) {
-  ['s-landing', 's-workspace', 's-plan'].forEach(s => {
+  ['s-landing', 's-workspace', 's-plan', 's-benchmark', 's-scheduler'].forEach(s => {
     document.getElementById(s)?.classList.toggle('hidden', s !== id);
   });
 }
@@ -98,33 +99,30 @@ function goPlan() {
   import('/static/js/modules/plan.js').then(m => m.init());
 }
 
+function goBenchmark() {
+  _showScreen('s-benchmark');
+  benchMod.init();
+}
+
+function goScheduler() {
+  _showScreen('s-scheduler');
+  schedulerMod.init();
+}
+
 // ── New conversation ───────────────────────────────────────────────────────────
 
-function startNew(mode) {
-  set('mode', mode);
+function startNew() {
   set('convId', null);
   set('convTitle', 'New Conversation');
   history.clearMessages();
   render.clearMsgs();
-  render.showEmptyState(mode);
+  render.showEmptyState();
   document.getElementById('tb-title')?.textContent && (document.getElementById('tb-title').textContent = 'New Conversation');
-  _updateModeBadge(mode);
   _updateReactBadge();
   goWorkspace();
 }
 
-function startNewKeepMode() {
-  startNew(S.mode);
-}
-
-// ── Mode badge / topbar ───────────────────────────────────────────────────────
-
-function _updateModeBadge(mode) {
-  const el = document.getElementById('tb-mode-badge');
-  if (!el) return;
-  el.textContent = mode.toUpperCase();
-  el.className   = `mode-badge ${mode}`;
-}
+// ── Topbar badge ──────────────────────────────────────────────────────────────
 
 function _updateReactBadge() {
   const el = document.getElementById('tb-react-status');
@@ -151,48 +149,7 @@ async function handleSend() {
   render.appendUserMsg(question);
   history.pushMessage({ role: 'user', content: question });
 
-  if (S.mode === 'react') {
-    await _runReact(question);
-  } else {
-    await _runChat(question);
-  }
-}
-
-// ── Chat streaming ────────────────────────────────────────────────────────────
-
-async function _runChat(question) {
-  if (!S.llmModel) { _showToast('LLM not initialized'); return; }
-
-  const genId   = crypto.randomUUID();
-  set('genId', genId);
-  setState('streaming');
-
-  const ctrl    = render.appendAssistantMsg();
-  const session = new streaming.ChatSession(question, genId, {
-    onChunk:  chunk => ctrl.append(chunk),
-    onFinish: (text, aborted) => {
-      ctrl.finalize(aborted);
-      if (!aborted && text) {
-        history.pushMessage({ role: 'assistant', content: text });
-        history.saveConversation();
-        _updateTitle(text);
-      }
-      streaming.clearCurrent();
-      setState('idle');
-    },
-    onError: e => {
-      _showToast('Chat error: ' + e.message);
-      ctrl.finalize(true);
-      streaming.clearCurrent();
-      setState('idle');
-    },
-  });
-  streaming.startSession(session);
-  session.run().catch(e => {
-    _showToast('Connection error: ' + e.message);
-    streaming.clearCurrent();
-    setState('idle');
-  });
+  await _runReact(question);
 }
 
 // ── ReAct streaming ───────────────────────────────────────────────────────────
@@ -214,6 +171,11 @@ async function _runReact(question) {
     onStep:      step  => ctrl.addStep(step),
     onRetry:    (i, reason) => _showToast(`Retry ${i}: ${reason}`),
     onApprovalRequest: (reqId, tool, args) => _promptApproval(session, reqId, tool, args),
+    onSubStart:  (action, instr) => ctrl.openSubAgent(action, instr),
+    onSubChunk:  (i, chunk)      => ctrl.addSubChunk(i, chunk),
+    onSubStep:   step            => ctrl.addSubStep(step),
+    onSubFinish: answer          => ctrl.closeSubAgent(answer, false),
+    onSubError:  error           => ctrl.closeSubAgent(error, true),
     onFinish:   (answer, aborted) => {
       ctrl.finalize(answer, aborted);
       if (!aborted && answer) {
@@ -291,7 +253,6 @@ function _rebuildFromHistory(messages) {
       ctrl.finalize(false);
     }
   });
-  _updateModeBadge(S.mode);
   render.scrollBottom();
   goWorkspace();
 }
@@ -319,8 +280,8 @@ async function loadWorkstation() {
     personaMod.updateWorkstationCard(),
     voiceMod.updateWorkstationCard(),
     schedulerMod.updateWorkstationCard(),
+    benchMod.updateWorkstationCard(),
     infraMod.updateServicesRow(),
-    schedulerMod.renderTaskTable(),
     renderRecentLanding(document.getElementById('landing-recent')),
   ]);
 }
@@ -334,16 +295,14 @@ function toggleSchedulerForm() {
 }
 
 function onSchedTriggerChange() {
-  const t = document.getElementById('sched-trigger')?.value;
-  document.getElementById('sched-once-fields')?.style &&
-    (document.getElementById('sched-once-fields').style.display = t === 'once' ? '' : 'none');
-  document.getElementById('sched-interval-fields')?.style &&
-    (document.getElementById('sched-interval-fields').style.display = t === 'interval' ? '' : 'none');
+  const t = document.querySelector('input[name="sched-trigger-radio"]:checked')?.value ?? 'once';
+  document.getElementById('sched-once-fields').style.display     = t === 'once'     ? '' : 'none';
+  document.getElementById('sched-interval-fields').style.display = t === 'interval' ? '' : 'none';
 }
 
 async function createSchedulerTask() {
   const $ = id => document.getElementById(id);
-  const triggerType = $('sched-trigger')?.value;
+  const triggerType = document.querySelector('input[name="sched-trigger-radio"]:checked')?.value ?? 'once';
   const payload = {
     name:             $('sched-name')?.value ?? '',
     instruction:      $('sched-instruction')?.value ?? '',
@@ -429,7 +388,7 @@ function _bind() {
   // Navigation
   on('btn-go-home',    'click', goHome);
   on('plan-btn-home',  'click', goHome);
-  on('btn-new-conv',   'click', startNewKeepMode);
+  on('btn-new-conv',   'click', startNew);
   on('btn-clear-hist', 'click', () => {
     if (confirm('Clear ALL history?')) {
       history.clearAllHistory().then(() => _showToast('History cleared'));
@@ -439,9 +398,20 @@ function _bind() {
   on('btn-refresh-ws','click', loadWorkstation);
 
   // Landing quick-start cards
-  document.querySelector('[data-action="start-chat"]')?.addEventListener('click', () => startNew('chat'));
-  document.querySelector('[data-action="start-react"]')?.addEventListener('click', () => startNew('react'));
+  document.querySelector('[data-action="start-react"]')?.addEventListener('click', () => startNew());
   document.querySelector('[data-action="start-plan"]')?.addEventListener('click', () => goPlan());
+  document.querySelector('[data-action="start-benchmark"]')?.addEventListener('click', () => goBenchmark());
+  document.querySelector('[data-action="start-scheduler"]')?.addEventListener('click', () => goScheduler());
+
+  // Benchmark screen
+  on('bench-btn-home',    'click', goHome);
+  on('bench-btn-run-all', 'click', () => benchMod.runAll());
+  on('bench-btn-run-sel', 'click', () => benchMod.runSelected());
+  on('bench-btn-clear',   'click', () => benchMod.clearReport());
+
+  // Scheduler screen
+  on('sched-btn-home',    'click', goHome);
+  on('btn-sched-refresh', 'click', () => schedulerMod.init());
 
   // Workstation module cards — double-click opens settings tab
   document.querySelectorAll('.module-card[data-tab]').forEach(card => {
@@ -459,10 +429,12 @@ function _bind() {
   on('s-stt-provider',    'change', settings.onSTTProviderChange);
 
   // Scheduler form
-  on('btn-sched-add',      'click', toggleSchedulerForm);
-  on('sched-trigger',      'change', onSchedTriggerChange);
-  on('btn-sched-create',   'click', createSchedulerTask);
-  on('btn-sched-cancel',   'click', toggleSchedulerForm);
+  on('btn-sched-add',    'click', toggleSchedulerForm);
+  on('btn-sched-create', 'click', createSchedulerTask);
+  on('btn-sched-cancel', 'click', toggleSchedulerForm);
+  document.querySelectorAll('input[name="sched-trigger-radio"]').forEach(r => {
+    r.addEventListener('change', onSchedTriggerChange);
+  });
 
   // Memory consolidate / clear
   on('btn-consolidate',    'click', settings.doConsolidate);

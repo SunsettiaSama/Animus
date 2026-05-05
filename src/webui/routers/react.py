@@ -31,8 +31,37 @@ class RestoreRequest(BaseModel):
 
 # ── Helper: serialise TaoEvents to wire dict ───────────────────────────────────
 
+def _sub_event_to_dict(event) -> dict | None:
+    from agent.react.tao import (
+        SubAgentStartEvent,
+        SubAgentChunkEvent,
+        SubAgentStepEvent,
+        SubAgentFinishEvent,
+        SubAgentErrorEvent,
+    )
+    if isinstance(event, SubAgentStartEvent):
+        return {"type": "sub_start", "action": event.action, "instruction": event.instruction}
+    if isinstance(event, SubAgentChunkEvent):
+        return {"type": "sub_chunk", "index": event.index, "chunk": event.chunk}
+    if isinstance(event, SubAgentStepEvent):
+        return {
+            "type": "sub_step",
+            "index": event.index,
+            "thought": event.thought,
+            "action": event.action,
+            "action_input": event.action_input,
+            "observation": event.observation,
+            "is_error": event.is_error,
+        }
+    if isinstance(event, SubAgentFinishEvent):
+        return {"type": "sub_finish", "answer": event.answer}
+    if isinstance(event, SubAgentErrorEvent):
+        return {"type": "sub_error", "error": event.error}
+    return None
+
+
 def _event_to_dict(event) -> dict | None:
-    from react.tao import (
+    from agent.react.tao import (
         ApprovalRequestEvent,
         ChunkEvent,
         FinishEvent,
@@ -70,21 +99,21 @@ def _event_to_dict(event) -> dict | None:
             "reason": event.reason,
             "deadline_secs": event.deadline_secs,
         }
-    return None
+    return _sub_event_to_dict(event)
 
 
 # ── ReAct init ────────────────────────────────────────────────────────────────
 
 def _do_react_init(req: ReactInitRequest, state) -> None:
     """Background worker that builds TaoLoop and ConvLoop."""
-    from config.react.tao_config import TaoConfig
-    from config.react.prompt_config import PromptConfig
-    from config.react.memory.memory_config import MemoryConfig
-    from config.react.persona_config import PersonaConfig
-    from scheduler import SchedulerConfig
-    from crew import CrewConfig
-    from react.loop import ConvLoop
-    from react.tao import TaoLoop
+    from config.agent.tao_config import TaoConfig
+    from config.agent.prompt_config import PromptConfig
+    from config.agent.memory.memory_config import MemoryConfig
+    from config.agent.persona_config import PersonaConfig
+    from agent.scheduler import SchedulerConfig
+    from agent.profile import SubAgentConfig
+    from agent.react.loop import ConvLoop
+    from agent.react.tao import TaoLoop
 
     def _load_memory_config() -> MemoryConfig:
         if os.path.exists(state.memory_config_yaml):
@@ -140,12 +169,12 @@ def _do_react_init(req: ReactInitRequest, state) -> None:
             scheduler_dir=state.cache.scheduler_dir,
             llm_cfg_path=state.llm_config_yaml,
         ),
-        crew=CrewConfig(llm_cfg_path=state.llm_config_yaml),
+        agent=SubAgentConfig(llm_cfg_path=state.llm_config_yaml),
     )
 
     tao = None
-    from config.react.risk_config import RiskConfig
-    from react.action.risk.gate import RiskGate
+    from config.agent.risk_config import RiskConfig
+    from agent.react.action.risk.gate import RiskGate
     risk_gate = RiskGate.from_config(RiskConfig())
 
     tao = TaoLoop(
@@ -339,13 +368,22 @@ async def ws_react_run(websocket: WebSocket):
     queue: asyncio.Queue             = asyncio.Queue()
 
     def _produce():
+        if state.active_tao is not None:
+            state.active_tao.sub_event_sink = lambda ev: (
+                (msg := _sub_event_to_dict(ev)) and
+                loop.call_soon_threadsafe(queue.put_nowait, msg)
+            )
         for event in state.conv_loop.stream(question):
             msg = _event_to_dict(event)
             if msg:
                 loop.call_soon_threadsafe(queue.put_nowait, msg)
+        if state.active_tao is not None:
+            state.active_tao.sub_event_sink = None
         loop.call_soon_threadsafe(queue.put_nowait, None)
 
     def _on_produce_error(exc: BaseException) -> None:
+        if state.active_tao is not None:
+            state.active_tao.sub_event_sink = None
         loop.call_soon_threadsafe(
             queue.put_nowait, {"type": "error", "message": str(exc)}
         )

@@ -1,0 +1,20 @@
+name: simple_qa
+description: "Simple Q&A without tool calls"
+prompt: "法国的首都是哪里？"
+
+llm_script:
+  - |
+    Thought: 这是一个简单的地理问题，可以直接回答，无需调用任何工具。
+    Final Answer: 法国的首都是巴黎（Paris）。
+
+tool_script: {}
+
+expected:
+  final_output_contains: ["巴黎", "Paris"]
+  max_steps: 1
+  tool_calls_allowed: false
+  max_wall_ms: 3000
+
+thresholds:
+  max_total_tokens: 300
+  max_wall_ms: 5000

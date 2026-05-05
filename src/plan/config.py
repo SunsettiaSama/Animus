@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
+
+
+def _default_agent_config() -> Any:
+    from agent.profile import SubAgentConfig
+    return SubAgentConfig()
 
 
 @dataclass
@@ -57,3 +63,4 @@ class OrchestratorConfig:
 class PlanConfig:
     llm_cfg_path: str = "config/llm_core/config.yaml"
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
+    agent: Any = field(default_factory=_default_agent_config)

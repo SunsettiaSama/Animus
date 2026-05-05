@@ -41,7 +41,7 @@ from unittest.mock import MagicMock
 # ─────────────────────────────────────────────────────────────────────────────
 
 SRC = Path(__file__).resolve().parent.parent.parent
-REACT_DIR = SRC / "react"
+REACT_DIR = SRC / "agent" / "react"
 
 
 def _pkg_stub(dotted_name: str, path: Path | None = None) -> types.ModuleType:
@@ -64,7 +64,7 @@ def _mod_stub(dotted_name: str) -> types.ModuleType:
     return m
 
 
-_pkg_stub("react", REACT_DIR)
+_pkg_stub("agent.react", REACT_DIR)
 
 # langchain_core.tools.BaseTool 是 pydantic BaseModel 的子类，
 # 需要提供一个真实可继承的 stub，否则 BaseAction(BaseTool) 的 pydantic 元类会报错。
@@ -96,7 +96,7 @@ for _name in ("AIMessage", "HumanMessage", "SystemMessage", "BaseMessage"):
     setattr(_lc_core_msgs, _name, MagicMock(name=_name))
 
 # react.action 包：跳过 __init__.py（它会触发 ToolManager → manager.py 的完整导入链）
-_pkg_stub("react.action", REACT_DIR / "action")
+_pkg_stub("agent.react.action", REACT_DIR / "action")
 
 # qdrant_client：桩住 store.py 依赖的 QdrantClient 和 models
 _qdrant = _pkg_stub("qdrant_client")
@@ -118,7 +118,7 @@ _emb_pkg.embedder = _emb_embedder
 
 sys.path.insert(0, str(SRC))
 
-from react.action.tools.impl.memory_recall import MemoryRecallAction
+from agent.react.action.tools.impl.memory_recall import MemoryRecallAction
 
 
 # ─────────────────────────────────────────────

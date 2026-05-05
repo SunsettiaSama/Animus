@@ -74,9 +74,9 @@ def stub_react_and_langchain() -> None:
     桩住 react 包（跳过 __init__.py）以及 langchain_community 的重型依赖。
     在任何需要导入 react.action.tools.impl.* 的测试文件顶部调用一次。
     """
-    REACT_DIR = SRC / "react"
+    REACT_DIR = SRC / "agent" / "react"
 
-    pkg_stub("react", REACT_DIR)
+    pkg_stub("agent.react", REACT_DIR)
 
     lc_comm = pkg_stub("langchain_community")
     lc_emb  = mod_stub("langchain_community.embeddings")

@@ -107,79 +107,18 @@
           <div class="mc-body" id="mc-scheduler-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
 
-      </div>
-    </div>
+        <!-- Benchmark (read-only status card) -->
+        <div class="module-card" id="mc-benchmark">
+          <div class="mc-header">
+            <span class="mc-icon">🧪</span>
+            <span class="mc-title">Benchmark</span>
+            <span class="mc-badge off" id="mc-bench-badge">—</span>
+          </div>
+          <div class="mc-body" id="mc-bench-body">
+            <span style="color:var(--text3)">No runs yet</span>
+          </div>
+        </div>
 
-    <!-- Scheduler -->
-    <div class="ws-section">
-      <div class="sched-header">
-        <div class="ws-section-title" style="margin-bottom:0">Scheduled Tasks</div>
-        <button id="btn-sched-add" class="btn-secondary sched-add-btn">+ New Task</button>
-      </div>
-
-      <table class="sched-table" id="sched-task-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Profile</th>
-            <th>Trigger</th>
-            <th>Next Run</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="sched-task-body">
-          <tr><td colspan="6" class="sched-empty">Loading…</td></tr>
-        </tbody>
-      </table>
-
-      <div id="sched-form-wrap" class="sched-form-wrap" style="display:none">
-        <div class="sched-form-title">New Scheduled Task</div>
-        <div class="sched-form-grid">
-          <div>
-            <label>Task Name</label>
-            <input id="sched-name" type="text" placeholder="daily-summary" />
-          </div>
-          <div>
-            <label>Profile</label>
-            <select id="sched-profile">
-              <option value="minimal">minimal</option>
-              <option value="executor">executor</option>
-              <option value="researcher">researcher</option>
-              <option value="researcher_with_memory">researcher_with_memory</option>
-              <option value="analyst">analyst</option>
-              <option value="planner">planner</option>
-            </select>
-          </div>
-          <div class="full">
-            <label>Instruction</label>
-            <textarea id="sched-instruction" placeholder="Describe what the agent should do…"></textarea>
-          </div>
-          <div class="full">
-            <label>Trigger Type</label>
-            <select id="sched-trigger">
-              <option value="once">Once（指定时间执行一次）</option>
-              <option value="interval">Interval（周期性执行）</option>
-            </select>
-          </div>
-        </div>
-        <div class="sched-trigger-fields" id="sched-once-fields">
-          <div>
-            <label>Execute At（本地时间）</label>
-            <input id="sched-at" type="datetime-local" />
-          </div>
-        </div>
-        <div class="sched-trigger-fields" id="sched-interval-fields" style="display:none">
-          <div>
-            <label>Interval（秒）</label>
-            <input id="sched-interval" type="number" value="3600" min="60" placeholder="3600" />
-          </div>
-        </div>
-        <div class="sched-form-actions">
-          <button id="btn-sched-create" class="btn-primary">Create Task</button>
-          <button id="btn-sched-cancel" class="btn-secondary">Cancel</button>
-        </div>
-        <div class="sched-msg" id="sched-form-msg"></div>
       </div>
     </div>
 
@@ -187,14 +126,17 @@
     <div class="ws-section">
       <div class="ws-section-title">Quick Start</div>
       <div class="ws-quick-btns">
-        <button class="ws-big-btn" data-action="start-chat">
-          <span>💬</span><span>New Chat</span>
-        </button>
         <button class="ws-big-btn accent" data-action="start-react">
-          <span>⚡</span><span>New ReAct Session</span>
+          <span>⚡</span><span>New Session</span>
         </button>
         <button class="ws-big-btn" data-action="start-plan">
           <span>🗂</span><span>Plan Mode</span>
+        </button>
+        <button class="ws-big-btn" data-action="start-benchmark">
+          <span>🧪</span><span>Benchmark Suite</span>
+        </button>
+        <button class="ws-big-btn" data-action="start-scheduler">
+          <span>🗓</span><span>Scheduler</span>
         </button>
       </div>
       <div id="landing-recent"></div>
@@ -229,7 +171,6 @@
     <div id="topbar">
       <div class="topbar-left">
         <span id="tb-title">New Conversation</span>
-        <button id="tb-mode" class="mode-badge" title="Click to switch mode">Chat</button>
         <span id="tb-persona-badge" class="persona-badge hidden">🎭 Persona</span>
         <span id="tb-mem-loading" class="mem-loading-badge hidden"><span class="spin">⟳</span>加载记忆中…</span>
       </div>
@@ -1070,6 +1011,227 @@
   </div><!-- /plan-body -->
 
 </div><!-- /s-plan -->
+
+
+<!-- ══════════════════════════════════
+     BENCHMARK SCREEN
+══════════════════════════════════ -->
+<div id="s-benchmark" class="hidden">
+
+  <!-- Topbar -->
+  <div class="plan-topbar">
+    <button id="bench-btn-home" class="icon-btn" title="Home">←</button>
+    <div class="plan-topbar-title">
+      <span class="plan-title-text">Benchmark Suite</span>
+      <span class="plan-badge" id="bench-status-badge">IDLE</span>
+    </div>
+    <div class="plan-topbar-actions">
+      <button id="bench-btn-run-all"  class="btn-primary">▶ Run All</button>
+      <button id="bench-btn-run-sel"  class="btn-secondary">Run Selected</button>
+      <button id="bench-btn-clear"    class="btn-secondary bench-clear-btn">Clear</button>
+    </div>
+  </div>
+
+  <!-- Stats bar — hidden until results exist -->
+  <div class="bench-stats-bar hidden" id="bench-stats-bar">
+    <div class="bench-stat">
+      <span class="bench-stat-num" id="bstat-total">—</span>
+      <span class="bench-stat-lbl">Total</span>
+    </div>
+    <div class="bench-stat-divider"></div>
+    <div class="bench-stat">
+      <span class="bench-stat-num bench-ok" id="bstat-passed">—</span>
+      <span class="bench-stat-lbl">Passed</span>
+    </div>
+    <div class="bench-stat-divider"></div>
+    <div class="bench-stat">
+      <span class="bench-stat-num bench-fail" id="bstat-failed">—</span>
+      <span class="bench-stat-lbl">Failed</span>
+    </div>
+    <div class="bench-stat-divider"></div>
+    <div class="bench-stat">
+      <span class="bench-stat-num" id="bstat-quality">—</span>
+      <span class="bench-stat-lbl">Avg Quality</span>
+    </div>
+    <div class="bench-stat-bar-wrap">
+      <div class="bench-stat-bar" id="bstat-bar"></div>
+    </div>
+  </div>
+
+  <div class="plan-body">
+
+    <!-- Left: scenario checklist + live progress -->
+    <div class="bench-left-col" id="bench-left">
+
+      <!-- Scenario checklist -->
+      <div class="bench-section-header">
+        <span>Scenarios</span>
+        <label class="bench-select-all-label">
+          <input type="checkbox" id="bench-chk-all" checked />
+          <span>All</span>
+        </label>
+      </div>
+      <div id="bench-scenario-list" class="bench-scenario-list"></div>
+
+      <!-- Live run log -->
+      <div class="bench-section-header bench-log-header hidden" id="bench-log-header">
+        <span>Run Log</span>
+        <span class="bench-log-spinner" id="bench-log-spinner">⟳</span>
+      </div>
+      <div id="bench-progress" class="bench-progress-log"></div>
+
+    </div>
+
+    <!-- Right: results table + drift -->
+    <div class="bench-right-col" id="bench-right">
+
+      <div class="bench-panel">
+        <div class="bench-panel-title">Results</div>
+        <div id="bench-results-table">
+          <div class="bench-empty-state">
+            <div class="bench-empty-icon">⚡</div>
+            <div class="bench-empty-text">No results yet</div>
+            <div class="bench-empty-hint">Select scenarios and click <strong>Run All</strong> to start</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bench-panel">
+        <div class="bench-panel-title">
+          History Drift
+          <span class="bench-panel-subtitle">token Δ vs previous run</span>
+        </div>
+        <div id="bench-drift-summary">
+          <div class="bench-empty-state bench-empty-sm">
+            <div class="bench-empty-text">Need ≥ 2 runs to compute drift</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</div><!-- /s-benchmark -->
+
+
+<!-- ══════════════════════════════════
+     SCHEDULER SCREEN
+══════════════════════════════════ -->
+<div id="s-scheduler" class="hidden">
+
+  <!-- Topbar -->
+  <div class="plan-topbar">
+    <button id="sched-btn-home" class="icon-btn" title="Home">←</button>
+    <div class="plan-topbar-title">
+      <span class="plan-title-text">Scheduler</span>
+      <span class="plan-badge" id="sched-status-badge">—</span>
+    </div>
+    <div class="plan-topbar-actions">
+      <button id="btn-sched-add"     class="btn-primary">+ New Task</button>
+      <button id="btn-sched-refresh" class="btn-secondary">↺ Refresh</button>
+    </div>
+  </div>
+
+  <!-- Stats bar -->
+  <div class="sched-stats-bar" id="sched-stats-bar">
+    <div class="sched-stat">
+      <span class="sched-stat-num" id="sstat-total">0</span>
+      <span class="sched-stat-lbl">Total</span>
+    </div>
+    <div class="sched-stat-divider"></div>
+    <div class="sched-stat">
+      <span class="sched-stat-num sched-stat-pending" id="sstat-pending">0</span>
+      <span class="sched-stat-lbl">Pending</span>
+    </div>
+    <div class="sched-stat-divider"></div>
+    <div class="sched-stat">
+      <span class="sched-stat-num sched-stat-running" id="sstat-running">0</span>
+      <span class="sched-stat-lbl">Running</span>
+    </div>
+    <div class="sched-stat-divider"></div>
+    <div class="sched-stat">
+      <span class="sched-stat-num sched-stat-done" id="sstat-done">0</span>
+      <span class="sched-stat-lbl">Done</span>
+    </div>
+  </div>
+
+  <div class="plan-body">
+
+    <!-- Left: task cards + create form -->
+    <div class="sched-left-col" id="sched-left">
+
+      <!-- Task list -->
+      <div id="sched-task-list" class="sched-task-list">
+        <div class="sched-loading">Loading…</div>
+      </div>
+
+      <!-- New task form (hidden drawer) -->
+      <div id="sched-form-wrap" class="sched-form-drawer" style="display:none">
+        <div class="sched-form-header">
+          <span class="sched-form-title">New Scheduled Task</span>
+        </div>
+        <div class="sched-form-body">
+          <div class="sched-form-grid">
+            <div>
+              <label>Task Name</label>
+              <input id="sched-name" type="text" placeholder="daily-summary" />
+            </div>
+            <div>
+              <label>Profile</label>
+              <select id="sched-profile">
+                <option value="minimal">minimal</option>
+                <option value="with_memory">with_memory</option>
+                <option value="full">full</option>
+              </select>
+            </div>
+            <div class="full">
+              <label>Instruction</label>
+              <textarea id="sched-instruction" placeholder="Describe what the agent should do…" rows="3"></textarea>
+            </div>
+            <div class="full">
+              <label>Trigger Type</label>
+              <div class="sched-trigger-tabs">
+                <label class="sched-trigger-tab">
+                  <input type="radio" name="sched-trigger-radio" id="sched-trigger" value="once" checked />
+                  <span>Once</span>
+                </label>
+                <label class="sched-trigger-tab">
+                  <input type="radio" name="sched-trigger-radio" value="interval" />
+                  <span>Interval</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="sched-trigger-fields" id="sched-once-fields">
+            <label>Execute At</label>
+            <input id="sched-at" type="datetime-local" />
+          </div>
+          <div class="sched-trigger-fields" id="sched-interval-fields" style="display:none">
+            <label>Repeat Every (seconds)</label>
+            <input id="sched-interval" type="number" value="3600" min="60" placeholder="3600" />
+          </div>
+          <div class="sched-form-actions">
+            <button id="btn-sched-create" class="btn-primary">Create Task</button>
+            <button id="btn-sched-cancel" class="btn-secondary">Cancel</button>
+          </div>
+          <div class="sched-msg" id="sched-form-msg"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right: timeline -->
+    <div class="sched-right-col" id="sched-right">
+      <div class="sched-tl-header">
+        <span>Timeline</span>
+        <span class="sched-tl-date" id="sched-tl-date"></span>
+      </div>
+      <div id="sched-timeline-list" class="sched-timeline-list"></div>
+    </div>
+
+  </div>
+</div><!-- /s-scheduler -->
+
 
   <script type="module" src="/static/js/main.js"></script>
 </body>

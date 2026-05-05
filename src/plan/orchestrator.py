@@ -37,12 +37,13 @@ class PlanOrchestrator:
         self,
         cfg: OrchestratorConfig,
         llm_cfg_path: str,
+        agent_cfg: Any = None,
     ) -> None:
         self._cfg = cfg
         self._llm_cfg_path = llm_cfg_path
         self._planner = PlannerAgent(cfg.planner, llm_cfg_path)
         self._replanner = ReplannerAgent(cfg.replanner, llm_cfg_path)
-        self._executor = ExecutorAgent(llm_cfg_path)
+        self._executor = ExecutorAgent(llm_cfg_path, agent_cfg=agent_cfg)
         self._events: list[PlanEvent] = []
         self._event_callbacks: list[Callable[[PlanEvent], None]] = []
         self._cycle = 0

@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from routers import llm, react, memory, persona, scheduler, knowledge, voice, history, plan
+from routers import llm, react, memory, persona, scheduler, knowledge, voice, history, plan, benchmark
 from routers.infra import router as infra_router
 from state import get_state
 
@@ -38,6 +38,7 @@ for _r in [
     voice.router,
     history.router,
     plan.router,
+    benchmark.router,
 ]:
     app.include_router(_r)
 

@@ -31,7 +31,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
 SRC = Path(__file__).resolve().parent.parent.parent
-REACT_DIR = SRC / "react"
+REACT_DIR = SRC / "agent" / "react"
 
 
 # ── stubs（必须在任何项目模块导入之前注册）───────────────────────────────────────
@@ -56,7 +56,7 @@ def _mod_stub(dotted_name: str) -> types.ModuleType:
     return m
 
 
-_pkg_stub("react", REACT_DIR)
+_pkg_stub("agent.react", REACT_DIR)
 
 _qdrant = _pkg_stub("qdrant_client")
 _qdrant_models = _mod_stub("qdrant_client.models")
@@ -76,8 +76,8 @@ sys.path.insert(0, str(SRC))
 
 # ── 真实模块导入（stubs 已就位）──────────────────────────────────────────────────
 
-from config.react.memory.memory_config import LongTermMemoryConfig
-from react.memory.long_term.store import LongTermStore, MemoryEntry, MEMORIES_FILE
+from config.agent.memory.memory_config import LongTermMemoryConfig
+from agent.react.memory.long_term.store import LongTermStore, MemoryEntry, MEMORIES_FILE
 
 
 # ── 辅助工厂 ──────────────────────────────────────────────────────────────────

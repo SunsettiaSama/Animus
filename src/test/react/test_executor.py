@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 SRC = Path(__file__).resolve().parent.parent.parent
-REACT_DIR = SRC / "react"
+REACT_DIR = SRC / "agent" / "react"
 
 
 def _pkg_stub(dotted_name: str, path: Path | None = None) -> types.ModuleType:
@@ -42,7 +42,7 @@ def _mod_stub(dotted_name: str) -> types.ModuleType:
     return m
 
 
-_pkg_stub("react", REACT_DIR)
+_pkg_stub("agent.react", REACT_DIR)
 
 # langchain_core stub — BaseTool 需要是真正的 Pydantic 模型，
 # 否则 executor.py 读不到 model_fields["name"].default
@@ -77,8 +77,8 @@ _lc_comm.vectorstores = _lcv
 sys.path.insert(0, str(SRC))
 
 import pytest
-from react.action.executor import ActionExecutor
-from react.action.tools.impl.weather import WeatherAction
+from agent.react.action.executor import ActionExecutor
+from agent.react.action.tools.impl.weather import WeatherAction
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -30,7 +30,7 @@ from unittest.mock import MagicMock
 # trigger the full TaoLoop → LangChain import chain).
 
 SRC = Path(__file__).resolve().parent.parent.parent
-REACT_DIR = SRC / "react"
+REACT_DIR = SRC / "agent" / "react"
 sys.path.insert(0, str(SRC))
 
 
@@ -55,12 +55,12 @@ def _mod_stub(dotted_name: str) -> types.ModuleType:
 
 
 # Stub `react` package so __init__.py is skipped
-_pkg_stub("react", REACT_DIR)
+_pkg_stub("agent.react", REACT_DIR)
 # Stub `react.prompt` package so its __init__.py is skipped (it imports
 # block / builder / manager which pull in langchain_core.prompts etc.)
-_pkg_stub("react.prompt", REACT_DIR / "prompt")
+_pkg_stub("agent.react.prompt", REACT_DIR / "prompt")
 # Stub `react.action` package similarly
-_pkg_stub("react.action", REACT_DIR / "action")
+_pkg_stub("agent.react.action", REACT_DIR / "action")
 
 # ── langchain_core stubs ──────────────────────────────────────────────────────
 
@@ -118,15 +118,15 @@ for _name in [
 
 # ── Now import the modules under test ─────────────────────────────────────────
 
-from react.prompt.parser import (   # noqa: E402
+from agent.react.prompt.parser import (   # noqa: E402
     ParseQuality,
     ParseResult,
     diagnose,
     parse_llm_output,
     _infer_action,
 )
-from react.prompt.repair import build_repair_prompt, repair  # noqa: E402
-from react.action.executor import ActionExecutor              # noqa: E402
+from agent.react.prompt.repair import build_repair_prompt, repair  # noqa: E402
+from agent.react.action.executor import ActionExecutor              # noqa: E402
 
 
 # ═════════════════════════════════════════════════════════════════════════════

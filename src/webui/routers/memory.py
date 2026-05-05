@@ -43,7 +43,7 @@ class MemorySaveRequest(BaseModel):
 
 
 def _load_memory_config():
-    from config.react.memory.memory_config import MemoryConfig
+    from config.agent.memory.memory_config import MemoryConfig
     state = get_state()
     if os.path.exists(state.memory_config_yaml):
         return MemoryConfig.from_yaml(state.memory_config_yaml)

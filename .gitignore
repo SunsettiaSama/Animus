@@ -20,7 +20,7 @@ dist/
 npm-debug.log
 yarn-error.log
 __pycache__/
-
+.github/
 
 idea/
 corpus/

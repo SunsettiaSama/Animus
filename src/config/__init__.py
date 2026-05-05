@@ -26,11 +26,11 @@ class AppPaths:
 
     @property
     def memory_config_yaml(self) -> Path:
-        return self.root / "config" / "react" / "memory.yaml"
+        return self.root / "config" / "agent" / "memory.yaml"
 
     @property
     def long_term_config_yaml(self) -> Path:
-        return self.root / "config" / "react" / "memory" / "long_term.yaml"
+        return self.root / "config" / "agent" / "memory" / "long_term.yaml"
 
     @property
     def embedding_model_yaml(self) -> Path:
@@ -50,7 +50,7 @@ class AppPaths:
 
     @property
     def run_config_yaml(self) -> Path:
-        return self.root / "config" / "react" / "run.yaml"
+        return self.root / "config" / "agent" / "run.yaml"
 
     @property
     def vllm_config_yaml(self) -> Path:
@@ -102,11 +102,11 @@ class AppConfig:
 
     @classmethod
     def from_disk(cls, root: Path | str | None = None) -> AppConfig:
-        from storage.config import StorageConfig
+        from config.storage import StorageConfig
         from config.llm_core.config import LLMConfig
-        from config.react.memory.memory_config import MemoryConfig, LongTermMemoryConfig
-        from config.react.memory.embedding_config import EmbeddingConfig
-        from config.react.tao_config import TaoConfig
+        from config.agent.memory.memory_config import MemoryConfig, LongTermMemoryConfig
+        from config.agent.memory.embedding_config import EmbeddingConfig
+        from config.agent.tao_config import TaoConfig
 
         p = AppPaths(root)
 
@@ -139,7 +139,7 @@ def _lazy_llm():
 
 
 def _lazy_tao():
-    from config.react.tao_config import TaoConfig
+    from config.agent.tao_config import TaoConfig
     return TaoConfig()
 
 

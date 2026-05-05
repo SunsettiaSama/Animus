@@ -3,9 +3,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from storage.config import StorageConfig
+from config.storage import StorageConfig
 from config.llm_core.config import LLMConfig
-from config.react.tao_config import TaoConfig
+from config.agent.tao_config import TaoConfig
 
 
 @dataclass
