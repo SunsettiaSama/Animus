@@ -53,12 +53,12 @@ class BaseMCPTool(BaseAction):
     字段说明：
     - server_name   : 工具所属的 MCP 服务器名（对应 MCPServerConfig.name）
     - mcp_tool_name : 在 MCP 服务器上注册的工具名（可能与 name 不同）
-    - input_schema  : 工具的 JSON Schema（从服务器自动获取）
+    - mcp_schema    : 工具的 JSON Schema（从服务器自动获取）
     """
 
     server_name: str = ""
     mcp_tool_name: str = ""
-    input_schema: dict = {}
+    mcp_schema: dict = {}
 
     def execute(self, **kwargs) -> str:
         raise NotImplementedError(

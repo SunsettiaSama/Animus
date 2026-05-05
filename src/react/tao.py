@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import json
+import threading
+import uuid
 from dataclasses import dataclass, field
 from typing import Generator, Union
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from config.react.tao_config import TaoConfig
+from infra.sandbox import SandboxManager
 from llm_core.handle import LLMHandle
 from llm_core.llm import LLM
 from react.action.executor import ActionExecutor
+from react.action.risk.gate import RiskGate
+from react.action.risk.level import RiskLevel
 from react.action.tools.impl.memory_recall import MemoryRecallAction
 from react.action.tools.impl.knowledge_hybrid_search import KnowledgeHybridSearchAction
 from react.action.tools.impl.knowledge_save import KnowledgeSaveAction
 from react.action.tools.impl.knowledge_list import KnowledgeListAction
+from react.action.tools.impl.scratchpad import NoteDeleteAction, NoteReadAction, NoteWriteAction, ScratchpadStore
 from react.action.skill.domain_learning import DomainLearningSkill
 from react.action.tools.impl.web_fetch import WebFetchAction
 from react.action.tools.impl.web_search import WebSearchAction
@@ -30,6 +36,7 @@ from react.prompt.repair import repair
 from react.persona import PersonaManager
 from react.prompt.manager import PromptManager, StaticPromptParts
 from react.trace import TraceStore
+from scheduler.timeline import TimelineStore
 
 
 # ── Events ───────────────────────────────────────────────────────────────────
@@ -70,7 +77,20 @@ class RetryEvent:
     reason: str
 
 
-TaoEvent = Union[StepStartEvent, ChunkEvent, StepEvent, FinishEvent, PromptPreviewEvent, RetryEvent]
+@dataclass
+class ApprovalRequestEvent:
+    request_id: str
+    tool_name: str
+    args: dict
+    risk_level: str
+    reason: str
+    deadline_secs: int
+
+
+TaoEvent = Union[
+    StepStartEvent, ChunkEvent, StepEvent, FinishEvent,
+    PromptPreviewEvent, RetryEvent, ApprovalRequestEvent,
+]
 
 
 # ── Pending finish state (stored between stream() and post_process()) ─────────
@@ -93,16 +113,31 @@ class TaoLoop:
         tool_descriptions: dict[str, str],
         cfg: TaoConfig,
         tool_category_summary: str = "",
+        sandbox: SandboxManager | None = None,
+        risk_gate: RiskGate | None = None,
     ):
         self._llm = LLMHandle(llm)   # shared handle — update_llm() swaps the inner LLM
         self._executor = executor
         self._cfg = cfg
+        self._sandbox = sandbox
+        self._risk_gate = risk_gate
         self._trace_store: TraceStore | None = (
             TraceStore(cfg.trace) if cfg.trace.enabled else None
         )
         self._persona: PersonaManager | None = (
             PersonaManager(cfg.persona, llm=self._llm) if cfg.persona.enabled else None
         )
+
+        # Timeline store — always created; writes are no-ops until directory exists.
+        self._timeline = TimelineStore(cfg.storage.timeline_dir)
+
+        # Abort signal — set by abort(), cleared by reset() / rollback_turn()
+        self._stop_event = threading.Event()
+
+        # Approval gate state: maps request_id → (threading.Event, approved: bool | None)
+        self._pending_approvals: dict[str, threading.Event] = {}
+        self._approval_results: dict[str, bool] = {}
+        self._approval_lock = threading.Lock()
 
         # Build memory stores before PromptManager so the recall tool can be
         # injected into the executor and its description added to the prompt.
@@ -131,6 +166,34 @@ class TaoLoop:
             self._executor.register_instance(recall)
             effective_descriptions[recall.name] = recall.description
 
+        # Inject scratchpad tools (always active; stateful, session-scoped).
+        self._scratchpad = ScratchpadStore()
+        for action in (
+            NoteWriteAction(store=self._scratchpad),
+            NoteReadAction(store=self._scratchpad),
+            NoteDeleteAction(store=self._scratchpad),
+        ):
+            self._executor.register_instance(action)
+            effective_descriptions[action.name] = action.description
+
+        # Inject sandbox-dependent tools when a sandbox is available.
+        if self._sandbox is not None:
+            from react.action.tools.impl.file_system import (
+                FileReadAction, FileWriteAction, FileListAction, FileExistsAction,
+            )
+            from react.action.tools.impl.http_request import HttpRequestAction
+            from react.action.tools.impl.python_run import PythonRunAction
+            for action in (
+                FileReadAction(sandbox=self._sandbox),
+                FileWriteAction(sandbox=self._sandbox),
+                FileListAction(sandbox=self._sandbox),
+                FileExistsAction(sandbox=self._sandbox),
+                HttpRequestAction(sandbox=self._sandbox),
+                PythonRunAction(sandbox=self._sandbox),
+            ):
+                self._executor.register_instance(action)
+                effective_descriptions[action.name] = action.description
+
         # Inject KB tools when a knowledge config is provided.
         self._kb = None
         if cfg.knowledge is not None:
@@ -156,6 +219,26 @@ class TaoLoop:
             self._executor.register_instance(skill)
             effective_descriptions[skill.name] = skill.description
 
+            # Inject research and document summary skills.
+            from react.action.skill.research import WebResearchSkill
+            from react.action.skill.document_summary import DocumentSummarySkill
+            research_skill = WebResearchSkill(
+                llm=self._llm,
+                web_search=web_search_inst,
+                web_fetch=web_fetch_inst,
+            )
+            self._executor.register_instance(research_skill)
+            effective_descriptions[research_skill.name] = research_skill.description
+
+            if self._sandbox is not None:
+                from react.action.tools.impl.file_system import FileReadAction as _FR
+                doc_summary_skill = DocumentSummarySkill(
+                    llm=self._llm,
+                    file_read=_FR(sandbox=self._sandbox),
+                )
+                self._executor.register_instance(doc_summary_skill)
+                effective_descriptions[doc_summary_skill.name] = doc_summary_skill.description
+
         # Inject scheduler tools when a scheduler config is provided.
         self._scheduler_engine = None
         if cfg.scheduler is not None:
@@ -163,7 +246,11 @@ class TaoLoop:
             from react.action.tools.impl.scheduler_add import SchedulerAddAction
             from react.action.tools.impl.scheduler_list import SchedulerListAction
             from react.action.tools.impl.scheduler_cancel import SchedulerCancelAction
-            self._scheduler_engine = SchedulerEngine(cfg.scheduler)
+            self._scheduler_engine = SchedulerEngine(
+                cfg.scheduler,
+                long_term=self._long_term,
+                timeline=self._timeline,
+            )
             for action in (
                 SchedulerAddAction(engine=self._scheduler_engine),
                 SchedulerListAction(engine=self._scheduler_engine),
@@ -172,8 +259,66 @@ class TaoLoop:
                 self._executor.register_instance(action)
                 effective_descriptions[action.name] = action.description
 
-        self._manager = PromptManager(effective_descriptions, cfg.prompt, tool_category_summary)
+        # Inject crew tools when a crew config is provided.
+        self._crew_manager = None
+        if cfg.crew is not None:
+            from crew.manager import CrewManager
+            from react.action.tools.impl.delegate_task import DelegateTaskAction
+            from react.action.tools.impl.spawn_agent import SpawnAgentAction
+            from react.action.tools.impl.get_agent_result import GetAgentResultAction
+            from react.action.tools.impl.spawn_all import SpawnAllAction
+            from react.action.tools.impl.await_agent import AwaitAgentAction
+            from react.action.tools.impl.await_all import AwaitAllAction
+            self._crew_manager = CrewManager(cfg.crew)
+            for action in (
+                DelegateTaskAction(manager=self._crew_manager),
+                SpawnAgentAction(manager=self._crew_manager),
+                GetAgentResultAction(manager=self._crew_manager),
+                SpawnAllAction(manager=self._crew_manager),
+                AwaitAgentAction(manager=self._crew_manager),
+                AwaitAllAction(manager=self._crew_manager),
+            ):
+                self._executor.register_instance(action)
+                effective_descriptions[action.name] = action.description
 
+        # Inject plan tools when a plan config is provided.
+        self._plan_orchestrator = None
+        if cfg.plan is not None:
+            from plan.orchestrator import PlanOrchestrator
+            from react.action.tools.impl.plan_tools import (
+                PlanStatusAction,
+                PlanSkipAction,
+                PlanPauseAction,
+                PlanSnapshotAction,
+                PlanRollbackAction,
+                RunPlanAction,
+            )
+            self._plan_orchestrator = PlanOrchestrator(
+                cfg=cfg.plan.orchestrator,
+                llm_cfg_path=cfg.plan.llm_cfg_path,
+            )
+            # Wire PlanEvent -> TimelineStore so plan events appear on the session timeline.
+            import dataclasses as _dc
+            def _plan_event_to_timeline(event: object) -> None:
+                self._timeline.append("plan_event", {
+                    "type": type(event).__name__,
+                    **_dc.asdict(event),  # type: ignore[arg-type]
+                })
+            self._plan_orchestrator.subscribe(_plan_event_to_timeline)
+
+            for action in (
+                RunPlanAction(orchestrator=self._plan_orchestrator),
+                PlanStatusAction(orchestrator=self._plan_orchestrator),
+                PlanSkipAction(orchestrator=self._plan_orchestrator),
+                PlanPauseAction(orchestrator=self._plan_orchestrator),
+                PlanSnapshotAction(orchestrator=self._plan_orchestrator),
+                PlanRollbackAction(orchestrator=self._plan_orchestrator),
+            ):
+                self._executor.register_instance(action)
+                effective_descriptions[action.name] = action.description
+
+        # Hook the tool-layer event sink after all tools are registered.
+        self._executor.set_event_sink(self._timeline.make_tool_sink())
         # Pre-assembled static prompt parts for the next turn.
         # None on first turn; rebuilt in post_process() after each commit.
         self._static_cache: StaticPromptParts | None = None
@@ -189,6 +334,31 @@ class TaoLoop:
     @staticmethod
     def _trunc(text: str, limit: int) -> str:
         return text[:limit] if limit > 0 and len(text) > limit else text
+
+    @property
+    def scheduler_engine(self):
+        return self._scheduler_engine
+
+    @property
+    def timeline(self) -> TimelineStore:
+        return self._timeline
+
+    # ── Approval gate ─────────────────────────────────────────────────────────
+
+    def resolve_approval(self, request_id: str, approved: bool) -> bool:
+        """
+        Called by the WebSocket handler when the user responds to an approval request.
+
+        Sets the corresponding threading.Event so the waiting stream() can resume.
+        Returns True if the request_id was found and resolved, False otherwise.
+        """
+        with self._approval_lock:
+            event = self._pending_approvals.get(request_id)
+            if event is None:
+                return False
+            self._approval_results[request_id] = approved
+        event.set()
+        return True
 
     # ── Core streaming loop ───────────────────────────────────────────────────
 
@@ -271,6 +441,8 @@ class TaoLoop:
             # ── LLM generation ───────────────────────────────────────────────
             raw_output = ""
             for chunk in self._llm.stream_generate_messages(messages):
+                if self._stop_event.is_set():
+                    return
                 raw_output += chunk
                 yield ChunkEvent(index=i, chunk=chunk)
 
@@ -312,6 +484,8 @@ class TaoLoop:
                     ]
                     raw_output = ""
                     for chunk in self._llm.stream_generate_messages(correction_msgs):
+                        if self._stop_event.is_set():
+                            return
                         raw_output += chunk
                         yield ChunkEvent(index=i, chunk=chunk)
                     result = parse_llm_output(raw_output, tool_names=tool_names)
@@ -335,9 +509,55 @@ class TaoLoop:
                 return
 
             # ── Tool execution ───────────────────────────────────────────────
-            observation = self._executor.run(
-                json.dumps({"action": result.action, "args": result.action_input}, ensure_ascii=False)
+            action_json = json.dumps(
+                {"action": result.action, "args": result.action_input},
+                ensure_ascii=False,
             )
+
+            # ── Risk gate check ──────────────────────────────────────────────
+            if self._risk_gate is not None and self._risk_gate.cfg.enabled:
+                risk = self._risk_gate.check(result.action, result.action_input)
+                if self._risk_gate.requires_approval(risk):
+                    request_id = str(uuid.uuid4())
+                    event = threading.Event()
+                    with self._approval_lock:
+                        self._pending_approvals[request_id] = event
+
+                    timeout_secs = self._risk_gate.cfg.approval_timeout_secs
+                    yield ApprovalRequestEvent(
+                        request_id=request_id,
+                        tool_name=result.action,
+                        args=result.action_input,
+                        risk_level=risk.level.value,
+                        reason=risk.reason,
+                        deadline_secs=timeout_secs,
+                    )
+
+                    granted = event.wait(timeout=timeout_secs)
+                    with self._approval_lock:
+                        self._pending_approvals.pop(request_id, None)
+                        approved = self._approval_results.pop(request_id, False)
+
+                    if not granted or not approved:
+                        label = "超时未响应" if not granted else "用户拒绝"
+                        observation = f"[{label}] 操作 {result.action!r} 未获批准，已取消执行。"
+                        step = Step(
+                            thought=result.thought,
+                            action=result.action,
+                            action_input=result.action_input,
+                            observation=observation,
+                        )
+                        processor.add(step)
+                        yield StepEvent(
+                            index=i,
+                            thought=result.thought,
+                            action=result.action,
+                            action_input=result.action_input,
+                            observation=observation,
+                        )
+                        continue
+
+            observation = self._executor.run(action_json)
             observation = self._trunc(observation, self._cfg.prompt.max_observation_chars)
 
             step = Step(
@@ -375,6 +595,11 @@ class TaoLoop:
 
         pf.processor.commit(pf.question, pf.answer)
 
+        self._timeline.append("conversation", {
+            "q": pf.question[:300],
+            "a": pf.answer[:500],
+        })
+
         if self._trace_store is not None:
             self._trace_store.write(pf.question, pf.answer, pf.processor.trace)
 
@@ -397,6 +622,10 @@ class TaoLoop:
         if self._long_term is not None:
             self._long_term.store.preload()
 
+    def close(self) -> None:
+        if self._long_term is not None:
+            self._long_term.store.close()
+
     def update_llm(self, llm: LLM) -> None:
         """Swap the underlying LLM for every component in this TaoLoop.
 
@@ -405,10 +634,22 @@ class TaoLoop:
         """
         self._llm.update(llm)
 
+    def abort(self) -> None:
+        """Signal the running stream() generator to stop at the next chunk boundary."""
+        self._stop_event.set()
+
+    def rollback_turn(self) -> None:
+        """Discard the unfinished current turn without clearing conversation history."""
+        self._pending_finish = None
+        self._static_cache = None
+        self._stop_event.clear()
+
     def reset(self) -> None:
         self._manager.clear_history()
         self._static_cache = None
         self._pending_finish = None
+        self._scratchpad.reset()
+        self._stop_event.clear()
 
     def clear_memory(self) -> None:
         """Wipe all persistent memory tiers and reset in-memory state."""

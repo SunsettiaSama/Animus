@@ -8,13 +8,25 @@ from react.action.executor import ActionExecutor
 from react.action.tools import (
     Base64Action,
     CalculatorAction,
+    FileExistsAction,
+    FileListAction,
+    FileReadAction,
+    FileWriteAction,
     GenerateUUIDAction,
     GetDatetimeAction,
     GetWeekdayAction,
     HashAction,
+    HttpRequestAction,
+    JsonQueryAction,
+    NoteDeleteAction,
+    NoteReadAction,
+    NoteWriteAction,
+    PythonRunAction,
     RandomChoiceAction,
     RandomNumberAction,
+    RegexExtractAction,
     StringTransformAction,
+    TextDiffAction,
     ToolMeta,
     ToolRegistry,
     ToolSearchAction,
@@ -30,6 +42,12 @@ from react.action.tools.impl.knowledge_list import KnowledgeListAction
 from react.action.tools.impl.scheduler_add import SchedulerAddAction
 from react.action.tools.impl.scheduler_list import SchedulerListAction
 from react.action.tools.impl.scheduler_cancel import SchedulerCancelAction
+from react.action.tools.impl.delegate_task import DelegateTaskAction
+from react.action.tools.impl.spawn_agent import SpawnAgentAction
+from react.action.tools.impl.get_agent_result import GetAgentResultAction
+from react.action.tools.impl.spawn_all import SpawnAllAction
+from react.action.tools.impl.await_agent import AwaitAgentAction
+from react.action.tools.impl.await_all import AwaitAllAction
 
 if TYPE_CHECKING:
     from react.action.mcp.registry import MCPRegistry, MCPToolInfo
@@ -68,6 +86,24 @@ def _build_default_registry() -> ToolRegistry:
     reg.add(SchedulerAddAction,    category="scheduler",  tags=["调度", "预约", "时间轴", "定时", "scheduler", "once", "interval"])
     reg.add(SchedulerListAction,   category="scheduler",  tags=["调度", "时间轴", "列表", "查看", "scheduler"])
     reg.add(SchedulerCancelAction, category="scheduler",  tags=["调度", "取消", "时间轴", "cancel", "scheduler"])
+    reg.add(JsonQueryAction,       category="data",       tags=["json", "jsonpath", "查询", "提取", "数据"])
+    reg.add(RegexExtractAction,    category="data",       tags=["正则", "提取", "匹配", "regex", "pattern"])
+    reg.add(TextDiffAction,        category="data",       tags=["差异", "对比", "diff", "文本比较"])
+    reg.add(FileReadAction,        category="filesystem", tags=["文件", "读取", "本地", "file", "read"])
+    reg.add(FileWriteAction,       category="filesystem", tags=["文件", "写入", "保存", "file", "write"])
+    reg.add(FileListAction,        category="filesystem", tags=["目录", "文件列表", "ls", "file", "list"])
+    reg.add(FileExistsAction,      category="filesystem", tags=["文件", "存在", "检查", "file", "exists"])
+    reg.add(HttpRequestAction,     category="network",    tags=["http", "请求", "api", "rest", "post", "get"])
+    reg.add(PythonRunAction,       category="code",       tags=["python", "代码", "执行", "计算", "脚本"])
+    reg.add(NoteWriteAction,       category="workspace",  tags=["笔记", "草稿本", "记录", "note", "write"])
+    reg.add(NoteReadAction,        category="workspace",  tags=["笔记", "草稿本", "读取", "note", "read"])
+    reg.add(NoteDeleteAction,      category="workspace",  tags=["笔记", "草稿本", "删除", "note", "delete"])
+    reg.add(DelegateTaskAction,    category="crew",   tags=["委派", "子智能体", "同步", "delegate", "agent", "crew"])
+    reg.add(SpawnAgentAction,      category="crew",   tags=["派发", "子智能体", "异步", "spawn", "agent", "crew"])
+    reg.add(GetAgentResultAction,  category="crew",   tags=["子智能体", "结果", "查询", "agent_result", "agent", "crew"])
+    reg.add(SpawnAllAction,        category="crew",   tags=["批量", "并行", "fan-out", "spawn_all", "crew"])
+    reg.add(AwaitAgentAction,      category="crew",   tags=["等待", "子智能体", "阻塞", "await", "agent", "crew"])
+    reg.add(AwaitAllAction,        category="crew",   tags=["等待", "全部", "fan-in", "await_all", "crew"])
     return reg
 
 

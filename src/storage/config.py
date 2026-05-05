@@ -35,3 +35,11 @@ class StorageConfig:
     @property
     def scheduler_dir(self) -> str:
         return os.path.join(self.root, "scheduler")
+
+    @property
+    def workspace_dir(self) -> str:
+        return os.path.join(self.root, "workspace")
+
+    @property
+    def timeline_dir(self) -> str:
+        return os.path.join(self.root, "timeline")

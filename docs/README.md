@@ -27,6 +27,38 @@ src/
 ├── tts/                     # 语音合成 / 识别
 │   ├── tts/                 # TTSEngine + Edge / OpenAI / Kokoro providers
 │   └── stt/                 # STTEngine + OpenAI / faster-whisper providers
+├── scheduler/               # 时钟触发的 Agent 自动化任务
+│   ├── config.py            # SchedulerConfig + 执行 profile 预设
+│   ├── task.py              # ScheduledTask + Trigger + TaskStatus
+│   ├── store.py             # TaskStore（tasks.json 持久化）
+│   ├── engine.py            # SchedulerEngine（async 轮询 + 任务分发）
+│   └── runner.py            # TaskRunner（线程内同步运行 TaoLoop）
+├── crew/                    # 主 Agent 按需委派的子 Agent 编排层（TaoLoop 当前使用）
+│   ├── config.py            # CrewConfig + CrewProfile（含工具集 + 角色描述 + recursive + return_log）
+│   ├── result.py            # CrewResult dataclass
+│   ├── runner.py            # CrewRunner（线程内同步运行子 TaoLoop）
+│   └── manager.py           # CrewManager（delegate / spawn / spawn_all / await_*）
+├── subagent/                # 向后兼容 shim（重导出 delegate/ 的类，仅保留兼容性）
+├── delegate/                # 子 Agent 编排层（已从 subagent/ 重命名，职责更清晰）
+│   ├── config.py            # DelegateConfig + DelegateProfile（SubAgentConfig/Profile 为别名）
+│   ├── result.py            # DelegateResult dataclass（SubAgentResult 为别名）
+│   ├── runner.py            # DelegateRunner（SubAgentRunner 为别名）
+│   └── manager.py           # DelegateManager（SubAgentManager 为别名）
+├── agent/                   # 统一 Agent 接口层
+│   └── base.py              # AgentBase 抽象基类 + AgentResult dataclass
+├── plan/                    # Plan-and-Execute 多智能体编排层
+│   ├── config.py            # PlannerConfig / ReplannerConfig / OrchestratorConfig / LogConfig
+│   ├── document.py          # PlanDocument IR（PlanTask/PlanModule/PlanMetadata）+ PlanParser + PlanValidator + CycleDetector
+│   ├── event.py             # PlanEvent 联合类型（任务/重规划/快照等 10 种事件）
+│   ├── patch.py             # HumanPatch + PlanDiff（计算 / 应用人类编辑差异）
+│   ├── channel.py           # HumanEditChannel（shadow copy 文件监视 + patch 队列）
+│   ├── snapshot.py          # SnapshotStore（计划版本快照 + 回滚）
+│   ├── log.py               # PlanLogger（JSONL 结构化日志 + read_async）
+│   ├── executor.py          # ExecutorAgent（单个 PlanTask → CrewRunner 执行）
+│   ├── planner.py           # PlannerAgent（自动规划）+ ConvPlanner（对话式规划）
+│   ├── replanner.py         # ReplannerAgent（增量上下文 + 修补决策）
+│   ├── orchestrator.py      # PlanOrchestrator（异步 DAG 调度 + 资源守卫 + 人类编辑集成）
+│   └── result.py            # PlanResult dataclass
 ├── react/                   # ReAct 核心框架
 │   ├── action/              # 动作空间（工具 + MCP + Skill）
 │   ├── memory/              # 三层记忆系统
@@ -45,7 +77,7 @@ src/
 ├── embedding/               # BGE 嵌入模型（FAISS 索引构建辅助）
 ├── storage/                 # 本地文件存储根目录配置（StorageConfig）
 ├── webui/                   # Web 前端（FastAPI + 单页 HTML）
-└── test/                    # 测试套件
+└── test/                    # 测试套件（plan/ + delegate/ + react/ + tools/ + memory/ + ...）
 ```
 
 ---
@@ -67,8 +99,13 @@ src/
 | `react/loop` | ✅ | ConvLoop + TaoLoop 两层循环，异步后台提交，Prompt 预热 |
 | `knowledge` | ✅ | MySQL 文档存储 + Qdrant 向量索引 + Redis 缓存，keyword / semantic / hybrid 三种检索 |
 | `tts` | ✅ | TTS（Edge / OpenAI / Kokoro）+ STT（OpenAI / faster-whisper）语音模块 |
-| `webui` | ✅ | ReAct + 普通对话双模式，知识库独立面板，TTS/STT，Prompt 预览，历史管理 |
-| `test` | ✅ | 记忆模块 27 用例（含时序检索 + 模式检测）+ 工具测试 |
+| `scheduler` | ✅ | 时钟触发的 Agent 自动化任务（一次性 / 周期性），JSON 持久化，async 轮询引擎 |
+| `crew` | ✅ | 按需委派子 Agent 编排层（TaoLoop 当前使用），支持 planner/researcher/analyst/minimal profile，recursive 嵌套 |
+| `subagent` / `delegate` | ✅ | 子 Agent 编排层，`delegate/` 为当前实现，`subagent/` 为向后兼容 shim；支持同步委派、异步派发、并行 Fan-out/Fan-in |
+| `agent` | ✅ | 统一 Agent 接口层（`AgentBase` 抽象基类 + `AgentResult`），Planner / Replanner / Executor 均继承 |
+| `plan` | ✅ | Plan-and-Execute 多智能体编排：Markdown 计划语言 → IR → 异步 DAG 执行，含 Replanner、资源锁、人类编辑通道、快照回滚、结构化日志 |
+| `webui` | ✅ | 工作站仪表板（主页）+ ReAct / Chat 双模式对话 + **Plan 模式**（DAG 可视化、影子编辑器、快照管理、日志流）；服务启停，模块状态总览，知识库独立面板，TTS/STT，Prompt 预览，历史管理 |
+| `test` | ✅ | 记忆模块 27 用例 + 工具测试 + plan/ 55 用例（文档解析/快照/日志/通道/编排器）+ delegate/ 15 用例 |
 
 ---
 
@@ -81,7 +118,7 @@ src/
 ConvLoop（多轮会话管理）
     │
     ▼
-TaoLoop.stream(question)
+TaoLoop.stream(question)   ← Orchestrator：任务分解 + 工具调用 + 委派
     │
     ├─ bias_query = persona.bias_query(question)   ← 短期偏好偏置 L3 检索方向
     │
@@ -96,7 +133,36 @@ TaoLoop.stream(question)
     │           ReflectionBlock?, PreferenceBlock?]
     │
     ├─ build_messages(...)  →  LLM.stream()  →  parse()
-    │       └─ [finish] → FinishEvent → 客户端立即收到答案
+    │       │
+    │       ├─ [finish] → FinishEvent → 客户端立即收到答案
+    │       │
+    │       └─ [tool]   → executor.run(action, args)
+    │               │
+    │               ├─ 基础工具（calculator / web_search / ...）
+    │               ├─ 调度工具（scheduler_add / scheduler_list / scheduler_cancel）
+    │               │       └─ → SchedulerEngine（async 事件循环）
+    │               │               └─ 到期触发 → TaskRunner（子线程 TaoLoop）
+    │               │
+    │               └─ 子 Agent 工具（delegate_task / spawn_agent / spawn_all / ...）
+    │                       └─ → DelegateManager
+    │                               ├─ delegate_task  : 同步运行子 TaoLoop，返回 answer
+    │                               ├─ spawn_agent    : 后台线程运行，返回 agent_id
+    │                               ├─ spawn_all      : 批量并行（Fan-out）
+    │                               ├─ await_agent    : 阻塞等单个完成
+    │                               └─ await_all      : 阻塞等全部（Fan-in）
+    │
+    │               └─ Plan 工具（run_plan / plan_status / plan_pause / plan_skip / ...）
+    │                       └─ → PlanOrchestrator（plan/ 模块）
+    │                               ├─ PlannerAgent     : Markdown 规划 → PlanDocument IR
+    │                               ├─ ReplannerAgent   : 增量上下文重规划
+    │                               ├─ _dispatch_all    : 异步 DAG 调度（asyncio.gather）
+    │                               │    ├─ 依赖事件等待（asyncio.Event per task）
+    │                               │    ├─ 并发限制（asyncio.Semaphore）
+    │                               │    ├─ 资源守卫（asyncio.Condition，writes 字段）
+    │                               │    └─ 暂停/恢复（_resume_event）
+    │                               ├─ HumanEditChannel : shadow.md 文件监视 + patch 队列
+    │                               ├─ SnapshotStore    : 计划版本快照 + 回滚
+    │                               └─ PlanLogger       : JSONL 结构化日志
     │
     └─ post_process()（后台线程）
             ├─ commit()
@@ -177,12 +243,14 @@ python src/run.py --port 8080
 |---|---|
 | [react/README.md](./react/README.md) | 完整链路：两层循环、三层记忆、Prompt、Persona、Trace |
 | [react/persona/README.md](./react/persona/README.md) | 人格演化引擎详解（稳定层 + 动态层）|
-| [react/action/README.md](./react/action/README.md) | 工具注册与 Pydantic 校验 |
+| [react/action/README.md](./react/action/README.md) | 工具注册与 Pydantic 校验，含 Agent 完整工具一览 |
 | [react/memory/README.md](./react/memory/README.md) | 三层记忆系统（含 L2 里程碑）|
 | [react/prompt/README.md](./react/prompt/README.md) | 块驱动 Prompt 组装 |
+| [subagent/README.md](./subagent/README.md) | 子 Agent 编排层（delegate/ 实现 + subagent/ 兼容 shim）|
+| [plan/README.md](./plan/README.md) | Plan-and-Execute 多智能体编排：Markdown 计划语言、DAG 调度、Replanner、资源锁、快照、日志 |
 | [knowledge/README.md](./knowledge/README.md) | 知识库：MySQL + Redis + Qdrant，三种检索模式 |
 | [tts/README.md](./tts/README.md) | TTS / STT 引擎与 Provider 配置 |
 | [llm_core/README.md](./llm_core/README.md) | LLM 抽象层 |
-| [webui/README.md](./webui/README.md) | Web 界面与 API |
+| [webui/README.md](./webui/README.md) | Web 界面与 API（含 Plan 模式）|
 | [cache/README.md](./cache/README.md) | 本地文件缓存管理 |
 | [test/README.md](./test/README.md) | 测试覆盖说明 |

@@ -48,10 +48,14 @@ class ActionExecutor:
       带有清晰描述的 ValueError。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, event_sink=None) -> None:
         self._registry: dict[str, type[BaseAction]] = {}
         self._instances: dict[str, BaseAction] = {}
         self._lc_tools: dict[str, BaseTool] = {}
+        self._event_sink = event_sink  # Callable[[str, dict, str], None] | None
+
+    def set_event_sink(self, sink) -> None:
+        self._event_sink = sink
 
     # ── 注册 ──────────────────────────────────────────────────────────────────
 
@@ -99,21 +103,29 @@ class ActionExecutor:
             instance = self._instances[action_name]
             args = self._coerce(instance, raw_args, source="instance")
             try:
-                return instance.execute(**args)
+                result = instance.execute(**args)
+                if self._event_sink is not None:
+                    self._event_sink(action_name, args, result)
+                return result
             except Exception as exc:
                 return f"[工具执行错误] {type(exc).__name__}: {exc}"
 
         if action_name in self._lc_tools:
             try:
-                result = self._lc_tools[action_name].invoke(raw_args)
-                return str(result)
+                result = str(self._lc_tools[action_name].invoke(raw_args))
+                if self._event_sink is not None:
+                    self._event_sink(action_name, raw_args, result)
+                return result
             except Exception as exc:
                 return f"[工具执行错误] {type(exc).__name__}: {exc}"
 
         action_cls = self._registry[action_name]
         args = self._coerce(action_cls, raw_args, source="class")
         try:
-            return action_cls().execute(**args)
+            result = action_cls().execute(**args)
+            if self._event_sink is not None:
+                self._event_sink(action_name, args, result)
+            return result
         except Exception as exc:
             return f"[工具执行错误] {type(exc).__name__}: {exc}"
 

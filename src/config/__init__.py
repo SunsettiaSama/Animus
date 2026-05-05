@@ -53,12 +53,24 @@ class AppPaths:
         return self.root / "config" / "react" / "run.yaml"
 
     @property
+    def vllm_config_yaml(self) -> Path:
+        return self.root / "config" / "llm_core" / "vllm.yaml"
+
+    @property
     def tts_config_yaml(self) -> Path:
         return self.root / "config" / "tts" / "tts.yaml"
 
     @property
     def stt_config_yaml(self) -> Path:
         return self.root / "config" / "tts" / "stt.yaml"
+
+    @property
+    def sandbox_config_yaml(self) -> Path:
+        return self.root / "config" / "infra" / "sandbox.yaml"
+
+    @property
+    def webui_settings_json(self) -> Path:
+        return self.root / "config" / "webui" / "settings.json"
 
     # ── Runtime cache dirs ────────────────────────────────────────────────────
 

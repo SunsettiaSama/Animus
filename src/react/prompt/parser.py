@@ -21,11 +21,14 @@ _FINISH_ACTIONS: frozenset[str] = frozenset({
 # ── Section boundary helpers ──────────────────────────────────────────────────
 
 # Listed most-specific first so "Action Input" is checked before "Action".
+# "answer" is included so that a bare "Answer:" label used by some models
+# is treated as a section boundary (stops Thought extraction before it).
 _ALL_SECTION_KEYWORDS = (
     "action[ _]?input|actioninput",
     "thought",
     "action",
     "observation",
+    "answer",
 )
 _ALL_KW_PAT = "|".join(_ALL_SECTION_KEYWORDS)
 
@@ -54,6 +57,7 @@ _RE_ACTION  = _field_re("Action")
 _RE_INPUT   = _field_re(
     "Action Input", "Action_Input", "ActionInput", "action_input",
 )
+_RE_ANSWER  = _field_re("Answer")
 
 # ── Layer 1 lenient action inference patterns ─────────────────────────────────
 # Matches phrases like "I'll use web_search", "Using web_search", "调用 web_search".
@@ -292,12 +296,22 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
             )
 
         # ── No action label — implicit finish ─────────────────────────────────
-        # LLM skipped the ReAct structure entirely and wrote the answer inline.
+        # LLM skipped the ReAct structure entirely and wrote the answer inline,
+        # or used an "Answer:" label instead of the standard "Action: finish".
+        # Prefer the content after "Answer:" if present; fall back to thought,
+        # then the full raw text as the answer payload.
         if not action:
+            answer_m = _RE_ANSWER.search(text)
+            if answer_m:
+                answer_text = answer_m.group(1).strip()
+            elif thought:
+                answer_text = thought
+            else:
+                answer_text = text
             return ParseResult(
                 thought=thought,
                 action="finish",
-                action_input={"answer": text},
+                action_input={"answer": answer_text},
                 raw=text,
                 is_finish=True,
                 quality=ParseQuality.FAILED,

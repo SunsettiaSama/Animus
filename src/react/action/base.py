@@ -3,12 +3,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 from langchain_core.tools import BaseTool
+from pydantic import ConfigDict
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
 
 class BaseAction(BaseTool):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     name: str
     description: str = ""
 

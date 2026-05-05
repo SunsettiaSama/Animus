@@ -1,915 +1,206 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ReAct Agent</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="/static/css/main.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/python.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/javascript.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/bash.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/json.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/sql.min.js"></script>
-  <style>
-    :root {
-      --bg:          #ffffff;
-      --bg2:         #f9fafb;
-      --bg3:         #f3f4f6;
-      --border:      #e5e7eb;
-      --text:        #111827;
-      --text2:       #6b7280;
-      --text3:       #9ca3af;
-      --accent:      #2563eb;
-      --accent2:     #1d4ed8;
-      --user-bg:     #2563eb;
-      --agent-bg:    #f3f4f6;
-      --r:           12px;
-      --r2:          8px;
-      --sidebar-w:   260px;
-    }
-
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg2);
-      color: var(--text);
-      height: 100vh;
-      overflow: hidden;
-    }
-
-    .hidden { display: none !important; }
-
-    button { cursor: pointer; border: none; background: none; font-family: inherit; color: inherit; }
-
-    input, textarea, select {
-      font-family: inherit;
-      font-size: 14px;
-      color: var(--text);
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--r2);
-      padding: 8px 12px;
-      outline: none;
-      width: 100%;
-      transition: border-color .15s;
-    }
-    input:focus, textarea:focus, select:focus { border-color: var(--accent); }
-    textarea { resize: none; }
-
-    label {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text2);
-      display: block;
-      margin-bottom: 5px;
-    }
-
-    /* ── Icon button ── */
-    .icon-btn {
-      width: 34px;
-      height: 34px;
-      border-radius: var(--r2);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 17px;
-      color: var(--text2);
-      flex-shrink: 0;
-      transition: background .12s, color .12s;
-    }
-    .icon-btn:hover { background: var(--bg3); color: var(--text); }
-    .icon-btn.danger:hover { background: #fee2e2; color: #ef4444; }
-
-    /* ════════════════════════════════════════
-       LANDING SCREEN
-    ════════════════════════════════════════ */
-    #s-landing {
-      position: fixed;
-      inset: 0;
-      background: var(--bg);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 36px;
-    }
-
-    #btn-settings-top {
-      position: absolute;
-      top: 18px;
-      right: 18px;
-    }
-
-    .landing-logo {
-      text-align: center;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 10px;
-    }
-    .landing-logo .logo-mark {
-      width: 64px;
-      height: 64px;
-      border-radius: 18px;
-      background: var(--accent);
-      color: #fff;
-      font-size: 32px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 4px;
-    }
-    .landing-logo h1 { font-size: 26px; font-weight: 700; }
-    .landing-logo p  { font-size: 15px; color: var(--text2); }
-
-    .mode-card {
-      width: 220px;
-      padding: 28px 20px 22px;
-      background: var(--bg);
-      border: 1.5px solid var(--border);
-      border-radius: var(--r);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-      transition: border-color .15s, box-shadow .15s, transform .12s;
-    }
-    .mode-card:hover {
-      border-color: var(--accent);
-      box-shadow: 0 4px 16px rgba(37,99,235,.13);
-      transform: translateY(-2px);
-    }
-    .mode-card .card-icon  { font-size: 34px; }
-    .mode-card .card-title { font-size: 16px; font-weight: 600; }
-    .mode-card .card-desc  { font-size: 12px; color: var(--text2); text-align: center; line-height: 1.5; }
-
-    #landing-recent {
-      width: 520px;
-      max-width: 90vw;
-    }
-    .recent-label {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text3);
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      margin-bottom: 10px;
-      text-align: center;
-    }
-    .recent-grid {
-      display: flex;
-      gap: 10px;
-      justify-content: center;
-    }
-    .recent-item {
-      flex: 1;
-      max-width: 164px;
-      padding: 11px 14px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--r2);
-      cursor: pointer;
-      transition: border-color .12s;
-      overflow: hidden;
-    }
-    .recent-item:hover { border-color: var(--accent); }
-    .ri-mode  { font-size: 11px; color: var(--text3); margin-bottom: 3px; }
-    .ri-title { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-    /* ════════════════════════════════════════
-       WORKSPACE SCREEN
-    ════════════════════════════════════════ */
-    #s-workspace {
-      position: fixed;
-      inset: 0;
-      display: flex;
-    }
-
-    /* -- Sidebar -- */
-    #sidebar {
-      width: var(--sidebar-w);
-      min-width: var(--sidebar-w);
-      background: var(--bg);
-      border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-    }
-
-    .sidebar-hdr {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 12px 10px;
-      border-bottom: 1px solid var(--border);
-      gap: 6px;
-    }
-    .sidebar-hdr .logo-text { font-size: 15px; font-weight: 700; flex: 1; padding-left: 4px; }
-    .sidebar-hdr-actions { display: flex; gap: 2px; }
-
-    #sidebar-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 6px;
-    }
-
-    .hist-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: var(--r2);
-      cursor: pointer;
-      transition: background .1s;
-    }
-    .hist-item:hover { background: var(--bg2); }
-    .hist-item.active { background: #eff6ff; }
-    .hi-icon { font-size: 15px; flex-shrink: 0; }
-    .hi-body { flex: 1; min-width: 0; }
-    .hi-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .hi-meta  { font-size: 11px; color: var(--text3); margin-top: 1px; }
-    .hi-del   { display: none; font-size: 13px; padding: 2px 5px; border-radius: 4px; color: var(--text3); }
-    .hist-item:hover .hi-del { display: block; }
-    .hi-del:hover { background: #fee2e2; color: #ef4444; }
-
-    .sidebar-empty {
-      padding: 20px 14px;
-      font-size: 13px;
-      color: var(--text3);
-      text-align: center;
-    }
-
-    /* -- Main area -- */
-    #main-area {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      background: var(--bg2);
-    }
-
-    #topbar {
-      height: 52px;
-      background: var(--bg);
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 16px;
-      flex-shrink: 0;
-      gap: 10px;
-    }
-    .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-    #tb-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
-    .mode-badge {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 2px 8px;
-      border-radius: 20px;
-      background: #eff6ff;
-      color: var(--accent);
-      text-transform: uppercase;
-      letter-spacing: .4px;
-      flex-shrink: 0;
-      cursor: pointer;
-      transition: opacity .15s;
-    }
-    .mode-badge:hover { opacity: .75; }
-    .mode-badge.react { background: #f0fdf4; color: #16a34a; }
-    .topbar-right { display: flex; gap: 2px; align-items: center; }
-
-    /* -- Messages -- */
-    #msgs {
-      flex: 1;
-      overflow-y: auto;
-      padding: 24px 20px 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-    }
-
-    .empty-state {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      color: var(--text3);
-      font-size: 14px;
-      gap: 10px;
-      padding-bottom: 60px;
-    }
-    .empty-icon { font-size: 36px; }
-
-    .message { display: flex; gap: 10px; max-width: 82%; }
-    .message.user      { align-self: flex-end;   flex-direction: row-reverse; }
-    .message.assistant { align-self: flex-start; }
-
-    .msg-avatar {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 15px;
-      flex-shrink: 0;
-      background: var(--bg3);
-      color: var(--text2);
-    }
-    .message.user .msg-avatar { background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; }
-
-    .msg-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; }
-    .message.user .msg-body { align-items: flex-end; }
-
-    .msg-bubble {
-      padding: 10px 14px;
-      border-radius: var(--r);
-      font-size: 14px;
-      line-height: 1.65;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .message.user .msg-bubble {
-      background: var(--user-bg);
-      color: #fff;
-      border-bottom-right-radius: 3px;
-    }
-    .message.assistant .msg-bubble {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-bottom-left-radius: 3px;
-    }
-    /* When MD is rendered, disable pre-wrap so block elements layout correctly */
-    .message.assistant .msg-bubble.md-rendered { white-space: normal; }
-
-    /* ── Markdown content styles ── */
-    .msg-bubble.md-rendered p          { margin: 0 0 .65em; }
-    .msg-bubble.md-rendered p:last-child { margin-bottom: 0; }
-    .msg-bubble.md-rendered h1,
-    .msg-bubble.md-rendered h2,
-    .msg-bubble.md-rendered h3,
-    .msg-bubble.md-rendered h4         { margin: .9em 0 .4em; font-weight: 700; line-height: 1.3; }
-    .msg-bubble.md-rendered h1         { font-size: 1.25em; }
-    .msg-bubble.md-rendered h2         { font-size: 1.1em; }
-    .msg-bubble.md-rendered h3         { font-size: 1em; }
-    .msg-bubble.md-rendered ul,
-    .msg-bubble.md-rendered ol         { padding-left: 1.4em; margin: .4em 0 .65em; }
-    .msg-bubble.md-rendered li         { margin: .2em 0; }
-    .msg-bubble.md-rendered li > p     { margin: 0; }
-    .msg-bubble.md-rendered blockquote {
-      border-left: 3px solid var(--border);
-      margin: .6em 0;
-      padding: .3em .8em;
-      color: var(--text2);
-    }
-    .msg-bubble.md-rendered pre {
-      background: var(--bg3);
-      border: 1px solid var(--border);
-      border-radius: var(--r2);
-      padding: 10px 12px;
-      overflow-x: auto;
-      margin: .6em 0;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    .msg-bubble.md-rendered code {
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-      font-size: 12.5px;
-    }
-    .msg-bubble.md-rendered :not(pre) > code {
-      background: var(--bg3);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 1px 5px;
-    }
-    .msg-bubble.md-rendered pre code   { background: none; border: none; padding: 0; }
-    .msg-bubble.md-rendered table      { border-collapse: collapse; margin: .6em 0; width: 100%; font-size: 13px; }
-    .msg-bubble.md-rendered th,
-    .msg-bubble.md-rendered td         { border: 1px solid var(--border); padding: 5px 10px; text-align: left; }
-    .msg-bubble.md-rendered th         { background: var(--bg3); font-weight: 600; }
-    .msg-bubble.md-rendered tr:hover td { background: var(--bg2); }
-    .msg-bubble.md-rendered a          { color: var(--accent); text-decoration: none; }
-    .msg-bubble.md-rendered a:hover    { text-decoration: underline; }
-    .msg-bubble.md-rendered hr         { border: none; border-top: 1px solid var(--border); margin: .8em 0; }
-    .msg-bubble.md-rendered strong     { font-weight: 700; }
-    .msg-bubble.md-rendered em         { font-style: italic; }
-
-    .msg-bubble.streaming::after {
-      content: '▋';
-      animation: blink .7s step-start infinite;
-    }
-    @keyframes blink { 50% { opacity: 0; } }
-
-    .msg-time { font-size: 11px; color: var(--text3); padding: 0 3px; }
-
-    /* -- ReAct steps -- */
-    .react-steps { margin-bottom: 6px; }
-
-    /* Activity strip — spinner + current status, visible during streaming */
-    .react-activity {
-      display: flex; align-items: center; gap: 9px;
-      padding: 8px 13px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--r2);
-      font-size: 13px;
-      color: var(--text2);
-      margin-bottom: 6px;
-    }
-    .ra-spinner {
-      width: 15px; height: 15px; flex-shrink: 0;
-      border: 2px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: ra-spin .65s linear infinite;
-    }
-    @keyframes ra-spin { to { transform: rotate(360deg); } }
-    .ra-text { flex: 1; color: var(--text2); font-size: 13px; }
-    .ra-tag {
-      font-size: 11px; padding: 2px 7px; border-radius: 4px;
-      background: #fef3c7; color: #b45309; font-weight: 600;
-      white-space: nowrap; flex-shrink: 0;
-    }
-
-    .steps-toggle {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      padding: 7px 12px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--r2);
-      font-size: 13px;
-      color: var(--text2);
-      cursor: pointer;
-      width: 100%;
-      transition: background .12s;
-    }
-    .steps-toggle:hover { background: var(--bg3); }
-    .chevron { transition: transform .2s; display: inline-block; font-size: 11px; }
-    .steps-toggle.open .chevron { transform: rotate(90deg); }
-
-    .react-steps-body { margin-top: 6px; display: flex; flex-direction: column; gap: 8px; }
-
-    /* Step card — collapsed by default; header click expands detail */
-    .step-card {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--r2);
-      overflow: hidden;
-      font-size: 13px;
-    }
-    .step-hdr {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 7px 12px;
-      background: var(--bg3);
-      font-weight: 600;
-      font-size: 12px;
-      color: var(--text2);
-      cursor: pointer;
-      user-select: none;
-      transition: background .12s;
-    }
-    .step-hdr:hover { background: #e5e7eb; }
-    .step-hdr .chevron { color: var(--text3); font-size: 10px; }
-    .step-hdr.open .chevron { transform: rotate(90deg); }
-    .step-action-tag {
-      font-size: 11px;
-      padding: 2px 6px;
-      border-radius: 4px;
-      background: #fef3c7;
-      color: #b45309;
-      font-weight: 600;
-    }
-    .step-done { font-size: 11px; color: #10b981; font-weight: 700; margin-left: auto; flex-shrink: 0; }
-    .step-streaming-label { font-size: 11px; color: var(--text3); font-weight: 400; }
-
-    /* Step detail body (collapsed by default) */
-    .step-detail { display: none; }
-    .step-detail.open { display: block; }
-
-    .retry-warning {
-      margin: 4px 12px 6px;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      color: #b45309;
-      background: #fef3c7;
-      border: 1px solid #fde68a;
-    }
-
-    .step-raw {
-      padding: 10px 12px;
-      font-family: "Courier New", Consolas, monospace;
-      font-size: 12px;
-      color: var(--text2);
-      white-space: pre-wrap;
-      word-break: break-word;
-      line-height: 1.6;
-    }
-
-    .step-sections { display: flex; flex-direction: column; }
-    .step-sec {
-      padding: 8px 12px;
-      border-top: 1px solid var(--border);
-      border-left: 3px solid transparent;
-    }
-    .step-sec.thought     { border-left-color: #3b82f6; }
-    .step-sec.action-sec  { border-left-color: #f59e0b; }
-    .step-sec.observation { border-left-color: #10b981; }
-
-    .sec-lbl {
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .4px;
-      margin-bottom: 5px;
-    }
-    .step-sec.thought     .sec-lbl { color: #3b82f6; }
-    .step-sec.action-sec  .sec-lbl { color: #b45309; }
-    .step-sec.observation .sec-lbl { color: #10b981; }
-
-    .sec-content { color: var(--text); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-    .code-val {
-      display: block;
-      margin-top: 5px;
-      padding: 5px 9px;
-      background: var(--bg3);
-      border-radius: 5px;
-      font-family: "Courier New", Consolas, monospace;
-      font-size: 12px;
-      color: var(--text);
-      white-space: pre;
-      overflow-x: auto;
-    }
-
-    /* -- Input bar -- */
-    #input-area {
-      padding: 10px 16px 14px;
-      background: var(--bg);
-      border-top: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-
-    .input-wrapper {
-      display: flex;
-      align-items: flex-end;
-      gap: 8px;
-      background: var(--bg2);
-      border: 1.5px solid var(--border);
-      border-radius: var(--r);
-      padding: 7px 7px 7px 14px;
-      transition: border-color .15s;
-    }
-    .input-wrapper:focus-within { border-color: var(--accent); }
-
-    #msg-input {
-      flex: 1;
-      border: none;
-      background: transparent;
-      padding: 0;
-      min-height: 24px;
-      max-height: 120px;
-      font-size: 14px;
-      line-height: 1.5;
-      resize: none;
-    }
-    #msg-input:focus { outline: none; }
-
-    #btn-send {
-      width: 36px;
-      height: 36px;
-      border-radius: var(--r2);
-      background: var(--accent);
-      color: #fff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      flex-shrink: 0;
-      transition: background .15s;
-    }
-    #btn-send:hover:not(:disabled) { background: var(--accent2); }
-    #btn-send:disabled { background: var(--bg3); color: var(--text3); }
-
-    /* ════════════════════════════════════════
-       SETTINGS MODAL
-    ════════════════════════════════════════ */
-    #overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, .32);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 200;
-    }
-
-    #settings-modal {
-      background: var(--bg);
-      border-radius: var(--r);
-      width: 460px;
-      max-width: 95vw;
-      max-height: 90vh;
-      display: flex;
-      flex-direction: column;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, .18);
-    }
-
-    .modal-hdr {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 16px 18px 12px;
-      border-bottom: 1px solid var(--border);
-    }
-    .modal-hdr h2 { font-size: 17px; font-weight: 700; }
-
-    .modal-tabs {
-      display: flex;
-      gap: 0;
-      padding: 0 18px;
-      border-bottom: 1px solid var(--border);
-    }
-    .tab-btn {
-      padding: 10px 14px;
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text2);
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-      transition: color .12s, border-color .12s;
-    }
-    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-    .tab-btn:hover:not(.active) { color: var(--text); }
-
-    .modal-body { flex: 1; overflow-y: auto; padding: 18px; }
-    .form-group { margin-bottom: 15px; }
-    .form-group:last-child { margin-bottom: 0; }
-    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-
-    .modal-footer {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 18px;
-      border-top: 1px solid var(--border);
-    }
-    #modal-msg { flex: 1; font-size: 13px; color: var(--text2); }
-    #modal-msg.ok  { color: #16a34a; }
-    #modal-msg.err { color: #ef4444; }
-
-    .btn-primary {
-      padding: 8px 18px;
-      background: var(--accent);
-      color: #fff;
-      border-radius: var(--r2);
-      font-size: 14px;
-      font-weight: 600;
-      transition: background .15s;
-    }
-    .btn-primary:hover:not(:disabled) { background: var(--accent2); }
-    .btn-primary:disabled { background: var(--bg3); color: var(--text3); cursor: not-allowed; }
-
-    .btn-secondary {
-      padding: 8px 16px;
-      background: var(--bg);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: var(--r2);
-      font-size: 14px;
-      transition: background .15s;
-    }
-    .btn-secondary:hover { background: var(--bg3); }
-
-    .btn-danger {
-      padding: 8px 16px;
-      background: #fee2e2;
-      color: #dc2626;
-      border: 1px solid #fca5a5;
-      border-radius: var(--r2);
-      font-size: 14px;
-      font-weight: 600;
-      transition: background .15s;
-    }
-    .btn-danger:hover { background: #fecaca; }
-
-    /* -- Scrollbar -- */
-    ::-webkit-scrollbar { width: 5px; height: 5px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
-    /* ════════════════════════════════════════
-       PERSONA
-    ════════════════════════════════════════ */
-    /* Toggle switch */
-    .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
-    .switch input { opacity: 0; width: 0; height: 0; }
-    .slider { position: absolute; cursor: pointer; inset: 0; background: var(--bg3); border-radius: 22px; transition: .2s; border: 1px solid var(--border); }
-    .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 2px; bottom: 2px; background: #fff; border-radius: 50%; transition: .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
-    .switch input:checked + .slider { background: var(--accent); border-color: var(--accent); }
-    .switch input:checked + .slider:before { transform: translateX(18px); }
-
-    /* Toggle row */
-    .toggle-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 0; }
-    .toggle-label { flex: 1; }
-    .toggle-title { display: block; font-size: 13px; font-weight: 600; color: var(--text); }
-    .toggle-desc { display: block; font-size: 12px; color: var(--text2); margin-top: 3px; line-height: 1.45; }
-
-    /* Section divider */
-    .section-divider { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text3); padding: 5px 0; border-bottom: 1px solid var(--border); margin: 14px 0 12px; }
-    .section-divider:first-child { margin-top: 0; }
-
-    /* Persona active badge in topbar */
-    .persona-badge { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 20px; background: #fdf4ff; color: #7c3aed; flex-shrink: 0; }
-
-    /* Memory loading indicator in topbar */
-    .mem-loading-badge {
-      font-size: 11px;
-      font-weight: 500;
-      padding: 2px 9px;
-      border-radius: 20px;
-      background: #fefce8;
-      color: #a16207;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-    }
-    .mem-loading-badge .spin {
-      display: inline-block;
-      animation: badge-spin .9s linear infinite;
-      line-height: 1;
-    }
-    @keyframes badge-spin { to { transform: rotate(360deg); } }
-    #input-area.mem-loading textarea, #input-area.mem-loading #btn-send {
-      opacity: .45;
-      pointer-events: none;
-    }
-
-    /* Toast notification */
-    .toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(14px); background: #1f2937; color: #fff; font-size: 13px; padding: 9px 20px; border-radius: 20px; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; z-index: 500; white-space: nowrap; }
-    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-
-    /* ── Voice / TTS / STT ── */
-    #btn-mic {
-      width: 36px; height: 36px;
-      border-radius: var(--r2);
-      display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
-      color: var(--text2);
-      transition: background .15s, color .15s, box-shadow .15s;
-    }
-    #btn-mic:hover { background: var(--bg3); color: var(--text); }
-    #btn-mic.recording {
-      background: rgba(239,68,68,.1); color: #ef4444;
-      animation: mic-pulse 1.2s ease-in-out infinite;
-    }
-    @keyframes mic-pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.35); }
-      55%       { box-shadow: 0 0 0 7px rgba(239,68,68,0); }
-    }
-
-    /* ── shared sound-wave bar component ── */
-    .sound-wave {
-      display: flex; align-items: center; gap: 2.5px; height: 20px;
-    }
-    .sound-wave b {
-      display: block; width: 3px; border-radius: 3px;
-      background: currentColor; transition: height .15s;
-    }
-    /* static idle profile (sine-shaped) */
-    .sound-wave b:nth-child(1) { height: 4px;  }
-    .sound-wave b:nth-child(2) { height: 9px;  }
-    .sound-wave b:nth-child(3) { height: 15px; }
-    .sound-wave b:nth-child(4) { height: 18px; }
-    .sound-wave b:nth-child(5) { height: 15px; }
-    .sound-wave b:nth-child(6) { height: 9px;  }
-    .sound-wave b:nth-child(7) { height: 4px;  }
-
-    /* recording animation — STT */
-    #btn-mic.recording .sound-wave b:nth-child(1) { animation: sw1 .48s ease-in-out infinite alternate; }
-    #btn-mic.recording .sound-wave b:nth-child(2) { animation: sw2 .62s ease-in-out infinite alternate; }
-    #btn-mic.recording .sound-wave b:nth-child(3) { animation: sw3 .40s ease-in-out infinite alternate; }
-    #btn-mic.recording .sound-wave b:nth-child(4) { animation: sw4 .55s ease-in-out infinite alternate; }
-    #btn-mic.recording .sound-wave b:nth-child(5) { animation: sw5 .44s ease-in-out infinite alternate; }
-    #btn-mic.recording .sound-wave b:nth-child(6) { animation: sw6 .67s ease-in-out infinite alternate; }
-    #btn-mic.recording .sound-wave b:nth-child(7) { animation: sw7 .50s ease-in-out infinite alternate; }
-
-    /* playing animation — TTS */
-    .msg-tts-btn.playing .sound-wave b:nth-child(1) { animation: sw1 .56s ease-in-out infinite alternate; }
-    .msg-tts-btn.playing .sound-wave b:nth-child(2) { animation: sw3 .44s ease-in-out infinite alternate; }
-    .msg-tts-btn.playing .sound-wave b:nth-child(3) { animation: sw2 .60s ease-in-out infinite alternate; }
-    .msg-tts-btn.playing .sound-wave b:nth-child(4) { animation: sw5 .38s ease-in-out infinite alternate; }
-    .msg-tts-btn.playing .sound-wave b:nth-child(5) { animation: sw4 .52s ease-in-out infinite alternate; }
-
-    @keyframes sw1 { from { height:  3px; } to { height: 12px; } }
-    @keyframes sw2 { from { height:  7px; } to { height:  3px; } }
-    @keyframes sw3 { from { height:  4px; } to { height: 18px; } }
-    @keyframes sw4 { from { height: 12px; } to { height:  3px; } }
-    @keyframes sw5 { from { height:  3px; } to { height: 14px; } }
-    @keyframes sw6 { from { height:  9px; } to { height:  3px; } }
-    @keyframes sw7 { from { height:  3px; } to { height: 11px; } }
-
-    .msg-tts-btn {
-      width: 26px; height: 22px;
-      padding: 0 3px;
-      border-radius: 4px;
-      display: inline-flex; align-items: center; justify-content: center;
-      color: var(--text3); line-height: 1;
-      transition: background .12s, color .12s;
-    }
-    .msg-tts-btn:hover { background: var(--bg3); color: var(--accent); }
-    .msg-tts-btn.playing { color: var(--accent); }
-    /* TTS wave is slightly smaller */
-    .msg-tts-btn .sound-wave { gap: 2px; height: 16px; }
-    .msg-tts-btn .sound-wave b { width: 2.5px; }
-    .msg-tts-btn .sound-wave b:nth-child(1) { height: 3px;  }
-    .msg-tts-btn .sound-wave b:nth-child(2) { height: 7px;  }
-    .msg-tts-btn .sound-wave b:nth-child(3) { height: 12px; }
-    .msg-tts-btn .sound-wave b:nth-child(4) { height: 7px;  }
-    .msg-tts-btn .sound-wave b:nth-child(5) { height: 3px;  }
-
-    /* provider-specific field groups in voice tab */
-    .voice-provider-section { display: none; }
-    .voice-provider-section.active { display: block; }
-
-    /* Full prompt section */
-    .full-prompt-section { margin-top: 5px; align-self: flex-end; width: 100%; }
-    .full-prompt-toggle {
-      font-size: 11px;
-      color: var(--text3);
-      padding: 2px 6px 2px 3px;
-      border-radius: 4px;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      transition: color .12s, background .12s;
-    }
-    .full-prompt-toggle:hover { color: var(--text2); background: var(--bg3); }
-    .full-prompt-toggle .chevron { font-size: 9px; transition: transform .2s; }
-    .full-prompt-toggle.open .chevron { transform: rotate(90deg); }
-
-    .full-prompt-body {
-      margin-top: 6px;
-      background: var(--bg3);
-      border: 1px solid var(--border);
-      border-radius: var(--r2);
-      padding: 10px 12px;
-      max-height: 300px;
-      overflow-y: auto;
-    }
-    .full-prompt-msg { margin-bottom: 10px; }
-    .full-prompt-msg:last-child { margin-bottom: 0; }
-    .fp-role {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      margin-bottom: 4px;
-    }
-    .fp-role.system    { color: #7c3aed; }
-    .fp-role.user      { color: var(--accent); }
-    .fp-role.assistant { color: #10b981; }
-    .fp-content {
-      font-size: 12px;
-      font-family: "Courier New", Consolas, monospace;
-      line-height: 1.55;
-      color: var(--text);
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-  </style>
 </head>
 <body>
 
 <!-- ══════════════════════════════════
-     LANDING SCREEN
+     LANDING SCREEN  (Workstation)
 ══════════════════════════════════ -->
 <div id="s-landing">
-  <button class="icon-btn" id="btn-settings-top" onclick="openSettings()" title="Settings">⚙</button>
+  <div class="ws-shell">
 
-  <div class="landing-logo">
-    <div class="logo-mark">⚡</div>
-    <h1>ReAct Agent</h1>
-    <p>Intelligent reasoning assistant</p>
+    <!-- Header -->
+    <div class="ws-topbar">
+      <div class="ws-logo">
+        <div class="logo-mark">⚡</div>
+        <div>
+          <h1>ReAct Workstation</h1>
+          <p>Intelligent reasoning platform</p>
+        </div>
+      </div>
+      <div class="ws-topbar-actions">
+        <button id="btn-refresh-ws" class="btn-secondary" title="Refresh all">↻ Refresh</button>
+        <button id="btn-settings-top" class="icon-btn" title="Settings">⚙</button>
+      </div>
+    </div>
+
+    <!-- Infrastructure Services -->
+    <div class="ws-section">
+      <div class="ws-section-title">Infrastructure Services</div>
+      <div class="ws-services" id="ws-services">
+        <span style="font-size:13px;color:var(--text3)">Loading…</span>
+      </div>
+    </div>
+
+    <!-- Module Cards -->
+    <div class="ws-section">
+      <div class="ws-section-title">Modules</div>
+      <div class="ws-modules">
+
+        <!-- LLM Core -->
+        <div class="module-card" data-tab="model">
+          <div class="mc-header">
+            <span class="mc-icon">🧠</span>
+            <span class="mc-title">LLM Core</span>
+            <span class="mc-badge off" id="mc-llm-badge">—</span>
+          </div>
+          <div class="mc-body" id="mc-llm-body"><span style="color:var(--text3)">Loading…</span></div>
+        </div>
+
+        <!-- ReAct Agent -->
+        <div class="module-card" data-tab="model">
+          <div class="mc-header">
+            <span class="mc-icon">⚡</span>
+            <span class="mc-title">ReAct Agent</span>
+            <span class="mc-badge off" id="mc-react-badge">—</span>
+          </div>
+          <div class="mc-body" id="mc-react-body"><span style="color:var(--text3)">Loading…</span></div>
+        </div>
+
+        <!-- Memory -->
+        <div class="module-card" data-tab="memory">
+          <div class="mc-header">
+            <span class="mc-icon">💾</span>
+            <span class="mc-title">Memory</span>
+          </div>
+          <div class="mc-body" id="mc-memory-body"><span style="color:var(--text3)">Loading…</span></div>
+        </div>
+
+        <!-- Persona -->
+        <div class="module-card" data-tab="persona">
+          <div class="mc-header">
+            <span class="mc-icon">🎭</span>
+            <span class="mc-title">Persona</span>
+            <span class="mc-badge off" id="mc-persona-badge">—</span>
+          </div>
+          <div class="mc-body" id="mc-persona-body"><span style="color:var(--text3)">Loading…</span></div>
+        </div>
+
+        <!-- Voice -->
+        <div class="module-card" data-tab="voice">
+          <div class="mc-header">
+            <span class="mc-icon">🔊</span>
+            <span class="mc-title">Voice</span>
+          </div>
+          <div class="mc-body" id="mc-voice-body"><span style="color:var(--text3)">Loading…</span></div>
+        </div>
+
+        <!-- Scheduler & Crew -->
+        <div class="module-card">
+          <div class="mc-header">
+            <span class="mc-icon">🗓</span>
+            <span class="mc-title">Scheduler &amp; Crew</span>
+          </div>
+          <div class="mc-body" id="mc-scheduler-body"><span style="color:var(--text3)">Loading…</span></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Scheduler -->
+    <div class="ws-section">
+      <div class="sched-header">
+        <div class="ws-section-title" style="margin-bottom:0">Scheduled Tasks</div>
+        <button id="btn-sched-add" class="btn-secondary sched-add-btn">+ New Task</button>
+      </div>
+
+      <table class="sched-table" id="sched-task-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Profile</th>
+            <th>Trigger</th>
+            <th>Next Run</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="sched-task-body">
+          <tr><td colspan="6" class="sched-empty">Loading…</td></tr>
+        </tbody>
+      </table>
+
+      <div id="sched-form-wrap" class="sched-form-wrap" style="display:none">
+        <div class="sched-form-title">New Scheduled Task</div>
+        <div class="sched-form-grid">
+          <div>
+            <label>Task Name</label>
+            <input id="sched-name" type="text" placeholder="daily-summary" />
+          </div>
+          <div>
+            <label>Profile</label>
+            <select id="sched-profile">
+              <option value="minimal">minimal</option>
+              <option value="executor">executor</option>
+              <option value="researcher">researcher</option>
+              <option value="researcher_with_memory">researcher_with_memory</option>
+              <option value="analyst">analyst</option>
+              <option value="planner">planner</option>
+            </select>
+          </div>
+          <div class="full">
+            <label>Instruction</label>
+            <textarea id="sched-instruction" placeholder="Describe what the agent should do…"></textarea>
+          </div>
+          <div class="full">
+            <label>Trigger Type</label>
+            <select id="sched-trigger">
+              <option value="once">Once（指定时间执行一次）</option>
+              <option value="interval">Interval（周期性执行）</option>
+            </select>
+          </div>
+        </div>
+        <div class="sched-trigger-fields" id="sched-once-fields">
+          <div>
+            <label>Execute At（本地时间）</label>
+            <input id="sched-at" type="datetime-local" />
+          </div>
+        </div>
+        <div class="sched-trigger-fields" id="sched-interval-fields" style="display:none">
+          <div>
+            <label>Interval（秒）</label>
+            <input id="sched-interval" type="number" value="3600" min="60" placeholder="3600" />
+          </div>
+        </div>
+        <div class="sched-form-actions">
+          <button id="btn-sched-create" class="btn-primary">Create Task</button>
+          <button id="btn-sched-cancel" class="btn-secondary">Cancel</button>
+        </div>
+        <div class="sched-msg" id="sched-form-msg"></div>
+      </div>
+    </div>
+
+    <!-- Quick Start -->
+    <div class="ws-section">
+      <div class="ws-section-title">Quick Start</div>
+      <div class="ws-quick-btns">
+        <button class="ws-big-btn" data-action="start-chat">
+          <span>💬</span><span>New Chat</span>
+        </button>
+        <button class="ws-big-btn accent" data-action="start-react">
+          <span>⚡</span><span>New ReAct Session</span>
+        </button>
+        <button class="ws-big-btn" data-action="start-plan">
+          <span>🗂</span><span>Plan Mode</span>
+        </button>
+      </div>
+      <div id="landing-recent"></div>
+    </div>
+
   </div>
-
-  <button class="mode-card start-card" onclick="startNew()">
-    <span id="start-card-icon" class="card-icon">💬</span>
-    <span id="start-card-title" class="card-title">New Conversation</span>
-    <span id="start-card-desc" class="card-desc">Click to start · Toggle tools in Settings</span>
-  </button>
-
-  <div id="landing-recent"></div>
 </div>
 
 
@@ -921,13 +212,13 @@
   <!-- Sidebar -->
   <aside id="sidebar">
     <div class="sidebar-hdr">
-      <button class="icon-btn" onclick="goHome()" title="Home">←</button>
+      <button id="btn-go-home" class="icon-btn" title="Home">←</button>
       <span class="logo-text">History</span>
       <div class="sidebar-hdr-actions">
-        <button class="icon-btn" onclick="startNewKeepMode()" title="New conversation">＋</button>
-        <button class="icon-btn danger" onclick="confirmClearAllHistory()" title="Clear all history">🗑</button>
-        <button class="icon-btn" onclick="openKBPanel()" title="知识库">📚</button>
-        <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
+        <button id="btn-new-conv" class="icon-btn" title="New conversation">＋</button>
+        <button id="btn-clear-hist" class="icon-btn danger" title="Clear all history">🗑</button>
+        <button id="btn-open-kb" class="icon-btn" title="知识库">📚</button>
+        <button id="btn-settings-sidebar" class="icon-btn" title="Settings">⚙</button>
       </div>
     </div>
     <div id="sidebar-list"></div>
@@ -938,13 +229,13 @@
     <div id="topbar">
       <div class="topbar-left">
         <span id="tb-title">New Conversation</span>
-        <button id="tb-mode" class="mode-badge" onclick="toggleMode()" title="Click to switch mode">Chat</button>
+        <button id="tb-mode" class="mode-badge" title="Click to switch mode">Chat</button>
         <span id="tb-persona-badge" class="persona-badge hidden">🎭 Persona</span>
         <span id="tb-mem-loading" class="mem-loading-badge hidden"><span class="spin">⟳</span>加载记忆中…</span>
       </div>
       <div class="topbar-right">
-        <button class="icon-btn hidden" id="btn-clear-react" onclick="clearReactSession()" title="Clear ReAct dialogue history">🔄</button>
-        <button class="icon-btn" onclick="openSettings()" title="Settings">⚙</button>
+        <button class="icon-btn hidden" id="btn-clear-react" title="Clear ReAct dialogue history">🔄</button>
+        <button id="btn-settings-topbar" class="icon-btn" title="Settings">⚙</button>
       </div>
     </div>
 
@@ -958,8 +249,8 @@
     <div id="input-area">
       <div class="input-wrapper">
         <textarea id="msg-input" rows="1" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
-        <button id="btn-mic" onclick="toggleMic()" title="语音输入（点击开始录音，再次点击停止）"><span class="sound-wave"><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span></button>
-        <button id="btn-send" onclick="sendMessage()">↑</button>
+        <button id="btn-mic" title="语音输入（点击开始录音，再次点击停止）"><span class="sound-wave"><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span></button>
+        <button id="btn-send">↑</button>
       </div>
     </div>
   </div>
@@ -969,8 +260,8 @@
     <div style="height:52px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px;flex-shrink:0;gap:10px">
       <span style="font-weight:600;font-size:15px">📚 知识库</span>
       <div style="display:flex;gap:8px">
-        <button class="btn-secondary" style="height:32px;font-size:13px" onclick="fixKBIndex()">修复索引</button>
-        <button class="btn-secondary" style="height:32px;font-size:13px" onclick="closeKBPanel()">← 返回聊天</button>
+        <button class="btn-secondary" style="height:32px;font-size:13px">修复索引</button>
+        <button class="btn-secondary" style="height:32px;font-size:13px">← 返回聊天</button>
       </div>
     </div>
 
@@ -980,7 +271,7 @@
       <div class="form-row" style="align-items:flex-end;gap:8px">
         <div class="form-group" style="flex:1;margin-bottom:0">
           <label>搜索内容</label>
-          <input id="kb-search-input2" type="text" placeholder="输入关键词或问题…" onkeydown="if(event.key==='Enter')doKBSearch2()" />
+          <input id="kb-search-input2" type="text" placeholder="输入关键词或问题…" />
         </div>
         <div class="form-group" style="width:130px;margin-bottom:0">
           <label>模式</label>
@@ -990,7 +281,7 @@
             <option value="keyword">关键词 keyword</option>
           </select>
         </div>
-        <button class="btn-secondary" style="flex-shrink:0;height:36px;align-self:flex-end" onclick="doKBSearch2()">搜索</button>
+        <button class="btn-secondary" style="flex-shrink:0;height:36px;align-self:flex-end">搜索</button>
       </div>
       <div id="kb-search-results2" style="font-size:13px;color:var(--text2);margin-top:8px"></div>
 
@@ -1013,11 +304,11 @@
           <input id="kb-ingest-concept2" type="text" placeholder="如 superposition" />
         </div>
       </div>
-      <button class="btn-primary" style="width:100%;margin-bottom:8px" onclick="doKBIngest2()">写入知识库</button>
+      <button class="btn-primary" style="width:100%;margin-bottom:8px">写入知识库</button>
       <div id="kb-ingest-msg2" style="font-size:12px;color:var(--text3);min-height:16px"></div>
 
       <div class="section-divider">文档列表</div>
-      <button class="btn-secondary" style="margin-bottom:8px" onclick="loadKBDocuments2()">刷新列表</button>
+      <button class="btn-secondary" style="margin-bottom:8px">刷新列表</button>
       <div id="kb-doc-list2" style="font-size:13px;color:var(--text2)"></div>
 
     </div>
@@ -1029,22 +320,37 @@
 <!-- ══════════════════════════════════
      SETTINGS MODAL
 ══════════════════════════════════ -->
-<div id="overlay" class="hidden" onclick="overlayClick(event)">
+<div id="overlay" class="hidden">
   <div id="settings-modal">
 
     <div class="modal-hdr">
       <h2>Settings</h2>
-      <button class="icon-btn" onclick="closeSettings()">✕</button>
+      <button id="btn-modal-close-x" class="icon-btn">✕</button>
     </div>
 
-    <div class="modal-tabs">
-      <button class="tab-btn active" id="tab-btn-model"     onclick="setTab('model')">Core</button>
-      <button class="tab-btn"        id="tab-btn-memory"    onclick="setTab('memory')">🧠 Memory</button>
-      <button class="tab-btn"        id="tab-btn-persona"   onclick="setTab('persona')">🎭 Persona</button>
-      <button class="tab-btn"        id="tab-btn-voice"     onclick="setTab('voice')">🔊 Voice</button>
-    </div>
+    <div class="modal-2col">
+      <nav class="settings-nav">
+        <button class="snav-item active" id="snav-btn-model"  >
+          <span class="snav-icon">⚙</span> Core
+        </button>
+        <button class="snav-item"        id="snav-btn-memory" >
+          <span class="snav-icon">🧠</span> Memory
+        </button>
+        <button class="snav-item"        id="snav-btn-persona">
+          <span class="snav-icon">🎭</span> Persona
+        </button>
+        <button class="snav-item"        id="snav-btn-voice"  >
+          <span class="snav-icon">🔊</span> Voice
+        </button>
+        <button class="snav-item"        id="snav-btn-vllm"   >
+          <span class="snav-icon">⚙</span> vLLM
+        </button>
+        <button class="snav-item"        id="snav-btn-sandbox">
+          <span class="snav-icon">🛡</span> Sandbox
+        </button>
+      </nav>
 
-    <div class="modal-body">
+      <div class="modal-body">
       <!-- Model tab -->
       <div id="tab-model">
         <div class="form-group">
@@ -1078,7 +384,7 @@
             <span class="toggle-title">Show Full Input</span>
             <span class="toggle-desc">在每条用户消息下方显示实际发送给模型的完整提示（系统提示 + 对话历史 + 当前消息）。</span>
           </div>
-          <label class="switch"><input type="checkbox" id="s-show-full-prompt" onchange="onToggleFullPrompt()"><span class="slider"></span></label>
+          <label class="switch"><input type="checkbox" id="s-show-full-prompt"><span class="slider"></span></label>
         </div>
 
         <div class="section-divider">ReAct Agent</div>
@@ -1087,7 +393,7 @@
             <span class="toggle-title">启用工具层（Agent 模式）</span>
             <span class="toggle-desc">开启后新建对话将使用 ReAct 模式，Agent 会通过推理步骤调用工具；关闭则使用纯对话 Chat 模式。</span>
           </div>
-          <label class="switch"><input type="checkbox" id="s-tools-enabled" onchange="onToggleTools()"><span class="slider"></span></label>
+          <label class="switch"><input type="checkbox" id="s-tools-enabled"><span class="slider"></span></label>
         </div>
         <div id="react-cfg-fields">
           <div class="form-row">
@@ -1192,7 +498,7 @@
             <input id="s-mt-consolidate-tokens" type="number" value="500" min="100" />
           </div>
           <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:2px">
-            <button id="btn-consolidate" class="btn-secondary" style="width:100%" onclick="doConsolidate()">立即整理近期历史</button>
+            <button id="btn-consolidate" class="btn-secondary" style="width:100%">立即整理近期历史</button>
           </div>
         </div>
         <div id="consolidate-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:-4px"></div>
@@ -1266,7 +572,7 @@
           <p style="font-size:12px;color:var(--text2);margin-bottom:10px">
             清空所有记忆层（L1 短期 / L2 中期 / L3 长期 / 里程碑），操作不可逆。
           </p>
-          <button class="btn-danger" style="width:100%" onclick="doClearMemory()">🗑 清空所有记忆</button>
+          <button id="btn-clear-memory" class="btn-danger" style="width:100%">🗑 清空所有记忆</button>
           <div id="clear-memory-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
         </div>
 
@@ -1332,7 +638,7 @@
           <p style="font-size:12px;color:var(--text2);margin-bottom:10px">
             清空所有演化漂移数据（画像 / 技能库 / 自省摘要 / 近期偏好），人格将还原至手动配置的基础设定，操作不可逆。
           </p>
-          <button class="btn-danger" style="width:100%" onclick="doClearPersona()">🗑 清空人格漂移数据</button>
+          <button id="btn-clear-persona" class="btn-danger" style="width:100%">🗑 清空人格漂移数据</button>
           <div id="clear-persona-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
         </div>
 
@@ -1352,7 +658,7 @@
         </div>
         <div class="form-group">
           <label>Provider</label>
-          <select id="s-tts-provider" onchange="onTTSProviderChange()">
+          <select id="s-tts-provider">
             <option value="edge">Edge TTS（免费，联网）</option>
             <option value="openai">OpenAI TTS</option>
             <option value="kokoro">Kokoro（本地）</option>
@@ -1443,7 +749,7 @@
               <input id="s-tts-hf-token" type="password" placeholder="hf_…" />
             </div>
           </div>
-          <button class="btn-secondary" style="width:100%;margin-top:2px" onclick="doDownloadModel('tts')">⬇ 从 HuggingFace 下载 Kokoro 模型</button>
+          <button class="btn-secondary" data-action="download-tts" style="width:100%;margin-top:2px">⬇ 从 HuggingFace 下载 Kokoro 模型</button>
           <div id="tts-dl-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:5px"></div>
         </div>
 
@@ -1451,7 +757,7 @@
         <div class="section-divider">STT 语音识别</div>
         <div class="form-group">
           <label>Provider</label>
-          <select id="s-stt-provider" onchange="onSTTProviderChange()">
+          <select id="s-stt-provider">
             <option value="openai">OpenAI Whisper（API）</option>
             <option value="faster_whisper">faster-whisper（本地）</option>
           </select>
@@ -1526,1517 +832,247 @@
               <input id="s-stt-hf-token" type="password" placeholder="hf_…" />
             </div>
           </div>
-          <button class="btn-secondary" style="width:100%;margin-top:2px" onclick="doDownloadModel('stt')">⬇ 从 HuggingFace 下载 Whisper 模型</button>
+          <button class="btn-secondary" data-action="download-stt" style="width:100%;margin-top:2px">⬇ 从 HuggingFace 下载 Whisper 模型</button>
           <div id="stt-dl-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:5px"></div>
         </div>
 
       </div>
 
+      <!-- vLLM tab -->
+      <div id="tab-vllm" class="hidden">
+
+        <div class="section-divider" style="margin-top:0">服务器</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Host</label>
+            <input id="s-vllm-host" type="text" placeholder="127.0.0.1" />
+          </div>
+          <div class="form-group">
+            <label>Port</label>
+            <input id="s-vllm-port" type="number" value="8000" min="1" max="65535" />
+          </div>
+        </div>
+
+        <div class="section-divider">GPU / 并行</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Tensor Parallel <span style="font-weight:400;color:var(--text3)">tensor_parallel_size</span></label>
+            <input id="s-vllm-tp" type="number" value="1" min="1" />
+          </div>
+          <div class="form-group">
+            <label>Pipeline Parallel <span style="font-weight:400;color:var(--text3)">pipeline_parallel_size</span></label>
+            <input id="s-vllm-pp" type="number" value="1" min="1" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>GPU Memory Util <span style="font-weight:400;color:var(--text3)">0.0–1.0</span></label>
+            <input id="s-vllm-gpu-mem" type="number" value="0.90" step="0.05" min="0.1" max="1.0" />
+          </div>
+          <div class="form-group">
+            <label>Max Model Len <span style="font-weight:400;color:var(--text3)">留空=自动</span></label>
+            <input id="s-vllm-max-len" type="number" placeholder="自动" min="1" />
+          </div>
+        </div>
+
+        <div class="section-divider">量化 / 精度</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Quantization</label>
+            <select id="s-vllm-quant">
+              <option value="">无（默认）</option>
+              <option value="awq">AWQ</option>
+              <option value="gptq">GPTQ</option>
+              <option value="squeezellm">SqueezeLLM</option>
+              <option value="fp8">FP8</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>dtype</label>
+            <select id="s-vllm-dtype">
+              <option value="auto">auto</option>
+              <option value="float16">float16</option>
+              <option value="bfloat16">bfloat16</option>
+              <option value="float32">float32</option>
+            </select>
+          </div>
+        </div>
+        <div class="toggle-row" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+          <div class="toggle-label">
+            <span class="toggle-title">Enforce Eager</span>
+            <span class="toggle-desc">禁用 CUDA Graph，对部分模型或显存受限环境有用。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-vllm-eager"><span class="slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">Enable LoRA</span>
+            <span class="toggle-desc">启用 LoRA 适配层支持。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-vllm-lora"><span class="slider"></span></label>
+        </div>
+        <div id="vllm-lora-fields" style="display:none">
+          <div class="form-group" style="margin-top:8px">
+            <label>Max LoRA Rank</label>
+            <input id="s-vllm-lora-rank" type="number" value="16" min="1" max="256" />
+          </div>
+        </div>
+
+        <div class="section-divider">控制</div>
+        <div style="display:flex;gap:8px">
+          <button id="btn-vllm-save" class="btn-primary" style="flex:1">保存配置</button>
+          <button id="btn-vllm-start" class="btn-secondary">Start</button>
+          <button id="btn-vllm-stop" class="btn-secondary">Stop</button>
+        </div>
+        <div id="vllm-cfg-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
+
+      </div><!-- /tab-vllm -->
+
+      <!-- Sandbox tab -->
+      <div id="tab-sandbox" class="hidden">
+
+        <div class="section-divider" style="margin-top:0">工作区 &amp; 执行</div>
+        <div class="form-group">
+          <label>Workspace 路径 <span style="font-weight:400;color:var(--text3)">Python 沙盒文件读写根目录</span></label>
+          <input id="s-sb-workspace" type="text" placeholder=".react/workspace" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Python 超时（秒）<span style="font-weight:400;color:var(--text3)">python_timeout_secs</span></label>
+            <input id="s-sb-timeout" type="number" value="10" min="1" max="300" />
+          </div>
+          <div class="form-group">
+            <label>最大输出字符 <span style="font-weight:400;color:var(--text3)">python_max_output_chars</span></label>
+            <input id="s-sb-max-output" type="number" value="5000" min="100" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>最大文件大小（MB）<span style="font-weight:400;color:var(--text3)">max_file_size_bytes</span></label>
+          <input id="s-sb-max-file" type="number" value="10" min="1" max="1024" />
+        </div>
+
+        <div class="section-divider">Python 安全</div>
+        <div class="form-group">
+          <label>禁用模块 <span style="font-weight:400;color:var(--text3)">逗号分隔，阻止在沙盒 Python 中 import</span></label>
+          <textarea id="s-sb-blocked-mods" rows="3" placeholder="os, sys, subprocess, socket…"></textarea>
+        </div>
+
+        <div class="section-divider">网络安全</div>
+        <div class="form-group">
+          <label>允许域名白名单 <span style="font-weight:400;color:var(--text3)">换行分隔，留空 = 不限制（黑名单仍然生效）</span></label>
+          <textarea id="s-sb-allowed-domains" rows="2" placeholder="api.example.com&#10;data.example.org"></textarea>
+        </div>
+        <div class="form-group">
+          <label>禁止域名黑名单 <span style="font-weight:400;color:var(--text3)">换行分隔，阻止对内网 / 指定域名的 HTTP 请求</span></label>
+          <textarea id="s-sb-blocked-domains" rows="4" placeholder="localhost&#10;127.0.0.1&#10;192.168."></textarea>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button id="btn-sandbox-save" class="btn-primary" style="flex:1">保存沙盒配置</button>
+        </div>
+        <div id="sandbox-cfg-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
+
+      </div><!-- /tab-sandbox -->
+
     </div><!-- /modal-body -->
+
+    </div><!-- /modal-2col -->
 
     <div class="modal-footer">
       <span id="modal-msg"></span>
-      <button class="btn-secondary" onclick="closeSettings()">Cancel</button>
-      <button class="btn-primary" id="btn-apply" onclick="applySettings()">Save &amp; Apply</button>
+      <button id="btn-modal-close" class="btn-secondary">Cancel</button>
+      <button id="btn-modal-save" class="btn-primary">Save &amp; Apply</button>
     </div>
 
   </div>
 </div>
 
-<script>
-  /* ════════════════════════════════════
-     STATE
-  ════════════════════════════════════ */
-  const S = {
-    mode:            'chat',
-    convId:          null,
-    messages:        [],
-    streaming:       false,
-    llmReady:        false,
-    reactReady:      false,
-    history:         [],
-    activeWs:        null,
-    personaEnabled:  false,
-    personaToast:    localStorage.getItem('personaToast') !== 'false',
-    showFullPrompt:  localStorage.getItem('showFullPrompt') === 'true',
-    toolsEnabled:    localStorage.getItem('toolsEnabled') === 'true',
-    ttsAutoplay:     localStorage.getItem('ttsAutoplay') === 'true',
-    // STT state
-    _micRecorder:    null,
-    _micChunks:      [],
-    _micMime:        'audio/webm',
-    // TTS state
-    _ttsAudio:       null,
-  };
-
-  /* ════════════════════════════════════
-     BOOT
-  ════════════════════════════════════ */
-  async function boot() {
-    await Promise.all([loadStatus(), loadHistory()]);
-    await fillSettings();
-    await loadPersona();
-    $('s-tools-enabled').checked = S.toolsEnabled;
-    updateStartCard();
-    renderLandingRecent();
-  }
-
-  /* ════════════════════════════════════
-     VOICE CONFIG
-  ════════════════════════════════════ */
-  function onTTSProviderChange() {
-    const p = $('s-tts-provider').value;
-    ['edge', 'openai', 'kokoro'].forEach(name => {
-      const el = $(`tts-${name}-fields`);
-      if (el) el.classList.toggle('active', name === p);
-    });
-  }
-
-  function onSTTProviderChange() {
-    const p = $('s-stt-provider').value;
-    $('stt-openai-fields').classList.toggle('active', p === 'openai');
-    $('stt-local-fields').classList.toggle('active',  p === 'faster_whisper');
-  }
-
-  async function loadVoiceConfig() {
-    const [tr, sr] = await Promise.all([
-      fetch('/api/tts/config').catch(() => null),
-      fetch('/api/stt/config').catch(() => null),
-    ]);
-
-    if (tr?.ok) {
-      const t = await tr.json();
-      $('s-tts-provider').value          = t.provider          || 'edge';
-      $('s-tts-voice').value             = t.voice             || 'zh-CN-XiaoxiaoNeural';
-      $('s-tts-rate').value              = t.rate              || '+0%';
-      $('s-tts-volume').value            = t.volume            || '+0%';
-      $('s-tts-format').value            = t.output_format     || 'mp3';
-      $('s-tts-openai-model').value      = t.openai_model      || 'tts-1';
-      $('s-tts-openai-voice').value      = t.provider === 'openai' ? (t.voice || 'alloy') : 'alloy';
-      $('s-tts-openai-base-url').value   = t.openai_base_url   || '';
-      $('s-tts-openai-api-key').value    = t.openai_api_key    || '';
-      $('s-tts-kokoro-path').value       = t.kokoro_model_path || '';
-      $('s-tts-kokoro-device').value     = t.kokoro_device     || 'auto';
-      $('s-tts-kokoro-voice').value      = t.provider === 'kokoro' ? (t.voice || 'af_bella') : 'af_bella';
-      $('s-tts-kokoro-hf-repo').value    = t.kokoro_hf_repo_id || 'hexgrad/Kokoro-82M';
-      $('s-tts-hf-endpoint').value       = t.hf_endpoint       || '';
-      $('s-tts-hf-token').value          = t.hf_token          || '';
-      onTTSProviderChange();
-    }
-    if (sr?.ok) {
-      const s = await sr.json();
-      $('s-stt-provider').value          = s.provider           || 'openai';
-      $('s-stt-language').value          = s.language           || 'zh';
-      $('s-stt-openai-model').value      = s.openai_model       || 'whisper-1';
-      $('s-stt-openai-base-url').value   = s.openai_base_url    || '';
-      $('s-stt-openai-api-key').value    = s.openai_api_key     || '';
-      $('s-stt-local-size').value        = s.local_model_size   || 'base';
-      $('s-stt-local-path').value        = s.local_model_path   || '';
-      $('s-stt-local-device').value      = s.local_device       || 'auto';
-      $('s-stt-local-compute').value     = s.local_compute_type || 'int8';
-      $('s-stt-local-hf-repo').value     = s.local_hf_repo_id  || '';
-      $('s-stt-hf-endpoint').value       = s.hf_endpoint        || '';
-      $('s-stt-hf-token').value          = s.hf_token           || '';
-      onSTTProviderChange();
-    }
-    $('s-tts-autoplay').checked = S.ttsAutoplay;
-  }
-
-  async function saveVoiceConfig() {
-    S.ttsAutoplay = $('s-tts-autoplay')?.checked ?? false;
-    localStorage.setItem('ttsAutoplay', S.ttsAutoplay);
-
-    const provider = $('s-tts-provider')?.value || 'edge';
-    let voice = $('s-tts-voice')?.value || 'zh-CN-XiaoxiaoNeural';
-    if (provider === 'openai')  voice = $('s-tts-openai-voice')?.value || 'alloy';
-    if (provider === 'kokoro')  voice = $('s-tts-kokoro-voice')?.value || 'af_bella';
-
-    const ttsBody = {
-      provider,
-      voice,
-      rate:              $('s-tts-rate')?.value              || '+0%',
-      volume:            $('s-tts-volume')?.value            || '+0%',
-      output_format:     $('s-tts-format')?.value            || 'mp3',
-      openai_model:      $('s-tts-openai-model')?.value      || 'tts-1',
-      openai_base_url:   $('s-tts-openai-base-url')?.value   || '',
-      openai_api_key:    $('s-tts-openai-api-key')?.value    || '',
-      kokoro_model_path: $('s-tts-kokoro-path')?.value       || '',
-      kokoro_device:     $('s-tts-kokoro-device')?.value     || 'auto',
-      kokoro_hf_repo_id: $('s-tts-kokoro-hf-repo')?.value    || 'hexgrad/Kokoro-82M',
-      hf_endpoint:       $('s-tts-hf-endpoint')?.value       || '',
-      hf_token:          $('s-tts-hf-token')?.value          || '',
-    };
-    const sttBody = {
-      provider:           $('s-stt-provider')?.value          || 'openai',
-      language:           $('s-stt-language')?.value          || 'zh',
-      openai_model:       $('s-stt-openai-model')?.value      || 'whisper-1',
-      openai_base_url:    $('s-stt-openai-base-url')?.value   || '',
-      openai_api_key:     $('s-stt-openai-api-key')?.value    || '',
-      local_model_size:   $('s-stt-local-size')?.value        || 'base',
-      local_model_path:   $('s-stt-local-path')?.value        || '',
-      local_device:       $('s-stt-local-device')?.value      || 'auto',
-      local_compute_type: $('s-stt-local-compute')?.value     || 'int8',
-      local_hf_repo_id:   $('s-stt-local-hf-repo')?.value     || '',
-      hf_endpoint:        $('s-stt-hf-endpoint')?.value       || '',
-      hf_token:           $('s-stt-hf-token')?.value          || '',
-    };
-    await Promise.all([
-      fetch('/api/tts/config/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ttsBody) }).catch(() => null),
-      fetch('/api/stt/config/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sttBody) }).catch(() => null),
-    ]);
-  }
-
-  async function doDownloadModel(kind) {
-    const msgEl = $(`${kind}-dl-msg`);
-    msgEl.style.color = 'var(--text3)';
-    msgEl.textContent = '连接中…';
-
-    const es = new EventSource(`/api/${kind}/download`);
-    es.onmessage = (e) => {
-      const d = JSON.parse(e.data);
-      if (d.status === 'start') {
-        msgEl.textContent = `下载中: ${d.repo} → ${d.local_dir}`;
-      } else if (d.status === 'done') {
-        msgEl.style.color = '#16a34a';
-        msgEl.textContent = `✓ 下载完成: ${d.path}`;
-        es.close();
-        // Update model path field to point at the downloaded dir
-        if (kind === 'tts') $('s-tts-kokoro-path').value = d.path;
-        if (kind === 'stt') $('s-stt-local-path').value  = d.path;
-      } else if (d.status === 'error') {
-        msgEl.style.color = '#ef4444';
-        msgEl.textContent = `✗ 下载失败: ${d.detail || '未知错误'}`;
-        es.close();
-      }
-    };
-    es.onerror = () => {
-      msgEl.style.color = '#ef4444';
-      msgEl.textContent = '✗ 连接失败，请检查服务是否运行。';
-      es.close();
-    };
-  }
-
-  /* ════════════════════════════════════
-     TTS PLAYBACK
-  ════════════════════════════════════ */
-  function speakMessage(btn) {
-    // Find the nearest assistant message bubble
-    const bubble = btn.closest('.msg-body')?.querySelector('.msg-bubble');
-    const text = bubble?.innerText?.trim();
-    if (!text) return;
-    speakText(text, btn);
-  }
-
-  async function speakText(text, btn) {
-    // Stop any currently playing audio
-    if (S._ttsAudio) {
-      S._ttsAudio.pause();
-      S._ttsAudio = null;
-      // Un-mark all playing buttons
-      document.querySelectorAll('.msg-tts-btn.playing').forEach(b => b.classList.remove('playing'));
-    }
-    if (btn) btn.classList.add('playing');
-
-    const r = await fetch('/api/tts/synthesize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    }).catch(() => null);
-
-    if (!r?.ok) {
-      if (btn) btn.classList.remove('playing');
-      showToast('⚠ TTS 合成失败，请检查 Voice 设置');
-      return;
-    }
-
-    const blob = await r.blob();
-    const url  = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    S._ttsAudio = audio;
-    audio.onended = () => {
-      if (btn) btn.classList.remove('playing');
-      URL.revokeObjectURL(url);
-      S._ttsAudio = null;
-    };
-    audio.onerror = () => {
-      if (btn) btn.classList.remove('playing');
-      S._ttsAudio = null;
-    };
-    audio.play();
-  }
-
-  /* ════════════════════════════════════
-     STT RECORDING
-  ════════════════════════════════════ */
-  async function toggleMic() {
-    if (S._micRecorder && S._micRecorder.state === 'recording') {
-      S._micRecorder.stop();
-      return;
-    }
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
-    if (!stream) { showToast('⚠ 无法访问麦克风，请检查浏览器权限'); return; }
-
-    // Pick supported mime type
-    const mimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
-    S._micMime = mimes.find(m => MediaRecorder.isTypeSupported(m)) || 'audio/webm';
-
-    S._micChunks   = [];
-    const recorder = new MediaRecorder(stream, { mimeType: S._micMime });
-    S._micRecorder = recorder;
-
-    recorder.ondataavailable = e => { if (e.data.size > 0) S._micChunks.push(e.data); };
-    recorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      $('btn-mic').classList.remove('recording');
-      S._micRecorder = null;
-
-      const blob = new Blob(S._micChunks, { type: S._micMime });
-      const formData = new FormData();
-      formData.append('audio', blob, 'recording.webm');
-
-      const r = await fetch('/api/stt/transcribe', { method: 'POST', body: formData }).catch(() => null);
-      if (!r?.ok) { showToast('⚠ 语音识别失败，请检查 Voice 设置'); return; }
-      const d = await r.json().catch(() => ({}));
-      const text = (d.text || '').trim();
-      if (text) {
-        const inp = $('msg-input');
-        inp.value += (inp.value ? ' ' : '') + text;
-        autoResize(inp);
-        inp.focus();
-      }
-    };
-
-    recorder.start();
-    $('btn-mic').classList.add('recording');
-  }
-
-  async function loadStatus() {
-    const r = await fetch('/api/status').catch(() => null);
-    if (!r?.ok) return;
-    const d = await r.json();
-    S.llmReady   = d.initialized;
-    S.reactReady = d.react_ready;
-  }
-
-  async function loadHistory() {
-    const r = await fetch('/api/history').catch(() => null);
-    if (!r?.ok) return;
-    S.history = (await r.json()).conversations || [];
-  }
-
-  async function fillSettings() {
-    const r = await fetch('/api/config').catch(() => null);
-    if (!r?.ok) return;
-    const c = await r.json();
-    if (!c || Object.keys(c).length === 0) return;
-    $('s-model').value            = c.model        ?? '';
-    $('s-apikey').value           = c.api_key       ?? '';
-    $('s-baseurl').value          = c.base_url      ?? '';
-    $('s-maxtokens').value        = c.max_tokens    ?? 512;
-    $('s-temp').value             = c.temperature   ?? 1.0;
-    $('s-sysprompt').value        = c.system_prompt ?? '';
-    $('s-show-full-prompt').checked = S.showFullPrompt;
-  }
-
-  /* ════════════════════════════════════
-     NAVIGATION
-  ════════════════════════════════════ */
-  function goHome() {
-    if (S.activeWs) { S.activeWs.close(); S.activeWs = null; }
-    S.convId    = null;
-    S.messages  = [];
-    S.streaming = false;
-    showScreen('landing');
-    renderLandingRecent();
-  }
-
-  async function startNew(mode) {
-    if (mode === undefined) mode = S.toolsEnabled ? 'react' : 'chat';
-    if (!S.llmReady) {
-      openSettings();
-      setModalMsg('⚠ Please configure and save model settings first.', 'err');
-      return;
-    }
-    if (mode === 'react') {
-      const ok = await callReactInit();
-      if (!ok) { openSettings(); setModalMsg('⚠ Failed to initialize ReAct.', 'err'); return; }
-    }
-    S.mode     = mode;
-    S.convId   = genId();
-    S.messages = [];
-    showScreen('workspace');
-    updateTopbar();
-    clearMsgs();
-    renderSidebar();
-    focusInput();
-  }
-
-  function startNewKeepMode() { startNew(S.mode); }
-
-  async function loadConv(id) {
-    const r = await fetch(`/api/history/${id}`).catch(() => null);
-    if (!r?.ok) return;
-    const conv = await r.json();
-
-    S.mode     = conv.mode || 'chat';
-    S.convId   = conv.id;
-    S.messages = conv.messages || [];
-
-    // For ReAct mode: (re-)initialize TaoLoop then restore PromptManager history
-    // so the agent retains full context when the user continues the conversation.
-    if (S.mode === 'react') {
-      if (!S.llmReady) { openSettings(); setModalMsg('⚠ Please configure model settings first.', 'err'); return; }
-      const ok = await callReactInit();
-      if (!ok) { openSettings(); setModalMsg('⚠ Failed to initialize ReAct.', 'err'); return; }
-      await fetch('/api/react/restore', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: S.messages }),
-      }).catch(() => null);
-    }
-
-    showScreen('workspace');
-    updateTopbar(conv.title || convTitle(S.messages));
-    clearMsgs();
-    S.messages.forEach(msg => renderMessage(msg, false));
-    scrollMsgs();
-    renderSidebar();
-    focusInput();
-  }
-
-  async function callReactInit() {
-    const lang     = $('s-lang')?.value    || 'cn';
-    const maxSteps = parseInt($('s-maxsteps')?.value) || 10;
-    const r = await fetch('/api/react/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lang, max_steps: maxSteps, primary_tools: null }),
-    }).catch(() => null);
-    if (!r?.ok) return false;
-
-    const data = await r.json().catch(() => null);
-
-    // Fast path: already ready (should not happen with the new backend, but keep for safety).
-    if (data?.status === 'ready' || data?.status === 'ok') {
-      S.reactReady = true;
-      return true;
-    }
-
-    // Background init: show loading indicator and poll /api/react/status.
-    setMemLoading(true);
-    const sleep = ms => new Promise(res => setTimeout(res, ms));
-    for (let i = 0; i < 240; i++) {   // max ~120 s
-      await sleep(500);
-      const sr = await fetch('/api/react/status').catch(() => null);
-      if (!sr?.ok) continue;
-      const sd = await sr.json().catch(() => null);
-      if (sd?.status === 'ready') {
-        setMemLoading(false);
-        S.reactReady = true;
-        return true;
-      }
-      if (sd?.status === 'error') {
-        setMemLoading(false);
-        console.error('ReAct init error:', sd.detail);
-        return false;
-      }
-    }
-    setMemLoading(false);
-    return false;
-  }
-
-  function setMemLoading(on) {
-    $('tb-mem-loading').classList.toggle('hidden', !on);
-    $('input-area').classList.toggle('mem-loading', on);
-  }
-
-  async function clearReactSession() {
-    const r = await fetch('/api/react/reset', { method: 'POST' }).catch(() => null);
-    if (!r?.ok) return;
-    S.convId   = genId();
-    S.messages = [];
-    clearMsgs();
-    updateTopbar();
-    renderSidebar();
-  }
-
-  /* ════════════════════════════════════
-     SETTINGS
-  ════════════════════════════════════ */
-  function openSettings()  { $('overlay').classList.remove('hidden'); }
-  function closeSettings() { $('overlay').classList.add('hidden'); setModalMsg(''); }
-  function overlayClick(e) { if (e.target === $('overlay')) closeSettings(); }
-
-  function setTab(name) {
-    ['model', 'memory', 'persona', 'voice'].forEach(t => {
-      $(`tab-${t}`).classList.toggle('hidden', t !== name);
-      $(`tab-btn-${t}`).classList.toggle('active', t === name);
-    });
-    if (name === 'persona') loadPersona();
-    if (name === 'memory')  loadMemory();
-    if (name === 'voice')   loadVoiceConfig();
-  }
-
-  function setModalMsg(msg, cls) {
-    const el = $('modal-msg');
-    el.textContent = msg;
-    el.className   = cls || '';
-  }
-
-  function onToggleFullPrompt() {
-    S.showFullPrompt = $('s-show-full-prompt').checked;
-    localStorage.setItem('showFullPrompt', S.showFullPrompt);
-    document.querySelectorAll('.full-prompt-section').forEach(el => {
-      el.classList.toggle('hidden', !S.showFullPrompt);
-      if (S.showFullPrompt) {
-        el.querySelector('.full-prompt-toggle')?.classList.add('open');
-        el.querySelector('.full-prompt-body')?.classList.remove('hidden');
-      }
-    });
-  }
-
-  function onToggleTools() {
-    S.toolsEnabled = $('s-tools-enabled').checked;
-    localStorage.setItem('toolsEnabled', S.toolsEnabled);
-    updateStartCard();
-  }
-
-  function updateStartCard() {
-    const icon  = $('start-card-icon');
-    const title = $('start-card-title');
-    const desc  = $('start-card-desc');
-    if (!icon) return;
-    if (S.toolsEnabled) {
-      icon.textContent  = '⚡';
-      title.textContent = 'New Agent Conversation';
-      desc.textContent  = 'ReAct · Reasoning + tool actions';
-    } else {
-      icon.textContent  = '💬';
-      title.textContent = 'New Conversation';
-      desc.textContent  = 'Chat · Direct conversation with the LLM';
-    }
-  }
-
-  async function toggleMode() {
-    if (S.streaming) return;
-    const newMode = S.mode === 'chat' ? 'react' : 'chat';
-    if (newMode === 'react') {
-      if (!S.llmReady) { openSettings(); setModalMsg('⚠ Please configure model settings first.', 'err'); return; }
-      const ok = await callReactInit();
-      if (!ok) return;
-    }
-    S.mode = newMode;
-    S.toolsEnabled = (newMode === 'react');
-    localStorage.setItem('toolsEnabled', S.toolsEnabled);
-    $('s-tools-enabled').checked = S.toolsEnabled;
-    updateStartCard();
-    updateTopbar();
-    clearMsgs();
-    S.messages = [];
-    S.convId   = genId();
-    renderSidebar();
-    focusInput();
-  }
-
-  async function confirmClearAllHistory() {
-    const ok = confirm('⚠ 确认要清除所有历史对话记录吗？\n\n此操作不可撤销，所有本地保存的对话将被永久删除。');
-    if (!ok) return;
-    const r = await fetch('/api/history', { method: 'DELETE' }).catch(() => null);
-    if (!r?.ok) { alert('清除失败，请重试。'); return; }
-    S.history = [];
-    renderSidebar();
-    renderLandingRecent();
-    if (S.convId) goHome();
-    showToast('✓ 历史记录已清除');
-  }
-
-  function toggleFullPrompt(btn) {
-    btn.classList.toggle('open');
-    btn.nextElementSibling?.classList.toggle('hidden');
-  }
-
-  function buildFullPromptHtml(context) {
-    return context.map(m => `
-      <div class="full-prompt-msg">
-        <div class="fp-role ${m.role}">${m.role.toUpperCase()}</div>
-        <div class="fp-content">${esc(m.content)}</div>
-      </div>`).join('');
-  }
-
-  async function applySettings() {
-    const btn = $('btn-apply');
-    btn.disabled = true;
-    setModalMsg('Saving…');
-
-    const cfg = {
-      model:         $('s-model').value.trim(),
-      api_key:       $('s-apikey').value.trim(),
-      base_url:      $('s-baseurl').value.trim(),
-      max_tokens:    parseInt($('s-maxtokens').value)    || 512,
-      temperature:   parseFloat($('s-temp').value)       || 1.0,
-      do_sample:     false,
-      device:        'auto',
-      system_prompt: $('s-sysprompt').value.trim(),
-    };
-
-    if (!cfg.model) {
-      setModalMsg('⚠ Model name is required.', 'err');
-      btn.disabled = false;
-      return;
-    }
-
-    const saveR = await fetch('/api/config/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cfg),
-    }).catch(() => null);
-
-    if (!saveR?.ok) { setModalMsg('Failed to save config.', 'err'); btn.disabled = false; return; }
-
-    const initR = await fetch('/api/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cfg),
-    }).catch(() => null);
-
-    if (!initR?.ok) { setModalMsg('Failed to initialize LLM.', 'err'); btn.disabled = false; return; }
-
-    S.llmReady = true;
-
-    // ── Step 3: Save memory + persona + voice settings to disk ──────────────
-    await saveMemory();
-    await savePersona();
-    await saveVoiceConfig();
-
-    // ── Step 4: (Re-)initialize React ────────────────────────────────────────
-    // TaoLoop stores a direct reference to the _llm object at construction time.
-    // /api/init replaces the server-side _llm with a new instance, so any active
-    // TaoLoop still holds a stale reference to the old LLM. We must re-create
-    // TaoLoop whenever the LLM or React-specific settings may have changed and
-    // React was already running (S.reactReady) or is about to be used.
-    const intendedMode = S.toolsEnabled ? 'react' : 'chat';
-
-    if (intendedMode === 'react' || S.reactReady) {
-      S.reactReady = await callReactInit();
-      if (intendedMode === 'react' && !S.reactReady) {
-        setModalMsg('⚠ Failed to initialize ReAct.', 'err');
-        btn.disabled = false;
-        return;
-      }
-      // Re-creating TaoLoop wipes the PromptManager history. If the user is
-      // currently in a React workspace with an ongoing conversation, restore
-      // the context so the agent retains full turn history after settings save.
-      if (S.reactReady && S.mode === 'react' && S.messages.length > 0) {
-        await fetch('/api/react/restore', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: S.messages }),
-        }).catch(() => null);
-      }
-    }
-
-    // ── Step 5: Apply mode to current window immediately ──────────────────────
-    const modeChanged  = S.mode !== intendedMode;
-    S.mode = intendedMode;
-
-    const inWorkspace = !$('s-workspace').classList.contains('hidden');
-    if (inWorkspace) {
-      if (modeChanged) {
-        // Mode switched: discard current draft and start a clean slate,
-        // same behaviour as the topbar toggleMode() button.
-        S.messages = [];
-        S.convId   = genId();
-        clearMsgs();
-        renderSidebar();
-      }
-      updateTopbar();
-    }
-    updateStartCard();
-
-    setModalMsg('✓ Saved & applied.', 'ok');
-    btn.disabled = false;
-    setTimeout(closeSettings, 900);
-  }
-
-  /* ════════════════════════════════════
-     MESSAGING
-  ════════════════════════════════════ */
-  async function sendMessage() {
-    if (S.streaming) return;
-    const inp  = $('msg-input');
-    const text = inp.value.trim();
-    if (!text) return;
-
-    if (!S.llmReady) {
-      openSettings();
-      setModalMsg('⚠ Please configure model settings first.', 'err');
-      return;
-    }
-
-    if (S.mode === 'react' && !S.reactReady) {
-      const ok = await callReactInit();
-      if (!ok) { openSettings(); setModalMsg('⚠ Failed to initialize ReAct.', 'err'); return; }
-    }
-
-    inp.value = '';
-    autoResize(inp);
-
-    const fullContext = [];
-    const sysprompt = $('s-sysprompt').value.trim();
-    if (sysprompt) fullContext.push({ role: 'system', content: sysprompt });
-    S.messages.forEach(m => {
-      if (m.role === 'user' || m.role === 'assistant')
-        fullContext.push({ role: m.role, content: m.content || '' });
-    });
-    fullContext.push({ role: 'user', content: text });
-
-    // For ReAct mode the actual prompt is richer (tool descs, memory, persona…);
-    // we store the basic chat context as a fallback that gets replaced by the
-    // server-side prompt_preview event once the real messages are assembled.
-    const userMsg = { role: 'user', content: text, timestamp: now(), full_context: fullContext };
-    S.messages.push(userMsg);
-    const userMsgEl = renderMessage(userMsg, false);
-
-    if (S.mode === 'chat') {
-      await streamChat(text);
-    } else {
-      await streamReact(text, userMsg, userMsgEl);
-    }
-  }
-
-  async function streamChat(text) {
-    S.streaming = true;
-    setSendDisabled(true);
-
-    const asstMsg = { role: 'assistant', content: '', timestamp: now() };
-    S.messages.push(asstMsg);
-    const msgEl    = renderMessage(asstMsg, true);
-    const bubbleEl = msgEl.querySelector('.msg-bubble');
-    bubbleEl.classList.add('streaming');
-
-    const ws = new WebSocket(wsUrl('/ws/chat'));
-    S.activeWs = ws;
-    let content = '';
-
-    // Send prior turns as history so the LLM maintains multi-turn context.
-    // S.messages currently has [...history, userMsg, emptyAsstPlaceholder].
-    // We slice off the last two (current question + empty placeholder) to get
-    // only the completed prior turns.
-    const history = S.messages.slice(0, -2).map(m => ({ role: m.role, content: m.content || '' }));
-    ws.onopen    = () => ws.send(JSON.stringify({ prompt: text, history }));
-    ws.onmessage = (e) => {
-      const d = JSON.parse(e.data);
-      if (d.error) {
-        asstMsg.content = `[Error] ${d.error}`;
-        bubbleEl.textContent = asstMsg.content;
-        bubbleEl.classList.remove('streaming');
-        ws.close(); return;
-      }
-      if (d.done) { ws.close(); return; }
-      if (d.chunk) {
-        content += d.chunk;
-        asstMsg.content = content;
-        bubbleEl.textContent = content;
-        scrollMsgs();
-      }
-    };
-    ws.onerror = () => {
-      bubbleEl.textContent = '[Connection error]';
-      bubbleEl.classList.remove('streaming');
-    };
-    ws.onclose = async () => {
-      bubbleEl.classList.remove('streaming');
-      if (asstMsg.content) setMdContent(bubbleEl, asstMsg.content);
-      S.streaming = false;
-      S.activeWs  = null;
-      setSendDisabled(false);
-      updateConvTitle();
-      await saveConv();
-      renderSidebar();
-      focusInput();
-      if (S.ttsAutoplay && asstMsg.content) speakText(asstMsg.content);
-    };
-  }
-
-  async function streamReact(question, userMsg, userMsgEl) {
-    S.streaming = true;
-    setSendDisabled(true);
-
-    const asstMsg = { role: 'assistant', content: '', steps: [], timestamp: now() };
-    S.messages.push(asstMsg);
-    const msgEl        = renderMessage(asstMsg, true);
-    const stepBody     = msgEl.querySelector('.react-steps-body');
-    const stepToggle   = msgEl.querySelector('.steps-toggle');
-    const finalBubble  = msgEl.querySelector('.msg-bubble');
-    const reactActivity = msgEl.querySelector('.react-activity');
-
-    const localStepEls = {};
-
-    // Extract "Action: xxx" from partial raw LLM text
-    function parseAction(raw) {
-      const m = raw.match(/^Action\s*[：:]\s*(\S+)/mi);
-      return m ? m[1].trim() : null;
-    }
-
-    function setActivity(stepIdx, action, done) {
-      if (!reactActivity) return;
-      reactActivity.classList.remove('hidden');
-      const spinner = reactActivity.querySelector('.ra-spinner');
-      const text    = reactActivity.querySelector('.ra-text');
-      const tag     = reactActivity.querySelector('.ra-tag');
-      if (done) {
-        if (spinner) spinner.style.borderTopColor = '#10b981';
-      } else {
-        if (spinner) spinner.style.borderTopColor = '';
-      }
-      if (text) text.textContent = `步骤 ${stepIdx + 1}`;
-      if (tag) {
-        tag.textContent = action || '思考中…';
-        tag.style.background = action ? '#fef3c7' : 'var(--bg3)';
-        tag.style.color       = action ? '#b45309' : 'var(--text3)';
-      }
-    }
-
-    const ws = new WebSocket(wsUrl('/ws/react/run'));
-    S.activeWs = ws;
-
-    ws.onopen    = () => ws.send(JSON.stringify({ question }));
-    ws.onmessage = (e) => {
-      const d = JSON.parse(e.data);
-
-      if (d.error) {
-        finalBubble.textContent = `[Error] ${d.error}`;
-        finalBubble.classList.remove('hidden');
-        ws.close(); return;
-      }
-
-      if (d.type === 'prompt_preview') {
-        if (userMsg) userMsg.full_context = d.messages;
-        if (userMsgEl) {
-          const fpSection = userMsgEl.querySelector('.full-prompt-section');
-          if (fpSection) {
-            const toggle = fpSection.querySelector('.full-prompt-toggle');
-            const body   = fpSection.querySelector('.full-prompt-body');
-            if (toggle) toggle.innerHTML =
-              `<span class="chevron">▶</span>Full prompt (${d.messages.length} msg${d.messages.length !== 1 ? 's' : ''})`;
-            if (body) body.innerHTML = buildFullPromptHtml(d.messages);
-            if (S.showFullPrompt) {
-              fpSection.classList.remove('hidden');
-              toggle?.classList.add('open');
-              body?.classList.remove('hidden');
-            }
-          }
-        }
-
-      } else if (d.type === 'step_start') {
-        asstMsg.steps.push({ index: d.index, thought: '', action: '', action_input: {}, observation: '', raw: '' });
-        const el = makeStreamingStepEl(d.index);
-        localStepEls[d.index] = el;
-        stepBody.appendChild(el);
-        if (stepToggle) {
-          stepToggle.classList.remove('hidden');
-          stepToggle.querySelector('.step-count').textContent =
-            `${asstMsg.steps.length} step${asstMsg.steps.length > 1 ? 's' : ''}`;
-        }
-        // Build activity tag element if missing
-        if (reactActivity && !reactActivity.querySelector('.ra-tag')) {
-          reactActivity.innerHTML = `<span class="ra-spinner"></span><span class="ra-text">步骤 ${d.index + 1}</span><span class="ra-tag">思考中…</span>`;
-        }
-        setActivity(d.index, null, false);
-
-      } else if (d.type === 'retry') {
-        const rawEl = localStepEls[d.index]?.querySelector('.step-raw');
-        if (rawEl) {
-          const warn = document.createElement('div');
-          warn.className = 'retry-warning';
-          warn.textContent = `⚠ 格式异常，正在重试… (${d.reason})`;
-          rawEl.parentElement.appendChild(warn);
-        }
-
-      } else if (d.type === 'chunk') {
-        const step = asstMsg.steps.find(s => s.index === d.index);
-        if (step) step.raw = (step.raw || '') + d.chunk;
-        const rawEl = localStepEls[d.index]?.querySelector('.step-raw');
-        if (rawEl) rawEl.textContent += d.chunk;
-        // Update activity with extracted action name
-        if (step) {
-          const action = parseAction(step.raw);
-          if (action) setActivity(d.index, action, false);
-        }
-        scrollMsgs();
-
-      } else if (d.type === 'step') {
-        const step = asstMsg.steps.find(s => s.index === d.index);
-        if (step) Object.assign(step, d);
-        upgradeStepEl(localStepEls[d.index], d);
-        setActivity(d.index, d.action, true);
-
-      } else if (d.type === 'finish') {
-        asstMsg.content = d.answer;
-        setMdContent(finalBubble, d.answer);
-        finalBubble.classList.remove('hidden');
-        if (reactActivity) reactActivity.classList.add('hidden');
-        scrollMsgs();
-        if (S.personaEnabled && S.personaToast) showToast('🎭 人格已演化');
-        if (S.ttsAutoplay && d.answer) speakText(d.answer);
-        ws.close();
-      }
-    };
-    ws.onerror = () => {
-      finalBubble.textContent = '[Connection error]';
-      finalBubble.classList.remove('hidden');
-      if (reactActivity) reactActivity.classList.add('hidden');
-    };
-    ws.onclose = async () => {
-      S.streaming = false;
-      S.activeWs  = null;
-      setSendDisabled(false);
-      updateConvTitle();
-      await saveConv();
-      renderSidebar();
-      focusInput();
-    };
-  }
-
-  /* ════════════════════════════════════
-     RENDERING
-  ════════════════════════════════════ */
-  function renderMessage(msg, isStreaming) {
-    const area      = $('msgs');
-    const emptyHint = $('empty-hint');
-    if (emptyHint) emptyHint.remove();
-
-    const el = document.createElement('div');
-    el.className = `message ${msg.role}`;
-
-    if (msg.role === 'user') {
-      const fpSection = msg.full_context
-        ? `<div class="full-prompt-section${S.showFullPrompt ? '' : ' hidden'}">
-             <button class="full-prompt-toggle${S.showFullPrompt ? ' open' : ''}" onclick="toggleFullPrompt(this)">
-               <span class="chevron">▶</span>Full prompt (${msg.full_context.length} msg${msg.full_context.length !== 1 ? 's' : ''})
-             </button>
-             <div class="full-prompt-body${S.showFullPrompt ? '' : ' hidden'}">${buildFullPromptHtml(msg.full_context)}</div>
-           </div>`
-        : '';
-      el.innerHTML = `
-        <div class="msg-body">
-          <div class="msg-bubble">${esc(msg.content)}</div>
-          <div class="msg-time">${relTime(msg.timestamp)}</div>
-          ${fpSection}
-        </div>
-        <div class="msg-avatar">You</div>`;
-    } else {
-      const isReact   = S.mode === 'react' || (msg.steps && msg.steps.length > 0);
-      const stepsHtml = (msg.steps && msg.steps.length > 0) ? buildStepsHtml(msg.steps) : '';
-
-      let stepsSection = '';
-      if (isReact) {
-        const toggleHidden = (msg.steps && msg.steps.length > 0) ? '' : 'hidden';
-        const count        = msg.steps?.length || 0;
-        stepsSection = `
-          <div class="react-steps">
-            <div class="react-activity hidden">
-              <span class="ra-spinner"></span>
-              <span class="ra-text">思考中…</span>
-            </div>
-            <button class="steps-toggle ${toggleHidden}" onclick="toggleSteps(this)">
-              <span class="chevron">▶</span>
-              <span class="step-count">${count} step${count !== 1 ? 's' : ''}</span>
-            </button>
-            <div class="react-steps-body hidden">${stepsHtml}</div>
-          </div>`;
-      }
-
-      const bubbleHidden = (isStreaming && isReact) ? 'hidden' : '';
-      el.innerHTML = `
-        <div class="msg-avatar">⚡</div>
-        <div class="msg-body">
-          ${stepsSection}
-          <div class="msg-bubble ${bubbleHidden}">${isStreaming ? '' : md(msg.content)}</div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <span class="msg-time">${relTime(msg.timestamp)}</span>
-            <button class="msg-tts-btn" onclick="speakMessage(this)" title="朗读此消息"><span class="sound-wave"><b></b><b></b><b></b><b></b><b></b></span></button>
-          </div>
-        </div>`;
-
-      // Mark as md-rendered for loaded history (non-streaming assistant messages)
-      if (!isStreaming && msg.content) {
-        el.querySelector('.msg-bubble')?.classList.add('md-rendered');
-      }
-
-      // For loaded history with steps: ensure toggle is visible
-      if (!isStreaming && msg.steps && msg.steps.length > 0) {
-        el.querySelector('.steps-toggle')?.classList.remove('hidden');
-      }
-    }
-
-    area.appendChild(el);
-    scrollMsgs();
-    return el;
-  }
-
-  function toggleSteps(btn) {
-    const isOpen = btn.classList.toggle('open');
-    btn.parentElement.querySelector('.react-steps-body')?.classList.toggle('hidden', !isOpen);
-  }
-
-  function toggleStepCard(hdr) {
-    const isOpen = hdr.classList.toggle('open');
-    const detail = hdr.nextElementSibling;
-    if (detail) detail.classList.toggle('open', isOpen);
-  }
-
-  function buildStepsHtml(steps) {
-    return steps.map(s => {
-      if (s.thought) {
-        return `
-          <div class="step-card">
-            <div class="step-hdr" onclick="toggleStepCard(this)">
-              <span class="chevron">▶</span>
-              <span>步骤 ${(s.index ?? 0) + 1}</span>
-              <span class="step-action-tag">${esc(s.action)}</span>
-              <span class="step-done">✓</span>
-            </div>
-            <div class="step-detail">
-              <div class="step-sections">
-                <div class="step-sec thought">
-                  <div class="sec-lbl">Thought</div>
-                  <div class="sec-content">${esc(s.thought)}</div>
-                </div>
-                <div class="step-sec action-sec">
-                  <div class="sec-lbl">Action · ${esc(s.action)}</div>
-                  <code class="code-val">${esc(JSON.stringify(s.action_input, null, 2))}</code>
-                </div>
-                <div class="step-sec observation">
-                  <div class="sec-lbl">Observation</div>
-                  <div class="sec-content">${esc(s.observation)}</div>
-                </div>
-              </div>
-            </div>
-          </div>`;
-      }
-      return `
-        <div class="step-card">
-          <div class="step-hdr" onclick="toggleStepCard(this)">
-            <span class="chevron">▶</span>
-            <span>步骤 ${(s.index ?? 0) + 1}</span>
-          </div>
-          <div class="step-detail">
-            <div class="step-raw">${esc(s.raw || '')}</div>
-          </div>
-        </div>`;
-    }).join('');
-  }
-
-  function makeStreamingStepEl(index) {
-    const el = document.createElement('div');
-    el.className = 'step-card';
-    el.innerHTML = `
-      <div class="step-hdr" onclick="toggleStepCard(this)">
-        <span class="chevron">▶</span>
-        <span>步骤 ${index + 1}</span>
-        <span class="step-streaming-label">thinking…</span>
+  <div id="toast" class="toast"></div>
+
+<!-- ══════════════════════════════════
+     PLAN SCREEN
+══════════════════════════════════ -->
+<div id="s-plan" class="hidden">
+
+  <!-- Top bar -->
+  <div class="plan-topbar">
+    <button id="plan-btn-home" class="icon-btn" title="Home">←</button>
+    <div class="plan-topbar-title">
+      <span class="plan-title-text" id="plan-title">Plan Mode</span>
+      <span class="plan-badge" id="plan-status-badge">idle</span>
+    </div>
+    <div class="plan-topbar-actions">
+      <button id="plan-btn-pause" class="btn-secondary" title="Pause plan">⏸ Pause</button>
+      <button id="plan-btn-resume" class="btn-secondary hidden" title="Resume plan">▶ Resume</button>
+      <button id="plan-btn-snapshot" class="btn-secondary" title="Save snapshot">📷 Snapshot</button>
+    </div>
+  </div>
+
+  <!-- Main body -->
+  <div class="plan-body">
+
+    <!-- DAG panel (left 60%) -->
+    <div class="plan-dag-wrap" id="plan-dag-wrap">
+      <div class="plan-dag-header">
+        <span>Execution DAG</span>
+        <span class="plan-dag-legend">
+          <span class="dag-legend-item dag-pending">pending</span>
+          <span class="dag-legend-item dag-running">running</span>
+          <span class="dag-legend-item dag-done">done</span>
+          <span class="dag-legend-item dag-failed">failed</span>
+          <span class="dag-legend-item dag-skipped">skipped</span>
+        </span>
       </div>
-      <div class="step-detail">
-        <div class="step-raw"></div>
-      </div>`;
-    return el;
-  }
+      <svg id="plan-dag-svg" class="plan-dag-svg"></svg>
+    </div>
 
-  function upgradeStepEl(el, data) {
-    if (!el) return;
-    const wasOpen = el.querySelector('.step-hdr')?.classList.contains('open');
-    el.innerHTML = `
-      <div class="step-hdr${wasOpen ? ' open' : ''}" onclick="toggleStepCard(this)">
-        <span class="chevron">▶</span>
-        <span>步骤 ${data.index + 1}</span>
-        <span class="step-action-tag">${esc(data.action)}</span>
-        <span class="step-done">✓</span>
+    <!-- Right sidebar (40%) -->
+    <div class="plan-sidebar" id="plan-sidebar">
+
+      <!-- Input section -->
+      <div class="plan-panel" id="plan-input-panel">
+        <div class="plan-panel-title">New Plan</div>
+        <textarea id="plan-question" class="plan-question-input" rows="4"
+          placeholder="Describe the complex task you want the orchestrator to plan and execute…"></textarea>
+        <button id="plan-btn-run" class="btn-primary plan-run-btn">▶ Run Plan</button>
       </div>
-      <div class="step-detail${wasOpen ? ' open' : ''}">
-        <div class="step-sections">
-          <div class="step-sec thought">
-            <div class="sec-lbl">Thought</div>
-            <div class="sec-content">${esc(data.thought)}</div>
-          </div>
-          <div class="step-sec action-sec">
-            <div class="sec-lbl">Action · ${esc(data.action)}</div>
-            <code class="code-val">${esc(JSON.stringify(data.action_input, null, 2))}</code>
-          </div>
-          <div class="step-sec observation">
-            <div class="sec-lbl">Observation</div>
-            <div class="sec-content">${esc(data.observation)}</div>
-          </div>
+
+      <!-- Shadow editor -->
+      <div class="plan-panel" id="plan-shadow-panel">
+        <div class="plan-panel-title">
+          Shadow Editor
+          <span class="plan-panel-hint">(edit to patch the live plan)</span>
         </div>
-      </div>`;
-  }
+        <textarea id="plan-shadow-editor" class="plan-shadow-editor" rows="12"
+          placeholder="Shadow plan (Markdown) — modified when a plan is running…" readonly></textarea>
+      </div>
 
-  /* ════════════════════════════════════
-     PERSISTENCE
-  ════════════════════════════════════ */
-  async function saveConv() {
-    if (!S.convId || S.messages.length === 0) return;
-    const title    = convTitle(S.messages);
-    const existing = S.history.find(h => h.id === S.convId);
-    const created  = existing?.created_at || now();
-
-    await fetch('/api/history', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: S.convId, title, mode: S.mode,
-        messages: S.messages, created_at: created, updated_at: now(),
-      }),
-    }).catch(() => {});
-
-    const item = { id: S.convId, title, mode: S.mode, updated_at: now() };
-    const idx  = S.history.findIndex(h => h.id === S.convId);
-    if (idx >= 0) S.history[idx] = item;
-    else          S.history.unshift(item);
-  }
-
-  async function deleteConv(id, e) {
-    e.stopPropagation();
-    await fetch(`/api/history/${id}`, { method: 'DELETE' }).catch(() => {});
-    S.history = S.history.filter(h => h.id !== id);
-    renderSidebar();
-    if (S.convId === id) goHome();
-  }
-
-  /* ════════════════════════════════════
-     UI HELPERS
-  ════════════════════════════════════ */
-  function showScreen(name) {
-    $('s-landing').classList.toggle('hidden', name !== 'landing');
-    $('s-workspace').classList.toggle('hidden', name !== 'workspace');
-  }
-
-  function updateTopbar(title) {
-    $('tb-title').textContent = title || 'New Conversation';
-    const badge = $('tb-mode');
-    badge.textContent = S.mode === 'react' ? 'ReAct' : 'Chat';
-    badge.className   = `mode-badge${S.mode === 'react' ? ' react' : ''}`;
-    $('btn-clear-react').classList.toggle('hidden', S.mode !== 'react');
-    $('tb-persona-badge').classList.toggle('hidden', !(S.personaEnabled && S.mode === 'react'));
-  }
-
-  function clearMsgs() {
-    $('msgs').innerHTML = `
-      <div class="empty-state" id="empty-hint">
-        <span class="empty-icon">${S.mode === 'react' ? '⚡' : '💬'}</span>
-        <span>Type a message below to begin</span>
-      </div>`;
-  }
-
-  function updateConvTitle() {
-    $('tb-title').textContent = convTitle(S.messages) || 'New Conversation';
-  }
-
-  function renderSidebar() {
-    const list = $('sidebar-list');
-    if (S.history.length === 0) {
-      list.innerHTML = '<div class="sidebar-empty">No conversations yet</div>';
-      return;
-    }
-    list.innerHTML = S.history.map(h => `
-      <div class="hist-item${h.id === S.convId ? ' active' : ''}" onclick="loadConv('${h.id}')">
-        <span class="hi-icon">${h.mode === 'react' ? '⚡' : '💬'}</span>
-        <div class="hi-body">
-          <div class="hi-title">${esc(h.title)}</div>
-          <div class="hi-meta">${relTime(h.updated_at)}</div>
+      <!-- Snapshots -->
+      <div class="plan-panel" id="plan-snaps-panel">
+        <div class="plan-panel-title">Snapshots</div>
+        <div id="plan-snaps-list" class="plan-snaps-list">
+          <span class="plan-empty-msg">No snapshots yet.</span>
         </div>
-        <button class="hi-del" onclick="deleteConv('${h.id}', event)" title="Delete">✕</button>
-      </div>`).join('');
-  }
+      </div>
 
-  function renderLandingRecent() {
-    const el = $('landing-recent');
-    if (S.history.length === 0) { el.innerHTML = ''; return; }
-    const recent = S.history.slice(0, 3);
-    el.innerHTML = `
-      <div class="recent-label">Recent</div>
-      <div class="recent-grid">
-        ${recent.map(h => `
-          <div class="recent-item" onclick="loadConv('${h.id}')">
-            <div class="ri-mode">${h.mode === 'react' ? '⚡ ReAct' : '💬 Chat'}</div>
-            <div class="ri-title">${esc(h.title)}</div>
-          </div>`).join('')}
-      </div>`;
-  }
-
-  function setSendDisabled(v) {
-    $('btn-send').disabled   = v;
-    $('msg-input').disabled  = v;
-  }
-
-  function scrollMsgs() {
-    const el = $('msgs');
-    el.scrollTop = el.scrollHeight;
-  }
-
-  function focusInput() {
-    setTimeout(() => $('msg-input')?.focus(), 40);
-  }
-
-  /* ════════════════════════════════════
-     UTILS
-  ════════════════════════════════════ */
-  function $(id) { return document.getElementById(id); }
-
-  function esc(s) {
-    return String(s ?? '')
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  /* Render Markdown to safe HTML. Falls back to escaped plain text if marked is unavailable. */
-  (function _setupMarked() {
-    if (typeof marked === 'undefined') return;
-    // marked.setOptions works in v4; for v5+ we pass options per-call in md()
-    if (typeof marked.setOptions === 'function') {
-      marked.setOptions({ gfm: true, breaks: true });
-    }
-  })();
-
-  function md(text) {
-    const raw = String(text ?? '');
-    if (typeof marked === 'undefined') return esc(raw);
-    // Pass options explicitly for v5+ compatibility
-    const opts = { gfm: true, breaks: true };
-    return typeof marked.parse === 'function'
-      ? marked.parse(raw, opts)
-      : marked(raw, opts);
-  }
-
-  function setMdContent(el, text) {
-    el.innerHTML = md(text);
-    el.classList.add('md-rendered');
-    // Apply syntax highlighting to all code blocks inside this element
-    if (typeof hljs !== 'undefined') {
-      el.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
-    }
-  }
-
-  function wsUrl(path) {
-    return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`;
-  }
-
-  function genId() {
-    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  }
-
-  function now() { return new Date().toISOString(); }
-
-  function relTime(ts) {
-    if (!ts) return '';
-    const d = Date.now() - new Date(ts).getTime();
-    if (d < 60000)    return 'Just now';
-    if (d < 3600000)  return `${Math.floor(d / 60000)}m ago`;
-    if (d < 86400000) return `${Math.floor(d / 3600000)}h ago`;
-    return new Date(ts).toLocaleDateString();
-  }
-
-  function convTitle(messages) {
-    const first = messages.find(m => m.role === 'user');
-    if (!first) return 'New Conversation';
-    const t = first.content.trim();
-    return t.length > 52 ? t.slice(0, 52) + '…' : t;
-  }
-
-  function autoResize(el) {
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-  }
-
-  /* ════════════════════════════════════
-     MEMORY
-  ════════════════════════════════════ */
-  async function loadMemory() {
-    const r = await fetch('/api/memory').catch(() => null);
-    if (!r?.ok) return;
-    const d = await r.json();
-
-    const st = d.short_term  || {};
-    const mt = d.medium_term || {};
-    const lt = d.long_term   || {};
-    const ms = d.milestone   || {};
-
-    $('s-st-enabled').checked        = st.enabled         ?? true;
-    $('s-st-max-turns').value        = st.max_turns        ?? 10;
-    $('s-st-max-tokens').value       = st.max_tokens       ?? 2048;
-    $('s-st-distill').checked        = st.distill_enabled  ?? true;
-    $('s-st-distill-trigger').value  = st.distill_trigger_steps ?? 4;
-    $('s-st-distill-tokens').value   = st.max_distillate_tokens ?? 400;
-
-    $('s-mt-enabled').checked        = mt.enabled     ?? true;
-    $('s-mt-window-days').value      = mt.window_days ?? 7;
-    $('s-mt-max-entries').value      = mt.max_entries ?? 30;
-    $('s-mt-max-chars').value        = mt.max_chars   ?? 3000;
-    $('s-mt-consolidate').checked        = mt.consolidate_enabled        ?? true;
-    $('s-mt-consolidate-batch').value    = mt.consolidate_batch          ?? 10;
-    $('s-mt-consolidate-interval').value = mt.consolidate_interval_days  ?? 1;
-    $('s-mt-consolidate-tokens').value   = mt.max_consolidate_tokens     ?? 500;
-
-    $('s-lt-enabled').checked        = lt.enabled          ?? false;
-    $('s-lt-top-k').value            = lt.top_k            ?? 5;
-    $('s-lt-max-recall').value       = lt.max_recall_chars ?? 3000;
-    $('s-lt-consolidation').value    = lt.consolidation_k  ?? 0;
-    $('s-lt-distill').checked        = lt.distill_enabled    ?? false;
-    $('s-lt-distill-tokens').value   = lt.max_distill_tokens ?? 400;
-
-    $('s-ms-enabled').checked        = ms.enabled              ?? false;
-    $('s-ms-threshold').value        = ms.importance_threshold ?? 0.6;
-    $('s-ms-top-k').value            = ms.top_k_retrieve       ?? 2;
-    $('s-ms-max').value              = ms.max_milestones        ?? 50;
-    $('s-ms-inject-detail').checked  = ms.inject_detail        ?? true;
-  }
-
-  async function doConsolidate() {
-    const btn = $('btn-consolidate');
-    const msg = $('consolidate-msg');
-    btn.disabled = true;
-    msg.style.color = 'var(--text3)';
-    msg.textContent = '正在整合…';
-    const r = await fetch('/api/memory/consolidate', { method: 'POST' }).catch(() => null);
-    btn.disabled = false;
-    if (!r) { msg.style.color = 'var(--err)'; msg.textContent = '请求失败，请检查服务是否运行。'; return; }
-    const d = await r.json().catch(() => ({}));
-    if (r.ok) {
-      msg.style.color = 'var(--accent)';
-      msg.textContent = d.message || '完成。';
-    } else {
-      msg.style.color = 'var(--err)';
-      msg.textContent = d.detail || '整合失败。';
-    }
-  }
-
-  async function saveMemory() {    const body = {
-      st_enabled:               $('s-st-enabled').checked,
-      st_max_turns:             parseInt($('s-st-max-turns').value)       || 10,
-      st_max_tokens:            parseInt($('s-st-max-tokens').value)      || 2048,
-      st_distill_enabled:       $('s-st-distill').checked,
-      st_distill_trigger_steps: parseInt($('s-st-distill-trigger').value) || 4,
-      st_max_distillate_tokens: parseInt($('s-st-distill-tokens').value)  || 400,
-
-      mt_enabled:     $('s-mt-enabled').checked,
-      mt_window_days: parseInt($('s-mt-window-days').value)  || 7,
-      mt_max_entries: parseInt($('s-mt-max-entries').value)  || 30,
-      mt_max_chars:   parseInt($('s-mt-max-chars').value)    || 3000,
-      mt_consolidate_enabled:       $('s-mt-consolidate').checked,
-      mt_consolidate_batch:         parseInt($('s-mt-consolidate-batch').value)    || 10,
-      mt_consolidate_interval_days: parseInt($('s-mt-consolidate-interval').value) ?? 1,
-      mt_max_consolidate_tokens:    parseInt($('s-mt-consolidate-tokens').value)   || 500,
-
-      lt_enabled:            $('s-lt-enabled').checked,
-      lt_top_k:              parseInt($('s-lt-top-k').value)         || 5,
-      lt_max_recall_chars:   parseInt($('s-lt-max-recall').value)    || 3000,
-      lt_consolidation_k:    parseInt($('s-lt-consolidation').value) || 0,
-      lt_distill_enabled:    $('s-lt-distill').checked,
-      lt_max_distill_tokens: parseInt($('s-lt-distill-tokens').value) || 400,
-
-      ms_enabled:              $('s-ms-enabled').checked,
-      ms_importance_threshold: parseFloat($('s-ms-threshold').value) || 0.6,
-      ms_top_k_retrieve:       parseInt($('s-ms-top-k').value)       || 2,
-      ms_max_milestones:       parseInt($('s-ms-max').value)         || 50,
-      ms_inject_detail:        $('s-ms-inject-detail').checked,
-    };
-    const r = await fetch('/api/memory/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).catch(() => null);
-    return r?.ok ?? false;
-  }
-
-  /* ════════════════════════════════════
-     PERSONA
-  ════════════════════════════════════ */
-  async function loadPersona() {
-    const r = await fetch('/api/persona').catch(() => null);
-    if (!r?.ok) return;
-    const d = await r.json();
-
-    $('s-persona-enabled').checked   = d.enabled ?? false;
-    $('s-persona-toast').checked     = S.personaToast;
-    $('s-p-name').value        = d.profile?.name       ?? 'Assistant';
-    $('s-p-background').value  = d.profile?.background ?? '';
-    $('s-p-traits').value      = (d.profile?.traits ?? []).join(', ');
-    $('s-p-values').value      = (d.profile?.values ?? []).join(', ');
-    $('s-p-style').value       = d.profile?.style      ?? '';
-    $('s-p-max-profile').value = d.max_profile_chars   ?? 500;
-
-    S.personaEnabled = d.enabled ?? false;
-    updateTopbar();
-  }
-
-  async function savePersona() {
-    const traits = $('s-p-traits').value.split(',').map(s => s.trim()).filter(Boolean);
-    const values = $('s-p-values').value.split(',').map(s => s.trim()).filter(Boolean);
-    const body = {
-      enabled:           $('s-persona-enabled').checked,
-      name:              $('s-p-name').value.trim() || 'Assistant',
-      background:        $('s-p-background').value.trim(),
-      traits,
-      values,
-      style:             $('s-p-style').value.trim(),
-      max_profile_chars: parseInt($('s-p-max-profile').value) || 500,
-    };
-    await fetch('/api/persona/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).catch(() => null);
-    S.personaEnabled = body.enabled;
-    S.personaToast   = $('s-persona-toast').checked;
-    localStorage.setItem('personaToast', S.personaToast);
-    updateTopbar();
-  }
-
-  function showToast(msg) {
-    const t = document.createElement('div');
-    t.className = 'toast';
-    t.textContent = msg;
-    document.body.appendChild(t);
-    requestAnimationFrame(() => { requestAnimationFrame(() => t.classList.add('show')); });
-    setTimeout(() => {
-      t.classList.remove('show');
-      setTimeout(() => t.remove(), 300);
-    }, 2600);
-  }
-
-  /* ════════════════════════════════════
-     CLEAR MEMORY
-  ════════════════════════════════════ */
-  async function doClearMemory() {
-    if (!confirm('确定要清空所有记忆？此操作不可撤销。')) return;
-    const msg = $('clear-memory-msg');
-    msg.textContent = '正在清空…';
-    const r = await fetch('/api/react/memory/clear', { method: 'POST' }).catch(() => null);
-    if (r?.ok) {
-      msg.textContent = '记忆已清空。';
-    } else {
-      msg.textContent = r ? '清空失败（ReAct 未初始化）' : '网络错误';
-    }
-    setTimeout(() => { msg.textContent = ''; }, 3000);
-  }
-
-  async function doClearPersona() {
-    if (!confirm('确定要清空所有人格漂移数据？画像将还原至基础设定，此操作不可撤销。')) return;
-    const msg = $('clear-persona-msg');
-    msg.textContent = '正在清空…';
-    const r = await fetch('/api/react/persona/clear', { method: 'POST' }).catch(() => null);
-    if (r?.ok) {
-      msg.textContent = '人格漂移数据已清空。';
-    } else {
-      const detail = r ? (await r.json().catch(() => ({}))).error || '清空失败' : '网络错误';
-      msg.textContent = detail;
-    }
-    setTimeout(() => { msg.textContent = ''; }, 3000);
-  }
-
-  /* ════════════════════════════════════
-     KNOWLEDGE BASE PANEL
-  ════════════════════════════════════ */
-  function openKBPanel() {
-    $('main-area').classList.add('hidden');
-    $('kb-panel').classList.remove('hidden');
-    loadKBDocuments2();
-  }
-
-  function closeKBPanel() {
-    $('kb-panel').classList.add('hidden');
-    $('main-area').classList.remove('hidden');
-  }
-
-  async function fixKBIndex() {
-    const r = await fetch('/api/kb/fix-index', { method: 'POST' }).catch(() => null);
-    alert(r?.ok ? '索引修复成功' : '修复失败（知识库可能未初始化）');
-  }
-
-  async function doKBSearch2() {
-    const q = $('kb-search-input2').value.trim();
-    if (!q) return;
-    const el = $('kb-search-results2');
-    el.textContent = '搜索中…';
-    const mode = $('kb-search-mode').value;
-    const url = `/api/kb/search?q=${encodeURIComponent(q)}&top_k=5&top_k_each=3&mode=${mode}`;
-    const r = await fetch(url).catch(() => null);
-    if (!r?.ok) { el.textContent = '搜索失败（知识库可能未初始化）'; return; }
-    const data = await r.json();
-    if (!data.results?.length) { el.textContent = '未找到相关内容。'; return; }
-    el.innerHTML = data.results.map((res, i) =>
-      `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
-        <span style="font-weight:600;color:var(--accent)">${i+1}.</span>
-        <span style="color:var(--text3)">[${res.score.toFixed(3)} | ${res.source}]</span>
-        <div style="margin-top:3px">${res.content.slice(0, 300)}${res.content.length > 300 ? '…' : ''}</div>
-      </div>`
-    ).join('');
-  }
-
-  async function doKBIngest2() {
-    const text = $('kb-ingest-text2').value.trim();
-    if (!text) return;
-    const msg = $('kb-ingest-msg2');
-    msg.textContent = '写入中…';
-    const r = await fetch('/api/kb/ingest', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text,
-        title:   $('kb-ingest-title2').value.trim(),
-        domain:  $('kb-ingest-domain2').value.trim(),
-        concept: $('kb-ingest-concept2').value.trim(),
-      }),
-    }).catch(() => null);
-    if (r?.ok) {
-      const d = await r.json();
-      msg.textContent = `写入成功：doc_id = ${d.doc_id}`;
-      $('kb-ingest-text2').value = '';
-      loadKBDocuments2();
-    } else {
-      msg.textContent = '写入失败（知识库可能未初始化）';
-    }
-    setTimeout(() => { msg.textContent = ''; }, 4000);
-  }
-
-  async function loadKBDocuments2() {
-    const el = $('kb-doc-list2');
-    el.textContent = '加载中…';
-    const r = await fetch('/api/kb/documents').catch(() => null);
-    if (!r?.ok) { el.textContent = '加载失败（知识库可能未初始化）'; return; }
-    const data = await r.json();
-    const docs = data.documents || [];
-    if (!docs.length) { el.textContent = '知识库为空。'; return; }
-    el.innerHTML = docs.map(d =>
-      `<div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <div>
-          <span style="font-weight:600">${d.title || '(无标题)'}</span>
-          <span style="color:var(--text3);font-size:12px;margin-left:6px">${d.source_type}</span>
-          ${d.meta?.domain ? `<span style="color:var(--accent);font-size:12px;margin-left:4px">${d.meta.domain}</span>` : ''}
+      <!-- Logs -->
+      <div class="plan-panel" id="plan-logs-panel">
+        <div class="plan-panel-title">
+          Logs
+          <button id="plan-btn-refresh-logs" class="icon-btn" title="Refresh logs" style="font-size:12px">↻</button>
         </div>
-        <button class="icon-btn danger" title="删除" onclick="deleteKBDoc('${d.id}')">🗑</button>
-      </div>`
-    ).join('');
-  }
+        <div id="plan-logs-container" class="plan-logs-container">
+          <span class="plan-empty-msg">No logs yet.</span>
+        </div>
+      </div>
 
-  async function deleteKBDoc(docId) {
-    if (!confirm('确定删除此文档？')) return;
-    const r = await fetch(`/api/kb/documents/${docId}`, { method: 'DELETE' }).catch(() => null);
-    if (r?.ok) loadKBDocuments2();
-  }
+    </div><!-- /plan-sidebar -->
+  </div><!-- /plan-body -->
 
-  /* ════════════════════════════════════
-     KEYBOARD + INIT
-  ════════════════════════════════════ */
-  document.addEventListener('DOMContentLoaded', () => {
-    const inp = $('msg-input');
-    inp.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-    });
-    inp.addEventListener('input', function () { autoResize(this); });
-    boot();
-  });
-</script>
+</div><!-- /s-plan -->
 
+  <script type="module" src="/static/js/main.js"></script>
 </body>
 </html>
+
+

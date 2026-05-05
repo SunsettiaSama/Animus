@@ -15,10 +15,15 @@ def _utcnow_iso() -> str:
 
 
 class SchedulerEngine:
-    def __init__(self, cfg: SchedulerConfig):
+    def __init__(
+        self,
+        cfg: SchedulerConfig,
+        long_term=None,
+        timeline=None,
+    ):
         self._cfg    = cfg
         self._store  = TaskStore(cfg.scheduler_dir)
-        self._runner = TaskRunner(cfg)
+        self._runner = TaskRunner(cfg, long_term=long_term, timeline=timeline)
 
     # ── Scheduling API ────────────────────────────────────────────────────────
 

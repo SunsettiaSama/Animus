@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -11,8 +11,12 @@ class LLMConfig:
     max_tokens: int = 512
     temperature: float = 1.0
     do_sample: bool = False
+    top_p: float = 1.0
+    top_k: int = 0
+    repetition_penalty: float = 1.0
     device: str = "auto"
     system_prompt: str = ""
+    backend: str = "openai"    # "openai" | "vllm" | "transformers"
 
     @classmethod
     def from_yaml(cls, path: str) -> LLMConfig:
@@ -27,20 +31,28 @@ class LLMConfig:
             max_tokens=int(data.get("max_tokens", 512)),
             temperature=float(data.get("temperature", 1.0)),
             do_sample=bool(data.get("do_sample", False)),
+            top_p=float(data.get("top_p", 1.0)),
+            top_k=int(data.get("top_k", 0)),
+            repetition_penalty=float(data.get("repetition_penalty", 1.0)),
             device=data.get("device", "auto"),
             system_prompt=data.get("system_prompt", ""),
+            backend=data.get("backend", "openai"),
         )
 
     def to_dict(self) -> dict:
         return {
-            "model": self.model,
-            "api_key": self.api_key,
-            "base_url": self.base_url or "",
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "do_sample": self.do_sample,
-            "device": self.device,
-            "system_prompt": self.system_prompt,
+            "model":              self.model,
+            "api_key":            self.api_key,
+            "base_url":           self.base_url or "",
+            "max_tokens":         self.max_tokens,
+            "temperature":        self.temperature,
+            "do_sample":          self.do_sample,
+            "top_p":              self.top_p,
+            "top_k":              self.top_k,
+            "repetition_penalty": self.repetition_penalty,
+            "device":             self.device,
+            "system_prompt":      self.system_prompt,
+            "backend":            self.backend,
         }
 
     def save_yaml(self, path: str) -> None:

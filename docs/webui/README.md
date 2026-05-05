@@ -1,25 +1,58 @@
 # WebUI
 
-基于 FastAPI 的轻量 Web 聊天界面，支持普通对话与 ReAct 推理两种模式，在浏览器中配置、对话、管理知识库并使用语音功能。
+基于 FastAPI 的 Web 界面，以工作站仪表板为主页，统一展示所有子系统状态与配置入口；支持 Chat / ReAct 双模式对话，集成知识库、语音、调度器与历史管理。
 
-## 文件
+## 文件结构
 
-| 文件 | 说明 |
+| 路径 | 说明 |
 |---|---|
-| `src/webui/app.py` | FastAPI 后端，REST API + WebSocket 流式接口 |
-| `src/webui/index.html` | 单页前端，纯 HTML + Vanilla JS，无框架依赖 |
-| `src/webui/run.py` | 启动入口 |
+| `src/webui/app.py` | FastAPI 应用入口，挂载静态资源，注册所有 router，处理 startup / shutdown |
+| `src/webui/state.py` | 后端单例 `AppState`，持有 LLM、ReAct、基础服务、工具等所有运行时对象 |
+| `src/webui/index.html` | 单页前端，纯 HTML + Vanilla JS ES 模块，无框架依赖 |
+| `src/webui/run.py` | uvicorn 启动入口（默认端口 8080，正式端口由 `config/react/run.yaml` 的 `webui.port` 决定，默认 **8300**）|
+| `src/webui/schemas/llm.py` | LLM 相关 Pydantic 模型 |
+| `src/webui/schemas/react.py` | ReAct WebSocket 消息 Pydantic 模型 |
+| `src/webui/routers/llm.py` | LLM 配置、初始化、状态、Chat 流式接口 |
+| `src/webui/routers/react.py` | ReAct 初始化、推理（SSE + WebSocket）、工具查询、时间线 |
+| `src/webui/routers/history.py` | 对话历史 CRUD（JSON 文件持久化） |
+| `src/webui/routers/memory.py` | 记忆配置读写与蒸馏触发 |
+| `src/webui/routers/persona.py` | 人格配置读写 |
+| `src/webui/routers/scheduler.py` | 调度器任务管理 |
+| `src/webui/routers/knowledge.py` | 知识库文档管理与检索 |
+| `src/webui/routers/voice.py` | TTS / STT 配置、合成、转录、模型下载 |
+| `src/webui/routers/infra/vllm.py` | vLLM 服务器配置与启停 |
+| `src/webui/routers/infra/sandbox.py` | 沙盒配置读写 |
+| `src/webui/routers/infra/services.py` | 统一服务状态与启停 |
+| `src/webui/static/css/main.css` | 全局样式 |
+| `src/webui/static/js/main.js` | 应用入口：引导、生命周期、事件绑定 |
+| `src/webui/static/js/state.js` | 前端状态机（`S`、`setState`、`set`） |
+| `src/webui/static/js/api.js` | HTTP / WebSocket 工具与所有路径常量（`PATHS`） |
+| `src/webui/static/js/history.js` | 对话历史 CRUD + 侧边栏渲染 |
+| `src/webui/static/js/settings.js` | 设置弹窗 Tab 读写，委托各域模块 |
+| `src/webui/static/js/streaming.js` | `ChatSession` / `ReactSession` WebSocket 会话管理 |
+| `src/webui/static/js/render.js` | 消息区 DOM 操作 |
+| `src/webui/static/js/modules/llm.js` | LLM 配置 / 初始化 / 工作站卡片 |
+| `src/webui/static/js/modules/react.js` | ReAct 初始化 / 状态 / 工具 / 工作站卡片 |
+| `src/webui/static/js/modules/memory.js` | 记忆配置 / 蒸馏 / 工作站卡片 |
+| `src/webui/static/js/modules/persona.js` | 人格配置 / 工作站卡片 |
+| `src/webui/static/js/modules/voice.js` | TTS / STT 配置 / 工作站卡片 |
+| `src/webui/static/js/modules/scheduler.js` | 调度器任务 / 工作站卡片 |
+| `src/webui/static/js/modules/infra.js` | vLLM / 沙盒 / 服务状态 |
+| `src/webui/static/js/modules/knowledge.js` | 知识库面板 |
+| `src/webui/routers/plan.py` | Plan 模式编排控制（运行 / 状态 / SSE 流 / 快照 / 回滚 / 日志 / 暂停 / 跳步）|
+| `src/webui/static/js/modules/plan.js` | Plan 模式前端（BFS DAG 布局、SVG 渲染、SSE 实时更新、影子编辑器、快照列表、日志尾流）|
 
 ## 启动
 
 ```bash
-# 项目根目录
+# 项目根目录（推荐）
 python src/run.py
+
 # 或直接
 python src/webui/run.py
 ```
 
-访问 `http://localhost:8300`。也可通过 `start.bat` 一键启动（含 Docker 数据库、依赖检查、浏览器自动打开）。
+访问 `http://localhost:8300`（端口由 `config/react/run.yaml` 的 `webui.port` 控制，默认 8300）。
 
 ---
 
@@ -29,41 +62,78 @@ python src/webui/run.py
 
 | 路由 | 方法 | 说明 |
 |---|---|---|
-| `/api/config` | GET | 读取当前 LLM 配置 |
-| `/api/config/save` | POST | 保存 LLM 配置到 YAML |
-| `/api/init` | POST | 初始化 / 切换 Chat 模式 LLM |
-| `/api/status` | GET | 查询 LLM 初始化状态与 ReAct 会话状态 |
+| `/api/config` | GET | 读取当前 LLM 配置（含 WebUI 偏好设置：`tools_enabled`、`show_full_prompt`、`prompt_lang`、`max_steps`）|
+| `/api/config/save` | POST | 保存 LLM 配置到 YAML，WebUI 偏好保存到 `config/webui/settings.json` |
+| `/api/llm/config` | GET | 同 `/api/config`（别名）|
+| `/api/llm/config/save` | POST | — |
+| `/api/init` 或 `/api/llm/init` | POST | 初始化 / 切换 Chat 模式 LLM |
+| `PATCH /api/llm` | PATCH | 流式保护下热替换 LLM（streaming 时返回 409）|
+| `/api/status` | GET | 查询 LLM 状态，返回 `initialized`、`model`、`backend`、`react_ready`、`turn_count`、`is_streaming` |
+
+`GET /api/config` 返回示例：
+
+```json
+{
+  "model": "gpt-4o",
+  "api_key": "sk-…",
+  "base_url": "",
+  "max_tokens": 512,
+  "temperature": 1.0,
+  "system_prompt": "",
+  "tools_enabled": false,
+  "show_full_prompt": false,
+  "prompt_lang": "cn",
+  "max_steps": 10
+}
+```
 
 ### 普通对话
 
 | 路由 | 方法 | 说明 |
 |---|---|---|
-| `/api/chat` | POST | SSE 流式对话（纯文本，带多轮 history）|
-| `/ws/chat` | WebSocket | WebSocket 流式对话（同上）|
+| `/api/chat` | POST | SSE 流式对话（纯文本，带多轮 history，兼容用）|
+| `/ws/chat` | WebSocket | WebSocket 流式对话（主路径，含 `gen_id`、abort 支持）|
 
 ### ReAct 推理
 
 | 路由 | 方法 | 说明 |
 |---|---|---|
-| `/api/react/init` | POST | 初始化 ReAct 会话（语言、工具、步数等）|
-| `/api/react/run` | POST | SSE 流式 ReAct 推理 |
+| `/api/react/init` 或 `/api/react/reinit` | POST | 初始化 ReAct 会话（`lang`、`max_steps`、`primary_tools`、`enable_kb`）；streaming 时返回 409 |
+| `/api/react/run` | POST | SSE 流式 ReAct 推理（兼容用）|
 | `/ws/react/run` | WebSocket | WebSocket 流式 ReAct 推理（主路径）|
 | `/api/react/reset` | POST | 清空当前会话历史 |
-| `/api/react/restore` | POST | 从保存的对话 JSON 恢复会话历史 |
-| `/api/react/status` | GET | 查询 ReAct 初始化状态 |
-| `/api/react/memory/clear` | POST | 清除记忆 |
+| `/api/react/restore` | POST | 从消息列表恢复会话历史（`{ messages: [...] }`）|
+| `/api/react/abort` | POST | REST 备用中止（WebSocket 断开时使用）|
+| `/api/react/status` | GET | 查询 ReAct 初始化状态（`initializing` / `ready` / `error`）|
+| `/api/react/memory/clear` | POST | 清除所有记忆层 |
+| `/api/react/persona/clear` | POST | 清除人格漂移数据 |
 | `/api/react/tools` | GET | 查询已注册工具列表（按分类）|
-| `/api/react/tools/search` | GET | 语义搜索工具 |
+| `/api/react/tools/search` | GET | 语义搜索工具（`?query=...&top_k=5`）|
+| `/api/timeline` | GET | 获取事件时间线（`?date=YYYY-MM-DD`，默认今天）|
 
 ### 对话历史
 
 | 路由 | 方法 | 说明 |
 |---|---|---|
-| `/api/history` | GET | 列出所有已保存对话 |
-| `/api/history/{id}` | GET | 读取单条对话 |
-| `/api/history` | POST | 保存对话 |
-| `/api/history/{id}` | DELETE | 删除对话 |
+| `/api/history` | GET | 列出所有已保存对话（按更新时间倒序）|
+| `/api/history/{id}` | GET | 读取单条对话完整内容 |
+| `/api/history` | POST | 保存对话（创建） |
+| `/api/history/{id}` | POST | 保存对话（更新，使用指定 id）|
+| `/api/history/{id}` | DELETE | 删除单条对话 |
 | `/api/history` | DELETE | 删除全部历史 |
+
+历史记录存储于 `.react/history/` 目录，每条对话一个 JSON 文件：
+
+```json
+{
+  "id": "uuid",
+  "title": "对话标题",
+  "mode": "chat | react",
+  "messages": [{"role": "user", "content": "…"}, {"role": "assistant", "content": "…"}],
+  "created_at": "ISO8601",
+  "updated_at": "ISO8601"
+}
+```
 
 ### 人格（Persona）
 
@@ -76,7 +146,7 @@ python src/webui/run.py
 
 | 路由 | 方法 | 说明 |
 |---|---|---|
-| `/api/memory` | GET | 读取记忆配置 |
+| `/api/memory` | GET | 读取记忆配置（L1 / L2 / L3 / Milestone）|
 | `/api/memory/save` | POST | 保存记忆配置 |
 | `/api/memory/consolidate` | POST | 手动触发中期记忆蒸馏 |
 
@@ -86,37 +156,19 @@ python src/webui/run.py
 |---|---|---|
 | `/api/kb/documents` | GET | 列出所有文档 |
 | `/api/kb/documents/{doc_id}` | DELETE | 删除指定文档 |
-| `/api/kb/search` | GET | 检索知识库，支持 `mode` 参数 |
+| `/api/kb/search` | GET | 检索知识库（`?q=...&mode=hybrid&top_k=5`）|
 | `/api/kb/ingest` | POST | 写入新文档 |
-| `/api/kb/repair` | POST | 修复未向量化的 chunks |
+| `/api/kb/fix-index` | POST | 修复未向量化的 chunks |
 
-#### `/api/kb/search` 参数
+`/api/kb/search` 的 `mode` 参数：`keyword` / `semantic` / `hybrid`（默认）。
 
-| 参数 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `q` | str | 必填 | 查询文本 |
-| `top_k` | int | 5 | keyword / semantic 模式返回条数 |
-| `top_k_each` | int | 3 | hybrid 模式每路返回条数 |
-| `mode` | str | `"hybrid"` | `keyword` / `semantic` / `hybrid` |
+### 调度器（Scheduler）
 
-响应示例：
-
-```json
-{
-  "query": "量子纠缠",
-  "mode": "hybrid",
-  "results": [
-    {
-      "chunk_id": "...",
-      "doc_id": "...",
-      "score": 0.92,
-      "source": "manual",
-      "content": "量子纠缠是...",
-      "meta": {"domain": "physics"}
-    }
-  ]
-}
-```
+| 路由 | 方法 | 说明 |
+|---|---|---|
+| `/api/scheduler/tasks` | GET | 列出所有任务 |
+| `/api/scheduler/tasks` | POST | 创建任务 |
+| `/api/scheduler/tasks/{id}` | DELETE | 删除任务 |
 
 ### TTS / STT
 
@@ -125,30 +177,81 @@ python src/webui/run.py
 | `/api/tts/config` | GET | 读取 TTS 配置 |
 | `/api/tts/config/save` | POST | 保存 TTS 配置 |
 | `/api/tts/synthesize` | POST | 一次性合成音频 |
-| `/api/tts/download` | GET | 下载已合成的音频文件 |
+| `/api/tts/download` | GET | 下载模型（SSE 进度流）|
 | `/ws/tts` | WebSocket | 流式 TTS（推送音频 chunk）|
 | `/api/stt/config` | GET | 读取 STT 配置 |
 | `/api/stt/config/save` | POST | 保存 STT 配置 |
 | `/api/stt/transcribe` | POST | 上传音频，返回转录文本 |
-| `/api/stt/download` | GET | 下载本地 STT 模型 |
+| `/api/stt/download` | GET | 下载本地 STT 模型（SSE 进度流）|
 | `/ws/stt` | WebSocket | 实时 STT |
+
+### 基础设施（Infra）
+
+| 路由 | 方法 | 说明 |
+|---|---|---|
+| `/api/vllm/config` | GET | 读取 vLLM 配置 |
+| `/api/vllm/config/save` | POST | 保存 vLLM 配置 |
+| `/api/vllm/start` | POST | 启动 vLLM 服务器 |
+| `/api/vllm/stop` | POST | 停止 vLLM 服务器 |
+| `/api/vllm/status` | GET | 查询 vLLM 运行状态 |
+| `/api/vllm/logs` | GET | 获取 vLLM 日志 |
+| `/api/sandbox/config` | GET | 读取沙盒配置 |
+| `/api/sandbox/config/save` | POST | 保存沙盒配置 |
+| `/api/services/status` | GET | 查询所有服务状态（vLLM / SearXNG / Sandbox / TTS / STT）|
+| `/api/services/{name}/status` | GET | 单个服务状态 |
+| `/api/services/{name}/start` | POST | 启动指定服务 |
+| `/api/services/{name}/stop` | POST | 停止指定服务 |
+| `/api/services/{name}/logs` | GET | 获取服务日志 |
+
+### Plan 模式（Plan Mode）
+
+| 路由 | 方法 | 说明 |
+|---|---|---|
+| `/api/plan/run` | POST | 启动新计划（`{ "question": "..." }`），返回 `plan_id` |
+| `/api/plan/status` | GET | 返回当前 `PlanDocument` 状态（任务列表、依赖、执行状态）|
+| `/api/plan/stream` | GET | SSE 事件流，推送 `PlanEvent`（task_start / task_running / task_complete / task_failed / replan / snapshot 等）|
+| `/api/plan/snapshots` | GET | 列出所有可用快照 |
+| `/api/plan/rollback` | POST | 回滚到指定快照（`{ "snapshot_id": "..." }`）|
+| `/api/plan/logs` | GET | 获取结构化日志（`?task_id=&n=50`）|
+| `/api/plan/pause` | POST | 暂停计划执行 |
+| `/api/plan/resume` | POST | 恢复计划执行 |
+| `/api/plan/skip/{task_id}` | POST | 跳过指定任务 |
 
 ---
 
-## WebSocket 事件流（`/ws/react/run`）
+## WebSocket 事件流
 
-| 事件类型 | 字段 | 说明 |
-|---|---|---|
-| `prompt_preview` | `messages: list[dict]` | 完整 Prompt 组装结果（首步前推送）|
-| `step_start` | `index: int` | 开始第 N 步推理 |
-| `chunk` | `index, chunk: str` | LLM 流式输出片段 |
-| `step` | `index, thought, action, action_input, observation` | 单步推理完整记录 |
-| `finish` | `answer: str` | 最终答案（WebSocket 随后关闭）|
-| `error` | `message: str` | 推理过程中发生异常 |
+### `/ws/chat` — 普通对话
+
+客户端首条消息：`{ "question": "...", "gen_id": "uuid" }`
+
+| 事件 | 方向 | 字段 | 说明 |
+|---|---|---|---|
+| `chunk` | S→C | `chunk: str` | LLM 流式输出片段 |
+| `finish` | S→C | `aborted: bool` | 对话结束 |
+| `error` | S→C | `message: str` | 错误信息 |
+| `abort` | C→S | `type: "abort"`, `gen_id: str` | 客户端中止请求 |
+
+### `/ws/react/run` — ReAct 推理
+
+客户端首条消息：`{ "question": "...", "gen_id": "uuid" }`
+
+| 事件类型 | 方向 | 字段 | 说明 |
+|---|---|---|---|
+| `prompt_preview` | S→C | `messages: list[dict]` | 完整 Prompt 组装结果（首步前推送一次）|
+| `step_start` | S→C | `index: int` | 开始第 N 步推理 |
+| `chunk` | S→C | `index: int`, `chunk: str` | LLM 流式输出片段 |
+| `step` | S→C | `index`, `thought`, `action`, `action_input`, `observation` | 单步推理完整记录 |
+| `retry` | S→C | `index: int`, `reason: str` | 当前步骤重试 |
+| `approval_request` | S→C | `request_id`, `tool_name`, `args`, `risk_level`, `reason`, `deadline_secs` | 高风险工具等待用户审批 |
+| `finish` | S→C | `answer: str`, `aborted: bool` | 最终答案（WebSocket 随后关闭）|
+| `error` | S→C | `message: str` | 推理过程中发生异常 |
+| `abort` | C→S | `type: "abort"`, `gen_id: str` | 客户端中止 |
+| `approval_response` | C→S | `type: "approval_response"`, `request_id: str`, `approved: bool` | 工具审批回应 |
 
 ### 后台提交机制
 
-`finish` 事件发送后 WebSocket 立即关闭，commit / 向量写入 / 蒸馏 / 人格演化 / 静态 Prompt 缓存构建在后台线程异步完成：
+`finish` 事件发送后 WebSocket 立即关闭，以下操作在后台线程异步完成：
 
 ```
 客户端收到 finish → WebSocket 关闭
@@ -164,44 +267,157 @@ python src/webui/run.py
 
 ## 前端布局
 
-### 主区域切换
+### 工作站主页（`#s-landing`）
 
-`#s-workspace` 下两个面板互斥显示（通过 `.hidden` 切换）：
+应用启动后默认显示工作站仪表板。页面分为四个区块：
 
-| 元素 ID | 内容 | 入口 |
+```
+┌─────────────────────────────────────────────────────┐
+│  ⚡ ReAct Workstation               [↻ Refresh] [⚙] │
+├─────────────────────────────────────────────────────┤
+│  Infrastructure Services                            │
+│  [vLLM ●] [SearXNG ●] [Sandbox ●] [TTS ●] [STT ●] │
+├──────────────┬──────────────┬──────────────────────┤
+│ LLM Core     │ ReAct Agent  │ Memory               │
+│ Persona      │ Voice        │ Scheduler & Crew     │
+│ [Configure]  │ [Configure]  │ [Configure]           │
+│                                                     │
+│              [📋 Plan Mode]                         │
+├──────────────┴──────────────┴──────────────────────┤
+│  Quick Start                                        │
+│  [💬 New Chat]  [⚡ New ReAct Session]             │
+│  Recent conversations（最多 6 条）                   │
+└─────────────────────────────────────────────────────┘
+```
+
+#### Infrastructure Services 行
+
+5 张服务卡片横向排列：状态指示灯（绿 = running / 灰 = stopped / 黄闪 = loading）、服务名与状态。
+
+| 服务 | 说明 | 启停 |
 |---|---|---|
-| `#main-area` | 聊天区（默认） | 知识库面板点击"← 返回聊天" |
-| `#kb-panel` | 知识库独立面板 | 侧边栏 📚 按钮 |
+| vLLM | 本地推理服务器 | Start / Stop |
+| SearXNG | 自托管搜索引擎 | Start / Stop |
+| Sandbox | 代码执行沙盒 | 仅显示状态 |
+| TTS | 语音合成引擎 | 仅显示状态 |
+| STT | 语音识别引擎 | 仅显示状态 |
 
-### 知识库独立面板（`#kb-panel`）
+#### Modules 卡片网格
+
+6 张卡片 3 列网格，展示各模块实时摘要，双击卡片直接跳转到对应 Settings Tab：
+
+| 卡片 | 展示内容 | Settings Tab |
+|---|---|---|
+| LLM Core | model / backend / streaming 状态；ready 徽章 | model |
+| ReAct Agent | status / profile / persona；active 徽章 | model |
+| Memory | L1 / L2 / L3 / MS 开关徽章 | memory |
+| Persona | 人格名称、演化开关；active/disabled 徽章 | persona |
+| Voice | TTS provider + 状态；STT provider + 状态 | voice |
+| Scheduler & Crew | Engine 状态、Crew 可用性 | model |
+
+#### 工作站数据加载
+
+进入主页时并行调用：
+
+| API | 用途 |
+|---|---|
+| `GET /api/status` | LLM 状态（`initialized`、`model`、`backend`、`react_ready`、`is_streaming`）|
+| `GET /api/react/status` | ReAct 就绪状态 |
+| `GET /api/services/status` | 5 个基础服务运行状态 |
+| `GET /api/config` | LLM Core 卡片摘要 |
+| `GET /api/memory` | Memory 卡片层级开关 |
+| `GET /api/persona` | Persona 卡片信息 |
+| `GET /api/react/tools` | ReAct Agent 工具总数与分类 |
+| `GET /api/scheduler/tasks` | 调度器任务表 |
+| `GET /api/history` | 最近对话列表 |
+
+### 对话区（`#s-workspace`）
+
+#### 侧边栏
+
+- 对话历史列表，支持切换 / 删除
+- 顶栏按钮：新建对话（＋）、清空历史（🗑）、知识库（📚）、设置（⚙）
+- 点击历史条目加载本地消息记录并重绘 DOM；**注意**：当前不自动调用 `/api/react/restore` 恢复后端 ReAct 上下文，切换对话后如需继续 ReAct 推理请手动重新初始化
+
+#### 消息区
+
+- `Enter` 发送，`Shift+Enter` 换行
+- Chat 模式：流式气泡
+- ReAct 模式：每步显示 Thought / Action / Action Input / Observation 折叠卡片
+- "Show Full Input" 开关：在用户消息下方显示完整 Prompt（系统提示 + 对话历史 + 当前消息）
+
+#### 知识库面板（`#kb-panel`）
 
 点击侧边栏 📚 按钮进入，与聊天区完全隔离：
 
 - **搜索区**：搜索框 + 模式下拉（`hybrid` / `semantic` / `keyword`）+ 搜索结果列表
 - **写入区**：内容 / 标题 / 领域 / 概念输入框 + 写入按钮
-- **文档列表**：列出所有文档，每行可删除；[修复索引] 按钮触发 `/api/kb/repair`
+- **文档列表**：列出所有文档，每行可删除；[修复索引] 按钮触发 `/api/kb/fix-index`
 
 ### Settings Modal（设置面板）
 
-Settings 按钮（⚙）打开模态框，包含以下 Tab：
+Settings 按钮（⚙）打开模态框，包含 6 个 Tab：
 
-| Tab | 说明 |
+| Tab ID | 说明 |
 |---|---|
-| **Core** | 模型配置（API Key / Base URL / 参数）+ ReAct Agent 配置（Agent 开关 / Prompt Language / Max Steps） |
-| **🧠 Memory** | L1 短期记忆 / L2 中期记忆 / L3 长期记忆 / Milestone 参数 |
-| **🎭 Persona** | 人格开关、画像编辑（姓名 / 背景 / 性格 / 价值观 / 风格）、演化引擎参数 |
-| **🔊 Voice** | TTS 提供商 / 语音名称 / 语速 / 音量；STT 提供商 / 语言 / 模型 |
+| `model` | LLM 模型配置（API Key / Base URL / 参数）+ WebUI 偏好（Show Full Input、Agent 开关、Prompt Language、Max Steps）|
+| `memory` | L1 短期记忆 / L2 中期记忆 / L3 长期记忆 / Milestone 参数 |
+| `persona` | 人格开关、画像编辑（姓名 / 背景 / 性格 / 价值观 / 风格）|
+| `voice` | TTS 提供商 / 语音参数；STT 提供商 / 语言 / 模型 |
+| `vllm` | vLLM 服务器参数（host / port / tensor_parallel_size 等）|
+| `sandbox` | 代码沙盒参数（工作目录 / 超时 / 封锁模块列表等）|
 
-> 知识库已从 Settings 中独立，移至侧边栏 📚 面板。
+所有 Tab 点击模态框底部 **Save** 按钮保存；`vllm` 和 `sandbox` Tab 内也有独立的 Save 按钮。工作站主页各模块卡片的 Configure 按钮携带 tab 参数直接跳转到对应 Tab。
 
-### 消息区域
+### Plan 模式界面（`#s-plan`）
 
-- `Enter` 发送，`Shift+Enter` 换行
-- ReAct 模式下每步显示 Thought / Action / Action Input / Observation 折叠卡片
-- "Show Full Input" 开关：在用户消息下方展示完整 Prompt 组装内容
+点击工作站主页 **[📋 Plan Mode]** 卡片进入，独立于会话区，专为多智能体编排可视化设计。
 
-### 侧边栏
+```
+┌──────────────────────────────────────────────────────────────┐
+│  ◀ Home   Plan Mode      [status badge]   [⏸ Pause] [📷 Snap]│
+├───────────────────────────┬──────────────────────────────────┤
+│                           │  ┌─ Input ─────────────────────┐ │
+│   DAG 可视化区（SVG）      │  │ [textarea: 目标/问题]        │ │
+│                           │  │ [▶ Run Plan]                 │ │
+│   task_a ──→ task_b       │  └─────────────────────────────┘ │
+│      ↓           ↓        │                                  │
+│   task_c ──→ task_d       │  ┌─ Shadow Editor ─────────────┐ │
+│                           │  │ (Markdown 影子编辑器)         │ │
+│   节点颜色：               │  │ [Apply Edits]               │ │
+│   ⬜ pending  🔵 running  │  └─────────────────────────────┘ │
+│   ✅ done    ❌ failed    │                                  │
+│   ⏭ skipped             │  ┌─ Snapshots ─────────────────┐ │
+│                           │  │ [snap_id]  [Rollback]        │ │
+│                           │  └─────────────────────────────┘ │
+│                           │                                  │
+│                           │  ┌─ Logs ──────────────────────┐ │
+│                           │  │ [task_id filter] [Refresh]   │ │
+│                           │  │ 结构化日志条目…               │ │
+│                           │  └─────────────────────────────┘ │
+└───────────────────────────┴──────────────────────────────────┘
+```
 
-- 显示对话历史列表，支持切换/删除
-- 顶栏按钮：新建对话（＋）、清空历史（🗑）、知识库（📚）、设置（⚙）
-- 切换对话时调用 `/api/react/restore` 恢复会话历史
+#### DAG 可视化
+
+- 使用 BFS 分层布局算法计算节点列（层）和行（同层内排序）坐标，自动适配任意拓扑。
+- 节点样式根据 `TaskStatus` 动态着色；`running` 状态节点带脉冲动画。
+- 通过 SSE（`/api/plan/stream`）实时接收 `PlanEvent`，增量更新节点 CSS 类，无需全量重渲染。
+- 支持的事件类型：`task_running`、`task_complete`、`task_failed`、`task_skipped`、`replan`（触发全量 DAG 重绘）、`snapshot`、`plan_complete`、`plan_abort`。
+
+#### 影子编辑器（Shadow Editor）
+
+- 展示当前 `PlanDocument` 的 Markdown 表示，用户可直接编辑。
+- 点击 **Apply Edits** 将 diff 发送回编排器（通过 `HumanEditChannel` patch 队列），编排器在下一个安全点应用修改（暂停任务调度、应用、恢复）。
+- 支持修改任务描述、参数、`writes` 资源声明，以及跳过任务（`status: skipped`）。
+
+#### 快照管理
+
+- 列出所有 `.react/plan/snapshots/<plan_id>/` 下的快照。
+- 点击 **Rollback** 恢复到快照时刻的 `PlanDocument`；回滚会重置 `running` 和 `failed` 状态的任务至 `pending`，并清除 `execution_ctx`。
+
+#### 日志查看
+
+- 从 `/api/plan/logs` 获取最近 N 条 JSONL 结构化日志（默认 50 条）。
+- 支持按 `task_id` 过滤，展示事件类型、时间戳、消息与附加字段。
+

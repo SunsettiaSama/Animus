@@ -27,6 +27,10 @@ Answer: {answer}
 
 Output only the distilled knowledge entry, no preamble."""
 
+_CREW_ACTIONS = frozenset({
+    "delegate_task", "await_agent", "await_all", "get_agent_result",
+})
+
 
 @dataclass
 class MemoryResult:
@@ -132,6 +136,10 @@ class MemoryProcessor:
           is kept as metadata so vector search can still match on it.
         - distill_enabled=True + llm available: ask the LLM to extract a
           concise knowledge summary from Q+A; fall back to answer-only on error.
+
+        Crew action observations (delegate_task, await_agent, etc.) are appended
+        as a supplement so sub-agent outputs are captured in L3 even when the
+        main agent's answer is brief.
         """
         cfg = self._cfg.long_term
         if cfg.distill_enabled and self._llm is not None:
@@ -142,9 +150,20 @@ class MemoryProcessor:
             )
             distilled = self._llm.generate(prompt).strip()
             if distilled:
-                return distilled
-        # Default / fallback: answer only
-        return answer
+                base_entry = distilled
+            else:
+                base_entry = answer
+        else:
+            base_entry = answer
+
+        crew_obs = [
+            s.observation for s in self._trace
+            if s.action in _CREW_ACTIONS and s.observation
+        ]
+        if crew_obs:
+            supplement = "\n\n[Crew 执行摘要]\n" + "\n---\n".join(crew_obs[:3])
+            return base_entry + supplement
+        return base_entry
 
     def clear(self) -> None:
         self._trace.clear()

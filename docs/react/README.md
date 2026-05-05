@@ -96,6 +96,8 @@ TaoLoop.stream(question)
 | `_milestone` | `MilestoneMemory \| None` | TaoLoop 内部（可选）| L2 里程碑事件检索与评分 |
 | `_trace_store` | `TraceStore \| None` | TaoLoop 内部 | 写入推理链到 `.react/traces/` |
 | `_persona` | `PersonaManager \| None` | TaoLoop 内部 | 人格注入 + 演化 + 偏置 |
+| `_scheduler_engine` | `SchedulerEngine \| None` | TaoLoop 内部（可选）| 时钟触发任务引擎；通过 `scheduler_engine` property 暴露 |
+| `_crew_manager` | `CrewManager \| None` | TaoLoop 内部（可选）| 子 Agent 委派与并发编排（`TaoConfig.crew` 非空时启用）|
 | `_static_cache` | `StaticPromptParts \| None` | TaoLoop 内部 | `post_process` 预热的静态 Prompt 片段 |
 | `_pending_finish` | `_PendingFinish \| None` | 临时状态 | `stream()` 末尾，`post_process()` 消费 |
 | `processor` | `MemoryProcessor` | **外部传入** | 统一读写 short_term + long_term + milestone |
@@ -404,7 +406,7 @@ TaoConfig
   ├── max_steps: int = 10
   ├── storage: StorageConfig               # 本地文件根目录（自动传播到各子模块）
   │     ├── root: str = ".react"
-  │     └── 派生属性: memory_dir / milestones_dir / persona_dir / traces_dir
+  │     └── 派生属性: memory_dir / milestones_dir / persona_dir / traces_dir / scheduler_dir
   ├── prompt: PromptConfig
   │     ├── lang: str = "en"              # "en" | "cn"
   │     ├── repair_enabled: bool = True
@@ -451,7 +453,28 @@ TaoConfig
   ├── trace: TraceConfig
   │     └── enabled: bool = True
   ├── knowledge: KnowledgeConfig | None = None
-  └── repair_llm: LLMConfig | None = None
+  ├── repair_llm: LLMConfig | None = None
+  ├── scheduler: SchedulerConfig | None = None   # 时钟触发的自动化任务
+  │     ├── scheduler_dir: str               # 任务 JSON + 执行结果存储目录
+  │     ├── poll_interval: float = 1.0       # 轮询间隔（秒）
+  │     ├── llm_cfg_path: str                # 子任务 LLM 配置路径
+  │     └── profiles: dict[str, TaoConfig]   # 执行配置预设（minimal/with_memory/full）
+  └── crew: CrewConfig | None = None         # 按需委派子 Agent 编排层（TaoLoop 当前使用）
+        ├── llm_cfg_path: str                # 子 Agent LLM 配置路径
+        ├── max_concurrent: int = 4          # 最大并发子 Agent 数
+        └── profiles: dict[str, CrewProfile] # 子 Agent 专业化预设
+              CrewProfile:
+                ├── max_steps: int = 10
+                ├── memory: MemoryConfig
+                ├── tools: list[str] | None  # None=全工具集；或指定子集
+                ├── system_note: str = ""    # 附加到系统提示的角色描述
+                ├── recursive: bool = False  # 是否允许递归调用子 Agent
+                └── return_log: bool = False # 是否在结果中返回完整推理日志
+              内置预设：
+                minimal   → 全工具集，无角色限定
+                researcher → web_search + web_fetch + knowledge 工具集
+                analyst    → calculator + unit_converter + web_search
+                planner    → 全工具集，任务规划编排角色（recursive=True）
 ```
 
 ---
@@ -474,6 +497,9 @@ TaoConfig
 │   └── preference.json
 ├── traces/               # 推理链存档（TraceStore）
 │   └── {timestamp}_{slug}.json
+├── scheduler/            # 调度任务持久化（SchedulerEngine）
+│   ├── tasks.json        # 所有调度任务状态
+│   └── results/          # 各任务执行结果 JSON
 └── knowledge_base/       # 知识库向量索引（Qdrant 本地文件）
     └── qdrant/
 ```

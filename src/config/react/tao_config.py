@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from config.knowledge.config import KnowledgeConfig
     from config.llm_core.config import LLMConfig
     from scheduler.config import SchedulerConfig
+    from crew.config import CrewConfig
+    from plan.config import PlanConfig
 
 
 @dataclass
@@ -26,6 +28,8 @@ class TaoConfig:
     knowledge: KnowledgeConfig | None = field(default=None)
     repair_llm: LLMConfig | None = field(default=None)
     scheduler: SchedulerConfig | None = field(default=None)
+    crew: CrewConfig | None = field(default=None)
+    plan: PlanConfig | None = field(default=None)
 
     def __post_init__(self) -> None:
         self._propagate_dirs()

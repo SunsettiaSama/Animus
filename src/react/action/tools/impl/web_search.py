@@ -31,7 +31,7 @@ class WebSearchAction(BaseAction):
         categories: str = "general",
         **kwargs,
     ) -> str:
-        from network.search import SearchEngine, SearchResult
+        from infra.network.search import SearchEngine, SearchResult
 
         results: list[SearchResult] = SearchEngine().search(
             query.strip(), max_results, language, categories

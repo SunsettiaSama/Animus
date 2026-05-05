@@ -31,8 +31,10 @@ def _write_result(task: ScheduledTask, answer: str, scheduler_dir: str) -> str:
 
 
 class TaskRunner:
-    def __init__(self, cfg: SchedulerConfig):
+    def __init__(self, cfg: SchedulerConfig, long_term=None, timeline=None):
         self._cfg = cfg
+        self._long_term = long_term
+        self._timeline = timeline
 
     async def run(self, task: ScheduledTask, store: TaskStore) -> None:
         store.update(task.id, status=TaskStatus.running, last_run_at=_utcnow_iso())
@@ -60,6 +62,19 @@ class TaskRunner:
         await asyncio.to_thread(_run_sync)
 
         result_path = _write_result(task, answer, self._cfg.scheduler_dir)
+
+        if self._long_term is not None:
+            summary = f"[调度任务] {task.name}\n指令: {task.instruction}\n结果: {answer}"
+            self._long_term.add(summary, source="scheduler", question=task.instruction)
+            self._long_term.save()
+
+        if self._timeline is not None:
+            self._timeline.append("scheduled_task", {
+                "task_id": task.id,
+                "task_name": task.name,
+                "instruction": task.instruction[:200],
+                "answer": answer[:500],
+            })
 
         if task.trigger.type == "interval" and task.trigger.interval_seconds:
             next_run = datetime.now(timezone.utc) + timedelta(seconds=task.trigger.interval_seconds)
