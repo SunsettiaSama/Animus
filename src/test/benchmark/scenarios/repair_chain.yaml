@@ -1,0 +1,25 @@
+name: repair_chain_no_action
+prompt: "What is 6 times 7?"
+description: >
+  LLM outputs free-form text with no ReAct structure at all (no Thought /
+  Action / Action Input labels).  The parser marks this FAILED quality
+  (implicit finish, is_finish=True via the no-action branch).
+  The TaoLoop L2 correction chain fires: the second script entry provides
+  a well-formed finish response, so the final answer should contain "42".
+  This scenario verifies the full L2 repair path end-to-end.
+
+llm_script:
+  - "The answer is 42."
+  - |
+    Thought: I should output proper format.
+    Action: finish
+    Action Input: {"answer": "42"}
+
+tool_script: {}
+
+expected:
+  final_output_contains: ["42"]
+  max_steps: 2
+
+thresholds:
+  max_wall_ms: 10000

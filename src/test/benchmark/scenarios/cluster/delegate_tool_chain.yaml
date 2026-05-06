@@ -1,0 +1,37 @@
+name: delegate_tool_chain
+prompt: "请先用calculator工具计算 (7 * 8 + 9) 的结果，然后委派子Agent对这个数字写一段简短解说"
+description: >
+  Tests a hybrid workflow: the parent TaoLoop first uses a local tool
+  (calculator), then delegates interpretation to a sub-agent, and finally
+  combines both outputs into a final answer.  Verifies that the parent can
+  interleave real tool calls and delegate_task calls without confusion.
+
+parent_llm_script:
+  - |
+    Thought: 先用本地calculator工具计算表达式的值。
+    Action: calculator
+    Action Input: {"expression": "(7 * 8 + 9)"}
+  - |
+    Thought: calculator返回65。现在委派子Agent为这个数字写一段解说。
+    Action: delegate_task
+    Action Input: {"instruction": "数字65是7*8+9的计算结果，请为它写一段有趣的数学背景解说（50字以内）", "profile": "minimal"}
+  - |
+    Thought: 子Agent已完成解说，可以给出最终答案了。
+    Action: finish
+    Action Input: {"answer": "(7 * 8 + 9) = 65。65 = 5 × 13，是一个半素数，也是两个连续整数的平方和（4²+7²=65）。"}
+
+parent_tool_script:
+  calculator:
+    - "65"
+
+sub_agent_script:
+  - instruction_contains: "65"
+    answer: "65 = 5 × 13，是半素数，且等于4²+7²，在数论中具有一定的趣味性。"
+
+expected:
+  final_output_contains: ["65"]
+  sub_agents_called: 1
+  max_steps: 4
+
+thresholds:
+  max_wall_ms: 10000

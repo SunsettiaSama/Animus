@@ -1,0 +1,38 @@
+name: sequential_delegates
+prompt: "请用两个子Agent分别完成：1) 计算圆周率π的近似值 2) 研究π的数学历史，然后给出综合报告"
+description: >
+  Tests sequential multi-agent delegation: the parent TaoLoop issues two
+  consecutive delegate_task calls (analyst profile for calculation, researcher
+  profile for history), then synthesises both results into a final answer.
+  Verifies that sub_agents_called == 2 and both delegation results are
+  incorporated correctly.
+
+parent_llm_script:
+  - |
+    Thought: 先委派给analyst子Agent计算π的近似值。
+    Action: delegate_task
+    Action Input: {"instruction": "计算圆周率π的近似值，精确到小数点后5位", "profile": "analyst"}
+  - |
+    Thought: analyst已返回π的近似值3.14159。接下来委派给researcher子Agent研究π的历史。
+    Action: delegate_task
+    Action Input: {"instruction": "研究圆周率π的数学历史，包括阿基米德、刘徽、祖冲之的贡献", "profile": "researcher"}
+  - |
+    Thought: 两个子Agent都完成了任务，现在生成综合报告。
+    Action: finish
+    Action Input: {"answer": "综合报告：π ≈ 3.14159，是最重要的数学常数之一。历史上阿基米德（前250年）用多边形逼近法首次严格估算，刘徽（263年）得3.14159，祖冲之（480年）精确到3.1415926。"}
+
+parent_tool_script: {}
+
+sub_agent_script:
+  - instruction_contains: "计算"
+    answer: "π ≈ 3.14159（使用莱布尼茨级数近似计算得出）"
+  - instruction_contains: "历史"
+    answer: "π历史：阿基米德（前250年）得3.1408~3.1429；中国数学家刘徽（263年）得3.14159；祖冲之（480年）精确到3.1415926，领先世界近千年。"
+
+expected:
+  final_output_contains: ["3.14159"]
+  sub_agents_called: 2
+  max_steps: 5
+
+thresholds:
+  max_wall_ms: 15000

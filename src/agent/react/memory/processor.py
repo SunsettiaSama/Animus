@@ -11,7 +11,7 @@ from ..memory.memory import Step
 from ..memory.short_term.memory import ShortTermMemory
 
 if TYPE_CHECKING:
-    from llm_core.llm import LLM
+    from infra.llm import LLM
     from ..memory.milestone.memory import MilestoneMemory
 
 

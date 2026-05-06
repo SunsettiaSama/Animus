@@ -1026,8 +1026,8 @@
       <span class="plan-badge" id="bench-status-badge">IDLE</span>
     </div>
     <div class="plan-topbar-actions">
-      <button id="bench-btn-run-all"  class="btn-primary">▶ Run All</button>
-      <button id="bench-btn-run-sel"  class="btn-secondary">Run Selected</button>
+      <button id="bench-btn-run-sel"  class="btn-primary">▶ Run Selected</button>
+      <button id="bench-btn-run-all"  class="btn-secondary">Run All</button>
       <button id="bench-btn-clear"    class="btn-secondary bench-clear-btn">Clear</button>
     </div>
   </div>
@@ -1058,16 +1058,16 @@
     </div>
   </div>
 
-  <div class="plan-body">
+  <div class="plan-body bench-three-col">
 
-    <!-- Left: scenario checklist + live progress -->
+    <!-- Col-1: scenario checklist + live progress -->
     <div class="bench-left-col" id="bench-left">
 
-      <!-- Scenario checklist -->
+      <!-- Scenario checklist — nothing pre-selected -->
       <div class="bench-section-header">
         <span>Scenarios</span>
-        <label class="bench-select-all-label">
-          <input type="checkbox" id="bench-chk-all" checked />
+        <label class="bench-select-all-label" title="Select all / none">
+          <input type="checkbox" id="bench-chk-all" />
           <span>All</span>
         </label>
       </div>
@@ -1082,8 +1082,8 @@
 
     </div>
 
-    <!-- Right: results table + drift -->
-    <div class="bench-right-col" id="bench-right">
+    <!-- Col-2: results summary + drift -->
+    <div class="bench-mid-col" id="bench-mid">
 
       <div class="bench-panel">
         <div class="bench-panel-title">Results</div>
@@ -1091,15 +1091,15 @@
           <div class="bench-empty-state">
             <div class="bench-empty-icon">⚡</div>
             <div class="bench-empty-text">No results yet</div>
-            <div class="bench-empty-hint">Select scenarios and click <strong>Run All</strong> to start</div>
+            <div class="bench-empty-hint">Select scenarios and click <strong>Run Selected</strong></div>
           </div>
         </div>
       </div>
 
       <div class="bench-panel">
         <div class="bench-panel-title">
-          History Drift
-          <span class="bench-panel-subtitle">token Δ vs previous run</span>
+          Metric Drift
+          <span class="bench-panel-subtitle">vs rolling baseline</span>
         </div>
         <div id="bench-drift-summary">
           <div class="bench-empty-state bench-empty-sm">
@@ -1108,6 +1108,38 @@
         </div>
       </div>
 
+      <!-- Probe Runs panel -->
+      <div class="bench-panel">
+        <div class="bench-panel-title">
+          Probe Runs
+          <span class="bench-panel-subtitle">@probe instrumented calls</span>
+          <button class="bench-probe-clear-btn icon-btn" id="bench-probe-clear" title="Clear probe runs" style="margin-left:auto;font-size:11px">✕ Clear</button>
+        </div>
+        <div class="bench-probe-filter-row">
+          <input id="bench-probe-filter-tag"  class="bench-probe-filter" placeholder="tag…" />
+          <input id="bench-probe-filter-name" class="bench-probe-filter" placeholder="name…" />
+        </div>
+        <div id="bench-probe-list">
+          <div class="bench-empty-state bench-empty-sm">
+            <div class="bench-empty-text">No probe runs yet</div>
+            <div class="bench-empty-hint">Run atomic_tool benchmark or wrap calls with @probe</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Col-3: scenario detail drawer — hidden until a scenario is clicked -->
+    <div class="bench-detail-col hidden" id="bench-detail-col">
+      <div class="bench-detail-topbar">
+        <span class="bench-detail-title" id="bench-detail-title">—</span>
+        <button class="icon-btn" id="bench-detail-close" title="Close">✕</button>
+      </div>
+      <div class="bench-detail-body" id="bench-detail-body">
+        <div class="bench-empty-state">
+          <div class="bench-empty-text">Click a scenario to inspect it</div>
+        </div>
+      </div>
     </div>
 
   </div>

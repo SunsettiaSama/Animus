@@ -58,7 +58,33 @@ def append_history(
         }
     )
     history = history[-max_runs:]
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _drift_alert(
+    name: str,
+    metric: str,
+    current_val: float,
+    past_vals: list[float],
+    threshold: float,
+) -> DriftAlert | None:
+    """Return a DriftAlert if *current_val* drifts beyond *threshold* vs mean of *past_vals*."""
+    if not past_vals:
+        return None
+    baseline = sum(past_vals) / len(past_vals)
+    if baseline == 0:
+        return None
+    drift = (current_val - baseline) / baseline
+    if abs(drift) <= threshold:
+        return None
+    return DriftAlert(
+        scenario=name,
+        metric=metric,
+        current=current_val,
+        baseline=baseline,
+        drift_pct=drift * 100,
+    )
 
 
 def check_drift(
@@ -70,6 +96,12 @@ def check_drift(
 ) -> list[DriftAlert]:
     """
     Compare current results against rolling average from history.
+
+    Tracked metrics per scenario:
+      total_tokens  — prompt + completion token count
+      wall_ms       — end-to-end wall-clock time
+      quality_score — 0-1 quality score (only when present in both current and history)
+      retry_rate    — llm_retries / max(steps, 1) — parser degradation signal
 
     Returns a list of DriftAlert, empty when no drift exceeds threshold.
     """
@@ -87,40 +119,42 @@ def check_drift(
 
         window = past[-rolling_window:]
 
+        # ── total_tokens ──────────────────────────────────────────────────────
         current_tokens = (
             current["total_prompt_tokens"] + current["total_completion_tokens"]
         )
         past_tokens = [
             p["total_prompt_tokens"] + p["total_completion_tokens"] for p in window
         ]
-        avg_tokens = sum(past_tokens) / len(past_tokens)
-        if avg_tokens > 0:
-            drift = (current_tokens - avg_tokens) / avg_tokens
-            if abs(drift) > threshold:
-                alerts.append(
-                    DriftAlert(
-                        scenario=name,
-                        metric="total_tokens",
-                        current=float(current_tokens),
-                        baseline=avg_tokens,
-                        drift_pct=drift * 100,
-                    )
-                )
+        if a := _drift_alert(name, "total_tokens", float(current_tokens), past_tokens, threshold):
+            alerts.append(a)
 
-        past_wall = [p["wall_ms"] for p in window]
-        avg_wall = sum(past_wall) / len(past_wall)
-        if avg_wall > 0:
-            drift = (current["wall_ms"] - avg_wall) / avg_wall
-            if abs(drift) > threshold:
-                alerts.append(
-                    DriftAlert(
-                        scenario=name,
-                        metric="wall_ms",
-                        current=float(current["wall_ms"]),
-                        baseline=avg_wall,
-                        drift_pct=drift * 100,
-                    )
-                )
+        # ── wall_ms ───────────────────────────────────────────────────────────
+        if a := _drift_alert(
+            name, "wall_ms",
+            float(current["wall_ms"]),
+            [p["wall_ms"] for p in window],
+            threshold,
+        ):
+            alerts.append(a)
+
+        # ── quality_score (skip when None in current or all-None in history) ──
+        current_q = current.get("quality_score")
+        if current_q is not None:
+            past_q = [p["quality_score"] for p in window if p.get("quality_score") is not None]
+            if a := _drift_alert(name, "quality_score", float(current_q), past_q, threshold):
+                alerts.append(a)
+
+        # ── retry_rate = llm_retries / max(steps, 1) ─────────────────────────
+        current_retries = current.get("llm_retries", 0)
+        current_steps = max(current.get("steps", 1), 1)
+        current_rr = current_retries / current_steps
+        past_rr = [
+            p.get("llm_retries", 0) / max(p.get("steps", 1), 1)
+            for p in window
+        ]
+        if a := _drift_alert(name, "retry_rate", current_rr, past_rr, threshold):
+            alerts.append(a)
 
     return alerts
 

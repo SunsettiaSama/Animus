@@ -1,0 +1,28 @@
+name: unit_converter
+prompt: "100 摄氏度等于多少华氏度？"
+description: >
+  Smoke test: LLM calls unit_converter to convert 100°C → °F, reads the
+  result (212), and finishes.  Checks multi-argument tool dispatch.
+
+llm_script:
+  - |
+    Thought: 温度单位换算可以使用 unit_converter 工具。
+    Action: unit_converter
+    Action Input: {"value": 100, "from_unit": "C", "to_unit": "F"}
+  - |
+    Thought: 工具返回结果 212 华氏度，已经可以回答。
+    Action: finish
+    Action Input: {"answer": "100 摄氏度 = 212 华氏度"}
+
+tool_script:
+  unit_converter:
+    - "100 摄氏度 = 212 华氏度"
+
+expected:
+  final_output_contains: ["212"]
+  tool_calls_required: ["unit_converter"]
+  max_steps: 2
+
+thresholds:
+  max_wall_ms: 5000
+  max_total_tokens: 500

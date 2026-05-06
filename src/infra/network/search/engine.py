@@ -30,19 +30,22 @@ class SearchEngine:
             DDGBackend(),
         ]
 
+    _NO_BACKEND_MSG = (
+        "没有可用的搜索后端。\n"
+        "请至少满足以下之一：\n"
+        "  · 设置 SEARXNG_URL 指向运行中的 SearXNG 实例\n"
+        "  · 设置 TAVILY_API_KEY（https://tavily.com）\n"
+        "  · 安装 duckduckgo_search（pip install duckduckgo-search）"
+    )
+
     # ── 内部 ──────────────────────────────────────────────────────────────────
 
     def _active_backend(self) -> BaseSearchBackend:
+        """返回第一个通过可用性检测（含连通性探测）的后端。"""
         for backend in self._backends:
             if backend.is_available():
                 return backend
-        raise RuntimeError(
-            "没有可用的搜索后端。\n"
-            "请至少满足以下之一：\n"
-            "  · 设置 SEARXNG_URL 指向运行中的 SearXNG 实例\n"
-            "  · 设置 TAVILY_API_KEY（https://tavily.com）\n"
-            "  · 安装 duckduckgo_search（pip install duckduckgo-search）"
-        )
+        raise RuntimeError(self._NO_BACKEND_MSG)
 
     # ── 公开接口 ──────────────────────────────────────────────────────────────
 
@@ -57,4 +60,17 @@ class SearchEngine:
         language: str = "auto",
         categories: str = "general",
     ) -> list[SearchResult]:
-        return self._active_backend().search(query, max_results, language, categories)
+        """按优先级逐一尝试可用后端，失败时自动降级到下一个。"""
+        last_exc: Exception | None = None
+        for backend in self._backends:
+            if not backend.is_available():
+                continue
+            try:
+                return backend.search(query, max_results, language, categories)
+            except Exception as exc:
+                last_exc = exc
+        if last_exc is not None:
+            raise RuntimeError(
+                f"所有可用后端均失败，最后错误：{last_exc}"
+            ) from last_exc
+        raise RuntimeError(self._NO_BACKEND_MSG)

@@ -4,7 +4,7 @@ from typing import Generator
 
 from langchain_core.messages import BaseMessage
 
-from llm_core.llm import BaseLLM, LLM
+from infra.llm.llm import BaseLLM, LLM
 
 
 class LLMHandle(BaseLLM):
@@ -12,9 +12,9 @@ class LLMHandle(BaseLLM):
 
     Every TaoLoop sub-component that needs an LLM receives the **same**
     LLMHandle at construction time.  When the user changes model / API key
-    and /api/init creates a new LLM object, a single call to
+    and LLMService.start() creates a new LLM object, a single call to
     ``handle.update(new_llm)`` propagates the change to every component
-    automatically — no per-component update_llm chain required.
+    automatically — no per-component update chain required.
 
     LLMHandle implements BaseLLM so it satisfies every type annotation that
     expects a BaseLLM (or its concrete subclass LLM).

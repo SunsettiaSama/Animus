@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from routers import llm, react, memory, persona, scheduler, knowledge, voice, history, plan, benchmark
+from routers import llm, react, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe
 from routers.infra import router as infra_router
 from state import get_state
 
@@ -39,6 +39,7 @@ for _r in [
     history.router,
     plan.router,
     benchmark.router,
+    probe.router,
 ]:
     app.include_router(_r)
 
@@ -52,12 +53,10 @@ def _startup():
         if not os.path.exists(state.llm_config_yaml):
             return
         from config.llm_core.config import LLMConfig
-        from llm_core.llm import LLM
         cfg = LLMConfig.from_yaml(state.llm_config_yaml)
-        state.llm_cfg = cfg
         if not cfg.model:
             return
-        state.llm = LLM(cfg)
+        state.llm_service.start(cfg)
         print(f"[webui] LLM auto-loaded  model={cfg.model!r}")
 
         from routers.react import ReactInitRequest, _do_react_init
@@ -65,6 +64,17 @@ def _startup():
         state.react_init_error = ""
         state.conv_loop = None
         _do_react_init(ReactInitRequest(), state)
+
+        # Start bot service if a WS URL is configured.  Runs independently of
+        # the browser — closing the WebUI frontend does not affect it.
+        if state.bot_service is not None:
+            from config.infra.bot_config import BotConfig
+            bot_cfg = BotConfig.load()
+            if bot_cfg.ws_url:
+                state.main_event_loop.call_soon_threadsafe(
+                    state.bot_service.start
+                )
+                print(f"[webui] BotService started  url={bot_cfg.ws_url!r}")
 
     def _on_error(exc: BaseException) -> None:
         state.react_init_error = str(exc)

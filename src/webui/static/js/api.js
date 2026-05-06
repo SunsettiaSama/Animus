@@ -82,12 +82,31 @@ export const PATHS = {
     item: id => `/api/history/${id}`,
   },
   timeline: '/api/timeline',
+  probe: {
+    runs:   (limit = 100, tag = '', name = '') => {
+      const q = new URLSearchParams();
+      if (limit !== 100) q.set('limit', limit);
+      if (tag)           q.set('tag', tag);
+      if (name)          q.set('name', name);
+      const qs = q.toString();
+      return `/api/probe/runs${qs ? '?' + qs : ''}`;
+    },
+    run:    id   => `/api/probe/runs/${encodeURIComponent(id)}`,
+    clear:  ()   => '/api/probe/runs',
+    tags:   ()   => '/api/probe/tags',
+  },
   benchmark: {
-    scenarios: '/api/benchmark/scenarios',
-    report:    '/api/benchmark/report',
-    history:   '/api/benchmark/history',
-    run:       '/api/benchmark/run',
-    clear:     '/api/benchmark/report',
+    scenarios:      '/api/benchmark/scenarios',
+    scenarioDetail: name => `/api/benchmark/scenarios/${encodeURIComponent(name)}`,
+    report:         '/api/benchmark/report',
+    history:        '/api/benchmark/history',
+    run:            '/api/benchmark/run',
+    runSuite:       '/api/benchmark/run-suite',
+    trend:          (metric, scenario) => {
+      const q = scenario ? `?metric=${metric}&scenario=${encodeURIComponent(scenario)}` : `?metric=${metric}`;
+      return `/api/benchmark/metrics/trend${q}`;
+    },
+    clear:          '/api/benchmark/report',
   },
 };
 

@@ -73,54 +73,6 @@ def assert_scenario(result: "ScenarioResult", scenario: Scenario) -> None:  # ty
     )
 
 
-def compute_quality(result: "ScenarioResult", scenario: Scenario) -> float | None:  # type: ignore[name-defined]
-    """Return a 0.0–1.0 quality score based on the 'expected' block, or None if no checks."""
-    exp = scenario.expected
-    if not exp:
-        return None
-
-    checks = 0
-    passed = 0
-
-    if "final_output_contains" in exp:
-        patterns = exp["final_output_contains"]
-        if isinstance(patterns, str):
-            patterns = [patterns]
-        final_ans = result.error or ""
-        for call in result.llm_calls:
-            _ = call  # answer is tracked via collector.mark_done
-        # Retrieve from tool_calls not possible here; answer is in ScenarioResult.error field
-        # The runner passes the final answer separately; quality check needs it injected.
-        # We fall through; runner calls compute_quality with extra context via wrapper.
-        checks += 1
-        # Without the answer string we conservatively skip this check.
-        # The runner uses _compute_quality_with_answer() instead.
-
-    if "tool_calls_allowed" in exp and not exp["tool_calls_allowed"]:
-        checks += 1
-        if not result.tool_calls:
-            passed += 1
-
-    if "tool_calls_required" in exp:
-        called_tools = {tc.tool_name for tc in result.tool_calls}
-        for tool in exp["tool_calls_required"]:
-            checks += 1
-            if tool in called_tools:
-                passed += 1
-
-    if "max_steps" in exp:
-        checks += 1
-        if result.steps <= int(exp["max_steps"]):
-            passed += 1
-
-    if "max_wall_ms" in exp:
-        checks += 1
-        if result.wall_ms <= float(exp["max_wall_ms"]):
-            passed += 1
-
-    return passed / checks if checks > 0 else None
-
-
 def compute_quality_with_answer(
     result: "ScenarioResult",  # type: ignore[name-defined]
     scenario: Scenario,

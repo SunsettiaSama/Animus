@@ -1,0 +1,28 @@
+name: string_ops
+prompt: "请把字符串 'hello world' 转成大写，然后告诉我结果。"
+description: >
+  Smoke test: LLM calls string_transform(operation=upper) then finishes.
+  Validates the one-shot tool-use pattern for deterministic string operations.
+
+llm_script:
+  - |
+    Thought: 我需要使用 string_transform 工具将字符串转换为大写。
+    Action: string_transform
+    Action Input: {"text": "hello world", "operation": "upper"}
+  - |
+    Thought: 工具返回了大写结果 HELLO WORLD，可以回答了。
+    Action: finish
+    Action Input: {"answer": "将 'hello world' 转换为大写后，结果是：HELLO WORLD"}
+
+tool_script:
+  string_transform:
+    - "大写：HELLO WORLD"
+
+expected:
+  final_output_contains: ["HELLO WORLD"]
+  tool_calls_required: ["string_transform"]
+  max_steps: 2
+
+thresholds:
+  max_wall_ms: 5000
+  max_total_tokens: 500

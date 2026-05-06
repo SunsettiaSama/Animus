@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from config.agent.persona_config import PersonaConfig
-from llm_core.llm import BaseLLM
+from infra.llm import BaseLLM
 from ..memory.memory import Step
 from ..persona.engine import EvolutionEngine
 from ..persona.preference.block import PreferenceBlock

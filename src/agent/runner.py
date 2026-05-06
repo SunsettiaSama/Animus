@@ -14,7 +14,7 @@ class SubAgentRunner:
         from config.llm_core.config import LLMConfig
         from config.agent.tao_config import TaoConfig
         from config.agent.prompt_config import PromptConfig
-        from llm_core.llm import LLM
+        from infra.llm import LLM
         from agent.react.action.manager import ToolManager
         from agent.react.tao import FinishEvent, StepEvent, TaoLoop
 

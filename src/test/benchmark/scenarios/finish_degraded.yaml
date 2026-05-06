@@ -1,0 +1,28 @@
+name: finish_degraded_garbled
+prompt: "What is 6 times 7?"
+description: >
+  LLM outputs a finish action but the Action Input is completely garbled
+  (not parseable as JSON by any strategy including ast.literal_eval).
+  The parser should mark this FINISH_DEGRADED and fall back to the
+  Thought content as the answer.  The TaoLoop L2 repair chain should then
+  trigger: the second script entry provides a well-formed JSON response,
+  and the final answer should contain "42".
+
+llm_script:
+  - |
+    Thought: The answer is 42.
+    Action: finish
+    Action Input: not valid json at all — completely garbled
+  - |
+    Thought: Let me reformat properly.
+    Action: finish
+    Action Input: {"answer": "42"}
+
+tool_script: {}
+
+expected:
+  final_output_contains: ["42"]
+  max_steps: 2
+
+thresholds:
+  max_wall_ms: 10000

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from llm_core.llm import BaseLLM
+from infra.llm import BaseLLM
 from ...memory.memory import Step
 from ...persona.profile.profile import PersonaProfile
 from ...persona.profile.skills import Skill, SkillsLibrary

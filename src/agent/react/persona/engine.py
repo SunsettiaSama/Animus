@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from llm_core.llm import BaseLLM
+from infra.llm import BaseLLM
 from ..memory.memory import Step
 from ..persona.profile.evolver import PersonaEvolver, ProfileDelta
 from ..persona.profile.profile import PersonaProfile

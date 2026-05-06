@@ -1725,19 +1725,183 @@
       transition: width .4s ease;
     }
 
-    /* Body columns */
+    /* Body columns — three-column layout */
+    .bench-three-col {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
     .bench-left-col {
-      flex: 0 0 300px;
+      flex: 0 0 240px;
       display: flex;
       flex-direction: column;
       border-right: 1px solid var(--border);
       overflow: hidden;
+    }
+    .bench-mid-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      min-width: 0;
     }
     .bench-right-col {
       flex: 1;
       display: flex;
       flex-direction: column;
       overflow-y: auto;
+    }
+
+    /* Scenario detail drawer — slides in as third column */
+    .bench-detail-col {
+      flex: 0 0 340px;
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--bg);
+      animation: bench-slide-in-r .18s ease;
+    }
+    .bench-detail-col.hidden { display: none; }
+    @keyframes bench-slide-in-r {
+      from { opacity: 0; transform: translateX(12px); }
+      to   { opacity: 1; transform: none; }
+    }
+    .bench-detail-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px 9px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      background: var(--bg2);
+    }
+    .bench-detail-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .bench-detail-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0;
+    }
+    .bench-detail-loading {
+      padding: 24px;
+      font-size: 13px;
+      color: var(--text3);
+    }
+    .bench-detail-error {
+      padding: 24px;
+      font-size: 13px;
+      color: #dc2626;
+    }
+    .bench-detail-section {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border2, rgba(0,0,0,.05));
+    }
+    .bench-detail-section:last-child { border-bottom: none; }
+    .bench-detail-section-title {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .bench-detail-prompt {
+      font-size: 13px;
+      color: var(--text);
+      background: var(--bg2);
+      border-radius: 6px;
+      padding: 8px 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--font-mono, monospace);
+      line-height: 1.5;
+    }
+    .bench-detail-desc {
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+    .bench-detail-divider {
+      height: 1px;
+      background: var(--border2, rgba(0,0,0,.06));
+      margin: 8px 0;
+    }
+    .bench-kv {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      padding: 3px 0;
+      color: var(--text2);
+    }
+    .bench-kv > span:first-child {
+      color: var(--text3);
+      flex-shrink: 0;
+    }
+    .bench-kv > span:last-child {
+      text-align: right;
+      word-break: break-word;
+    }
+    .bench-kv-sm {
+      font-size: 11px;
+      padding: 2px 0;
+    }
+    .bench-kv-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      margin: 4px 0 3px;
+    }
+    .bench-detail-chip {
+      display: inline-block;
+      background: var(--bg3);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 11px;
+      color: var(--text);
+      font-family: var(--font-mono, monospace);
+      margin: 1px 2px;
+    }
+
+    /* Sparklines */
+    .bench-sparklines {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .bench-sparkline-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .bench-sparkline-label {
+      font-size: 11px;
+      color: var(--text3);
+    }
+    .bench-sparkline {
+      width: 100%;
+      height: 40px;
+      overflow: visible;
+    }
+    .bench-sparkline-range {
+      font-size: 10px;
+      color: var(--text3);
+      text-align: right;
     }
 
     /* Section headers */
@@ -1914,3 +2078,69 @@
     .bench-ok   { color: #16a34a; }
     .bench-fail { color: #dc2626; }
     .bench-clear-btn { color: var(--text3); }
+
+    /* ── Probe runs panel ─────────────────────────────────────────────── */
+    .bench-probe-filter-row {
+      display: flex;
+      gap: 6px;
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border2, rgba(0,0,0,.05));
+    }
+    .bench-probe-filter {
+      flex: 1;
+      font-size: 12px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+    }
+    .bench-probe-filter:focus { border-color: var(--accent); }
+
+    .bench-probe-row {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border2, rgba(0,0,0,.04));
+      transition: background .1s;
+      user-select: none;
+    }
+    .bench-probe-row:hover { background: var(--bg3); }
+    .bench-probe-row:last-child { border-bottom: none; }
+    .bench-probe-row-top {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .bench-probe-name {
+      flex: 1;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .bench-probe-wall {
+      font-size: 11px;
+      color: var(--text3);
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+    .bench-probe-row-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .bench-probe-tag {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 99px;
+      background: var(--bg3);
+      color: var(--text3);
+      font-weight: 500;
+    }
+    .bench-probe-tag-metric {
+      background: #eff6ff;
+      color: #1d4ed8;
+    }

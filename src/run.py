@@ -147,7 +147,7 @@ def _build_tao(llm_cfg) -> object:
     from config.storage import StorageConfig
     from config.agent.memory.memory_config import MemoryConfig
     from config.agent.tao_config import TaoConfig
-    from llm_core.llm import LLM
+    from infra.llm import LLM
     from agent.react.action.manager import ToolManager
     from agent.react.tao import TaoLoop
 

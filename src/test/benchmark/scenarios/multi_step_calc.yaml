@@ -1,0 +1,34 @@
+name: multi_step_calc
+prompt: "先计算 sqrt(144)，再把这个结果乘以 3，最终答案是多少？"
+description: >
+  Smoke test: Two sequential calculator calls in a multi-step loop.
+  Verifies that the benchmark handles more than one tool call step correctly,
+  and that the answer accumulates across observations.
+
+llm_script:
+  - |
+    Thought: 第一步计算 sqrt(144)。
+    Action: calculator
+    Action Input: {"expression": "sqrt(144)"}
+  - |
+    Thought: sqrt(144) = 12，现在把 12 * 3 计算出来。
+    Action: calculator
+    Action Input: {"expression": "12 * 3"}
+  - |
+    Thought: 12 * 3 = 36，可以回答了。
+    Action: finish
+    Action Input: {"answer": "sqrt(144) = 12，12 × 3 = 36，最终答案是 36。"}
+
+tool_script:
+  calculator:
+    - "sqrt(144) = 12"
+    - "12 * 3 = 36"
+
+expected:
+  final_output_contains: ["36"]
+  tool_calls_required: ["calculator"]
+  max_steps: 3
+
+thresholds:
+  max_wall_ms: 8000
+  max_total_tokens: 800

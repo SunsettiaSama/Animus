@@ -1,0 +1,29 @@
+name: calculator_basic
+prompt: "计算 (123 + 456) * 2 的结果是多少？"
+description: >
+  Smoke test: LLM calls calculator tool to evaluate an arithmetic expression,
+  then finishes with the correct answer.  Tests the basic tool-call → observe
+  → finish loop.
+
+llm_script:
+  - |
+    Thought: 这是一个简单的数学问题，我可以使用 calculator 工具计算。
+    Action: calculator
+    Action Input: {"expression": "(123 + 456) * 2"}
+  - |
+    Thought: calculator 返回了结果 1158，可以直接回答。
+    Action: finish
+    Action Input: {"answer": "(123 + 456) * 2 = 1158"}
+
+tool_script:
+  calculator:
+    - "(123 + 456) * 2 = 1158"
+
+expected:
+  final_output_contains: ["1158"]
+  tool_calls_required: ["calculator"]
+  max_steps: 2
+
+thresholds:
+  max_wall_ms: 5000
+  max_total_tokens: 500

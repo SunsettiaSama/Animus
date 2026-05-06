@@ -47,3 +47,23 @@ class StorageConfig:
     @property
     def benchmark_dir(self) -> str:
         return os.path.join(self.root, "benchmark")
+
+    @property
+    def obs_dir(self) -> str:
+        return os.path.join(self.root, "logs")
+
+    @property
+    def train_dir(self) -> str:
+        return os.path.join(self.root, "train")
+
+    @property
+    def checkpoints_dir(self) -> str:
+        return os.path.join(self.root, "train", "checkpoints")
+
+    @property
+    def adapters_dir(self) -> str:
+        return os.path.join(self.root, "train", "adapters")
+
+    @property
+    def merged_dir(self) -> str:
+        return os.path.join(self.root, "train", "merged")

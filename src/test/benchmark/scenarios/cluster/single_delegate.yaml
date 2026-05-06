@@ -1,0 +1,31 @@
+name: single_delegate
+prompt: "请研究Python GIL（全局解释器锁）对多线程的影响，然后给出总结"
+description: >
+  Smoke test for single-agent delegation: the parent TaoLoop issues one
+  delegate_task call to a researcher sub-agent, receives the answer, then
+  produces a final summary.  Verifies the basic delegate → observe → finish
+  path through MockSubAgentRunner.
+
+parent_llm_script:
+  - |
+    Thought: 这个问题需要研究GIL机制，我将委派给专门的researcher子Agent来完成。
+    Action: delegate_task
+    Action Input: {"instruction": "研究Python GIL（全局解释器锁）对多线程并发的影响，给出技术要点", "profile": "researcher"}
+  - |
+    Thought: 子Agent已完成研究，可以基于其结果给出总结了。
+    Action: finish
+    Action Input: {"answer": "Python GIL（全局解释器锁）限制CPython同一时刻只允许一个线程执行Python字节码，因此CPU密集型多线程任务无法真正并行。IO密集型任务受影响较小，可结合多进程绕过GIL。"}
+
+parent_tool_script: {}
+
+sub_agent_script:
+  - instruction_contains: "GIL"
+    answer: "GIL（全局解释器锁）是CPython的核心互斥锁，防止多线程同时操作Python对象。CPU密集型任务受影响大，IO密集型（如网络、文件）受影响小，可用multiprocessing或asyncio绕过。"
+
+expected:
+  final_output_contains: ["GIL"]
+  sub_agents_called: 1
+  max_steps: 3
+
+thresholds:
+  max_wall_ms: 10000

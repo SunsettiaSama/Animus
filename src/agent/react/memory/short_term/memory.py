@@ -8,7 +8,7 @@ from config.agent.memory.short_term_config import ShortTermMemoryConfig
 from ...memory.memory import Step
 
 if TYPE_CHECKING:
-    from llm_core.llm import BaseLLM
+    from infra.llm import BaseLLM
 
 _STEP_TEMPLATE = (
     "Thought: {thought}\n"

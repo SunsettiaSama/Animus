@@ -10,7 +10,7 @@ from ...memory.milestone.scorer import ImportanceScorer
 from ...memory.milestone.store import MilestoneStore
 
 if TYPE_CHECKING:
-    from llm_core.llm import BaseLLM
+    from infra.llm import BaseLLM
 
 
 def _fmt_ts(iso: str) -> str:

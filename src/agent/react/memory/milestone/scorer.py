@@ -8,7 +8,7 @@ from ...memory.memory import Step
 from ...memory.milestone.entry import MilestoneEntry
 
 if TYPE_CHECKING:
-    from llm_core.llm import BaseLLM
+    from infra.llm import BaseLLM
 
 _SCORE_PROMPT = """\
 你是一个对话重要性评估器。请判断以下对话是否值得作为长期里程碑记录下来。

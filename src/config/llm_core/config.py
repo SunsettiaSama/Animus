@@ -17,6 +17,7 @@ class LLMConfig:
     device: str = "auto"
     system_prompt: str = ""
     backend: str = "openai"    # "openai" | "vllm" | "transformers"
+    trained_model_path: str = ""
 
     @classmethod
     def from_yaml(cls, path: str) -> LLMConfig:
@@ -37,6 +38,7 @@ class LLMConfig:
             device=data.get("device", "auto"),
             system_prompt=data.get("system_prompt", ""),
             backend=data.get("backend", "openai"),
+            trained_model_path=data.get("trained_model_path", ""),
         )
 
     def to_dict(self) -> dict:
@@ -52,7 +54,8 @@ class LLMConfig:
             "repetition_penalty": self.repetition_penalty,
             "device":             self.device,
             "system_prompt":      self.system_prompt,
-            "backend":            self.backend,
+            "backend":             self.backend,
+            "trained_model_path":  self.trained_model_path,
         }
 
     def save_yaml(self, path: str) -> None:

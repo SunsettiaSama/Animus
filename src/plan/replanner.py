@@ -148,7 +148,7 @@ class ReplannerAgent(AgentBase):
     def _replan_sync(self, doc: PlanDocument, trigger: str, cycle: int) -> ReplanDecision:
         from langchain_core.messages import HumanMessage, SystemMessage
         from config.llm_core.config import LLMConfig
-        from llm_core.llm import LLM
+        from infra.llm import LLM
 
         llm = LLM(LLMConfig.from_yaml(self._llm_cfg_path))
         context = self._builder.build(doc, trigger, cycle)

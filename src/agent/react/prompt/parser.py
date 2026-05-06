@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 from dataclasses import dataclass, field
@@ -136,15 +137,25 @@ def _extract_json(text: str) -> dict | None:
                 except json.JSONDecodeError:
                     continue
 
+        # Pass 4: ast.literal_eval — handles Python-style dicts with single quotes
+        # that json.loads rejects (e.g. {'answer': 'text'} from some LLM outputs).
+        try:
+            val = ast.literal_eval(blob)
+            if isinstance(val, dict):
+                return val
+        except (ValueError, SyntaxError):
+            pass
+
     return None
 
 
 # ── ParseQuality ──────────────────────────────────────────────────────────────
 
 class ParseQuality(Enum):
-    CLEAN   = "clean"    # all fields extracted via standard patterns
-    LENIENT = "lenient"  # action inferred via fallback heuristics
-    FAILED  = "failed"   # action is empty and this is not a finish step
+    CLEAN            = "clean"            # all fields extracted via standard patterns
+    LENIENT          = "lenient"          # action inferred via fallback heuristics
+    FINISH_DEGRADED  = "finish_degraded"  # finish detected but answer fell back to thought/raw
+    FAILED           = "failed"           # action is empty and this is not a finish step
 
 
 # ── ParseResult ───────────────────────────────────────────────────────────────
@@ -177,6 +188,13 @@ def diagnose(result: ParseResult) -> str:
         issues.append(
             f"Action field inferred via heuristic (found '{result.action}' "
             "from context, not from a labeled 'Action:' line)"
+        )
+
+    if result.quality == ParseQuality.FINISH_DEGRADED:
+        issues.append(
+            "finish action detected but Action Input could not be parsed as valid JSON — "
+            "the answer was recovered from Thought or raw output; "
+            'please rewrite with a proper JSON object: Action Input: {"answer": "..."}'
         )
 
     if not result.is_finish and not result.action_input:
@@ -308,7 +326,10 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
                     quality=quality,
                 )
 
-            # (c) Fall back: check Answer: label first, then thought, then raw text
+            # (c) Fall back: check Answer: label first, then thought, then raw text.
+            # All sub-paths here are structurally degraded — the Action Input JSON
+            # could not be recovered, so quality is marked FINISH_DEGRADED to let
+            # the upper-layer repair chain know it should attempt a correction.
             answer_label_m = _RE_ANSWER.search(text)
             if answer_label_m:
                 answer = answer_label_m.group(1).strip()
@@ -322,7 +343,7 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
                 action_input={"answer": answer},
                 raw=text,
                 is_finish=True,
-                quality=quality,
+                quality=ParseQuality.FINISH_DEGRADED,
             )
 
         # ── No action label — implicit finish ─────────────────────────────────

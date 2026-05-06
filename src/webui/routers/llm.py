@@ -140,15 +140,11 @@ def save_config(req: SaveConfigRequest):
 @router.post("/api/llm/init")
 def init_llm(req: InitRequest):
     from config.llm_core.config import LLMConfig
-    from llm_core.llm import LLM
     state = get_state()
-    base_url = req.base_url
-    if req.backend == "vllm":
-        base_url = state.vllm_manager.base_url
     cfg = LLMConfig(
         model=req.model,
         api_key=req.api_key,
-        base_url=base_url,
+        base_url=req.base_url,
         max_tokens=req.max_tokens,
         temperature=req.temperature,
         do_sample=req.do_sample,
@@ -159,10 +155,7 @@ def init_llm(req: InitRequest):
         system_prompt=req.system_prompt,
         backend=req.backend,
     )
-    state.llm_cfg = cfg
-    state.llm = LLM(cfg)
-    if state.conv_loop is not None:
-        state.conv_loop._tao.update_llm(state.llm)
+    state.llm_service.start(cfg)
     return {"status": "ok", "backend": req.backend}
 
 
@@ -170,7 +163,6 @@ def init_llm(req: InitRequest):
 def patch_llm(req: PatchLLMRequest):
     """Hot-swap LLM handle only; refuse if a stream is in progress."""
     from config.llm_core.config import LLMConfig
-    from llm_core.llm import LLM
     state = get_state()
     if state.is_streaming:
         return JSONResponse(
@@ -194,10 +186,7 @@ def patch_llm(req: PatchLLMRequest):
         system_prompt=req.system_prompt if req.system_prompt is not None else old.system_prompt,
         backend=req.backend if req.backend is not None else getattr(old, "backend", "openai"),
     )
-    state.llm_cfg = cfg
-    state.llm = LLM(cfg)
-    if state.conv_loop is not None:
-        state.conv_loop._tao.update_llm(state.llm)
+    state.llm_service.reload(cfg)
     return {"status": "ok"}
 
 

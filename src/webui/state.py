@@ -10,9 +10,26 @@ from typing import Any
 @dataclass
 class AppState:
     # ── LLM ───────────────────────────────────────────────────────────────────
-    llm: Any = None                   # LLM | None
-    llm_cfg: Any = None               # LLMConfig | None
+    llm_service: Any = None           # LLMService | None  (set in _init_infra)
     prompt_lang: str = "cn"
+
+    @property
+    def llm(self):
+        if self.llm_service is None:
+            return None
+        return self.llm_service.handle
+
+    @property
+    def llm_cfg(self):
+        if self.llm_service is None:
+            return None
+        return self.llm_service.cfg
+
+    @property
+    def vllm_manager(self):
+        if self.service_registry is None:
+            return None
+        return self.service_registry.get("vllm")
 
     # ── ReAct ─────────────────────────────────────────────────────────────────
     conv_loop: Any = None             # ConvLoop | None
@@ -30,11 +47,11 @@ class AppState:
 
     # ── Infrastructure (set in startup) ──────────────────────────────────────
     task_runner: Any = None
-    vllm_manager: Any = None
     searxng_manager: Any = None
     sandbox_manager: Any = None
     service_registry: Any = None
     tool_manager: Any = None
+    bot_service: Any = None           # BotService | None
 
     # ── Plan orchestration ────────────────────────────────────────────────────
     active_orchestrator: Any = None   # PlanOrchestrator | None
@@ -112,6 +129,7 @@ class AppState:
     def _init_infra(self) -> None:
         from infra.task_runner import BackgroundTaskRunner
         from infra.vllm_server import VLLMServerManager
+        from infra.llm.service import LLMService
         from infra.searxng_manager import SearXNGManager
         from infra.sandbox import SandboxManager
         from infra.service_registry import ServiceRegistry
@@ -122,7 +140,8 @@ class AppState:
         from config import paths
 
         self.task_runner      = BackgroundTaskRunner(max_workers=8)
-        self.vllm_manager     = VLLMServerManager()
+        _vllm_manager         = VLLMServerManager()
+        self.llm_service      = LLMService(_vllm_manager)
 
         run_cfg = RunConfig.load()
         self.searxng_manager = SearXNGManager(
@@ -135,7 +154,8 @@ class AppState:
 
         self.sandbox_manager  = SandboxManager()
         self.service_registry = ServiceRegistry()
-        self.service_registry.register("vllm",    self.vllm_manager)
+        self.service_registry.register("llm",     self.llm_service)
+        self.service_registry.register("vllm",    _vllm_manager)
         self.service_registry.register("searxng", self.searxng_manager)
         self.service_registry.register("sandbox", self.sandbox_manager)
 
@@ -150,6 +170,20 @@ class AppState:
 
         self.tool_manager = ToolManager()
         self.kb_cfg       = KnowledgeConfig()
+
+        # ── Bot service ───────────────────────────────────────────────────────
+        from config.infra.bot_config import BotConfig
+        from infra.network.bot.onebot.transport.forward_ws import ForwardWSTransport
+        from infra.network.bot.service import BotService
+
+        bot_cfg   = BotConfig.load()
+        transport = ForwardWSTransport(
+            url=bot_cfg.ws_url,
+            access_token=bot_cfg.access_token,
+            reconnect_interval=bot_cfg.reconnect_interval_sec,
+        )
+        self.bot_service = BotService(transport, self, bot_cfg)
+        self.service_registry.register("bot", self.bot_service)
 
 
 # ── Lazy singleton ────────────────────────────────────────────────────────────

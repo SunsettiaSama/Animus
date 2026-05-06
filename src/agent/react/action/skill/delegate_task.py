@@ -59,11 +59,11 @@ class DelegateTaskSkill(BaseSkill):
 
     def execute(self, instruction: str, profile: str = "minimal", **kwargs) -> str:
         from agent.profile import SubAgentProfile
-        from agent.react.tao import SubAgentStartEvent, SubAgentErrorEvent
         if self.runner is None or self.cfg is None:
             return "DelegateTaskSkill 未正确初始化（runner 或 cfg 为 None）。"
         profile_obj = self.cfg.profiles.get(profile) or SubAgentProfile()
         if self.sub_event_sink is not None:
+            from agent.react.tao import SubAgentStartEvent
             self.sub_event_sink(SubAgentStartEvent(action=self.name, instruction=instruction))
         try:
             result = self.runner.run_sync(
@@ -72,6 +72,7 @@ class DelegateTaskSkill(BaseSkill):
             )
         except Exception as exc:
             if self.sub_event_sink is not None:
+                from agent.react.tao import SubAgentErrorEvent
                 self.sub_event_sink(SubAgentErrorEvent(error=str(exc)))
             raise
         return result.get("answer", "")

@@ -109,39 +109,7 @@ def _event_to_dict(event) -> dict | None:
 
 def _do_react_init(req: ReactInitRequest, state) -> None:
     """Background worker that builds TaoLoop and ConvLoop."""
-    from config.agent.tao_config import TaoConfig
-    from config.agent.prompt_config import PromptConfig
-    from config.agent.memory.memory_config import MemoryConfig
-    from config.agent.persona_config import PersonaConfig
-    from agent.scheduler import SchedulerConfig
-    from agent.profile import SubAgentConfig
-    from agent.react.loop import ConvLoop
-    from agent.react.tao import TaoLoop
-
-    def _load_memory_config() -> MemoryConfig:
-        if os.path.exists(state.memory_config_yaml):
-            return MemoryConfig.from_yaml(state.memory_config_yaml)
-        return MemoryConfig()
-
-    def _load_persona_config() -> PersonaConfig:
-        import json
-        d: dict = {}
-        if os.path.exists(state.persona_cfg_file):
-            with open(state.persona_cfg_file, encoding="utf-8") as fh:
-                d = json.load(fh)
-        return PersonaConfig(
-            enabled=d.get("enabled", False),
-            persona_dir=state.persona_dir,
-            max_profile_chars=d.get("max_profile_chars", 500),
-            evolution_enabled=d.get("evolution_enabled", False),
-            evolve_interval=d.get("evolve_interval", 1),
-            skills_enabled=d.get("skills_enabled", True),
-            max_skills_in_prompt=d.get("max_skills_in_prompt", 5),
-            max_skills_chars=d.get("max_skills_chars", 600),
-            reflection_enabled=d.get("reflection_enabled", False),
-            reflect_interval=d.get("reflect_interval", 3),
-            max_reflection_chars=d.get("max_reflection_chars", 400),
-        )
+    from agent.react.factory import build_conv_loop
 
     # Cancel any running scheduler from a previous init.
     if state.scheduler_future is not None and not state.scheduler_future.done():
@@ -157,40 +125,16 @@ def _do_react_init(req: ReactInitRequest, state) -> None:
     if old_tao is not None:
         old_tao.close()
 
-    executor          = state.tool_manager.build_executor()
-    tool_descriptions = state.tool_manager.primary_descriptions(req.primary_tools)
-    category_summary  = state.tool_manager.category_summary()
-
-    cfg = TaoConfig(
+    conv_loop = build_conv_loop(
+        state,
+        lang=req.lang,
         max_steps=req.max_steps,
-        storage=state.cache,
-        prompt=PromptConfig(lang=req.lang),
-        memory=_load_memory_config(),
-        persona=_load_persona_config(),
-        knowledge=state.kb_cfg if req.enable_kb else None,
-        scheduler=SchedulerConfig(
-            scheduler_dir=state.cache.scheduler_dir,
-            llm_cfg_path=state.llm_config_yaml,
-        ),
-        agent=SubAgentConfig(llm_cfg_path=state.llm_config_yaml),
+        primary_tools=req.primary_tools,
+        enable_kb=req.enable_kb,
     )
-
-    tao = None
-    from config.agent.risk_config import RiskConfig
-    from agent.react.action.risk.gate import RiskGate
-    risk_gate = RiskGate.from_config(RiskConfig())
-
-    tao = TaoLoop(
-        llm=state.llm,
-        executor=executor,
-        tool_descriptions=tool_descriptions,
-        cfg=cfg,
-        tool_category_summary=category_summary,
-        sandbox=state.sandbox_manager,
-        risk_gate=risk_gate,
-    )
+    tao = conv_loop._tao
     state.active_tao = tao
-    state.conv_loop  = ConvLoop(tao)
+    state.conv_loop  = conv_loop
     state.react_init_event.set()
 
     state.preload_future = state.task_runner.submit("preload", tao.preload)
@@ -205,7 +149,7 @@ def _do_react_init(req: ReactInitRequest, state) -> None:
 @router.post("/api/react/reinit")
 def react_init(req: ReactInitRequest):
     state = get_state()
-    if state.llm is None:
+    if state.llm_service is None or state.llm_service.handle is None:
         return JSONResponse(status_code=400, content={"error": "LLM not initialized."})
     if state.is_streaming:
         return JSONResponse(
@@ -465,11 +409,11 @@ async def ws_react_run(websocket: WebSocket):
         await websocket.send_json(item)
 
     receive_task.cancel()
-    # B3: suppress the CancelledError stored in the task to prevent
-    # "Task exception was never retrieved" log noise.
+    # Await the cancelled task so its CancelledError is retrieved and the
+    # "Task exception was never retrieved" warning is suppressed.
     try:
-        await asyncio.shield(receive_task)
-    except Exception:
+        await receive_task
+    except (asyncio.CancelledError, Exception):
         pass
 
     was_aborted = (

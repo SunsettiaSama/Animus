@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from config.agent.memory.medium_term_config import MediumTermMemoryConfig
 
 if TYPE_CHECKING:
-    from llm_core.llm import BaseLLM
+    from infra.llm import BaseLLM
 
 _FILENAME       = "medium_term.jsonl"
 _CACHE_FILENAME = "medium_term_consolidate.json"

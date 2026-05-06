@@ -7,7 +7,7 @@ from ...persona.preference.entry import PreferenceEntry
 from ...persona.preference.recent import RecentPreference
 
 if TYPE_CHECKING:
-    from llm_core.llm import BaseLLM
+    from infra.llm import BaseLLM
 
 _UPDATE_PROMPT = """\
 请根据以下对话，分析 Agent 当前对话轮次的偏好状态。

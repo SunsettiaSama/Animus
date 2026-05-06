@@ -69,8 +69,24 @@ class AppPaths:
         return self.root / "config" / "infra" / "sandbox.yaml"
 
     @property
+    def bot_config_yaml(self) -> Path:
+        return self.root / "config" / "infra" / "bot_config.yaml"
+
+    @property
     def webui_settings_json(self) -> Path:
         return self.root / "config" / "webui" / "settings.json"
+
+    @property
+    def lora_config_yaml(self) -> Path:
+        return self.root / "config" / "train" / "lora.yaml"
+
+    @property
+    def sft_config_yaml(self) -> Path:
+        return self.root / "config" / "train" / "sft.yaml"
+
+    @property
+    def quant_config_yaml(self) -> Path:
+        return self.root / "config" / "train" / "quant.yaml"
 
     # ── Runtime cache dirs ────────────────────────────────────────────────────
 

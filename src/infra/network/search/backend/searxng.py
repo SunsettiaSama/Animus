@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import socket
+from urllib.parse import urlparse
 
 from infra.network.search.backend.base import BaseSearchBackend
 from infra.network.search.result import SearchResult
@@ -10,9 +12,9 @@ class SearXNGBackend(BaseSearchBackend):
     """
     SearXNG HTTP JSON API 后端。
 
-    可用条件（静态判断，不发起网络请求）：
-      - 环境变量 SEARXNG_URL 已设置，或
-      - 配置中的 url 不是模板占位符（不含 "yourdomain.com"）
+    可用条件（TCP 连通性探测，超时 1 秒）：
+      - URL 不是模板占位符（不含 "yourdomain.com"），且
+      - 目标主机:端口 TCP 可达
     """
 
     def __init__(self, config) -> None:
@@ -23,9 +25,15 @@ class SearXNGBackend(BaseSearchBackend):
         return "searxng"
 
     def is_available(self) -> bool:
-        if os.environ.get("SEARXNG_URL"):
-            return True
-        return "yourdomain.com" not in self._cfg.url
+        url = self._cfg.effective_url
+        if "yourdomain.com" in url:
+            return False
+        parsed = urlparse(url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1.0)
+            return s.connect_ex((host, port)) == 0
 
     def search(
         self,

@@ -10,8 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from config.agent.tao_config import TaoConfig
 from infra.sandbox import SandboxManager
-from llm_core.handle import LLMHandle
-from llm_core.llm import LLM
+from infra.llm import LLM, LLMHandle
 from .action.executor import ActionExecutor
 from .action.risk.gate import RiskGate
 from .action.risk.level import RiskLevel
@@ -152,7 +151,7 @@ class _PendingFinish:
 class TaoLoop:
     def __init__(
         self,
-        llm: LLM,
+        llm: LLMHandle,
         executor: ActionExecutor,
         tool_descriptions: dict[str, str],
         cfg: TaoConfig,
@@ -160,7 +159,7 @@ class TaoLoop:
         sandbox: SandboxManager | None = None,
         risk_gate: RiskGate | None = None,
     ):
-        self._llm = LLMHandle(llm)   # shared handle — update_llm() swaps the inner LLM
+        self._llm = llm   # canonical handle from LLMService — shared by all sub-components
         self._executor = executor
         self._cfg = cfg
         self._sandbox = sandbox
@@ -421,6 +420,22 @@ class TaoLoop:
     # ── Core streaming loop ───────────────────────────────────────────────────
 
     def stream(self, question: str) -> Generator[TaoEvent, None, None]:
+        import time as _time
+        from test.obs.collector import get_collector as _get_collector
+        from test.obs.events import ParseEvent as _ParseEvent, SessionEvent as _SessionEvent, ToolCallEvent as _ToolCallEvent
+
+        _obs = _get_collector()
+        _session_id = str(uuid.uuid4())
+        _obs.set_session(_session_id)
+        _obs.emit(_SessionEvent(
+            session_id=_session_id,
+            ts=_time.time(),
+            event_type="start",
+            question_summary=question[:200],
+            total_steps=0,
+            answer_summary="",
+        ))
+
         question = self._trunc(question, self._cfg.prompt.max_question_chars)
         processor = MemoryProcessor(
             self._cfg.memory,
@@ -545,12 +560,42 @@ class TaoLoop:
             # the existing conversation and retry the main LLM.  Runs first
             # because the model already has full context and self-correction is
             # cheapest before we resort to an isolated repair call.
-            if result.quality == ParseQuality.FAILED and not result.is_finish:
+            # Also triggers for FINISH_DEGRADED: finish was detected but the
+            # Action Input JSON could not be parsed, so the answer fell back to
+            # Thought or raw text.  A targeted reminder asking for double-quoted
+            # JSON is usually enough for the model to self-correct.
+            def _needs_retry(r: "ParseResult") -> bool:  # type: ignore[name-defined]
+                return (
+                    r.quality == ParseQuality.FAILED and not r.is_finish
+                ) or r.quality == ParseQuality.FINISH_DEGRADED
+
+            if _needs_retry(result):
                 for _attempt in range(self._cfg.prompt.retry_on_bad_parse):
-                    yield RetryEvent(index=i, reason=diagnose(result))
-                    correction_msgs = messages + [
-                        AIMessage(content=raw_output),
-                        HumanMessage(content=(
+                    _retry_reason = diagnose(result)
+                    yield RetryEvent(index=i, reason=_retry_reason)
+                    _obs.emit(_ParseEvent(
+                        session_id=_session_id,
+                        ts=_time.time(),
+                        step_index=i,
+                        event_type="retry_l2",
+                        diagnosis=_retry_reason,
+                    ))
+                    # Use a finish-specific correction when the problem is only
+                    # the JSON encoding of the answer, not the overall structure.
+                    if result.quality == ParseQuality.FINISH_DEGRADED:
+                        _correction = (
+                            "Your Action Input is not valid JSON. "
+                            "Since you want to finish, please rewrite using double-quoted JSON:\n"
+                            "Thought: <your reasoning>\n"
+                            "Action: finish\n"
+                            'Action Input: {"answer": "your complete answer here"}\n\n'
+                            "Action Input 不是合法 JSON（请使用双引号）。请按以下格式重新输出 finish：\n"
+                            "Thought: <思考过程>\n"
+                            "Action: finish\n"
+                            'Action Input: {"answer": "完整回答内容"}'
+                        )
+                    else:
+                        _correction = (
                             "Your output format is incorrect. Please rewrite strictly following this format:\n"
                             "Thought: <your reasoning>\n"
                             "Action: <tool_name>\n"
@@ -559,7 +604,10 @@ class TaoLoop:
                             "Thought: <思考过程>\n"
                             "Action: <工具名>\n"
                             'Action Input: {"key": "value"}'
-                        )),
+                        )
+                    correction_msgs = messages + [
+                        AIMessage(content=raw_output),
+                        HumanMessage(content=_correction),
                     ]
                     raw_output = ""
                     for chunk in self._llm.stream_generate_messages(correction_msgs):
@@ -568,16 +616,16 @@ class TaoLoop:
                         raw_output += chunk
                         yield ChunkEvent(index=i, chunk=chunk)
                     result = parse_llm_output(raw_output, tool_names=tool_names)
-                    if result.quality != ParseQuality.FAILED or result.is_finish:
+                    if not _needs_retry(result):
                         break
 
             # L3: isolated repair LLM — only reached when all in-context retries
             # failed.  Calls the repair model with a focused reformat prompt
             # (no conversation history) and verifies the result re-parses before
-            # accepting it.
+            # accepting it.  Also covers FINISH_DEGRADED where L2 could not coax
+            # the model into producing valid Action Input JSON.
             if (
-                result.quality == ParseQuality.FAILED
-                and not result.is_finish
+                _needs_retry(result)
                 and self._cfg.prompt.repair_enabled
             ):
                 _diagnosis = diagnose(result)
@@ -588,6 +636,13 @@ class TaoLoop:
                     list(tool_names),
                 )
                 if _repaired:
+                    _obs.emit(_ParseEvent(
+                        session_id=_session_id,
+                        ts=_time.time(),
+                        step_index=i,
+                        event_type="repair_l3",
+                        diagnosis=_diagnosis,
+                    ))
                     result = parse_llm_output(_repaired, tool_names=tool_names)
 
             # L4: all layers exhausted — the parser's implicit-finish path
@@ -606,6 +661,14 @@ class TaoLoop:
                     persona_blocks=persona_blocks,
                 )
                 yield FinishEvent(answer=answer)
+                _obs.emit(_SessionEvent(
+                    session_id=_session_id,
+                    ts=_time.time(),
+                    event_type="finish",
+                    question_summary=question[:200],
+                    total_steps=i + 1,
+                    answer_summary=answer[:200],
+                ))
                 return
 
             # ── Tool execution ───────────────────────────────────────────────
@@ -613,6 +676,7 @@ class TaoLoop:
                 {"action": result.action, "args": result.action_input},
                 ensure_ascii=False,
             )
+            _t_tool_start = _time.perf_counter()
 
             # ── Risk gate check ──────────────────────────────────────────────
             if self._risk_gate is not None and self._risk_gate.cfg.enabled:
@@ -660,6 +724,17 @@ class TaoLoop:
             observation = self._executor.run(action_json)
             observation = self._trunc(observation, self._cfg.prompt.max_observation_chars)
 
+            _t_tool_end = _time.perf_counter()
+            _obs.emit(_ToolCallEvent(
+                session_id=_session_id,
+                ts=_t_tool_start,
+                step_index=i,
+                tool_name=result.action,
+                latency_ms=(_t_tool_end - _t_tool_start) * 1000,
+                input_summary=action_json[:200],
+                output_summary=observation[:200],
+            ))
+
             step = Step(
                 thought=result.thought,
                 action=result.action,
@@ -677,6 +752,14 @@ class TaoLoop:
             )
 
         yield MaxStepsEvent(max_steps=self._cfg.max_steps)
+        _obs.emit(_SessionEvent(
+            session_id=_session_id,
+            ts=_time.time(),
+            event_type="max_steps",
+            question_summary=question[:200],
+            total_steps=self._cfg.max_steps,
+            answer_summary="",
+        ))
 
     # ── Post-processing (runs in background after FinishEvent is delivered) ───
 
@@ -727,11 +810,6 @@ class TaoLoop:
             self._long_term.store.close()
 
     def update_llm(self, llm: LLM) -> None:
-        """Swap the underlying LLM for every component in this TaoLoop.
-
-        Because all sub-components share the same LLMHandle, a single call
-        here propagates instantly — no chain of per-component update calls.
-        """
         self._llm.update(llm)
 
     def abort(self) -> None:

@@ -73,7 +73,7 @@ class PlannerAgent(AgentBase):
         from config.agent.tao_config import TaoConfig
         from config.agent.prompt_config import PromptConfig
         from config.agent.memory.memory_config import MemoryConfig
-        from llm_core.llm import LLM
+        from infra.llm import LLM
         from agent.react.action.manager import ToolManager
         from agent.react.tao import FinishEvent, TaoLoop
 
@@ -169,7 +169,7 @@ class ConvPlanner:
         from config.agent.tao_config import TaoConfig
         from config.agent.prompt_config import PromptConfig
         from config.agent.memory.memory_config import MemoryConfig
-        from llm_core.llm import LLM
+        from infra.llm import LLM
         from agent.react.action.manager import ToolManager
         from agent.react.tao import TaoLoop
         from agent.react.loop import ConvLoop
