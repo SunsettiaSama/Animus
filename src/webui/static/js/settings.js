@@ -11,6 +11,7 @@ import * as memoryMod   from './modules/memory.js';
 import * as personaMod  from './modules/persona.js';
 import * as voiceMod    from './modules/voice.js';
 import * as infraMod    from './modules/infra.js';
+import * as botMod      from './modules/bot.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ export function handleOverlayClick(e) {
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
 
-const _ALL_TABS = ['model', 'memory', 'persona', 'voice', 'vllm', 'sandbox'];
+const _ALL_TABS = ['model', 'memory', 'persona', 'voice', 'vllm', 'sandbox', 'bot'];
 
 export function setTab(tab) {
   _activeTab = tab;
@@ -58,6 +59,7 @@ async function _loadTab(tab) {
   if (tab === 'voice')   await _loadVoiceTab();
   if (tab === 'vllm')    await _loadVLLMTab();
   if (tab === 'sandbox') await _loadSandboxTab();
+  if (tab === 'bot')     await _loadBotTab();
 }
 
 // ── Model tab ─────────────────────────────────────────────────────────────────
@@ -387,6 +389,50 @@ export async function saveSandboxTab() {
   _toast('Sandbox config saved');
 }
 
+// ── Bot tab ───────────────────────────────────────────────────────────────────
+
+async function _loadBotTab() {
+  const d = await infraMod.bot.loadConfig().catch(() => null);
+  if (!d) return;
+  _si('s-bot-ws-url',           d.ws_url ?? '');
+  _si('s-bot-token',            d.access_token ?? '');
+  _si('s-bot-reconnect',        d.reconnect_interval_sec ?? 5);
+  _si('s-bot-users',            (d.allowed_private_users ?? []).join(', '));
+  _si('s-bot-groups',           (d.allowed_groups ?? []).join(', '));
+  _si('s-bot-prefix',           d.command_prefix ?? '');
+  _si('s-bot-max-sessions',     d.max_sessions ?? 100);
+  _si('s-bot-ttl',              d.session_ttl_hours ?? 24);
+
+  // Status badge
+  const st = await infraMod.bot.status().catch(() => null);
+  const badge = $('s-bot-status-badge');
+  if (badge && st) {
+    const state = st.state ?? 'unknown';
+    badge.textContent = state;
+    badge.className   = 'bot-status-badge ' + (
+      state === 'connected'  ? 'ok'      :
+      state === 'connecting' ? 'loading' : 'off'
+    );
+    const sessEl = $('s-bot-sessions-count');
+    if (sessEl) sessEl.textContent = `${st.sessions ?? 0} active sessions`;
+  }
+}
+
+export async function saveBotTab() {
+  const _ids = id => _v(id).split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+  const payload = {
+    ws_url:                 _v('s-bot-ws-url'),
+    access_token:           _v('s-bot-token'),
+    reconnect_interval_sec: parseFloat(_v('s-bot-reconnect')) || 5,
+    allowed_private_users:  _ids('s-bot-users'),
+    allowed_groups:         _ids('s-bot-groups'),
+    command_prefix:         _v('s-bot-prefix'),
+    max_sessions:           parseInt(_v('s-bot-max-sessions')) || 100,
+    session_ttl_hours:      parseFloat(_v('s-bot-ttl')) || 24,
+  };
+  await botMod.saveConfig(payload);
+}
+
 // ── Modal footer Save button ──────────────────────────────────────────────────
 
 export async function saveCurrentTab() {
@@ -399,6 +445,7 @@ export async function saveCurrentTab() {
     voice:   saveVoiceTab,
     vllm:    saveVLLMTab,
     sandbox: saveSandboxTab,
+    bot:     saveBotTab,
   };
   const fn = actions[_activeTab];
   if (!fn) return;

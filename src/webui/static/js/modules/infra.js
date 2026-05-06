@@ -25,6 +25,17 @@ export const sandbox = {
   saveConfig:  payload => http.post(PATHS.infra.sandbox.save, payload).then(() => _cb.onToast('Sandbox config saved')),
 };
 
+// ── Bot service ───────────────────────────────────────────────────────────────
+
+export const bot = {
+  loadConfig:  () => http.get(PATHS.infra.bot.config),
+  saveConfig:  payload => http.post(PATHS.infra.bot.save, payload).then(() => _cb.onToast('Bot config saved')),
+  status:      () => http.get(PATHS.infra.bot.status),
+  sessions:    () => http.get(PATHS.infra.bot.sessions),
+  start:       () => http.post(PATHS.infra.bot.start, {}).then(d => { _cb.onToast('Bot service starting…'); return d; }),
+  stop:        () => http.post(PATHS.infra.bot.stop,  {}).then(() => _cb.onToast('Bot service stopped')),
+};
+
 // ── Service registry ──────────────────────────────────────────────────────────
 
 export const services = {
@@ -41,6 +52,7 @@ const _SERVICE_META = {
   vllm:    { icon: '🧠', label: 'vLLM' },
   searxng: { icon: '🔍', label: 'SearXNG' },
   sandbox: { icon: '🏖', label: 'Sandbox' },
+  bot:     { icon: '🤖', label: 'Bot' },
   tts:     { icon: '🔊', label: 'TTS' },
   stt:     { icon: '🎙', label: 'STT' },
 };
@@ -69,7 +81,7 @@ export async function updateServicesRow() {
         <span class="sc-state">${state}</span>
       </div>`;
 
-    if (name === 'vllm' || name === 'searxng') {
+    if (name === 'vllm' || name === 'searxng' || name === 'bot') {
       const btn = document.createElement('button');
       btn.className = 'btn-secondary sc-btn';
       if (state === 'running') {

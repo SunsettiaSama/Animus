@@ -56,6 +56,7 @@
             <span class="mc-icon">🧠</span>
             <span class="mc-title">LLM Core</span>
             <span class="mc-badge off" id="mc-llm-badge">—</span>
+            <button class="mc-settings-btn icon-btn" title="设置">⚙</button>
           </div>
           <div class="mc-body" id="mc-llm-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
@@ -66,6 +67,7 @@
             <span class="mc-icon">⚡</span>
             <span class="mc-title">ReAct Agent</span>
             <span class="mc-badge off" id="mc-react-badge">—</span>
+            <button class="mc-settings-btn icon-btn" title="设置">⚙</button>
           </div>
           <div class="mc-body" id="mc-react-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
@@ -75,6 +77,7 @@
           <div class="mc-header">
             <span class="mc-icon">💾</span>
             <span class="mc-title">Memory</span>
+            <button class="mc-settings-btn icon-btn" title="设置">⚙</button>
           </div>
           <div class="mc-body" id="mc-memory-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
@@ -85,6 +88,7 @@
             <span class="mc-icon">🎭</span>
             <span class="mc-title">Persona</span>
             <span class="mc-badge off" id="mc-persona-badge">—</span>
+            <button class="mc-settings-btn icon-btn" title="设置">⚙</button>
           </div>
           <div class="mc-body" id="mc-persona-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
@@ -94,8 +98,20 @@
           <div class="mc-header">
             <span class="mc-icon">🔊</span>
             <span class="mc-title">Voice</span>
+            <button class="mc-settings-btn icon-btn" title="设置">⚙</button>
           </div>
           <div class="mc-body" id="mc-voice-body"><span style="color:var(--text3)">Loading…</span></div>
+        </div>
+
+        <!-- 通信接口 -->
+        <div class="module-card" data-tab="bot">
+          <div class="mc-header">
+            <span class="mc-icon">💬</span>
+            <span class="mc-title">通信接口</span>
+            <span class="mc-badge off" id="mc-bot-badge">—</span>
+            <button class="mc-settings-btn icon-btn" title="设置">⚙</button>
+          </div>
+          <div class="mc-body" id="mc-bot-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
 
         <!-- Scheduler & Crew -->
@@ -288,6 +304,9 @@
         </button>
         <button class="snav-item"        id="snav-btn-sandbox">
           <span class="snav-icon">🛡</span> Sandbox
+        </button>
+        <button class="snav-item"        id="snav-btn-bot"    >
+          <span class="snav-icon">💬</span> 通信接口
         </button>
       </nav>
 
@@ -914,6 +933,73 @@
         <div id="sandbox-cfg-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
 
       </div><!-- /tab-sandbox -->
+
+      <!-- Bot tab -->
+      <div id="tab-bot" class="hidden">
+
+        <!-- Status bar -->
+        <div class="section-divider" style="margin-top:0">Bot 服务状态</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <span class="bot-status-badge off" id="s-bot-status-badge">unknown</span>
+          <span style="font-size:12px;color:var(--text3)" id="s-bot-sessions-count"></span>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button id="btn-bot-start"  class="btn-primary"   style="height:30px;font-size:12px">Start</button>
+            <button id="btn-bot-stop"   class="btn-secondary" style="height:30px;font-size:12px">Stop</button>
+            <button id="btn-bot-refresh" class="btn-secondary" style="height:30px;font-size:12px">↻</button>
+          </div>
+        </div>
+
+        <!-- Connection -->
+        <div class="section-divider">连接配置</div>
+        <div class="form-group">
+          <label>WebSocket URL <span style="font-weight:400;color:var(--text3)">OneBot 11 正向 WS 地址（NapCat 默认 ws://127.0.0.1:3001）</span></label>
+          <input id="s-bot-ws-url" type="text" placeholder="ws://127.0.0.1:3001" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Access Token <span style="font-weight:400;color:var(--text3)">留空则不鉴权</span></label>
+            <input id="s-bot-token" type="password" placeholder="（可选）" />
+          </div>
+          <div class="form-group">
+            <label>重连间隔（秒）<span style="font-weight:400;color:var(--text3)">reconnect_interval_sec</span></label>
+            <input id="s-bot-reconnect" type="number" value="5" min="1" max="60" />
+          </div>
+        </div>
+
+        <!-- Access control -->
+        <div class="section-divider">访问控制</div>
+        <div class="form-group">
+          <label>允许私聊用户 QQ <span style="font-weight:400;color:var(--text3)">逗号分隔，留空 = 允许所有人</span></label>
+          <input id="s-bot-users" type="text" placeholder="12345678, 87654321" />
+        </div>
+        <div class="form-group">
+          <label>允许响应的群号 <span style="font-weight:400;color:var(--text3)">逗号分隔，留空 = 允许所有群</span></label>
+          <input id="s-bot-groups" type="text" placeholder="100000001, 100000002" />
+        </div>
+        <div class="form-group">
+          <label>指令前缀 <span style="font-weight:400;color:var(--text3)">留空则响应所有消息；填写后仅响应以该前缀开头的消息</span></label>
+          <input id="s-bot-prefix" type="text" placeholder="（可选，如 /ai）" />
+        </div>
+
+        <!-- Session management -->
+        <div class="section-divider">会话管理</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>最大并发会话数 <span style="font-weight:400;color:var(--text3)">max_sessions</span></label>
+            <input id="s-bot-max-sessions" type="number" value="100" min="1" max="1000" />
+          </div>
+          <div class="form-group">
+            <label>会话超时（小时）<span style="font-weight:400;color:var(--text3)">session_ttl_hours</span></label>
+            <input id="s-bot-ttl" type="number" value="24" min="1" max="720" />
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button id="btn-bot-save" class="btn-primary" style="flex:1">保存 Bot 配置</button>
+        </div>
+        <div id="bot-cfg-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
+
+      </div><!-- /tab-bot -->
 
     </div><!-- /modal-body -->
 

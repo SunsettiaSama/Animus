@@ -16,6 +16,25 @@ class BotConfig:
     max_sessions: int = 100
     session_ttl_hours: float = 24.0
 
+    def to_yaml(self, path: str | Path) -> None:
+        import yaml
+        import os
+        path = Path(path)
+        os.makedirs(path.parent, exist_ok=True)
+        data = {
+            "transport":             self.transport,
+            "ws_url":                self.ws_url,
+            "access_token":          self.access_token,
+            "reconnect_interval_sec": self.reconnect_interval_sec,
+            "allowed_private_users": self.allowed_private_users,
+            "allowed_groups":        self.allowed_groups,
+            "command_prefix":        self.command_prefix,
+            "max_sessions":          self.max_sessions,
+            "session_ttl_hours":     self.session_ttl_hours,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, allow_unicode=True)
+
     @classmethod
     def load(cls, path: str | Path | None = None) -> BotConfig:
         import yaml

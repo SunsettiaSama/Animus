@@ -26,13 +26,14 @@ import * as schedulerMod                  from './modules/scheduler.js';
 import * as voiceMod                      from './modules/voice.js';
 import * as infraMod                      from './modules/infra.js';
 import * as benchMod                      from './modules/benchmark.js';
+import * as botMod                        from './modules/bot.js';
 import { renderRecentLanding }            from './history.js';
 
 // ── Module callback wiring ────────────────────────────────────────────────────
 
 const _toast = text => _showToast(text);
 
-[llmMod, reactMod, memoryMod, personaMod, schedulerMod, voiceMod, infraMod, benchMod].forEach(m => {
+[llmMod, reactMod, memoryMod, personaMod, schedulerMod, voiceMod, infraMod, benchMod, botMod].forEach(m => {
   if (m.setCallbacks) m.setCallbacks({ onToast: _toast });
 });
 reactMod.setCallbacks({
@@ -292,6 +293,7 @@ async function loadWorkstation() {
     voiceMod.updateWorkstationCard(),
     schedulerMod.updateWorkstationCard(),
     benchMod.updateWorkstationCard(),
+    botMod.updateWorkstationCard(),
     infraMod.updateServicesRow(),
     renderRecentLanding(document.getElementById('landing-recent')),
   ]);
@@ -424,13 +426,18 @@ function _bind() {
   on('sched-btn-home',    'click', goHome);
   on('btn-sched-refresh', 'click', () => schedulerMod.init());
 
-  // Workstation module cards — double-click opens settings tab
+  // Workstation module cards — ⚙ button or double-click opens settings tab
   document.querySelectorAll('.module-card[data-tab]').forEach(card => {
-    card.addEventListener('dblclick', () => settings.open(card.dataset.tab));
+    const tab = card.dataset.tab;
+    card.addEventListener('dblclick', () => settings.open(tab));
+    card.querySelector('.mc-settings-btn')?.addEventListener('click', e => {
+      e.stopPropagation();
+      settings.open(tab);
+    });
   });
 
-  // Settings nav tab buttons (supplementary — already wired in settings.js via onclick)
-  ['model','memory','persona','voice','vllm','sandbox'].forEach(tab => {
+  // Settings nav tab buttons
+  ['model','memory','persona','voice','vllm','sandbox','bot'].forEach(tab => {
     document.getElementById(`snav-btn-${tab}`)?.addEventListener('click', () => settings.setTab(tab));
   });
 
@@ -457,6 +464,17 @@ function _bind() {
   on('btn-vllm-stop',  'click', () => infraMod.vllm.stop());
   on('btn-vllm-save',  'click', () => settings.saveVLLMTab());
   on('btn-sandbox-save','click',() => settings.saveSandboxTab());
+
+  // Bot service buttons
+  on('btn-bot-save',   'click', async () => {
+    const msgEl = document.getElementById('bot-cfg-msg');
+    if (msgEl) msgEl.textContent = 'Saving…';
+    await settings.saveBotTab().catch(e => { if (msgEl) msgEl.textContent = e.message; return; });
+    if (msgEl) { msgEl.textContent = 'Saved ✓'; setTimeout(() => { msgEl.textContent = ''; }, 2000); }
+  });
+  on('btn-bot-start',  'click', () => infraMod.bot.start().catch(e => _showToast(e.message)));
+  on('btn-bot-stop',   'click', () => infraMod.bot.stop().catch(e => _showToast(e.message)));
+  on('btn-bot-refresh','click', () => settings.setTab('bot'));
 
   // Model download
   document.querySelector('[data-action="download-tts"]')?.addEventListener('click', () => doDownloadModel('tts'));

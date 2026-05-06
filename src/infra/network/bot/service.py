@@ -56,8 +56,8 @@ class BotService(BaseServiceManager, EventHandler):
         if self._svc_state == "running":
             return
         self._transport.on_event = self._dispatch
-        loop = asyncio.get_event_loop()
-        loop.create_task(self._transport.start())
+        loop = self._state.main_event_loop
+        asyncio.run_coroutine_threadsafe(self._transport.start(), loop)
         self._svc_state = "running"
         logger.info("[BotService] started, transport=%r", self._transport)
 
@@ -65,8 +65,8 @@ class BotService(BaseServiceManager, EventHandler):
         if self._svc_state == "stopped":
             return
         self._svc_state = "stopped"
-        loop = asyncio.get_event_loop()
-        loop.create_task(self._async_stop())
+        loop = self._state.main_event_loop
+        asyncio.run_coroutine_threadsafe(self._async_stop(), loop)
 
     def status(self) -> dict:
         return {

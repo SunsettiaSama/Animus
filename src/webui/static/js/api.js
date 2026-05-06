@@ -53,6 +53,14 @@ export const PATHS = {
       logs:   '/api/vllm/logs',
     },
     sandbox: { config: '/api/sandbox/config', save: '/api/sandbox/config/save' },
+    bot: {
+      config:   '/api/bot/config',
+      save:     '/api/bot/config/save',
+      status:   '/api/bot/status',
+      sessions: '/api/bot/sessions',
+      start:    '/api/bot/start',
+      stop:     '/api/bot/stop',
+    },
     services:{
       status:  '/api/services/status',
       one:     n => `/api/services/${n}/status`,
