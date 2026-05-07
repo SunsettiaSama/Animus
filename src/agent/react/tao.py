@@ -318,17 +318,17 @@ class TaoLoop:
             self._executor.register_instance(delegate_skill)
             effective_descriptions[delegate_skill.name] = delegate_skill.description
 
-        # Inject plan tools when a plan config is provided.
+        # Inject plan skills when a plan config is provided.
         self._plan_orchestrator = None
+        self._plan_skill_set = None
         if cfg.plan is not None:
             from plan.orchestrator import PlanOrchestrator
-            from .action.tools.impl.plan_tools import (
-                PlanStatusAction,
-                PlanSkipAction,
-                PlanPauseAction,
-                PlanSnapshotAction,
-                PlanRollbackAction,
-                RunPlanAction,
+            from .action.skill.plan_skill import (
+                PlanSkillSet,
+                RunPlanSkill,
+                PlanStatusSkill,
+                PlanWaitSkill,
+                PlanSkipSkill,
             )
             self._plan_orchestrator = PlanOrchestrator(
                 cfg=cfg.plan.orchestrator,
@@ -344,16 +344,20 @@ class TaoLoop:
                 })
             self._plan_orchestrator.subscribe(_plan_event_to_timeline)
 
-            for action in (
-                RunPlanAction(orchestrator=self._plan_orchestrator),
-                PlanStatusAction(orchestrator=self._plan_orchestrator),
-                PlanSkipAction(orchestrator=self._plan_orchestrator),
-                PlanPauseAction(orchestrator=self._plan_orchestrator),
-                PlanSnapshotAction(orchestrator=self._plan_orchestrator),
-                PlanRollbackAction(orchestrator=self._plan_orchestrator),
+            self._plan_skill_set = PlanSkillSet(
+                orchestrator=self._plan_orchestrator,
+                event_sink=None,  # injected later via set_plan_event_sink()
+            )
+            for skill in (
+                RunPlanSkill(skill_set=self._plan_skill_set),
+                PlanStatusSkill(skill_set=self._plan_skill_set),
+                PlanWaitSkill(skill_set=self._plan_skill_set),
+                PlanSkipSkill(skill_set=self._plan_skill_set),
             ):
-                self._executor.register_instance(action)
-                effective_descriptions[action.name] = action.description
+                # Register instance for execution; intentionally NOT added to
+                # effective_descriptions so plan tools are only discovered via
+                # tool_search, not shown in the primary tool list.
+                self._executor.register_instance(skill)
 
         # Hook the tool-layer event sink after all tools are registered.
         self._executor.set_event_sink(self._timeline.make_tool_sink())
@@ -399,6 +403,11 @@ class TaoLoop:
         self._sub_event_sink = sink
         if self._delegate_skill is not None:
             self._delegate_skill.sub_event_sink = sink
+
+    def set_plan_event_sink(self, sink) -> None:
+        """Inject an event_sink into the PlanSkillSet (called by WebUI after init)."""
+        if self._plan_skill_set is not None:
+            self._plan_skill_set.set_event_sink(sink)
 
     # ── Approval gate ─────────────────────────────────────────────────────────
 
@@ -515,6 +524,24 @@ class TaoLoop:
                     ),
                     extra_system_blocks=persona_blocks,
                 )
+
+            # ── Active plan status injection ─────────────────────────────────
+            # If a plan is running, append a compact status block to the system
+            # message so the agent is aware of ongoing background progress.
+            if (
+                self._plan_orchestrator is not None
+                and self._plan_orchestrator.lifecycle_state.value
+                    not in ("idle", "done", "failed", "aborted")
+            ):
+                from .action.skill.plan_skill import _format_plan_status
+                plan_status_block = (
+                    "\n\n【活跃多智能体计划】\n"
+                    + _format_plan_status(self._plan_orchestrator)
+                )
+                if messages and isinstance(messages[0], SystemMessage):
+                    messages[0] = SystemMessage(
+                        content=messages[0].content + plan_status_block
+                    )
 
             # ── Prompt preview (step 0 only) ─────────────────────────────────
             # Build the preview payload eagerly but defer the yield until after

@@ -1,10 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from plan.patch import HumanPatch
+
+
+class PlanLifecycleState(str, Enum):
+    idle       = "idle"
+    planning   = "planning"     # PlannerAgent generating plan
+    running    = "running"      # DAG tasks executing
+    replanning = "replanning"   # ReplannerAgent triggered
+    done       = "done"
+    failed     = "failed"
+    aborted    = "aborted"
+
+
+@dataclass
+class LifecycleStateEvent:
+    plan_id: str
+    state: str   # PlanLifecycleState value
 
 
 @dataclass
@@ -84,6 +101,13 @@ class PlanAbortEvent:
     reason: str
 
 
+@dataclass
+class TaskStepEvent:
+    plan_id: str
+    task_id: str
+    step: dict   # { type, index, thought, action, action_input, observation }
+
+
 PlanEvent = Union[
     PlanStartEvent,
     TaskStartEvent,
@@ -96,4 +120,6 @@ PlanEvent = Union[
     SnapshotEvent,
     PlanCompleteEvent,
     PlanAbortEvent,
+    LifecycleStateEvent,
+    TaskStepEvent,
 ]

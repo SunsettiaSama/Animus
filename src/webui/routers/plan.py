@@ -67,6 +67,12 @@ def _plan_event_to_dict(event) -> dict:
         return {"type": "plan_complete", "plan_id": event.plan_id, "conclusion": event.conclusion}
     if isinstance(event, PlanAbortEvent):
         return {"type": "plan_abort", "plan_id": event.plan_id, "reason": event.reason}
+    from plan.event import LifecycleStateEvent
+    if isinstance(event, LifecycleStateEvent):
+        return {"type": "lifecycle_state", "plan_id": event.plan_id, "state": event.state}
+    from plan.event import TaskStepEvent
+    if isinstance(event, TaskStepEvent):
+        return {"type": "task_step", "plan_id": event.plan_id, "task_id": event.task_id, "step": event.step}
     return {"type": "unknown"}
 
 
@@ -220,6 +226,14 @@ def plan_resume() -> JSONResponse:
 
 
 # ── POST /api/plan/skip/{task_id} ──────────────────────────────────────────────
+
+@router.get("/api/plan/task/{task_id}/steps")
+def plan_task_steps(task_id: str) -> JSONResponse:
+    state = get_state()
+    orch = state.active_orchestrator
+    steps = (orch._task_steps.get(task_id, []) if orch is not None else [])
+    return JSONResponse({"task_id": task_id, "steps": steps})
+
 
 @router.post("/api/plan/skip/{task_id}")
 def plan_skip(task_id: str, req: SkipRequest = SkipRequest()) -> JSONResponse:

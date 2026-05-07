@@ -10,6 +10,7 @@ router = APIRouter()
 
 
 class VLLMConfigSaveRequest(BaseModel):
+    provider: str = "official"
     host: str = "127.0.0.1"
     port: int = 8000
     tensor_parallel_size: int = 1
@@ -42,6 +43,7 @@ def save_vllm_config(req: VLLMConfigSaveRequest):
     from config.llm_core.vllm_config import VLLMConfig
     state = get_state()
     cfg = VLLMConfig(
+        provider=req.provider,
         host=req.host,
         port=req.port,
         tensor_parallel_size=req.tensor_parallel_size,
@@ -79,7 +81,11 @@ def vllm_stop():
 
 @router.get("/api/vllm/status")
 def vllm_status():
-    return get_state().vllm_manager.status()
+    state = get_state()
+    s = state.vllm_manager.status()
+    cfg = _load_vllm_config()
+    s.setdefault("provider", cfg.provider)
+    return s
 
 
 @router.get("/api/vllm/logs")

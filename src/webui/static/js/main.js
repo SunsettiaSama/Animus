@@ -93,6 +93,8 @@ function goHome() {
 function goWorkspace() {
   _showScreen('s-workspace');
   history.renderSidebar();
+  // Initialise the embedded plan sub-panel once (no-op on subsequent calls).
+  import('/static/js/modules/plan.js').then(m => m.initSubPanel());
 }
 
 function goPlan() {
@@ -371,8 +373,17 @@ async function doDownloadModel(type) {
 
 // ── DOM event bindings ────────────────────────────────────────────────────────
 
+// Expose settings helpers that are called from inline HTML attributes
+window.onBotTransportChange = () => settings.onBotTransportChange?.();
+
 function _bind() {
-  const on = (id, ev, fn) => document.getElementById(id)?.addEventListener(ev, fn);
+  const on = (id, ev, fn) => {
+    try {
+      document.getElementById(id)?.addEventListener(ev, fn);
+    } catch (err) {
+      console.error(`[main] failed to bind #${id} ${ev}:`, err);
+    }
+  };
 
   // Send / abort
   on('btn-send', 'click', handleSend);

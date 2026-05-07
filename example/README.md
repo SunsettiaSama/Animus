@@ -6,7 +6,8 @@
 
 ```
 example/
-├── napcat_qq/          QQ（通过 NapCat，推荐起步方式）
+├── napcat_qq/          QQ（通过 NapCat / OneBot 11 桥接，支持个人账号）
+├── qq_official/        QQ（官方机器人 API，无需外部进程）
 └── custom_transport/   自定义平台接入模板（Telegram / Discord / HTTP 等）
 ```
 
@@ -38,15 +39,25 @@ AgentSession → ConvLoop → TaoLoop  ← 框架自动处理
 
 ---
 
-## 快速开始：QQ（NapCat）
+## 快速开始：选择接入方式
 
-最快 5 分钟内让 Bot 跑起来：
+### 方式 A：QQ 官方机器人 API（推荐，无需外部进程）
+
+适合：官方机器人账号、群助手、稳定生产部署
+
+1. 在 QQ 开放平台注册机器人，获取 AppID + AppSecret → 见 [qq_official/README.md](qq_official/README.md)
+2. 编辑 `config/infra/bot_config.yaml`，设置 `transport: qq_official` 及 `appid` / `secret`
+3. `python main.py webui`
+4. 在 WebUI 中初始化 LLM，向 Bot 发消息即可
+
+### 方式 B：NapCat / OneBot 11（个人 QQ 账号）
+
+适合：操控个人 QQ 账号、需要主动发送消息
 
 1. 安装并配置 NapCat → 见 [napcat_qq/README.md](napcat_qq/README.md)
-2. 编辑 `config/infra/bot_config.yaml`，填写 `ws_url` 和访问控制规则
+2. 编辑 `config/infra/bot_config.yaml`，设置 `transport: forward_ws` 及 `ws_url`
 3. `python main.py webui`
-4. 在 WebUI 中初始化 LLM
-5. 向 Bot 发消息即可
+4. 在 WebUI 中初始化 LLM，向 Bot 发消息即可
 
 ---
 

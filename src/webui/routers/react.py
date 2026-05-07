@@ -137,6 +137,23 @@ def _do_react_init(req: ReactInitRequest, state) -> None:
     state.conv_loop  = conv_loop
     state.react_init_event.set()
 
+    # Wire plan event_sink: when the agent triggers run_plan via chat, plan events
+    # are forwarded to state.plan_event_queue so the WebUI sub-panel can track them.
+    def _make_plan_sink(st):
+        def _sink(event_dict: dict) -> None:
+            loop = st.main_event_loop
+            if loop is None:
+                return
+            # Create a fresh asyncio.Queue on the main loop if none exists
+            # (chat-driven plan runs don't go through POST /api/plan/run).
+            if st.plan_event_queue is None:
+                q: asyncio.Queue = asyncio.Queue()
+                st.plan_event_queue = q
+            loop.call_soon_threadsafe(st.plan_event_queue.put_nowait, event_dict)
+        return _sink
+
+    tao.set_plan_event_sink(_make_plan_sink(state))
+
     state.preload_future = state.task_runner.submit("preload", tao.preload)
 
     if tao.scheduler_engine is not None and state.main_event_loop is not None:

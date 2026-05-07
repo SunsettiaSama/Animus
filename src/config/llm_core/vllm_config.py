@@ -6,6 +6,7 @@ from typing import Optional
 
 @dataclass
 class VLLMConfig:
+    provider: str = "official"     # "official" | "custom"
     host: str = "127.0.0.1"
     port: int = 8000
     tensor_parallel_size: int = 1
@@ -25,6 +26,7 @@ class VLLMConfig:
         with open(path, encoding="utf-8") as f:
             data: dict = yaml.safe_load(f) or {}
         return cls(
+            provider=data.get("provider", "official"),
             host=data.get("host", "127.0.0.1"),
             port=int(data.get("port", 8000)),
             tensor_parallel_size=int(data.get("tensor_parallel_size", 1)),
@@ -40,6 +42,7 @@ class VLLMConfig:
 
     def to_dict(self) -> dict:
         return {
+            "provider":               self.provider,
             "host":                   self.host,
             "port":                   self.port,
             "tensor_parallel_size":   self.tensor_parallel_size,

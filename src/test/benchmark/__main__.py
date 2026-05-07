@@ -79,6 +79,18 @@ def _build_suite(scenarios_dir: Path) -> "BenchmarkSuite":
     except (ImportError, OSError):
         pass
 
+    try:
+        from test.benchmark.skill_runner import SkillRunner
+        suite.register(SkillRunner())
+    except (ImportError, OSError):
+        pass
+
+    try:
+        from test.benchmark.mcp_tool_runner import MCPToolRunner
+        suite.register(MCPToolRunner())
+    except (ImportError, OSError):
+        pass
+
     return suite
 
 

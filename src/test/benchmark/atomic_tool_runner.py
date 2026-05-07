@@ -130,13 +130,96 @@ _CASES: list[_ToolCase] = [
         expect=lambda out: "2.2" in out,
         description="1 kg ≈ 2.2046 lb",
     ),
-    # ── word_count ─────────────────────────────────────────────────────────────
     _ToolCase(
         name="tool_get_weekday",
         tool_cls_path="agent.react.action.tools.impl.datetime_tool.GetWeekdayAction",
         args={"date": "2026-01-01"},
         expect="星期四",
         description="2026-01-01 is Thursday (星期四)",
+    ),
+    # ── datetime ──────────────────────────────────────────────────────────────
+    _ToolCase(
+        name="tool_get_datetime_beijing",
+        tool_cls_path="agent.react.action.tools.impl.datetime_tool.GetDatetimeAction",
+        args={"tz": "beijing"},
+        expect=lambda out: "UTC+8" in out,
+        description="GetDatetime returns Beijing time with UTC+8 label",
+    ),
+    # ── hash ──────────────────────────────────────────────────────────────────
+    _ToolCase(
+        name="tool_hash_sha256",
+        tool_cls_path="agent.react.action.tools.impl.string_tool.HashAction",
+        args={"text": "hello", "algorithm": "sha256"},
+        expect="2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        description="sha256('hello') well-known hash",
+    ),
+    _ToolCase(
+        name="tool_hash_md5",
+        tool_cls_path="agent.react.action.tools.impl.string_tool.HashAction",
+        args={"text": "hello", "algorithm": "md5"},
+        expect="5d41402abc4b2a76b9719d911017c592",
+        description="md5('hello') well-known hash",
+    ),
+    # ── word_count ────────────────────────────────────────────────────────────
+    _ToolCase(
+        name="tool_word_count",
+        tool_cls_path="agent.react.action.tools.impl.word_count.WordCountAction",
+        args={"text": "Hello world foo"},
+        expect="3",
+        description="'Hello world foo' has 3 English words",
+    ),
+    # ── json_query ────────────────────────────────────────────────────────────
+    _ToolCase(
+        name="tool_json_query",
+        tool_cls_path="agent.react.action.tools.impl.data_tool.JsonQueryAction",
+        args={"data": '{"name":"Alice","age":30}', "path": "$.name"},
+        expect="Alice",
+        description="JSONPath $.name extracts 'Alice'",
+    ),
+    # ── regex_extract ─────────────────────────────────────────────────────────
+    _ToolCase(
+        name="tool_regex_extract",
+        tool_cls_path="agent.react.action.tools.impl.data_tool.RegexExtractAction",
+        args={"text": "foo123bar456", "pattern": r"\d+"},
+        expect="123",
+        description="RegexExtract finds '123' in 'foo123bar456'",
+    ),
+    # ── text_diff ─────────────────────────────────────────────────────────────
+    _ToolCase(
+        name="tool_text_diff_same",
+        tool_cls_path="agent.react.action.tools.impl.data_tool.TextDiffAction",
+        args={"text_a": "hello", "text_b": "hello"},
+        expect="完全相同",
+        description="TextDiff on identical strings returns '完全相同'",
+    ),
+    _ToolCase(
+        name="tool_text_diff_different",
+        tool_cls_path="agent.react.action.tools.impl.data_tool.TextDiffAction",
+        args={"text_a": "hello", "text_b": "world"},
+        expect="---",
+        description="TextDiff on different strings returns unified diff",
+    ),
+    # ── random ────────────────────────────────────────────────────────────────
+    _ToolCase(
+        name="tool_random_number",
+        tool_cls_path="agent.react.action.tools.impl.random_tool.RandomNumberAction",
+        args={"min": 1, "max": 100},
+        expect=lambda out: "随机整数" in out,
+        description="RandomNumber returns an integer in range",
+    ),
+    _ToolCase(
+        name="tool_random_choice",
+        tool_cls_path="agent.react.action.tools.impl.random_tool.RandomChoiceAction",
+        args={"options": "apple,banana,cherry"},
+        expect=lambda out: any(x in out for x in ["apple", "banana", "cherry"]),
+        description="RandomChoice picks one of the given options",
+    ),
+    _ToolCase(
+        name="tool_generate_uuid",
+        tool_cls_path="agent.react.action.tools.impl.random_tool.GenerateUUIDAction",
+        args={},
+        expect=lambda out: len(out) > 30 and "-" in out,
+        description="GenerateUUID returns a UUID string",
     ),
 ]
 
@@ -191,7 +274,15 @@ def _run_case(case: _ToolCase) -> ScenarioResult:
             error=f"expected {case.expect!r} in output {output!r}",
         )
 
-    return collector.finalize(quality_score=1.0 if ok else 0.0)
+    result = collector.finalize(quality_score=1.0 if ok else 0.0)
+    result.trace = {
+        "input":      case.args,
+        "output":     output,
+        "elapsed_ms": round(wall_ms, 3),
+        "tool":       tool_cls.__name__,
+        "assertion":  "pass" if ok else "fail",
+    }
+    return result
 
 
 class AtomicToolRunner:

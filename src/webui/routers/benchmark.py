@@ -35,18 +35,15 @@ def benchmark_scenario_detail(name: str):
     """
     Return full metadata for a single scenario: YAML content + last run result.
 
+    For YAML-based scenarios, returns full spec + last result.
+    For atomic-tool / skill / MCP scenarios without a YAML file, returns
+    just the last result from the saved report with a minimal spec stub.
+
     Response shape:
       name, description, prompt, expected, thresholds,
       llm_script_count, tool_names, delay_ms, ttfb_ms,
       last_result: { ...ScenarioResult fields } | null
     """
-    yaml_path = _SCENARIOS_DIR / f"{name}.yaml"
-    if not yaml_path.exists():
-        return JSONResponse(status_code=404, content={"error": f"Scenario {name!r} not found"})
-
-    from test.benchmark.scenarios.base import ScenarioLoader
-    scenario = ScenarioLoader.load(yaml_path)
-
     last_result = None
     p = _report_path()
     if p.exists():
@@ -56,17 +53,39 @@ def benchmark_scenario_detail(name: str):
                 last_result = r
                 break
 
+    yaml_path = _SCENARIOS_DIR / f"{name}.yaml"
+    if yaml_path.exists():
+        from test.benchmark.scenarios.base import ScenarioLoader
+        scenario = ScenarioLoader.load(yaml_path)
+        return {
+            "name": scenario.name,
+            "description": scenario.description,
+            "prompt": scenario.prompt,
+            "expected": scenario.expected,
+            "thresholds": scenario.thresholds,
+            "llm_script_count": len(scenario.llm_script),
+            "tool_names": sorted(scenario.tool_script.keys()),
+            "delay_ms": scenario.delay_ms,
+            "ttfb_ms": scenario.ttfb_ms,
+            "last_result": last_result,
+        }
+
+    # Non-YAML scenario: return result-only stub
+    if last_result is None:
+        return JSONResponse(status_code=404, content={"error": f"Scenario {name!r} not found"})
+
+    trace = last_result.get("trace") or {}
     return {
-        "name": scenario.name,
-        "description": scenario.description,
-        "prompt": scenario.prompt,
-        "expected": scenario.expected,
-        "thresholds": scenario.thresholds,
-        "llm_script_count": len(scenario.llm_script),
-        "tool_names": sorted(scenario.tool_script.keys()),
-        "delay_ms": scenario.delay_ms,
-        "ttfb_ms": scenario.ttfb_ms,
-        "last_result": last_result,
+        "name":             name,
+        "description":      trace.get("output", ""),
+        "prompt":           json.dumps(trace.get("input", {}), ensure_ascii=False),
+        "expected":         {},
+        "thresholds":       {},
+        "llm_script_count": 0,
+        "tool_names":       [trace.get("tool", "")] if trace.get("tool") else [],
+        "delay_ms":         0,
+        "ttfb_ms":          0,
+        "last_result":      last_result,
     }
 
 
@@ -74,10 +93,20 @@ def benchmark_scenario_detail(name: str):
 
 @router.get("/api/benchmark/scenarios")
 def benchmark_scenarios():
-    if not _SCENARIOS_DIR.exists():
-        return {"scenarios": []}
-    names = sorted(p.stem for p in _SCENARIOS_DIR.glob("*.yaml"))
-    return {"scenarios": names}
+    names: list[str] = []
+    if _SCENARIOS_DIR.exists():
+        names.extend(p.stem for p in _SCENARIOS_DIR.glob("*.yaml"))
+    # Include any non-YAML scenarios that appear in the latest report
+    p = _report_path()
+    if p.exists():
+        records = json.loads(p.read_text(encoding="utf-8"))
+        existing = set(names)
+        for r in records:
+            sname = r.get("scenario", "")
+            if sname and sname not in existing:
+                names.append(sname)
+                existing.add(sname)
+    return {"scenarios": sorted(names)}
 
 
 @router.get("/api/benchmark/report")
@@ -176,6 +205,18 @@ def benchmark_run_suite(body: dict):
             from test.benchmark.atomic_tool_runner import AtomicToolRunner
             suite.register(AtomicToolRunner())
         except ImportError:
+            pass
+
+        try:
+            from test.benchmark.skill_runner import SkillRunner
+            suite.register(SkillRunner())
+        except (ImportError, OSError):
+            pass
+
+        try:
+            from test.benchmark.mcp_tool_runner import MCPToolRunner
+            suite.register(MCPToolRunner())
+        except (ImportError, OSError):
             pass
 
         gate = None if gate_param == "all" else gate_param

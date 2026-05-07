@@ -21,6 +21,7 @@ class ExecutorAgent(AgentBase):
     async def run(self, instruction: str, **ctx: Any) -> AgentResult:
         task: PlanTask = ctx["task"]
         doc: PlanDocument = ctx["doc"]
+        step_callback = ctx.get("step_callback")
 
         agent_id = str(uuid.uuid4())
         await doc.update_task(task.task_id, status=TaskStatus.running)
@@ -34,6 +35,7 @@ class ExecutorAgent(AgentBase):
             instruction,
             profile_name,
             max_steps,
+            step_callback,
         )
         answer = result.get("answer", "")
         step_count = result.get("step_count", 0)
@@ -66,6 +68,7 @@ class ExecutorAgent(AgentBase):
         instruction: str,
         profile_name: str,
         max_steps: int | None,
+        step_callback=None,
     ) -> dict:
         from agent.profile import SubAgentConfig, SubAgentProfile
         from agent.runner import SubAgentRunner
@@ -81,4 +84,4 @@ class ExecutorAgent(AgentBase):
             profile_obj = dataclasses.replace(profile_obj, max_steps=max_steps)
 
         runner = SubAgentRunner()
-        return runner.run_sync(instruction, profile_obj, agent_cfg.llm_cfg_path)
+        return runner.run_sync(instruction, profile_obj, agent_cfg.llm_cfg_path, event_callback=step_callback)

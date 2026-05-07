@@ -128,7 +128,6 @@ class AppState:
 
     def _init_infra(self) -> None:
         from infra.task_runner import BackgroundTaskRunner
-        from infra.vllm_server import VLLMServerManager
         from infra.llm.service import LLMService
         from infra.searxng_manager import SearXNGManager
         from infra.sandbox import SandboxManager
@@ -140,7 +139,22 @@ class AppState:
         from config import paths
 
         self.task_runner      = BackgroundTaskRunner(max_workers=8)
-        _vllm_manager         = VLLMServerManager()
+        _vllm_cfg_path = self.vllm_config_yaml
+        import os as _os
+        if _os.path.exists(_vllm_cfg_path):
+            from config.llm_core.vllm_config import VLLMConfig as _VLLMCfg
+            _startup_vllm_cfg = _VLLMCfg.from_yaml(_vllm_cfg_path)
+        else:
+            from config.llm_core.vllm_config import VLLMConfig as _VLLMCfg
+            _startup_vllm_cfg = _VLLMCfg()
+
+        if _startup_vllm_cfg.provider == "custom":
+            from infra.llm.custom import CustomVLLMManager
+            _vllm_manager = CustomVLLMManager()
+        else:
+            from infra.llm.official import OfficialVLLMManager
+            _vllm_manager = OfficialVLLMManager()
+
         self.llm_service      = LLMService(_vllm_manager)
 
         run_cfg = RunConfig.load()
@@ -173,17 +187,44 @@ class AppState:
 
         # ── Bot service ───────────────────────────────────────────────────────
         from config.infra.bot_config import BotConfig
-        from infra.network.bot.onebot.transport.forward_ws import ForwardWSTransport
         from infra.network.bot.service import BotService
 
         bot_cfg   = BotConfig.load()
-        transport = ForwardWSTransport(
+        transport = _build_transport(bot_cfg)
+        self.bot_service = BotService(transport, self, bot_cfg)
+        self.service_registry.register("bot", self.bot_service)
+
+
+# ── Transport factory ─────────────────────────────────────────────────────────
+
+def _build_transport(bot_cfg: Any) -> Any:
+    """根据 bot_config.yaml 中的 transport 字段选择对应的 Transport 实现。
+
+    "forward_ws"  → ForwardWSTransport（对接 NapCat / go-cqhttp 等外部进程）
+    "qq_official" → QQOfficialTransport（QQ 官方机器人 API，无需外部进程）
+    """
+    t = bot_cfg.transport
+
+    if t == "forward_ws":
+        from infra.network.bot.onebot.transport.forward_ws import ForwardWSTransport
+        return ForwardWSTransport(
             url=bot_cfg.ws_url,
             access_token=bot_cfg.access_token,
             reconnect_interval=bot_cfg.reconnect_interval_sec,
         )
-        self.bot_service = BotService(transport, self, bot_cfg)
-        self.service_registry.register("bot", self.bot_service)
+
+    if t == "qq_official":
+        from infra.network.bot.onebot.transport.qq_official import QQOfficialTransport
+        return QQOfficialTransport(
+            appid=bot_cfg.appid,
+            secret=bot_cfg.secret,
+            is_sandbox=bot_cfg.is_sandbox,
+        )
+
+    raise ValueError(
+        f"Unknown bot transport: {t!r}. "
+        "Valid options: 'forward_ws', 'qq_official'"
+    )
 
 
 # ── Lazy singleton ────────────────────────────────────────────────────────────

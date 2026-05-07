@@ -10,6 +10,13 @@
 
 import { http, PATHS } from '../api.js';
 
+// plan.js is loaded lazily to keep the initial bundle lighter.
+let _planMod = null;
+async function _getPlanMod() {
+  if (!_planMod) _planMod = await import('./plan.js');
+  return _planMod;
+}
+
 const _cb = { onToast: () => {} };
 export function setCallbacks(cbs) { Object.assign(_cb, cbs); }
 
@@ -428,7 +435,85 @@ async function _openDetail(name) {
     trendRR?.series?.[name] ?? [],
   );
 
-  body.innerHTML = descHtml + promptHtml + specHtml + lastRunHtml + trendHtml;
+  const traceHtml = _buildTraceHtml(detail.last_result?.trace);
+  body.innerHTML = descHtml + promptHtml + specHtml + lastRunHtml + traceHtml + trendHtml;
+
+  // Embed interactive plan DAG if this scenario captured plan tasks
+  const planTasks = detail.last_result?.trace?.plan_tasks;
+  const dagWrap = document.getElementById('bench-plan-dag-wrap');
+  if (dagWrap) {
+    if (planTasks && planTasks.length) {
+      dagWrap.classList.remove('hidden');
+      _getPlanMod().then(m => m.renderDAG(planTasks, 'bench-plan-dag-svg', true));
+    } else {
+      dagWrap.classList.add('hidden');
+    }
+  }
+}
+
+function _buildTraceHtml(trace) {
+  if (!trace) return '';
+
+  // Input section
+  const inputVal = typeof trace.input === 'object'
+    ? JSON.stringify(trace.input, null, 2)
+    : String(trace.input ?? '—');
+
+  // Steps section
+  let stepsHtml = '';
+  if (Array.isArray(trace.steps) && trace.steps.length) {
+    const stepCards = trace.steps.map((s, i) => {
+      const isSub = s.type === 'sub_agent';
+      const icon = isSub ? '🤖' : '⚙';
+      const label = isSub ? `SubAgent Step ${i + 1}` : `Step ${i + 1}`;
+      const thought  = s.thought      ? `<div class="trace-row"><span class="trace-lbl">💭 Thought</span><span class="trace-val">${_esc(s.thought)}</span></div>` : '';
+      const action   = s.action       ? `<div class="trace-row"><span class="trace-lbl">🔧 Action</span><span class="trace-val">${_esc(s.action)}</span></div>` : '';
+      const ainput   = s.action_input ? `<div class="trace-row"><span class="trace-lbl">   Input</span><span class="trace-val trace-code">${_esc(typeof s.action_input === 'object' ? JSON.stringify(s.action_input, null, 2) : s.action_input)}</span></div>` : '';
+      const obs      = s.observation  ? `<div class="trace-row"><span class="trace-lbl">👁 Obs</span><span class="trace-val">${_esc(String(s.observation).slice(0, 300))}</span></div>` : '';
+      const stepStr  = s.step !== undefined ? `<div class="trace-row"><span class="trace-lbl">   Step</span><span class="trace-val">${_esc(s.step)}</span></div>` : '';
+      const statusStr = s.status       ? `<div class="trace-row"><span class="trace-lbl">   Status</span><span class="trace-val">${_esc(s.status)}</span></div>` : '';
+      const noteStr  = s.note         ? `<div class="trace-row"><span class="trace-lbl">   Note</span><span class="trace-val">${_esc(s.note)}</span></div>` : '';
+      return `<div class="trace-step${isSub ? ' trace-step-sub' : ''}">
+        <div class="trace-step-hdr">${icon} ${_esc(label)}</div>
+        ${thought}${action}${ainput}${obs}${stepStr}${statusStr}${noteStr}
+      </div>`;
+    }).join('');
+    stepsHtml = `<div class="bench-detail-section">
+      <div class="bench-detail-section-title">Execution Steps
+        <span style="font-weight:400;color:var(--text3)">${trace.elapsed_ms != null ? trace.elapsed_ms + ' ms' : ''}</span>
+      </div>
+      <div class="trace-steps">${stepCards}</div>
+    </div>`;
+  } else if (trace.elapsed_ms != null) {
+    stepsHtml = `<div class="bench-detail-section">
+      <div class="bench-detail-section-title">Execution
+        <span style="font-weight:400;color:var(--text3)">${trace.elapsed_ms} ms</span>
+      </div>
+    </div>`;
+  }
+
+  // Output section
+  const outputVal = trace.output != null ? String(trace.output) : '—';
+  const assertOk  = trace.assertion === 'pass';
+
+  return `
+    <div class="bench-detail-section bench-trace-section">
+      <div class="bench-detail-section-title">Trace</div>
+      <div class="trace-block trace-input">
+        <div class="trace-block-lbl">INPUT</div>
+        <pre class="trace-pre">${_esc(inputVal)}</pre>
+      </div>
+    </div>
+    ${stepsHtml}
+    <div class="bench-detail-section bench-trace-section">
+      <div class="trace-block trace-output">
+        <div class="trace-block-lbl">
+          OUTPUT
+          ${trace.assertion ? `<span class="bench-pill ${assertOk ? 'ok' : 'fail'}" style="font-size:9px;margin-left:6px">${trace.assertion}</span>` : ''}
+        </div>
+        <pre class="trace-pre">${_esc(outputVal.slice(0, 500))}</pre>
+      </div>
+    </div>`;
 }
 
 function _buildTrendHtml(qsPoints, rrPoints) {
@@ -527,10 +612,20 @@ async function _run(scenarios) {
           <span class="bench-progress-status ${ok ? 'bench-ok' : 'bench-fail'}">${ok ? '✓' : '✗'}</span>
           <span>${_esc(msg.scenario)}</span>
           ${retries > 0 ? `<span style="color:#dc2626;font-size:11px">↺${retries}</span>` : ''}
+          ${msg.result?.trace?.plan_tasks ? '<span style="color:#7c3aed;font-size:11px" title="Has plan DAG">⬡</span>' : ''}
           <span class="bench-progress-time">${elapsed}s</span>`;
         row.addEventListener('click', () => _openDetail(msg.scenario));
         progressEl.appendChild(row);
         progressEl.scrollTop = progressEl.scrollHeight;
+
+        // If this result has plan_tasks and the detail is open for this scenario, embed DAG
+        if (_detailOpen === msg.scenario && msg.result?.trace?.plan_tasks) {
+          const dagWrap = document.getElementById('bench-plan-dag-wrap');
+          if (dagWrap) {
+            dagWrap.classList.remove('hidden');
+            _getPlanMod().then(m => m.renderDAG(msg.result.trace.plan_tasks, 'bench-plan-dag-svg', true));
+          }
+        }
       }
 
       if (msg.done) {

@@ -10,6 +10,8 @@
  *   - Shadow editor (read-only display of current plan markdown)
  */
 
+import { Inspector } from '../components/Inspector.js';
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const API = {
@@ -30,11 +32,18 @@ const COL_GAP = 60;
 const ROW_GAP = 18;
 const PAD     = 24;
 
+const API_TASK_STEPS = (tid) => `/api/plan/task/${tid}/steps`;
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let _sse = null;       // EventSource
 let _tasks = [];       // last-known task list
 let _planId = null;
+
+// ── Inspector state ───────────────────────────────────────────────────────────
+
+let _inspectorTaskId = null;   // currently inspected task_id
+let _inspectorSse    = null;   // SSE source for live step streaming
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
 
@@ -132,9 +141,18 @@ function _svgEl(tag, attrs = {}) {
 
 // ── Full DAG render (called on initial load and replan) ───────────────────────
 
-export function renderDAG(tasks) {
+/**
+ * Render a DAG of tasks into an SVG element.
+ * @param {Array}  tasks          - Task array from plan doc.
+ * @param {string} [svgSelector]  - Optional CSS selector or element-id for the target SVG.
+ *                                  Defaults to '#plan-dag-svg'.
+ * @param {boolean} [enableInspector] - If false, suppress dblclick inspector binding.
+ */
+export function renderDAG(tasks, svgSelector, enableInspector = true) {
   _tasks = tasks;
-  const svg = $('plan-dag-svg');
+  const svg = svgSelector
+    ? (svgSelector.startsWith('#') ? document.querySelector(svgSelector) : document.getElementById(svgSelector))
+    : $('plan-dag-svg');
   if (!svg) return;
 
   // Clear previous
@@ -224,7 +242,103 @@ export function renderDAG(tasks) {
     g.appendChild(text);
     g.appendChild(title);
     svg.appendChild(g);
+
+    // Double-click opens the inspector for this node
+    if (enableInspector) {
+      g.style.cursor = 'pointer';
+      g.addEventListener('dblclick', () => openNodeInspector(task));
+    }
   }
+}
+
+// ── Node Inspector ────────────────────────────────────────────────────────────
+
+function _escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function _renderStepCard(step, index) {
+  const isSub = step.type === 'sub_agent';
+  const cls   = isSub ? 'tao-step tao-step-sub' : 'tao-step';
+  const lbl   = isSub ? `SubAgent #${index + 1}` : `Step ${index + 1}`;
+  const thought = step.thought      ? `<div class="tao-row"><span class="tao-lbl">💭</span><span class="tao-val">${_escHtml(step.thought)}</span></div>` : '';
+  const action  = step.action       ? `<div class="tao-row"><span class="tao-lbl">🔧 ${_escHtml(step.action)}</span></div>` : '';
+  const ainput  = step.action_input ? `<div class="tao-row"><span class="tao-lbl">   Input</span><span class="tao-val tao-code">${_escHtml(typeof step.action_input === 'object' ? JSON.stringify(step.action_input, null, 2) : step.action_input)}</span></div>` : '';
+  const obs     = step.observation  ? `<div class="tao-row"><span class="tao-lbl">👁</span><span class="tao-val">${_escHtml(String(step.observation).slice(0, 400))}</span></div>` : '';
+  return `<div class="${cls}">
+    <div class="tao-step-hdr">${_escHtml(lbl)}</div>
+    ${thought}${action}${ainput}${obs}
+  </div>`;
+}
+
+function _renderInspectorSteps(steps) {
+  const container = document.getElementById('pi-steps');
+  if (!container) return;
+  if (!steps.length) {
+    container.innerHTML = '<div class="pi-empty">No steps recorded yet.</div>';
+    return;
+  }
+  container.innerHTML = steps.map((s, i) => _renderStepCard(s, i)).join('');
+}
+
+function _appendInspectorStep(step) {
+  const idx = document.getElementById('pi-steps')?.children.length ?? 0;
+  Inspector.appendStep(_renderStepCard(step, idx));
+}
+
+export async function openNodeInspector(task) {
+  // Close any existing SSE stream for inspector
+  if (_inspectorSse) { _inspectorSse.close(); _inspectorSse = null; }
+  _inspectorTaskId = task.task_id;
+
+  Inspector.open({
+    title:       task.task_id,
+    badge:       task.status || 'pending',
+    description: task.description || '',
+  });
+
+  // Register SSE cleanup when user closes inspector
+  Inspector.onClose(() => {
+    if (_inspectorSse) { _inspectorSse.close(); _inspectorSse = null; }
+    _inspectorTaskId = null;
+  });
+
+  // Show loading state then fetch historical steps
+  const steps = document.getElementById('pi-steps');
+  if (steps) steps.innerHTML = '<div class="pi-empty">Loading…</div>';
+
+  const data = await fetch(API_TASK_STEPS(task.task_id)).then(r => r.json()).catch(() => ({ steps: [] }));
+  _renderInspectorSteps(data.steps || []);
+
+  // If running, listen to SSE for live steps
+  if (task.status === 'running' || task.status === 'pending') {
+    _inspectorSse = new EventSource(API.stream);
+    _inspectorSse.onmessage = (e) => {
+      if (!e.data || e.data === '{}') return;
+      const ev = JSON.parse(e.data);
+      if (ev.type === 'task_step' && ev.task_id === _inspectorTaskId) {
+        _appendInspectorStep(ev.step);
+      }
+      if (ev.type === 'task_complete' && ev.task_id === _inspectorTaskId) {
+        const stEl = document.getElementById('pi-status');
+        if (stEl) { stEl.textContent = 'done'; stEl.className = 'pi-badge pi-badge-done'; }
+        Inspector.setResult(`<div class="pi-result-text">${_escHtml(ev.result_preview || '')}</div>`);
+        if (_inspectorSse) { _inspectorSse.close(); _inspectorSse = null; }
+      }
+      if (ev.type === 'task_failed' && ev.task_id === _inspectorTaskId) {
+        const stEl = document.getElementById('pi-status');
+        if (stEl) { stEl.textContent = 'failed'; stEl.className = 'pi-badge pi-badge-failed'; }
+        if (_inspectorSse) { _inspectorSse.close(); _inspectorSse = null; }
+      }
+    };
+    _inspectorSse.onerror = () => { if (_inspectorSse) { _inspectorSse.close(); _inspectorSse = null; } };
+  }
+}
+
+export function closeNodeInspector() {
+  Inspector.close();
+  if (_inspectorSse) { _inspectorSse.close(); _inspectorSse = null; }
+  _inspectorTaskId = null;
 }
 
 // ── Incremental node update (no full re-render) ────────────────────────────────
@@ -305,6 +419,13 @@ function _connectSSE() {
 
       case 'snapshot':
         refreshSnapshots();
+        break;
+
+      case 'task_step':
+        // Live step streaming for the inspector (if inspector SSE is not active)
+        if (!_inspectorSse && _inspectorTaskId === ev.task_id) {
+          _appendInspectorStep(ev.step);
+        }
         break;
     }
   };
@@ -490,6 +611,7 @@ function _bind() {
   $('plan-btn-resume')?.addEventListener('click', togglePause);
   $('plan-btn-snapshot')?.addEventListener('click', takeSnapshot);
   $('plan-btn-refresh-logs')?.addEventListener('click', () => refreshLogs());
+  // pi-close is handled by Inspector.initGlobalKeyHandler() in app.js
 }
 
 // ── Public init ───────────────────────────────────────────────────────────────
@@ -509,4 +631,222 @@ export function init() {
   refreshStatus();
   refreshSnapshots();
   refreshLogs();
+}
+
+// ── Sub-panel (embedded in chat area) ─────────────────────────────────────────
+
+let _subSse = null;           // EventSource for sub-panel
+let _subTasks = {};           // task_id → { status, profile, module }
+let _subPlanId = null;
+let _subCollapsed = false;
+let _subPanelInitialized = false;
+
+const TASK_ICONS = {
+  pending:  '○',
+  running:  '⟳',
+  done:     '✓',
+  failed:   '✗',
+  skipped:  '—',
+};
+
+function _subEl(id) { return document.getElementById(id); }
+
+function _showSubPanel() {
+  const panel = _subEl('plan-subpanel');
+  if (panel) panel.classList.remove('hidden');
+}
+
+function _hideSubPanel() {
+  const panel = _subEl('plan-subpanel');
+  if (panel) panel.classList.add('hidden');
+}
+
+function _updateSubBadge(state) {
+  const badge = _subEl('plan-subpanel-state-badge');
+  if (!badge) return;
+  badge.textContent = state.toUpperCase();
+  badge.className = `plan-state-badge ${state}`;
+}
+
+function _updateSubProgress() {
+  const el = _subEl('plan-subpanel-progress');
+  if (!el) return;
+  const total = Object.keys(_subTasks).length;
+  const done  = Object.values(_subTasks).filter(t => ['done', 'failed', 'skipped'].includes(t.status)).length;
+  el.textContent = total ? `${done}/${total}` : '';
+}
+
+function _renderTaskRow(taskId, info) {
+  const status  = info.status || 'pending';
+  const icon    = TASK_ICONS[status] || '○';
+  const profile = info.profile ? ` (${info.profile})` : '';
+  const module  = info.module  ? `[${info.module}] ` : '';
+  return `<div class="plan-task-row ${status}" id="sp-task-${taskId}">
+    <span class="plan-task-icon">${icon}</span>
+    <span class="plan-task-id">${taskId}</span>
+    <span class="plan-task-module">${module}</span>
+    <span class="plan-task-profile">${profile}</span>
+  </div>`;
+}
+
+function _refreshTaskList() {
+  const list = _subEl('plan-task-list');
+  if (!list) return;
+  // Sort: running first, then pending, then done/failed/skipped
+  const order = { running: 0, pending: 1, done: 2, skipped: 2, failed: 2 };
+  const sorted = Object.entries(_subTasks).sort(([, a], [, b]) =>
+    (order[a.status] ?? 3) - (order[b.status] ?? 3)
+  );
+  list.innerHTML = sorted.map(([tid, info]) => _renderTaskRow(tid, info)).join('');
+}
+
+function _updateTaskStatus(taskId, status, extra = {}) {
+  if (!_subTasks[taskId]) _subTasks[taskId] = {};
+  Object.assign(_subTasks[taskId], { status, ...extra });
+  _refreshTaskList();
+  _updateSubProgress();
+}
+
+function _connectSubSSE() {
+  if (_subSse) { _subSse.close(); _subSse = null; }
+  _subSse = new EventSource(API.stream);
+
+  _subSse.onmessage = (e) => {
+    if (!e.data || e.data === '{}') return;
+    let ev;
+    ev = JSON.parse(e.data);
+
+    switch (ev.type) {
+      case 'plan_start':
+        _subPlanId = ev.plan_id;
+        _subTasks = {};
+        const titleEl = _subEl('plan-subpanel-title');
+        if (titleEl) titleEl.textContent = `计划: ${ev.plan_id.slice(0, 8)}…  (${ev.task_count} 任务)`;
+        _updateSubBadge('planning');
+        _showSubPanel();
+        // Link detail button to plan tab
+        const detailBtn = _subEl('plan-btn-detail');
+        if (detailBtn) {
+          detailBtn.setAttribute('href', '#');
+          detailBtn.onclick = (e) => {
+            e.preventDefault();
+            // Switch to plan tab if available
+            const planTab = document.querySelector('[data-tab="plan"]');
+            if (planTab) planTab.click();
+          };
+        }
+        break;
+
+      case 'lifecycle_state':
+        _updateSubBadge(ev.state);
+        if (ev.state === 'running') {
+          const replanNotice = _subEl('plan-replan-notice');
+          if (replanNotice) replanNotice.classList.add('hidden');
+        }
+        break;
+
+      case 'task_start':
+        _updateTaskStatus(ev.task_id, 'pending', { profile: ev.profile, module: ev.module });
+        break;
+
+      case 'task_running':
+        _updateTaskStatus(ev.task_id, 'running');
+        _updateSubBadge('running');
+        break;
+
+      case 'task_complete':
+        _updateTaskStatus(ev.task_id, 'done');
+        break;
+
+      case 'task_failed':
+        _updateTaskStatus(ev.task_id, 'failed');
+        break;
+
+      case 'task_skipped':
+        _updateTaskStatus(ev.task_id, 'skipped');
+        break;
+
+      case 'replan':
+        _updateSubBadge('replanning');
+        const notice = _subEl('plan-replan-notice');
+        if (notice) {
+          notice.classList.remove('hidden');
+          setTimeout(() => notice.classList.add('hidden'), 3000);
+        }
+        break;
+
+      case 'plan_complete':
+      case 'done':
+        _updateSubBadge('done');
+        _subEl('subpanel-btn-pause')?.classList.add('hidden');
+        _subEl('subpanel-btn-resume')?.classList.add('hidden');
+        if (_subSse) { _subSse.close(); _subSse = null; }
+        break;
+
+      case 'plan_abort':
+        _updateSubBadge('aborted');
+        _subEl('subpanel-btn-pause')?.classList.add('hidden');
+        _subEl('subpanel-btn-resume')?.classList.add('hidden');
+        if (_subSse) { _subSse.close(); _subSse = null; }
+        break;
+    }
+  };
+
+  _subSse.onerror = () => {
+    if (_subSse) { _subSse.close(); _subSse = null; }
+  };
+}
+
+async function _subTogglePause() {
+  const res = await fetch(API.status).then(r => r.json()).catch(() => null);
+  const paused = res?.doc?.metadata?.paused;
+  await fetch(paused ? API.resume : API.pause, { method: 'POST' });
+  const btnPause  = _subEl('subpanel-btn-pause');
+  const btnResume = _subEl('subpanel-btn-resume');
+  if (paused) {
+    _updateSubBadge('running');
+    btnPause?.classList.remove('hidden');
+    btnResume?.classList.add('hidden');
+  } else {
+    _updateSubBadge('paused');
+    btnPause?.classList.add('hidden');
+    btnResume?.classList.remove('hidden');
+  }
+}
+
+function _bindSubPanel() {
+  const header = _subEl('plan-subpanel-header');
+  const toggleBtn = _subEl('plan-subpanel-toggle');
+  if (header) {
+    header.addEventListener('click', (e) => {
+      // Don't collapse when clicking buttons
+      if (e.target.closest('.plan-subpanel-controls') || e.target.closest('.plan-subpanel-toggle')) return;
+      _subCollapsed = !_subCollapsed;
+      const panel = _subEl('plan-subpanel');
+      panel?.classList.toggle('collapsed', _subCollapsed);
+      if (toggleBtn) toggleBtn.textContent = _subCollapsed ? '▸' : '▾';
+    });
+  }
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _subCollapsed = !_subCollapsed;
+      const panel = _subEl('plan-subpanel');
+      panel?.classList.toggle('collapsed', _subCollapsed);
+      toggleBtn.textContent = _subCollapsed ? '▸' : '▾';
+    });
+  }
+  _subEl('subpanel-btn-pause')?.addEventListener('click', (e) => { e.stopPropagation(); _subTogglePause(); });
+  _subEl('subpanel-btn-resume')?.addEventListener('click', (e) => { e.stopPropagation(); _subTogglePause(); });
+}
+
+/**
+ * Initialize the embedded plan sub-panel in the chat area.
+ * Called once from main.js after the workspace screen is shown.
+ */
+export function initSubPanel() {
+  if (_subPanelInitialized) return;
+  _subPanelInitialized = true;
+  _bindSubPanel();
+  _connectSubSSE();
 }

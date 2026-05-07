@@ -8,42 +8,81 @@
 src/config/
 ├── __init__.py                     # AppPaths — 统一路径入口
 ├── app_config.py
+├── storage.py                      # StorageConfig（运行时文件根目录）
 ├── llm_core/
-│   └── config.py                   # LLMConfig
+│   ├── config.py                   # LLMConfig
+│   └── vllm_config.py              # VLLMConfig
+├── agent/                          # Agent 各子模块配置
+│   ├── tao_config.py               # TaoConfig（顶层）
+│   ├── persona_config.py           # PersonaConfig
+│   ├── prompt_config.py            # PromptConfig
+│   ├── risk_config.py              # RiskConfig
+│   ├── trace_config.py             # TraceConfig
+│   └── memory/
+│       ├── memory_config.py        # MemoryConfig + LongTermMemoryConfig
+│       ├── short_term_config.py    # ShortTermMemoryConfig
+│       ├── medium_term_config.py   # MediumTermMemoryConfig
+│       ├── milestone_config.py     # MilestoneConfig
+│       └── retrieve_config.py      # RetrieveConfig
 ├── embedding/
-│   └── config.py                   # EmbeddingConfig
-├── hf_download/
-│   └── config.py                   # HFDownloadConfig
+│   └── __init__.py                 # EmbeddingConfig
+├── knowledge/                      # 知识库配置
+├── infra/
+│   └── sandbox_config.py           # SandboxConfig
 ├── network/
 │   └── web_search_config.py        # WebSearchConfig
-└── react/
-    ├── tao_config.py               # TaoConfig（顶层）
-    ├── persona_config.py           # PersonaConfig
-    ├── prompt_config.py            # PromptConfig
-    ├── run_config.py               # RunConfig（WebUI / SearXNG 默认端口）
-    ├── trace_config.py             # TraceConfig
-    └── memory/
-        ├── memory_config.py        # MemoryConfig + LongTermMemoryConfig
-        ├── short_term_config.py    # ShortTermMemoryConfig
-        ├── medium_term_config.py   # MediumTermMemoryConfig
-        ├── milestone_config.py     # MilestoneConfig
-        ├── retrieve_config.py      # RetrieveConfig
-        └── embedding_config.py     # EmbeddingConfig（记忆专用）
-```
-
-对应的 YAML 默认值文件位于 `config/react/`：
-
-```
-config/react/
-├── memory.yaml          # 四层记忆的所有参数（统一入口）
-├── run.yaml             # WebUI host/port、SearXNG 容器参数
-└── memory/
-    └── long_term.yaml   # L3 长期记忆详细参数（含 retrieve 子段）
+├── tts/                            # TTS / STT 配置
+└── hf_download/
+    └── config.py                   # HFDownloadConfig
 ```
 
 ---
 
 ## 各配置说明
+
+### `LLMConfig`（`config/llm_core/config.py`）
+
+```python
+@dataclass
+class LLMConfig:
+    model: str = ""
+    api_key: str = ""
+    base_url: str | None = None
+    max_tokens: int = 512
+    temperature: float = 1.0
+    do_sample: bool = False
+    top_p: float = 1.0
+    top_k: int = 0
+    repetition_penalty: float = 1.0
+    device: str = "auto"
+    system_prompt: str = ""
+    backend: str = "openai"          # "openai" | "vllm" | "transformers"
+    trained_model_path: str = ""
+```
+
+从 YAML 加载：`LLMConfig.from_yaml("config/llm_core/config.yaml")`
+
+---
+
+### `TaoConfig`（`config/agent/tao_config.py`）
+
+```python
+@dataclass
+class TaoConfig:
+    max_steps: int = 10
+    storage: StorageConfig = ...
+    prompt: PromptConfig = ...
+    memory: MemoryConfig = ...
+    persona: PersonaConfig = ...
+    trace: TraceConfig = ...
+    knowledge: KnowledgeConfig | None = None
+    repair_llm: LLMConfig | None = None
+    scheduler: SchedulerConfig | None = None
+    agent: SubAgentConfig | None = None   # 子 Agent 委派（注入 DelegateTaskSkill）
+    plan: PlanConfig | None = None
+```
+
+---
 
 ### `ShortTermMemoryConfig`
 
@@ -51,15 +90,12 @@ config/react/
 @dataclass
 class ShortTermMemoryConfig:
     enabled: bool = True
-    max_turns: int = 10             # 滑动窗口保留的最大步骤数
-    max_tokens: int = 2048          # Token 上限（与 max_turns 取最严格约束）
-    # 蒸馏：步骤溢出时自动压缩，保留推理精华
+    max_turns: int = 10
+    max_tokens: int = 2048
     distill_enabled: bool = True
-    distill_trigger_steps: int = 4  # 积累 N 个驱逐步骤后触发 LLM 蒸馏
+    distill_trigger_steps: int = 4
     max_distillate_tokens: int = 400
 ```
-
-对应 `memory.yaml` 中的 `short_term` 段。
 
 ### `MediumTermMemoryConfig`
 
@@ -68,17 +104,14 @@ class ShortTermMemoryConfig:
 class MediumTermMemoryConfig:
     enabled: bool = True
     window_days: int = 7            # 加载最近 N 天的条目
-    max_entries: int = 30           # 最多加载 N 条（取最新）
-    max_chars: int = 3000           # 注入 prompt 的字符上限
+    max_entries: int = 30
+    max_chars: int = 3000
     memory_dir: str = ""            # 由 TaoConfig._propagate_dirs 自动填充
-    # 滚动整合
     consolidate_enabled: bool = True
-    consolidate_batch: int = 10     # 每次整合的旧条目数
-    consolidate_interval_days: int = 1  # 自动整合最短间隔（天）；0 = 每次提交都检查
+    consolidate_batch: int = 10
+    consolidate_interval_days: int = 1
     max_consolidate_tokens: int = 500
 ```
-
-对应 `memory.yaml` 中的 `medium_term` 段。
 
 ### `LongTermMemoryConfig`
 
@@ -92,13 +125,10 @@ class LongTermMemoryConfig:
     model_name_or_path: str = "BAAI/bge-small-zh-v1.5"
     use_fp16: bool = True
     device: str = "auto"
-    consolidation_k: int = 0        # 0 = 关闭窗口整合
     max_entry_chars: int = 2000
     max_recall_chars: int = 3000
     retrieve: RetrieveConfig = ...
 ```
-
-详细参数见 `config/react/memory/long_term.yaml`。
 
 ### `MilestoneConfig`
 
@@ -127,23 +157,22 @@ class MemoryConfig:
     milestone: MilestoneConfig
 ```
 
-从 YAML 加载：
+### `StorageConfig`（`config/storage.py`）
 
-```python
-cfg = MemoryConfig.from_yaml("config/react/memory.yaml")
-```
-
-### `EmbeddingConfig`
+控制运行时文件根目录，通过 `TaoConfig._propagate_dirs()` 自动传播到各子模块。
 
 ```python
 @dataclass
-class EmbeddingConfig:
-    model_name_or_path: str = "BAAI/bge-small-zh-v1.5"
-    use_fp16: bool = True
-    device: str = "auto"
-    query_prefix: str = "query: "
-    passage_prefix: str = ""
-    host: str = "0.0.0.0"
-    port: int = 8000
-    workers: int = 1
-```
+class StorageConfig:
+    root: str = ".react"
+
+    @property
+    def memory_dir(self) -> str: ...
+    @property
+    def milestones_dir(self) -> str: ...
+    @property
+    def persona_dir(self) -> str: ...
+    @property
+    def traces_dir(self) -> str: ...
+    @property
+    def scheduler_dir(self) -> str: ...

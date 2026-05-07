@@ -39,6 +39,7 @@ class ScenarioResult:
     total_prompt_tokens: int
     total_completion_tokens: int
     error: str | None = None
+    trace: dict | None = None          # {"input": ..., "output": ..., "elapsed_ms": ...}
 
 
 class MetricsCollector:

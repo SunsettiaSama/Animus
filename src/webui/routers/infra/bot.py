@@ -12,9 +12,14 @@ router = APIRouter(prefix="/api/bot", tags=["bot"])
 # ── Config models ─────────────────────────────────────────────────────────────
 
 class BotConfigPayload(BaseModel):
+    enabled:                 bool      = False
+    transport:               str       = "forward_ws"
     ws_url:                  str       = "ws://127.0.0.1:3001"
     access_token:            str       = ""
     reconnect_interval_sec:  float     = 5.0
+    appid:                   str       = ""
+    secret:                  str       = ""
+    is_sandbox:              bool      = False
     allowed_private_users:   list[int] = []
     allowed_groups:          list[int] = []
     command_prefix:          str       = ""
@@ -27,9 +32,14 @@ def get_bot_config():
     from config.infra.bot_config import BotConfig
     cfg = BotConfig.load()
     return {
+        "enabled":                cfg.enabled,
+        "transport":              cfg.transport,
         "ws_url":                 cfg.ws_url,
         "access_token":           cfg.access_token,
         "reconnect_interval_sec": cfg.reconnect_interval_sec,
+        "appid":                  cfg.appid,
+        "secret":                 cfg.secret,
+        "is_sandbox":             cfg.is_sandbox,
         "allowed_private_users":  cfg.allowed_private_users,
         "allowed_groups":         cfg.allowed_groups,
         "command_prefix":         cfg.command_prefix,
@@ -44,9 +54,14 @@ def save_bot_config(req: BotConfigPayload):
     from config import paths as app_paths
     state   = get_state()
     new_cfg = BotConfig(
+        enabled=req.enabled,
+        transport=req.transport,
         ws_url=req.ws_url,
         access_token=req.access_token,
         reconnect_interval_sec=req.reconnect_interval_sec,
+        appid=req.appid,
+        secret=req.secret,
+        is_sandbox=req.is_sandbox,
         allowed_private_users=req.allowed_private_users,
         allowed_groups=req.allowed_groups,
         command_prefix=req.command_prefix,

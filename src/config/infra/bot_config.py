@@ -6,15 +6,24 @@ from pathlib import Path
 
 @dataclass
 class BotConfig:
-    transport: str = "forward_ws"
-    ws_url: str = "ws://127.0.0.1:3001"
-    access_token: str = ""
-    reconnect_interval_sec: float = 5.0
+    # ── 通用 ──────────────────────────────────────────────────────────────────
+    enabled: bool = False            # 是否在启动时自动连接
+    transport: str = "forward_ws"   # "forward_ws" | "qq_official"
     allowed_private_users: list[int] = field(default_factory=list)
     allowed_groups: list[int] = field(default_factory=list)
     command_prefix: str = ""
     max_sessions: int = 100
     session_ttl_hours: float = 24.0
+
+    # ── forward_ws 专用（NapCat / go-cqhttp 等 OneBot 11 WebSocket 服务） ──
+    ws_url: str = "ws://127.0.0.1:3001"
+    access_token: str = ""
+    reconnect_interval_sec: float = 5.0
+
+    # ── qq_official 专用（QQ 开放平台官方机器人 API） ──────────────────────
+    appid: str = ""
+    secret: str = ""
+    is_sandbox: bool = False
 
     def to_yaml(self, path: str | Path) -> None:
         import yaml
@@ -22,15 +31,21 @@ class BotConfig:
         path = Path(path)
         os.makedirs(path.parent, exist_ok=True)
         data = {
-            "transport":             self.transport,
-            "ws_url":                self.ws_url,
-            "access_token":          self.access_token,
+            "enabled":                self.enabled,
+            "transport":              self.transport,
+            "allowed_private_users":  self.allowed_private_users,
+            "allowed_groups":         self.allowed_groups,
+            "command_prefix":         self.command_prefix,
+            "max_sessions":           self.max_sessions,
+            "session_ttl_hours":      self.session_ttl_hours,
+            # forward_ws
+            "ws_url":                 self.ws_url,
+            "access_token":           self.access_token,
             "reconnect_interval_sec": self.reconnect_interval_sec,
-            "allowed_private_users": self.allowed_private_users,
-            "allowed_groups":        self.allowed_groups,
-            "command_prefix":        self.command_prefix,
-            "max_sessions":          self.max_sessions,
-            "session_ttl_hours":     self.session_ttl_hours,
+            # qq_official
+            "appid":                  self.appid,
+            "secret":                 self.secret,
+            "is_sandbox":             self.is_sandbox,
         }
         with open(path, "w", encoding="utf-8") as f:
             yaml.safe_dump(data, f, allow_unicode=True)
@@ -49,10 +64,8 @@ class BotConfig:
         with open(path, encoding="utf-8") as f:
             data: dict = yaml.safe_load(f) or {}
         return cls(
+            enabled=bool(data.get("enabled", False)),
             transport=str(data.get("transport", "forward_ws")),
-            ws_url=str(data.get("ws_url", "ws://127.0.0.1:3001")),
-            access_token=str(data.get("access_token", "")),
-            reconnect_interval_sec=float(data.get("reconnect_interval_sec", 5.0)),
             allowed_private_users=[
                 int(x) for x in data.get("allowed_private_users") or []
             ],
@@ -62,4 +75,12 @@ class BotConfig:
             command_prefix=str(data.get("command_prefix", "")),
             max_sessions=int(data.get("max_sessions", 100)),
             session_ttl_hours=float(data.get("session_ttl_hours", 24.0)),
+            # forward_ws
+            ws_url=str(data.get("ws_url", "ws://127.0.0.1:3001")),
+            access_token=str(data.get("access_token", "")),
+            reconnect_interval_sec=float(data.get("reconnect_interval_sec", 5.0)),
+            # qq_official
+            appid=str(data.get("appid", "")),
+            secret=str(data.get("secret", "")),
+            is_sandbox=bool(data.get("is_sandbox", False)),
         )

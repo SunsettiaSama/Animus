@@ -1604,6 +1604,132 @@
     }
     .dag-node.dag-running rect { animation: pulse-outline 1.4s ease-in-out infinite; }
 
+    /* ── Plan Node Inspector — body-level fixed overlay ─────────────────── */
+    #plan-node-inspector {
+      position: fixed;
+      top: 0; right: 0;
+      width: 360px;
+      height: 100vh;
+      overflow-y: auto;
+      background: var(--bg);
+      border-left: 1px solid var(--border);
+      box-shadow: -4px 0 24px rgba(0,0,0,.12);
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+    }
+    .inspector-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      gap: 8px;
+    }
+    .inspector-hdr-left { display: flex; align-items: center; gap: 8px; }
+    .pi-task-id { font-size: 13px; font-weight: 600; color: var(--text); }
+    .pi-badge {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--bg2);
+      color: var(--text2);
+    }
+    .pi-badge-running { background: #dbeafe; color: #1e40af; }
+    .pi-badge-done    { background: #dcfce7; color: #166534; }
+    .pi-badge-failed  { background: #fee2e2; color: #991b1b; }
+    .pi-badge-pending { background: #f3f4f6; color: #6b7280; }
+    .pi-desc {
+      font-size: 12px;
+      color: var(--text2);
+      padding: 8px 12px 4px;
+      margin: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .pi-steps {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .pi-empty { font-size: 12px; color: var(--text3); text-align: center; padding: 20px; }
+    .pi-result {
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--text2);
+      border-top: 1px solid var(--border);
+      background: var(--bg2);
+    }
+
+    /* TAO Step cards */
+    .tao-step {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 12px;
+    }
+    .tao-step-sub {
+      border-left: 3px solid #8b5cf6;
+      background: #f5f3ff;
+    }
+    .tao-step-hdr {
+      font-weight: 600;
+      font-size: 11px;
+      color: var(--text2);
+      margin-bottom: 4px;
+    }
+    .tao-row { display: flex; gap: 6px; align-items: flex-start; margin-top: 3px; }
+    .tao-lbl { min-width: 80px; color: var(--text3); font-size: 11px; white-space: nowrap; }
+    .tao-val { color: var(--text); word-break: break-word; }
+    .tao-code { font-family: var(--font-mono, monospace); font-size: 11px; }
+
+    /* ── Trace section in benchmark detail ─────────────────────────────── */
+    .bench-trace-section { border-top: 1px solid var(--border); }
+    .trace-block { margin-bottom: 4px; }
+    .trace-block-lbl {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--text3);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+    }
+    .trace-pre {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px;
+      font-size: 11px;
+      font-family: var(--font-mono, monospace);
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+      color: var(--text);
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .trace-steps { display: flex; flex-direction: column; gap: 6px; }
+    .trace-step {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 12px;
+    }
+    .trace-step-sub { border-left: 3px solid #8b5cf6; background: #f5f3ff; }
+    .trace-step-hdr { font-weight: 600; font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+    .trace-row { display: flex; gap: 6px; margin-top: 3px; align-items: flex-start; }
+    .trace-lbl { min-width: 80px; color: var(--text3); font-size: 11px; white-space: nowrap; }
+    .trace-val { color: var(--text); word-break: break-word; }
+    .trace-code { font-family: var(--font-mono, monospace); font-size: 11px; }
+
     /* Right sidebar */
     .plan-sidebar {
       flex: 0 0 40%;
@@ -2163,3 +2289,247 @@
       background: #eff6ff;
       color: #1d4ed8;
     }
+
+/* ── Plan sub-panel ───────────────────────────────────────────────────── */
+    .plan-subpanel {
+      flex-shrink: 0;
+      border-top: 1px solid var(--border);
+      background: var(--bg2);
+      font-size: 13px;
+      transition: max-height 0.2s ease;
+      overflow: hidden;
+    }
+    .plan-subpanel.hidden { display: none; }
+    .plan-subpanel.collapsed #plan-subpanel-body { display: none; }
+
+    .plan-subpanel-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      cursor: pointer;
+      user-select: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .plan-subpanel-header:hover { background: var(--bg3); }
+
+    .plan-subpanel-icon { font-size: 14px; }
+
+    #plan-subpanel-title {
+      font-weight: 600;
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    .plan-state-badge {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 99px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: var(--bg3);
+      color: var(--text3);
+    }
+    .plan-state-badge.planning  { background: #fef9c3; color: #854d0e; }
+    .plan-state-badge.running   { background: #dbeafe; color: #1e40af; }
+    .plan-state-badge.replanning{ background: #fce7f3; color: #9d174d; }
+    .plan-state-badge.done      { background: #dcfce7; color: #14532d; }
+    .plan-state-badge.failed    { background: #fee2e2; color: #7f1d1d; }
+    .plan-state-badge.aborted   { background: #f3f4f6; color: #6b7280; }
+
+    .plan-subpanel-progress {
+      margin-left: 4px;
+      font-size: 11px;
+      color: var(--text3);
+    }
+
+    .plan-subpanel-controls {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .plan-ctrl-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 2px 8px;
+      font-size: 12px;
+      cursor: pointer;
+      color: var(--text2);
+      text-decoration: none;
+      line-height: 1.6;
+    }
+    .plan-ctrl-btn:hover { background: var(--bg3); color: var(--text); }
+
+    .plan-subpanel-toggle {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text3);
+      padding: 0 2px;
+      margin-left: 2px;
+    }
+
+    #plan-subpanel-body {
+      padding: 6px 12px 8px;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    #plan-task-list {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .plan-task-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: var(--text2);
+    }
+    .plan-task-row.running  { background: #eff6ff; color: #1e40af; }
+    .plan-task-row.done     { color: var(--text3); }
+    .plan-task-row.failed   { background: #fff1f2; color: #be123c; }
+    .plan-task-row.skipped  { color: var(--text3); text-decoration: line-through; }
+    .plan-task-row.pending  { color: var(--text3); }
+
+    .plan-task-icon { font-size: 11px; min-width: 14px; text-align: center; }
+    .plan-task-id   { font-weight: 600; }
+    .plan-task-module { font-size: 10px; color: var(--text3); }
+    .plan-task-profile { font-size: 10px; color: var(--text3); margin-left: auto; }
+
+    .plan-replan-notice {
+      font-size: 11px;
+      color: #9d174d;
+      padding: 2px 0;
+      font-style: italic;
+    }
+    .plan-replan-notice.hidden { display: none; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APP COMPONENT LAYER  (app-* prefix — do not mix with legacy class names)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── StatusBadge ─────────────────────────────────────────────────────────── */
+    .app-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+    .app-badge--idle    { background: var(--bg3);   color: var(--text3); }
+    .app-badge--running { background: #eff6ff;       color: var(--accent); }
+    .app-badge--pass    { background: #dcfce7;       color: #166534; }
+    .app-badge--fail    { background: #fee2e2;       color: #991b1b; }
+    .app-badge--pulse   { animation: badge-pulse 1.4s ease-in-out infinite; }
+    @keyframes badge-pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .55; }
+    }
+
+/* ── TopBar ──────────────────────────────────────────────────────────────── */
+    .app-topbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .app-topbar-back { flex-shrink: 0; }
+    .app-topbar-title {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .app-topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+/* ── Card ────────────────────────────────────────────────────────────────── */
+    .app-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border2, rgba(0,0,0,.04));
+      cursor: pointer;
+      transition: background .12s;
+      user-select: none;
+    }
+    .app-card:hover   { background: var(--bg3); }
+    .app-card-label   { flex: 1; font-size: 13px; font-weight: 500; color: var(--text); }
+    .app-card-badge   { flex-shrink: 0; }
+    .app-card-meta    { font-size: 11px; color: var(--text3); flex-shrink: 0; }
+
+/* ── EmptyState ──────────────────────────────────────────────────────────── */
+    .app-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 16px;
+      gap: 6px;
+      color: var(--text3);
+    }
+    .app-empty--sm { padding: 16px 12px; }
+    .app-empty-icon { font-size: 28px; margin-bottom: 4px; }
+    .app-empty-text { font-size: 14px; font-weight: 500; color: var(--text2); text-align: center; }
+    .app-empty-hint { font-size: 12px; text-align: center; }
+
+/* ── DetailDrawer ────────────────────────────────────────────────────────── */
+    .app-drawer {
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid var(--border);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .app-drawer.hidden { display: none; }
+    .app-drawer-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .app-drawer-title { font-weight: 600; font-size: 14px; color: var(--text); }
+    .app-drawer-body  { flex: 1; overflow-y: auto; padding: 14px; }
+    .app-drawer-loading { font-size: 13px; color: var(--text3); }
+    .app-drawer-error   { font-size: 13px; color: #dc2626; }
+
+/* ── info-banner ──────────────────────────────────────────────────────────── */
+.info-banner {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text2);
+  margin-bottom: 4px;
+}
+.info-banner code {
+  background: var(--surface3);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: var(--font-mono);
+}

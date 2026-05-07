@@ -34,7 +34,7 @@ from infra.base_service import BaseServiceManager
 from infra.task_runner import BackgroundTaskRunner
 from infra.service_registry import ServiceRegistry
 from infra.searxng_manager import SearXNGManager
-from infra.vllm_server import VLLMServerManager
+from infra.llm.official import OfficialVLLMManager as VLLMServerManager
 from config.llm_core.vllm_config import VLLMConfig
 
 

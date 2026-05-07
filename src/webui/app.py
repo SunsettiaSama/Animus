@@ -65,16 +65,17 @@ def _startup():
         state.conv_loop = None
         _do_react_init(ReactInitRequest(), state)
 
-        # Start bot service if a WS URL is configured.  Runs independently of
-        # the browser — closing the WebUI frontend does not affect it.
+        # Start bot service only when explicitly enabled by the user.
+        # Runs independently of the browser — closing the WebUI frontend
+        # does not affect it.
         if state.bot_service is not None:
             from config.infra.bot_config import BotConfig
             bot_cfg = BotConfig.load()
-            if bot_cfg.ws_url:
+            if bot_cfg.enabled:
                 state.main_event_loop.call_soon_threadsafe(
                     state.bot_service.start
                 )
-                print(f"[webui] BotService started  url={bot_cfg.ws_url!r}")
+                print(f"[webui] BotService started  transport={bot_cfg.transport!r}")
 
     def _on_error(exc: BaseException) -> None:
         state.react_init_error = str(exc)

@@ -1,0 +1,120 @@
+# =============================================================================
+# docker/vllm/docker-compose.yml — vLLM 推理服务
+#
+# 独立启动 vLLM：
+#   cd docker/vllm
+#   docker compose up -d
+#
+# 与主服务栈联合启动（共享 react-net 网络）：
+#   docker compose \
+#     -f docker/docker-compose.yml \
+#     -f docker/vllm/docker-compose.yml \
+#     up -d
+#
+# 查看日志：
+#   docker compose -f docker/vllm/docker-compose.yml logs -f
+#
+# 配置参数：在同目录下创建 .env 文件（参考 .env.example）
+# =============================================================================
+
+services:
+
+  vllm:
+    build:
+      # 构建上下文必须是项目根目录（COPY docker/vllm/entrypoint.sh 需要）
+      context: ../..
+      dockerfile: docker/vllm/Dockerfile
+    image: react-vllm:latest
+    container_name: react-vllm
+    restart: unless-stopped
+
+    # NVIDIA GPU 直通 (需要 nvidia-container-toolkit)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    environment:
+      # ── 必填：模型名称或本地路径 ──────────────────────────────────────────
+      VLLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+
+      # ── 服务端口（容器内） ──────────────────────────────────────────────────
+      VLLM_HOST: 0.0.0.0
+      VLLM_PORT: 8000
+
+      # ── GPU / 并行 ──────────────────────────────────────────────────────────
+      VLLM_TENSOR_PARALLEL:   ${VLLM_TENSOR_PARALLEL:-1}
+      VLLM_PIPELINE_PARALLEL: ${VLLM_PIPELINE_PARALLEL:-1}
+      VLLM_GPU_MEM_UTIL:      ${VLLM_GPU_MEM_UTIL:-0.90}
+
+      # ── 精度 & 量化 ──────────────────────────────────────────────────────────
+      VLLM_DTYPE:         ${VLLM_DTYPE:-auto}
+      VLLM_QUANTIZATION:  ${VLLM_QUANTIZATION:-}
+
+      # ── 上下文长度 ────────────────────────────────────────────────────────────
+      VLLM_MAX_MODEL_LEN: ${VLLM_MAX_MODEL_LEN:-}
+
+      # ── LoRA ──────────────────────────────────────────────────────────────────
+      VLLM_ENABLE_LORA:   ${VLLM_ENABLE_LORA:-false}
+      VLLM_MAX_LORA_RANK: ${VLLM_MAX_LORA_RANK:-16}
+
+      # ── 其他 ──────────────────────────────────────────────────────────────────
+      VLLM_ENFORCE_EAGER: ${VLLM_ENFORCE_EAGER:-false}
+
+      # HuggingFace Token（私有模型需要）
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+
+      # 显卡选择（空 = 使用全部 GPU）
+      CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}
+
+    volumes:
+      # HuggingFace 模型缓存（避免每次重新下载）
+      - vllm-hf-cache:/cache/huggingface
+      # vLLM 运行时缓存
+      - vllm-runtime-cache:/cache/vllm
+      # 可选：挂载本地模型目录（离线部署）
+      # - ${LOCAL_MODEL_DIR:-/models}:/models:ro
+
+    ports:
+      # 仅绑定 127.0.0.1，避免直接暴露到公网
+      # Windows/WSL 访问：http://localhost:8000/v1
+      - "127.0.0.1:${VLLM_HOST_PORT:-8000}:8000"
+
+    # 独立使用时挂载到默认网络
+    # 联合使用时 (与 docker-compose.yml 合并) 自动加入 react-net
+    networks:
+      - vllm-net
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          python3.11 -c
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+          || exit 1
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 5
+
+    # 日志轮转：避免磁盘撑满
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+volumes:
+  vllm-hf-cache:
+    name: react-vllm-hf-cache
+  vllm-runtime-cache:
+    name: react-vllm-runtime-cache
+
+networks:
+  vllm-net:
+    name: react-vllm-net
+    driver: bridge

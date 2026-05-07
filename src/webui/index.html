@@ -203,6 +203,26 @@
       </div>
     </div>
 
+    <!-- Plan sub-panel: embedded live progress tracker for multi-agent plans -->
+    <div id="plan-subpanel" class="plan-subpanel hidden">
+      <div class="plan-subpanel-header" id="plan-subpanel-header">
+        <span class="plan-subpanel-icon">⚙</span>
+        <span id="plan-subpanel-title">多智能体计划</span>
+        <span id="plan-subpanel-state-badge" class="plan-state-badge"></span>
+        <span id="plan-subpanel-progress" class="plan-subpanel-progress"></span>
+        <div class="plan-subpanel-controls">
+          <button id="subpanel-btn-pause" class="plan-ctrl-btn" title="暂停计划">⏸</button>
+          <button id="subpanel-btn-resume" class="plan-ctrl-btn hidden" title="恢复计划">▶</button>
+          <a id="plan-btn-detail" class="plan-ctrl-btn plan-detail-link" title="查看完整计划详情">详情</a>
+        </div>
+        <button id="plan-subpanel-toggle" class="plan-subpanel-toggle" title="收起">▾</button>
+      </div>
+      <div id="plan-subpanel-body">
+        <div id="plan-task-list"></div>
+        <div id="plan-replan-notice" class="plan-replan-notice hidden">重规划中…</div>
+      </div>
+    </div>
+
     <div id="input-area">
       <div class="input-wrapper">
         <textarea id="msg-input" rows="1" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
@@ -210,7 +230,6 @@
         <button id="btn-send">↑</button>
       </div>
     </div>
-  </div>
 
   <!-- Knowledge Base Panel -->
   <div id="kb-panel" class="hidden" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
@@ -271,7 +290,8 @@
     </div>
   </div>
 
-</div>
+</div><!-- /main-area -->
+</div><!-- /s-workspace -->
 
 
 <!-- ══════════════════════════════════
@@ -801,7 +821,19 @@
       <!-- vLLM tab -->
       <div id="tab-vllm" class="hidden">
 
-        <div class="section-divider" style="margin-top:0">服务器</div>
+        <div class="section-divider" style="margin-top:0">服务实现</div>
+        <div class="form-group">
+          <label>vLLM Provider <span style="font-weight:400;color:var(--text3)">更换后需重启服务生效</span></label>
+          <select id="s-vllm-provider">
+            <option value="official">Official vLLM（官方 vllm serve）</option>
+            <option value="custom">Custom vLLM（自研复现实现）</option>
+          </select>
+        </div>
+        <div id="vllm-custom-notice" class="info-banner" style="display:none">
+          ⚠️ 自研 vLLM 尚在开发中，启动后将进入 <code>error</code> 状态直至实现 <code>_build_cmd</code>。
+        </div>
+
+        <div class="section-divider">服务器</div>
         <div class="form-row">
           <div class="form-group">
             <label>Host</label>
@@ -937,8 +969,15 @@
       <!-- Bot tab -->
       <div id="tab-bot" class="hidden">
 
+        <!-- Enabled toggle -->
+        <div class="section-divider" style="margin-top:0">Bot 服务开关</div>
+        <label class="toggle-row" style="margin-bottom:12px">
+          <input id="s-bot-enabled" type="checkbox" />
+          <span>启用通信接口 <span style="font-weight:400;color:var(--text3)">（保存后下次启动生效）</span></span>
+        </label>
+
         <!-- Status bar -->
-        <div class="section-divider" style="margin-top:0">Bot 服务状态</div>
+        <div class="section-divider">Bot 服务状态</div>
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
           <span class="bot-status-badge off" id="s-bot-status-badge">unknown</span>
           <span style="font-size:12px;color:var(--text3)" id="s-bot-sessions-count"></span>
@@ -952,18 +991,45 @@
         <!-- Connection -->
         <div class="section-divider">连接配置</div>
         <div class="form-group">
-          <label>WebSocket URL <span style="font-weight:400;color:var(--text3)">OneBot 11 正向 WS 地址（NapCat 默认 ws://127.0.0.1:3001）</span></label>
-          <input id="s-bot-ws-url" type="text" placeholder="ws://127.0.0.1:3001" />
+          <label>通信方式 <span style="font-weight:400;color:var(--text3)">Transport</span></label>
+          <select id="s-bot-transport" onchange="onBotTransportChange()">
+            <option value="forward_ws">OneBot 11 WebSocket (NapCat / go-cqhttp)</option>
+            <option value="qq_official">QQ 官方机器人 API (qq-botpy)</option>
+          </select>
         </div>
-        <div class="form-row">
+
+        <!-- forward_ws 专有字段 -->
+        <div id="bot-forward-ws-section">
           <div class="form-group">
-            <label>Access Token <span style="font-weight:400;color:var(--text3)">留空则不鉴权</span></label>
-            <input id="s-bot-token" type="password" placeholder="（可选）" />
+            <label>WebSocket URL <span style="font-weight:400;color:var(--text3)">OneBot 11 正向 WS 地址（NapCat 默认 ws://127.0.0.1:3001）</span></label>
+            <input id="s-bot-ws-url" type="text" placeholder="ws://127.0.0.1:3001" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Access Token <span style="font-weight:400;color:var(--text3)">留空则不鉴权</span></label>
+              <input id="s-bot-token" type="password" placeholder="（可选）" />
+            </div>
+            <div class="form-group">
+              <label>重连间隔（秒）<span style="font-weight:400;color:var(--text3)">reconnect_interval_sec</span></label>
+              <input id="s-bot-reconnect" type="number" value="5" min="1" max="60" />
+            </div>
+          </div>
+        </div>
+
+        <!-- qq_official 专有字段 -->
+        <div id="bot-official-section" class="hidden">
+          <div class="form-group">
+            <label>AppID <span style="font-weight:400;color:var(--text3)">QQ 开放平台 AppID</span></label>
+            <input id="s-bot-appid" type="text" placeholder="QQ 开放平台 AppID" />
           </div>
           <div class="form-group">
-            <label>重连间隔（秒）<span style="font-weight:400;color:var(--text3)">reconnect_interval_sec</span></label>
-            <input id="s-bot-reconnect" type="number" value="5" min="1" max="60" />
+            <label>AppSecret <span style="font-weight:400;color:var(--text3)">AppSecret</span></label>
+            <input id="s-bot-secret" type="password" placeholder="AppSecret" />
           </div>
+          <label class="toggle-row">
+            <input id="s-bot-sandbox" type="checkbox" />
+            <span>沙箱模式 <span style="font-weight:400;color:var(--text3)">is_sandbox</span></span>
+          </label>
         </div>
 
         <!-- Access control -->
@@ -1041,7 +1107,7 @@
     <!-- DAG panel (left 60%) -->
     <div class="plan-dag-wrap" id="plan-dag-wrap">
       <div class="plan-dag-header">
-        <span>Execution DAG</span>
+        <span>Execution DAG <span style="font-size:11px;color:var(--text3);font-weight:400">(double-click node to inspect)</span></span>
         <span class="plan-dag-legend">
           <span class="dag-legend-item dag-pending">pending</span>
           <span class="dag-legend-item dag-running">running</span>
@@ -1051,6 +1117,7 @@
         </span>
       </div>
       <svg id="plan-dag-svg" class="plan-dag-svg"></svg>
+
     </div>
 
     <!-- Right sidebar (40%) -->
@@ -1226,6 +1293,13 @@
           <div class="bench-empty-text">Click a scenario to inspect it</div>
         </div>
       </div>
+      <!-- Embedded plan DAG (shown only for plan scenarios) -->
+      <div id="bench-plan-dag-wrap" class="hidden">
+        <div class="bench-detail-section">
+          <div class="bench-detail-section-title">Execution DAG</div>
+          <svg id="bench-plan-dag-svg" style="width:100%;overflow:auto;display:block"></svg>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -1351,7 +1425,21 @@
 </div><!-- /s-scheduler -->
 
 
-  <script type="module" src="/static/js/main.js"></script>
+  <!-- ── DAG Node Inspector — body-level overlay, shared across all screens ── -->
+  <div id="plan-node-inspector" class="hidden">
+    <div class="inspector-hdr">
+      <div class="inspector-hdr-left">
+        <span class="pi-task-id" id="pi-task-id"></span>
+        <span class="pi-badge" id="pi-status"></span>
+      </div>
+      <button id="pi-close" class="icon-btn" title="Close">✕</button>
+    </div>
+    <p id="pi-description" class="pi-desc"></p>
+    <div id="pi-steps" class="pi-steps"></div>
+    <div id="pi-result" class="pi-result hidden"></div>
+  </div>
+
+  <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
 

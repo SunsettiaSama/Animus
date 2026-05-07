@@ -11,9 +11,11 @@ from plan.config import OrchestratorConfig, PlanConfig
 from plan.document import PlanDocument, TaskStatus
 from plan.event import (
     HumanPatchEvent,
+    LifecycleStateEvent,
     PlanAbortEvent,
     PlanCompleteEvent,
     PlanEvent,
+    PlanLifecycleState,
     PlanStartEvent,
     ReplanEvent,
     SnapshotEvent,
@@ -51,11 +53,47 @@ class PlanOrchestrator:
         self._current_doc: PlanDocument | None = None
         self._current_snapshots: SnapshotStore | None = None
         self._current_logger: PlanLogger | None = None
+        self._lifecycle_state: PlanLifecycleState = PlanLifecycleState.idle
+        self._current_plan_id: str | None = None
+        # Per-task TAO step capture (task_id → list of step dicts)
+        self._task_steps: dict[str, list[dict]] = {}
+        self._main_loop = None
+
+    # ── Lifecycle state properties ────────────────────────────────────────────
+
+    @property
+    def lifecycle_state(self) -> PlanLifecycleState:
+        return self._lifecycle_state
+
+    @property
+    def current_plan_id(self) -> str | None:
+        return self._current_plan_id
+
+    def progress(self) -> tuple[int, int]:
+        """Return (done_count, total_count) for the active plan."""
+        if self._current_doc is None:
+            return (0, 0)
+        tasks = self._current_doc.all_tasks()
+        done = sum(1 for t in tasks if t.status in (TaskStatus.done, TaskStatus.skipped, TaskStatus.failed))
+        return (done, len(tasks))
+
+    def running_tasks(self) -> list[str]:
+        """Return task_ids currently in running state."""
+        if self._current_doc is None:
+            return []
+        return [t.task_id for t in self._current_doc.all_tasks() if t.status == TaskStatus.running]
+
+    def _set_lifecycle(self, state: PlanLifecycleState, plan_id: str) -> None:
+        self._lifecycle_state = state
+        self._emit(LifecycleStateEvent(plan_id=plan_id, state=state.value))
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def run(self, question: str) -> PlanResult:
         plan_id = str(uuid.uuid4())
+        self._current_plan_id = plan_id
+        self._task_steps = {}
+        self._main_loop = asyncio.get_event_loop()
         # Shared file-I/O lock: serialises snapshot writes, shadow-file writes, and
         # pause-state dumps so that concurrent coroutines never interleave file I/O
         # for the same plan directory.
@@ -73,11 +111,13 @@ class PlanOrchestrator:
         self._current_snapshots = snapshots
 
         # ── Plan phase ───────────────────────────────────────────────────────
+        self._set_lifecycle(PlanLifecycleState.planning, plan_id)
         try:
             planner_result = await self._planner.run(question)
             doc: PlanDocument = planner_result.output
         except Exception as exc:
             await logger.error("planner_failed", exc=exc)
+            self._set_lifecycle(PlanLifecycleState.failed, plan_id)
             raise
 
         doc.plan_id = plan_id
@@ -97,6 +137,7 @@ class PlanOrchestrator:
             channel.materialize(doc)
 
         # ── Execution phase ──────────────────────────────────────────────────
+        self._set_lifecycle(PlanLifecycleState.running, plan_id)
         watch_task: asyncio.Task | None = None
         if self._cfg.human_edit:
             watch_task = asyncio.create_task(channel.watch(doc))
@@ -107,6 +148,7 @@ class PlanOrchestrator:
             await logger.critical("dispatch_failed", exc=exc)
             if watch_task:
                 watch_task.cancel()
+            self._set_lifecycle(PlanLifecycleState.aborted, plan_id)
             self._emit(PlanAbortEvent(plan_id=plan_id, reason=str(exc)))
             return PlanResult(plan_id=plan_id, status="failed", error=str(exc), doc=doc)
         finally:
@@ -120,6 +162,8 @@ class PlanOrchestrator:
 
         conclusion = decision.conclusion or doc.conclusion or ""
         status = "done" if decision.decision in ("done", "continue") else "aborted"
+        final_state = PlanLifecycleState.done if status == "done" else PlanLifecycleState.aborted
+        self._set_lifecycle(final_state, plan_id)
         self._emit(PlanCompleteEvent(plan_id=plan_id, conclusion=conclusion))
         await logger.info("plan_complete", status=status, conclusion=conclusion[:200])
 
@@ -229,6 +273,7 @@ class PlanOrchestrator:
                     instruction=task.description,
                     task=task,
                     doc=doc,
+                    step_callback=self._make_step_callback(task_id, plan_id),
                 )
                 await logger.debug("dag_semaphore_release", task_id=task_id)
 
@@ -284,6 +329,34 @@ class PlanOrchestrator:
         if pending:
             await asyncio.gather(*[run_when_ready(t.task_id) for t in pending])
 
+    # ── Step callback (thread-safe, called from executor thread) ─────────────
+
+    def _make_step_callback(self, task_id: str, plan_id: str):
+        from agent.react.tao import FinishEvent, StepEvent
+
+        def _callback(event) -> None:
+            if not isinstance(event, StepEvent):
+                return
+            step = {
+                "type":         "step",
+                "index":        event.index,
+                "thought":      event.thought or "",
+                "action":       event.action or "",
+                "action_input": event.action_input,
+                "observation":  event.observation or "",
+            }
+            if task_id not in self._task_steps:
+                self._task_steps[task_id] = []
+            self._task_steps[task_id].append(step)
+
+            from plan.event import TaskStepEvent
+            ev = TaskStepEvent(plan_id=plan_id, task_id=task_id, step=step)
+            loop = getattr(self, "_main_loop", None)
+            if loop is not None and loop.is_running():
+                loop.call_soon_threadsafe(self._emit, ev)
+
+        return _callback
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _is_module_complete(self, module_name: str, doc: PlanDocument) -> bool:
@@ -304,6 +377,8 @@ class PlanOrchestrator:
         trigger: str,
     ) -> ReplanDecision:
         self._cycle += 1
+        prev_state = self._lifecycle_state
+        self._set_lifecycle(PlanLifecycleState.replanning, plan_id)
 
         if "pre_replan" in self._cfg.snapshot_triggers:
             snap = await snapshots.save_async(doc, trigger=f"pre_replan:{self._cycle}", cycle=self._cycle)
@@ -341,6 +416,9 @@ class PlanOrchestrator:
 
         if decision.decision in ("done", "abort"):
             doc.conclusion = decision.conclusion
+        else:
+            # Restore previous state (running) after replanning unless terminal
+            self._set_lifecycle(prev_state, plan_id)
 
         return decision
 

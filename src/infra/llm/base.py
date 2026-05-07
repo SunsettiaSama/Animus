@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+import threading
+import time
+from abc import abstractmethod
+from collections import deque
+from typing import Literal
+
+from config.llm_core.vllm_config import VLLMConfig
+from infra.base_service import BaseServiceManager
+
+
+class BaseVLLMManager(BaseServiceManager):
+    """Abstract base for all vLLM server managers.
+
+    Encapsulates the shared lifecycle infrastructure used by every
+    concrete vLLM provider:
+
+    - Thread-safe state machine (stopped / starting / running / error)
+    - Subprocess handle and graceful shutdown
+    - Log ring-buffer captured from stdout/stderr via a daemon thread
+    - Background health-watch thread that promotes "starting" → "running"
+    - TCP port probe and HTTP health endpoint check
+
+    Concrete subclasses must implement:
+
+    - ``start(model, cfg)``  — launch the server process
+    - ``stop()``             — terminate it
+    - ``status()``           — return a state dict (include ``"provider"`` key)
+    - ``base_url``           — property returning the OpenAI-compat base URL
+    - ``health_check()``     — full HTTP health probe
+
+    Shared helpers available to subclasses:
+
+    - ``_launch_subprocess(cmd)``       — spawn a Popen, attach log/health threads
+    - ``_stop_process()``               — graceful terminate → kill
+    - ``_port_is_open()``              — non-raising TCP probe
+    - ``get_logs(n)``                   — return last n lines from ring-buffer
+    """
+
+    _LOG_MAXLEN: int = 500
+    _LOG_TAG:    str = "vllm"        # override in subclass for log prefix
+
+    def __init__(self) -> None:
+        self._state: Literal["stopped", "starting", "running", "error"] = "stopped"
+        self._process: subprocess.Popen | None = None
+        self._cfg: VLLMConfig | None = None
+        self._model: str = ""
+        self._log_lines: deque[str] = deque(maxlen=self._LOG_MAXLEN)
+        self._lock = threading.Lock()
+
+    # ── Abstract interface ────────────────────────────────────────────────────
+
+    @abstractmethod
+    def start(self, model: str, cfg: VLLMConfig) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def stop(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def status(self) -> dict:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def base_url(self) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    def health_check(self) -> bool:
+        raise NotImplementedError
+
+    # ── Shared helpers for subclasses ─────────────────────────────────────────
+
+    def _launch_subprocess(self, cmd: list[str]) -> None:
+        """Spawn *cmd* as a subprocess and start log-capture / health-watch threads."""
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        with self._lock:
+            self._process = process
+
+        tag = self._LOG_TAG
+        threading.Thread(
+            target=self._capture_logs,
+            args=(process,),
+            daemon=True,
+            name=f"{tag}-log-capture",
+        ).start()
+        threading.Thread(
+            target=self._watch_health,
+            args=(self._cfg,),
+            daemon=True,
+            name=f"{tag}-health-watch",
+        ).start()
+
+    def _stop_process(self) -> None:
+        """Grab the process handle, signal stopped, then terminate → kill."""
+        with self._lock:
+            process = self._process
+            self._process = None
+            self._state = "stopped"
+
+        if process is None:
+            return
+
+        process.terminate()
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                return
+            time.sleep(0.2)
+        process.kill()
+
+    def _port_is_open(self) -> bool:
+        """Non-raising TCP probe — returns False if the port is not reachable."""
+        import socket
+        cfg = self._cfg
+        if cfg is None:
+            return False
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        rc = sock.connect_ex((cfg.host, cfg.port))
+        sock.close()
+        return rc == 0
+
+    def get_logs(self, n: int = 100) -> list[str]:
+        with self._lock:
+            lines = list(self._log_lines)
+        return lines[-n:]
+
+    # ── Internal daemon threads ───────────────────────────────────────────────
+
+    def _capture_logs(self, process: subprocess.Popen) -> None:
+        tag = self._LOG_TAG
+        for line in process.stdout:
+            stripped = line.rstrip("\n")
+            with self._lock:
+                self._log_lines.append(stripped)
+            print(f"[{tag}] {stripped}", file=sys.stderr, flush=True)
+
+        with self._lock:
+            if self._state not in ("stopped",):
+                self._state = "error"
+
+    def _watch_health(self, cfg: VLLMConfig | None) -> None:
+        deadline = time.monotonic() + 120.0
+        while time.monotonic() < deadline:
+            with self._lock:
+                state = self._state
+            if state not in ("starting",):
+                return
+            if self._port_is_open():
+                with self._lock:
+                    if self._state == "starting":
+                        self._state = "running"
+                return
+            time.sleep(2.0)
+
+        with self._lock:
+            if self._state == "starting":
+                self._state = "error"

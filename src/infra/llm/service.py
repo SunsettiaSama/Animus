@@ -10,7 +10,7 @@ from infra.llm.handle import LLMHandle
 if TYPE_CHECKING:
     from config.llm_core.config import LLMConfig
     from config.llm_core.vllm_config import VLLMConfig
-    from infra.vllm_server import VLLMServerManager
+    from infra.llm.base import BaseVLLMManager
 
 
 class LLMService(BaseServiceManager):
@@ -27,7 +27,7 @@ class LLMService(BaseServiceManager):
     to do anything to pick up the change.
     """
 
-    def __init__(self, vllm_manager: VLLMServerManager) -> None:
+    def __init__(self, vllm_manager: BaseVLLMManager) -> None:
         self._vllm = vllm_manager
         self._handle: LLMHandle | None = None
         self._cfg: LLMConfig | None = None

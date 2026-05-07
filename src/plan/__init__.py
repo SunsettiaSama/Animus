@@ -16,7 +16,7 @@ from plan.document import (
     TaskExecutionContext,
     TaskStatus,
 )
-from plan.event import PlanEvent
+from plan.event import LifecycleStateEvent, PlanEvent, PlanLifecycleState
 from plan.orchestrator import PlanOrchestrator
 from plan.patch import HumanPatch, PatchOp, PlanDiff
 from plan.planner import ConvPlanner, PlannerAgent
@@ -39,7 +39,9 @@ __all__ = [
     "PlanValidator",
     "TaskExecutionContext",
     "TaskStatus",
+    "LifecycleStateEvent",
     "PlanEvent",
+    "PlanLifecycleState",
     "PlanOrchestrator",
     "HumanPatch",
     "PatchOp",
