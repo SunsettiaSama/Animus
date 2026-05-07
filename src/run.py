@@ -207,7 +207,14 @@ def run_cli(llm_config: Path, no_searxng: bool) -> None:
 
 
 def run_webui(host: str, port: int, llm_config: Path, no_searxng: bool) -> None:
+    import logging
     import uvicorn
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     print(_bold("\n=== ReAct WebUI 模式 ==="))
     ensure_searxng(no_searxng)

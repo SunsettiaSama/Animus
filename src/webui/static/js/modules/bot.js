@@ -25,22 +25,33 @@ export async function updateWorkstationCard() {
   const c = cfg.status === 'fulfilled' ? cfg.value : null;
   const s = st.status  === 'fulfilled' ? st.value  : null;
 
-  const state = s?.state ?? 'unavailable';
+  const state    = (s?.state         ?? 'unavailable').trim();
+  const svcState = (s?.service_state ?? '').trim();
+  // Consider the service "on" if either the transport is connected/running OR
+  // the service itself reports running (transport may lag on first connect).
+  const isOn       = state === 'connected' || state === 'running' || svcState === 'running';
+  const isLoading  = !isOn && state === 'connecting';
   if (badgeEl) {
-    if (state === 'connected')  { badgeEl.textContent = 'ON';  badgeEl.className = 'mc-badge on'; }
-    else if (state === 'connecting') { badgeEl.textContent = '…'; badgeEl.className = 'mc-badge'; }
-    else                             { badgeEl.textContent = 'OFF'; badgeEl.className = 'mc-badge off'; }
+    if (isOn)       { badgeEl.textContent = 'ON';  badgeEl.className = 'mc-badge on'; }
+    else if (isLoading) { badgeEl.textContent = '…';   badgeEl.className = 'mc-badge'; }
+    else            { badgeEl.textContent = 'OFF'; badgeEl.className = 'mc-badge off'; }
   }
 
-  const url      = c?.ws_url || '—';
-  const sessions = s?.sessions ?? 0;
-  const prefix   = c?.command_prefix ? `<code style="font-size:11px">${_esc(c.command_prefix)}</code>` : '<span style="color:var(--text3)">无前缀</span>';
+  const transport = c?.transport ?? 'forward_ws';
+  const connInfo  = transport === 'qq_official'
+    ? (c?.appid ? `appid: ${_esc(c.appid)}` : '—')
+    : _esc(c?.ws_url || '—');
+  const connLabel = transport === 'qq_official' ? 'AppID' : 'WS';
+  const sessions  = s?.active_sessions ?? 0;
+  const prefix    = c?.command_prefix
+    ? `<code style="font-size:11px">${_esc(c.command_prefix)}</code>`
+    : '<span style="color:var(--text3)">无前缀</span>';
 
   bodyEl.innerHTML = `
     <div class="mc-row"><span class="mc-key">状态</span>
       <span class="mc-val">${_stateLabel(state)}</span></div>
-    <div class="mc-row"><span class="mc-key">WS</span>
-      <span class="mc-val mc-truncate" title="${_esc(url)}">${_esc(url)}</span></div>
+    <div class="mc-row"><span class="mc-key">${connLabel}</span>
+      <span class="mc-val mc-truncate" title="${connInfo}">${connInfo}</span></div>
     <div class="mc-row"><span class="mc-key">会话</span>
       <span class="mc-val">${sessions} 活跃</span></div>
     <div class="mc-row"><span class="mc-key">前缀</span>
@@ -48,10 +59,14 @@ export async function updateWorkstationCard() {
 }
 
 function _stateLabel(state) {
-  if (state === 'connected')   return '<span style="color:#16a34a">已连接</span>';
-  if (state === 'connecting')  return '<span style="color:#1e40af">连接中…</span>';
-  if (state === 'unavailable') return '<span style="color:var(--text3)">未启动</span>';
-  return `<span style="color:var(--text3)">${_esc(state)}</span>`;
+  const s = (state ?? '').trim();
+  if (s === 'connected' || s === 'running')
+                             return '<span style="color:#16a34a">已连接</span>';
+  if (s === 'connecting')    return '<span style="color:#d97706">连接中…</span>';
+  if (s === 'stopped')       return '<span style="color:var(--text3)">已停止</span>';
+  if (s === 'unavailable')   return '<span style="color:var(--text3)">未启动</span>';
+  if (s === 'error')         return '<span style="color:#ef4444">错误</span>';
+  return `<span style="color:var(--text3)">${_esc(s)}</span>`;
 }
 
 function _esc(s) {

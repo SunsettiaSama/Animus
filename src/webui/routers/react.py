@@ -69,6 +69,7 @@ def _event_to_dict(event) -> dict | None:
         PromptPreviewEvent,
         RetryEvent,
         StepEvent,
+        StepPauseEvent,
         StepStartEvent,
     )
     if isinstance(event, PromptPreviewEvent):
@@ -87,6 +88,15 @@ def _event_to_dict(event) -> dict | None:
             "action": event.action,
             "action_input": event.action_input,
             "observation": event.observation,
+            "calls": event.calls,    # list[{action, args}] | None — parallel calls
+            "output": event.output,  # <O> content; empty string when absent
+        }
+    if isinstance(event, StepPauseEvent):
+        return {
+            "type": "step_pause",
+            "index": event.index,
+            "output": event.output,
+            "request_id": event.request_id,
         }
     if isinstance(event, FinishEvent):
         return {"type": "finish", "answer": event.answer}
@@ -105,16 +115,21 @@ def _event_to_dict(event) -> dict | None:
     return _sub_event_to_dict(event)
 
 
+# ── Notification helper ───────────────────────────────────────────────────────
+
+def _push_notify(state, task: str, message: str, done: bool = False) -> None:
+    """Thread-safe push of a notification event to the SSE notify queue."""
+    if state.notify_queue is None or state.main_event_loop is None:
+        return
+    item = {"type": "notify", "task": task, "message": message, "done": done}
+    state.main_event_loop.call_soon_threadsafe(state.notify_queue.put_nowait, item)
+
+
 # ── ReAct init ────────────────────────────────────────────────────────────────
 
 def _do_react_init(req: ReactInitRequest, state) -> None:
     """Background worker that builds TaoLoop and ConvLoop."""
     from agent.react.factory import build_conv_loop
-
-    # Cancel any running scheduler from a previous init.
-    if state.scheduler_future is not None and not state.scheduler_future.done():
-        state.scheduler_future.cancel()
-    state.scheduler_future = None
 
     # Wait for any in-flight preload to finish, then release its QdrantClient
     # file lock before we create a new one.
@@ -131,6 +146,7 @@ def _do_react_init(req: ReactInitRequest, state) -> None:
         max_steps=req.max_steps,
         primary_tools=req.primary_tools,
         enable_kb=req.enable_kb,
+        reply_target={"type": "webui"},
     )
     tao = conv_loop._tao
     state.active_tao = tao
@@ -138,28 +154,25 @@ def _do_react_init(req: ReactInitRequest, state) -> None:
     state.react_init_event.set()
 
     # Wire plan event_sink: when the agent triggers run_plan via chat, plan events
-    # are forwarded to state.plan_event_queue so the WebUI sub-panel can track them.
+    # are broadcast to all active SSE subscribers via state.plan_broadcast().
     def _make_plan_sink(st):
         def _sink(event_dict: dict) -> None:
             loop = st.main_event_loop
             if loop is None:
                 return
-            # Create a fresh asyncio.Queue on the main loop if none exists
-            # (chat-driven plan runs don't go through POST /api/plan/run).
-            if st.plan_event_queue is None:
-                q: asyncio.Queue = asyncio.Queue()
-                st.plan_event_queue = q
-            loop.call_soon_threadsafe(st.plan_event_queue.put_nowait, event_dict)
+            loop.call_soon_threadsafe(st.plan_broadcast, event_dict)
         return _sink
 
     tao.set_plan_event_sink(_make_plan_sink(state))
 
-    state.preload_future = state.task_runner.submit("preload", tao.preload)
+    def _preload_with_notify():
+        _push_notify(state, "preload", "正在加载嵌入模型与长期记忆…", done=False)
+        tao.preload()
+        _push_notify(state, "preload", "嵌入模型与长期记忆已就绪", done=True)
 
-    if tao.scheduler_engine is not None and state.main_event_loop is not None:
-        state.scheduler_future = asyncio.run_coroutine_threadsafe(
-            tao.scheduler_engine.start(), state.main_event_loop
-        )
+    state.preload_future = state.task_runner.submit("preload", _preload_with_notify)
+
+
 
 
 @router.post("/api/react/init")
@@ -288,10 +301,37 @@ def react_tools_search(query: str, top_k: int = 5):
     }
 
 
-# ── SSE legacy endpoint ────────────────────────────────────────────────────────
+# ── Notification SSE endpoint ─────────────────────────────────────────────────
 
 import json
 from fastapi.responses import StreamingResponse as _SR
+
+@router.get("/api/react/notify")
+async def notify_stream():
+    """Persistent SSE stream for background task notifications.
+
+    Emits ``{"type":"notify","task":"...","message":"...","done":bool}`` events
+    whenever a background task (preload, post_process) starts or finishes.
+    """
+    state = get_state()
+
+    async def _generate():
+        if state.notify_queue is None:
+            return
+        while True:
+            item = await state.notify_queue.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+
+    return _SR(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── SSE legacy endpoint ────────────────────────────────────────────────────────
 
 @router.post("/api/react/run")
 def react_run(req: ReactRunRequest):
@@ -339,12 +379,6 @@ async def ws_react_run(websocket: WebSocket):
     queue: asyncio.Queue             = asyncio.Queue()
 
     def _produce():
-        # B1: Wait for any in-flight post_process from the previous turn to
-        # finish before reading shared TaoLoop state (_manager, _static_cache).
-        pp = state.task_runner.get_future("post_process")
-        if pp is not None and not pp.done():
-            pp.result(timeout=30)
-
         if state.active_tao is not None:
             state.active_tao.sub_event_sink = lambda ev: (
                 (msg := _sub_event_to_dict(ev)) and
@@ -410,6 +444,11 @@ async def ws_react_run(websocket: WebSocket):
                         msg.get("request_id", ""),
                         bool(msg.get("approved", False)),
                     )
+                elif mtype in ("continue", "stop") and state.conv_loop is not None:
+                    state.conv_loop._tao.resolve_step_decision(
+                        msg.get("request_id", ""),
+                        mtype,
+                    )
                 elif mtype == "abort":
                     if msg.get("gen_id") == state.current_gen_id:
                         if state.conv_loop is not None:
@@ -442,7 +481,12 @@ async def ws_react_run(websocket: WebSocket):
         await websocket.send_json({"type": "finish", "answer": "", "aborted": True})
     else:
         if state.conv_loop is not None:
-            state.task_runner.submit("post_process", state.conv_loop.post_process)
+            _conv_loop = state.conv_loop
+            def _post_process_with_notify():
+                _push_notify(state, "post_process", "正在写入记忆…", done=False)
+                _conv_loop.post_process()
+                _push_notify(state, "post_process", "记忆写入完成", done=True)
+            state.task_runner.submit("post_process", _post_process_with_notify)
 
     state.set_streaming(False)
     await websocket.close()

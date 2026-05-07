@@ -16,8 +16,11 @@ from plan.event import (
     PlanCompleteEvent,
     PlanEvent,
     PlanLifecycleState,
+    PlannerStepEvent,
     PlanStartEvent,
     ReplanEvent,
+    ReplannerCompleteEvent,
+    ReplannerStartEvent,
     SnapshotEvent,
     TaskCompleteEvent,
     TaskFailedEvent,
@@ -113,7 +116,10 @@ class PlanOrchestrator:
         # ── Plan phase ───────────────────────────────────────────────────────
         self._set_lifecycle(PlanLifecycleState.planning, plan_id)
         try:
-            planner_result = await self._planner.run(question)
+            planner_result = await self._planner.run(
+                question,
+                step_callback=self._make_planner_callback(plan_id, "planning"),
+            )
             doc: PlanDocument = planner_result.output
         except Exception as exc:
             await logger.error("planner_failed", exc=exc)
@@ -329,6 +335,26 @@ class PlanOrchestrator:
         if pending:
             await asyncio.gather(*[run_when_ready(t.task_id) for t in pending])
 
+    # ── Planner step callback (thread-safe, called from executor thread) ──────
+
+    def _make_planner_callback(self, plan_id: str, phase: str):
+        loop = self._main_loop
+
+        def cb(index: int, thought: str, action: str, obs: str) -> None:
+            if loop is None or not loop.is_running():
+                return
+            ev = PlannerStepEvent(
+                plan_id=plan_id,
+                phase=phase,
+                step_index=index,
+                thought=thought,
+                action=action,
+                observation=obs,
+            )
+            loop.call_soon_threadsafe(self._emit, ev)
+
+        return cb
+
     # ── Step callback (thread-safe, called from executor thread) ─────────────
 
     def _make_step_callback(self, task_id: str, plan_id: str):
@@ -385,6 +411,7 @@ class PlanOrchestrator:
             self._emit(SnapshotEvent(plan_id=plan_id, snapshot_id=snap.snapshot_id, trigger=f"pre_replan:{self._cycle}"))
 
         await logger.info("replan_triggered", trigger=trigger, cycle=self._cycle)
+        self._emit(ReplannerStartEvent(plan_id=plan_id, trigger=trigger, cycle=self._cycle))
 
         result = await self._replanner.run(
             instruction="",
@@ -401,6 +428,12 @@ class PlanOrchestrator:
             reason=decision.reason[:200],
             patches_count=len(decision.patches),
         )
+        self._emit(ReplannerCompleteEvent(
+            plan_id=plan_id,
+            decision=decision.decision,
+            reason=decision.reason[:200],
+            patches_count=len(decision.patches),
+        ))
 
         if decision.patches:
             from plan.patch import PlanDiff

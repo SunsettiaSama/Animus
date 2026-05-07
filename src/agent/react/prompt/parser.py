@@ -19,6 +19,12 @@ _FINISH_ACTIONS: frozenset[str] = frozenset({
     "done",
 })
 
+# ── XML tag patterns (Priority 0) ─────────────────────────────────────────────
+
+_RE_T = re.compile(r"<T>(.*?)</T>", re.DOTALL | re.IGNORECASE)
+_RE_A = re.compile(r"<A>(.*?)</A>", re.DOTALL | re.IGNORECASE)
+_RE_O = re.compile(r"<O>(.*?)</O>", re.DOTALL | re.IGNORECASE)
+
 # ── Section boundary helpers ──────────────────────────────────────────────────
 
 # Listed most-specific first so "Action Input" is checked before "Action".
@@ -29,6 +35,7 @@ _ALL_SECTION_KEYWORDS = (
     "thought",
     "action",
     "observation",
+    "output",
     "answer",
 )
 _ALL_KW_PAT = "|".join(_ALL_SECTION_KEYWORDS)
@@ -54,6 +61,7 @@ def _field_re(*keywords: str) -> re.Pattern[str]:
 # ── Compiled field patterns ───────────────────────────────────────────────────
 
 _RE_THOUGHT = _field_re("Thought")
+_RE_OUTPUT  = _field_re("Output")
 _RE_ACTION  = _field_re("Action")
 _RE_INPUT   = _field_re(
     "Action Input", "Action_Input", "ActionInput", "action_input",
@@ -79,7 +87,7 @@ _RE_REASONING_PREAMBLE = re.compile(
     re.IGNORECASE,
 )
 _RE_TRAILING_MARKERS = re.compile(
-    r"\n+(?:Thought|Action|Observation)[ \t]*[:：].*$",
+    r"\n+(?:Thought|Action|Observation|Output)[ \t]*[:：].*$",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -149,11 +157,99 @@ def _extract_json(text: str) -> dict | None:
     return None
 
 
+def _extract_json_array(text: str) -> list | None:
+    """
+    Progressively attempt to extract a JSON array from *text*.
+
+    Mirrors the strategy of _extract_json but targets '[' / ']' boundaries
+    instead of '{' / '}', since Output: sections produce arrays not dicts.
+
+    Returns None when no valid array is found.
+    """
+    text = text.strip()
+    if not text:
+        return None
+
+    # Pass 1 — code fence
+    fence = _RE_CODE_FENCE.search(text)
+    if fence:
+        inner = fence.group(1).strip()
+        try:
+            val = json.loads(inner)
+            if isinstance(val, list):
+                return val
+        except json.JSONDecodeError:
+            pass
+
+    # Pass 2 — direct parse
+    try:
+        val = json.loads(text)
+        if isinstance(val, list):
+            return val
+    except json.JSONDecodeError:
+        pass
+
+    # Pass 3 — blob scan from first '[' to last ']'
+    start = text.find("[")
+    end   = text.rfind("]")
+    if start != -1 and end > start:
+        blob = text[start : end + 1]
+        try:
+            val = json.loads(blob)
+            if isinstance(val, list):
+                return val
+        except json.JSONDecodeError:
+            for candidate_end in (m.start() for m in re.finditer(r"\]", blob)):
+                try:
+                    val = json.loads(blob[: candidate_end + 1])
+                    if isinstance(val, list):
+                        return val
+                except json.JSONDecodeError:
+                    continue
+
+        # Pass 4: ast.literal_eval for Python-style lists
+        try:
+            val = ast.literal_eval(blob)
+            if isinstance(val, list):
+                return val
+        except (ValueError, SyntaxError):
+            pass
+
+    return None
+
+
+def _normalise_call(item: object) -> dict | None:
+    """Normalise a single element from an Output array into {action, args}.
+
+    Accepts:
+      {"action": "...", "args": {...}}
+      {"action": "...", "arguments": {...}}
+      {"action": "...", "input": {...}}
+      {"name": "...", "args": {...}}   (some model variants)
+    Returns None for unrecognisable shapes.
+    """
+    if not isinstance(item, dict):
+        return None
+    action = item.get("action") or item.get("name") or item.get("tool")
+    if not isinstance(action, str) or not action:
+        return None
+    args = (
+        item.get("args")
+        or item.get("arguments")
+        or item.get("input")
+        or item.get("action_input")
+        or {}
+    )
+    if not isinstance(args, dict):
+        args = {}
+    return {"action": action.strip(), "args": args}
+
+
 # ── ParseQuality ──────────────────────────────────────────────────────────────
 
 class ParseQuality(Enum):
-    CLEAN            = "clean"            # all fields extracted via standard patterns
-    LENIENT          = "lenient"          # action inferred via fallback heuristics
+    CLEAN            = "clean"            # Output:[...] or <T><A> format extracted cleanly
+    LENIENT          = "lenient"          # fell back to legacy Action:/Action Input: format
     FINISH_DEGRADED  = "finish_degraded"  # finish detected but answer fell back to thought/raw
     FAILED           = "failed"           # action is empty and this is not a finish step
 
@@ -168,6 +264,8 @@ class ParseResult:
     raw: str
     is_finish: bool
     quality: ParseQuality = field(default=ParseQuality.CLEAN)
+    calls: list[dict] | None = None   # [{"action": str, "args": dict}, ...]; set when Output: found
+    output: str = ""                   # <O> tag content; the sole user-visible output
 
 
 # ── diagnose ──────────────────────────────────────────────────────────────────
@@ -180,27 +278,31 @@ def diagnose(result: ParseResult) -> str:
     issues: list[str] = []
 
     if not result.thought:
-        issues.append("missing Thought field")
+        issues.append("missing <T> thought field")
 
     if not result.action:
-        issues.append("missing Action field — no tool name could be extracted")
+        issues.append(
+            "missing <A> action field — no tool name could be extracted. "
+            'Use: <A>[{"action": "tool_name", "args": {...}}]</A>'
+        )
     elif result.quality == ParseQuality.LENIENT:
         issues.append(
-            f"Action field inferred via heuristic (found '{result.action}' "
-            "from context, not from a labeled 'Action:' line)"
+            f"used deprecated Action:/Action Input: format (found '{result.action}'); "
+            'please rewrite using: <A>[{"action": "tool_name", "args": {...}}]</A>'
         )
 
     if result.quality == ParseQuality.FINISH_DEGRADED:
         issues.append(
-            "finish action detected but Action Input could not be parsed as valid JSON — "
-            "the answer was recovered from Thought or raw output; "
-            'please rewrite with a proper JSON object: Action Input: {"answer": "..."}'
+            "finish action detected but <A> args could not be parsed as valid JSON — "
+            "the answer was recovered from <T> or raw output; "
+            'please rewrite with: <A>[{"action": "finish", "args": {"answer": "..."}}]</A>'
+            ' and optionally <O>your answer</O>'
         )
 
     if not result.is_finish and not result.action_input:
         issues.append(
-            "missing or unparseable Action Input — "
-            "expected a JSON object like {\"query\": \"...\"}"
+            "missing or unparseable args — "
+            'expected: <A>[{"action": "tool", "args": {"key": "value"}}]</A>'
         )
 
     if not issues:
@@ -242,32 +344,21 @@ def _infer_action(text: str, tool_names: frozenset[str]) -> str:
 
 class ReActOutputParser(BaseOutputParser[ParseResult]):
     """
-    Defensive three-quality ReAct output parser.
+    Defensive three-quality ReAct output parser supporting the new XML tag
+    format (<T><A><O>), the Output:[{action,args}] array format, and the
+    legacy Action:/Action Input: format.
 
-    Layer 1 — field extraction:
-      Flexible regex matching for Thought / Action / Action Input.
-      Handles case variants, markdown wrappers, alternative spellings,
-      and ASCII / CJK separators.
+    Priority order:
+      0. <T>...</T> + <A>...</A> — preferred XML format; quality = CLEAN
+      1. Output: [...] — legacy array format; quality = CLEAN
+      2. Action: / Action Input: — deprecated fallback; quality = LENIENT
+         (triggers L2 nudge to adopt the new format)
+      3. Implicit finish — no structured action found; quality = FAILED
+         Only triggers is_finish=True when <O> content or Answer: label exists.
 
-    Layer 1b — lenient inference (LENIENT quality):
-      When no labeled Action field is found, attempts heuristic inference
-      from verb patterns and bare tool-name lines.
-
-    Layer 2 — finish detection + answer recovery:
-      When a finish action is identified, prefer the structured answer
-      from the parsed Action Input over the full raw text.  Falls back
-      through three levels:
-        (a) action_input["answer"]  — LLM followed the format correctly
-        (b) thought                 — LLM reasoned but skipped Action Input
-        (c) raw                     — last resort; full LLM output
-
-    JSON extraction uses a three-pass strategy:
-      code-fence stripping → direct parse → blob scan with narrowing.
-
-    Quality scoring:
-      CLEAN   — standard patterns matched
-      LENIENT — action inferred via heuristics
-      FAILED  — action empty and not a finish step (triggers upper-layer repair)
+    Parallel calls: when <A> or Output: contains multiple elements, all are
+    returned in ParseResult.calls; result.action / result.action_input reflect
+    the first element for backward-compatible callers.
     """
 
     def parse(
@@ -275,35 +366,119 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
         text: str,
         tool_names: frozenset[str] | None = None,
     ) -> ParseResult:
+
+        # ── Priority 0: new XML <T><A><O> format ──────────────────────────────
+        t_m = _RE_T.search(text)
+        a_m = _RE_A.search(text)
+        o_m = _RE_O.search(text)
+        output_content = o_m.group(1).strip() if o_m else ""
+
+        if a_m:
+            thought = t_m.group(1).strip() if t_m else ""
+            raw_a = a_m.group(1).strip()
+            items = _extract_json_array(raw_a)
+            if items:
+                calls = [c for c in (_normalise_call(i) for i in items) if c is not None]
+                if calls:
+                    first = calls[0]
+                    action_norm = re.sub(r"[\s\-]+", "_", first["action"].lower()).strip("_")
+
+                    if action_norm in _FINISH_ACTIONS:
+                        finish_args = first["args"]
+                        if "answer" not in finish_args:
+                            answer_text = output_content or _clean_finish_answer(thought) or thought or text
+                            finish_args = {"answer": answer_text}
+                            quality = ParseQuality.FINISH_DEGRADED
+                        else:
+                            quality = ParseQuality.CLEAN
+                        return ParseResult(
+                            thought=thought,
+                            action="finish",
+                            action_input=finish_args,
+                            raw=text,
+                            is_finish=True,
+                            quality=quality,
+                            calls=calls,
+                            output=output_content,
+                        )
+
+                    return ParseResult(
+                        thought=thought,
+                        action=first["action"],
+                        action_input=first["args"],
+                        raw=text,
+                        is_finish=False,
+                        quality=ParseQuality.CLEAN,
+                        calls=calls,
+                        output=output_content,
+                    )
+
+        # ── Priority 1: legacy Output: [...] format ────────────────────────────
         thought_m = _RE_THOUGHT.search(text)
-        action_m  = _RE_ACTION.search(text)
-        input_m   = _RE_INPUT.search(text)
-
         thought = thought_m.group(1).strip() if thought_m else ""
-        action  = action_m.group(1).strip()  if action_m  else ""
 
-        quality = ParseQuality.CLEAN
+        output_m = _RE_OUTPUT.search(text)
+        if output_m:
+            raw_output = output_m.group(1).strip()
+            items = _extract_json_array(raw_output)
+            if items:
+                calls = [c for c in (_normalise_call(i) for i in items) if c is not None]
+                if calls:
+                    first = calls[0]
+                    action_norm = re.sub(r"[\s\-]+", "_", first["action"].lower()).strip("_")
 
-        # ── Layer 1b: lenient action inference ───────────────────────────────
+                    if action_norm in _FINISH_ACTIONS:
+                        finish_args = first["args"]
+                        if "answer" not in finish_args:
+                            answer_text = output_content or _clean_finish_answer(thought) or thought or text
+                            finish_args = {"answer": answer_text}
+                            quality = ParseQuality.FINISH_DEGRADED
+                        else:
+                            quality = ParseQuality.CLEAN
+                        return ParseResult(
+                            thought=thought,
+                            action="finish",
+                            action_input=finish_args,
+                            raw=text,
+                            is_finish=True,
+                            quality=quality,
+                            calls=calls,
+                            output=output_content,
+                        )
+
+                    return ParseResult(
+                        thought=thought,
+                        action=first["action"],
+                        action_input=first["args"],
+                        raw=text,
+                        is_finish=False,
+                        quality=ParseQuality.CLEAN,
+                        calls=calls,
+                        output=output_content,
+                    )
+
+        # ── Priority 2: legacy Action: / Action Input: format (LENIENT) ───────
+        action_m = _RE_ACTION.search(text)
+        input_m  = _RE_INPUT.search(text)
+
+        action = action_m.group(1).strip() if action_m else ""
+
+        # Layer 1b: lenient action inference
+        quality = ParseQuality.LENIENT
         if not action and tool_names:
             inferred = _infer_action(text, tool_names)
             if inferred:
-                action  = inferred
-                quality = ParseQuality.LENIENT
+                action = inferred
 
-        # ── JSON extraction ───────────────────────────────────────────────────
         if input_m:
             action_input = _extract_json(input_m.group(1)) or {}
         else:
             action_input = {}
 
-        # ── Action name normalisation ─────────────────────────────────────────
-        # Collapse whitespace/dashes to underscore; strip leading/trailing ones.
         action_norm = re.sub(r"[\s\-]+", "_", action.lower()).strip("_")
 
-        # ── Finish detection ──────────────────────────────────────────────────
+        # ── Finish detection (legacy path) ────────────────────────────────────
         if action_norm in _FINISH_ACTIONS:
-            # (a) LLM provided a structured answer in Action Input
             if "answer" in action_input:
                 return ParseResult(
                     thought=thought,
@@ -312,9 +487,10 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
                     raw=text,
                     is_finish=True,
                     quality=quality,
+                    calls=None,
+                    output=output_content,
                 )
 
-            # (b) No structured Action Input at all — try scanning full text
             recovered = _extract_json(text)
             if recovered and "answer" in recovered:
                 return ParseResult(
@@ -324,12 +500,10 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
                     raw=text,
                     is_finish=True,
                     quality=quality,
+                    calls=None,
+                    output=output_content,
                 )
 
-            # (c) Fall back: check Answer: label first, then thought, then raw text.
-            # All sub-paths here are structurally degraded — the Action Input JSON
-            # could not be recovered, so quality is marked FINISH_DEGRADED to let
-            # the upper-layer repair chain know it should attempt a correction.
             answer_label_m = _RE_ANSWER.search(text)
             if answer_label_m:
                 answer = answer_label_m.group(1).strip()
@@ -344,31 +518,53 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
                 raw=text,
                 is_finish=True,
                 quality=ParseQuality.FINISH_DEGRADED,
+                calls=None,
+                output=output_content,
             )
 
-        # ── No action label — implicit finish ─────────────────────────────────
-        # LLM skipped the ReAct structure entirely and wrote the answer inline,
-        # or used an "Answer:" label instead of the standard "Action: finish".
-        # Prefer the content after "Answer:" if present; fall back to thought,
-        # then the full raw text as the answer payload.
+        # ── No action label — implicit finish (FAILED) ────────────────────────
+        # Only treat as finished when there is an explicit user-visible signal:
+        # an <O> tag or an Answer: label. Otherwise keep FAILED+is_finish=False
+        # so the escalation chain (L2/L3) can attempt recovery.
         if not action:
             answer_m = _RE_ANSWER.search(text)
+            if output_content:
+                # <O> present — treat as finish with <O> as the answer
+                return ParseResult(
+                    thought=thought,
+                    action="finish",
+                    action_input={"answer": output_content},
+                    raw=text,
+                    is_finish=True,
+                    quality=ParseQuality.FAILED,
+                    calls=None,
+                    output=output_content,
+                )
             if answer_m:
                 answer_text = answer_m.group(1).strip()
-            elif thought:
-                answer_text = _clean_finish_answer(thought) or thought
-            else:
-                answer_text = _clean_finish_answer(text) or text
+                return ParseResult(
+                    thought=thought,
+                    action="finish",
+                    action_input={"answer": answer_text},
+                    raw=text,
+                    is_finish=True,
+                    quality=ParseQuality.FAILED,
+                    calls=None,
+                    output=output_content,
+                )
+            # No explicit signal — keep as FAILED without is_finish so L2/L3 can retry
             return ParseResult(
                 thought=thought,
-                action="finish",
-                action_input={"answer": answer_text},
+                action="",
+                action_input={},
                 raw=text,
-                is_finish=True,
+                is_finish=False,
                 quality=ParseQuality.FAILED,
+                calls=None,
+                output=output_content,
             )
 
-        # ── Regular tool call ─────────────────────────────────────────────────
+        # ── Regular tool call (legacy single-action) ──────────────────────────
         return ParseResult(
             thought=thought,
             action=action,
@@ -376,6 +572,8 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
             raw=text,
             is_finish=False,
             quality=quality,
+            calls=None,
+            output=output_content,
         )
 
     @property

@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Callable
 
 from agent.scheduler.config import SchedulerConfig
 from agent.scheduler.store import TaskStore
 from agent.scheduler.task import ScheduledTask, TaskStatus
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow_iso() -> str:
@@ -31,10 +35,17 @@ def _write_result(task: ScheduledTask, answer: str, scheduler_dir: str) -> str:
 
 
 class TaskRunner:
-    def __init__(self, cfg: SchedulerConfig, long_term=None, timeline=None):
+    def __init__(
+        self,
+        cfg: SchedulerConfig,
+        long_term=None,
+        timeline=None,
+        notify_fn: Callable[[ScheduledTask, str], None] | None = None,
+    ):
         self._cfg = cfg
         self._long_term = long_term
         self._timeline = timeline
+        self._notify_fn = notify_fn
 
     async def run(self, task: ScheduledTask, store: TaskStore) -> None:
         store.update(task.id, status=TaskStatus.running, last_run_at=_utcnow_iso())
@@ -55,7 +66,12 @@ class TaskRunner:
             result = runner.run_sync(task.instruction, profile, self._cfg.llm_cfg_path)
             answer = result["answer"]
 
-        await asyncio.to_thread(_run_sync)
+        try:
+            await asyncio.to_thread(_run_sync)
+        except BaseException as exc:
+            store.update(task.id, status=TaskStatus.failed)
+            logger.error("[TaskRunner] task %s (%s) failed: %s", task.id[:8], task.name, exc)
+            raise
 
         result_path = _write_result(task, answer, self._cfg.scheduler_dir)
 
@@ -82,3 +98,9 @@ class TaskRunner:
             )
         else:
             store.update(task.id, status=TaskStatus.done, last_result_path=result_path)
+
+        if self._notify_fn is not None:
+            try:
+                self._notify_fn(task, answer)
+            except Exception as exc:
+                logger.error("[TaskRunner] notify_fn error for task %s: %s", task.id[:8], exc)

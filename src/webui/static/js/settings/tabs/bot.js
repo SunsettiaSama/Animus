@@ -24,24 +24,26 @@ export async function load() {
   _si('s-bot-prefix',       d.command_prefix ?? '');
   _si('s-bot-max-sessions', d.max_sessions ?? 100);
   _si('s-bot-ttl',          d.session_ttl_hours ?? 24);
+  _si('s-bot-invite-code',  d.invite_code ?? '');
+  _si('s-bot-invite-limit', d.invite_daily_limit ?? 4);
   onBotTransportChange();
 
   const st    = await infraMod.bot.status().catch(() => null);
   const badge = $('s-bot-status-badge');
   if (badge && st) {
-    const state      = st.state ?? 'unknown';
+    const state    = (st.state         ?? 'unknown').trim();
+    const svcState = (st.service_state ?? '').trim();
+    const isOn      = state === 'connected' || state === 'running' || svcState === 'running';
+    const isLoading = !isOn && state === 'connecting';
     badge.textContent = state;
-    badge.className   = 'bot-status-badge ' + (
-      state === 'connected'  ? 'ok'      :
-      state === 'connecting' ? 'loading' : 'off'
-    );
+    badge.className   = 'bot-status-badge ' + (isOn ? 'ok' : isLoading ? 'loading' : 'off');
     const sessEl = $('s-bot-sessions-count');
-    if (sessEl) sessEl.textContent = `${st.sessions ?? 0} active sessions`;
+    if (sessEl) sessEl.textContent = `${st.active_sessions ?? 0} active sessions`;
   }
 }
 
 export async function save() {
-  const _ids = id => _v(id).split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+  const _ids = id => _v(id).split(',').map(s => s.trim()).filter(s => s.length > 0);
   await botMod.saveConfig({
     enabled:                _c('s-bot-enabled'),
     transport:              _v('s-bot-transport'),
@@ -56,5 +58,7 @@ export async function save() {
     command_prefix:         _v('s-bot-prefix'),
     max_sessions:           parseInt(_v('s-bot-max-sessions')) || 100,
     session_ttl_hours:      parseFloat(_v('s-bot-ttl')) || 24,
+    invite_code:            _v('s-bot-invite-code').trim(),
+    invite_daily_limit:     parseInt(_v('s-bot-invite-limit')) || 4,
   });
 }

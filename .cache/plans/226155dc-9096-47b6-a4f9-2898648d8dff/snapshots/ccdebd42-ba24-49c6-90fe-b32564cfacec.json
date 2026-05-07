@@ -1,0 +1,75 @@
+{
+  "snapshot_id": "ccdebd42-ba24-49c6-90fe-b32564cfacec",
+  "plan_id": "226155dc-9096-47b6-a4f9-2898648d8dff",
+  "timestamp": 1778168957.5105064,
+  "trigger": "initial",
+  "cycle": 0,
+  "doc_dict": {
+    "plan_id": "226155dc-9096-47b6-a4f9-2898648d8dff",
+    "title": "Create three Python scripts for sine and cosine curves",
+    "objective": "Write sin_curve.py, cos_curve.py, and plot_both.py to plot sine, cosine, and combined curves using matplotlib.",
+    "modules": [
+      {
+        "name": "Curve Plotting",
+        "tasks": [
+          {
+            "task_id": "write_sin_curve",
+            "description": "Write sin_curve.py that generates and plots a sine wave.",
+            "module": "Curve Plotting",
+            "profile": "executor",
+            "max_steps": 5,
+            "depends_on": [],
+            "writes": [],
+            "parallel": false,
+            "status": "pending",
+            "result": null,
+            "error": null,
+            "params": {},
+            "execution_ctx": null
+          },
+          {
+            "task_id": "write_cos_curve",
+            "description": "Write cos_curve.py that generates and plots a cosine wave.",
+            "module": "Curve Plotting",
+            "profile": "executor",
+            "max_steps": 5,
+            "depends_on": [],
+            "writes": [],
+            "parallel": false,
+            "status": "pending",
+            "result": null,
+            "error": null,
+            "params": {},
+            "execution_ctx": null
+          },
+          {
+            "task_id": "write_plot_both",
+            "description": "Write plot_both.py that imports sin_curve and cos_curve, then uses matplotlib to plot both curves together.",
+            "module": "Curve Plotting",
+            "profile": "executor",
+            "max_steps": 10,
+            "depends_on": [
+              "write_sin_curve",
+              "write_cos_curve"
+            ],
+            "writes": [],
+            "parallel": false,
+            "status": "pending",
+            "result": null,
+            "error": null,
+            "params": {},
+            "execution_ctx": null
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "max_replan_cycles": 3,
+      "checkpoint": "per_module",
+      "timeout": null,
+      "paused": false
+    },
+    "replan_notes": [],
+    "conclusion": null
+  }
+}

@@ -68,6 +68,19 @@ class TaskStore:
             self._save(data)
         return True
 
+    def reset_stale_running(self) -> int:
+        """将遗留的 running 状态任务重置为 pending（服务重启后调用）。"""
+        with self._lock:
+            data = self._load()
+            count = 0
+            for raw in data.values():
+                if raw.get("status") == TaskStatus.running.value:
+                    raw["status"] = TaskStatus.pending.value
+                    count += 1
+            if count:
+                self._save(data)
+        return count
+
     def get_due_tasks(self, now: datetime) -> list[ScheduledTask]:
         with self._lock:
             data = self._load()

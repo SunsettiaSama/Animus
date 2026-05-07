@@ -49,6 +49,8 @@ class PromptManager:
         if tool_category_summary:
             tool_list += f"\n\n{tool_category_summary}"
         self._base_system: str = self._tpl.system.format(tool_list=tool_list)
+        if cfg and cfg.system_note:
+            self._base_system += f"\n\n{cfg.system_note}"
         # Pre-render the role block once; prepended to every system message.
         self._role_prefix: str = self._tpl.react_role.render(separator=self._tpl.separator) or ""
 

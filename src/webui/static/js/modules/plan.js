@@ -24,21 +24,27 @@ const API = {
   pause:     '/api/plan/pause',
   resume:    '/api/plan/resume',
   skip:      (tid) => `/api/plan/skip/${tid}`,
+  history:   '/api/plan/history',
+  historyDel: (pid) => `/api/plan/history/${pid}`,
 };
 
-const NODE_W  = 130;
-const NODE_H  = 36;
-const COL_GAP = 60;
-const ROW_GAP = 18;
-const PAD     = 24;
+const NODE_W  = 164;
+const NODE_H  = 54;
+const COL_GAP = 80;
+const ROW_GAP = 20;
+const PAD     = 28;
+
+const STATUS_ICONS = { running: '⟳', done: '✓', failed: '✗', skipped: '—' };
 
 const API_TASK_STEPS = (tid) => `/api/plan/task/${tid}/steps`;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-let _sse = null;       // EventSource
-let _tasks = [];       // last-known task list
+let _sse = null;             // EventSource
+let _tasks = [];             // last-known task list
 let _planId = null;
+let _logPollInterval = null; // setInterval handle for log polling
+let _thinkingCollapsed = false;
 
 // ── Inspector state ───────────────────────────────────────────────────────────
 
@@ -187,7 +193,7 @@ export function renderDAG(tasks, svgSelector, enableInspector = true) {
   defs.appendChild(marker);
   svg.appendChild(defs);
 
-  // Edges
+  // Edges (drawn before nodes so nodes render on top)
   for (const task of layed) {
     for (const dep of (task.depends_on || [])) {
       const src = idToLayout[dep];
@@ -199,10 +205,13 @@ export function renderDAG(tasks, svgSelector, enableInspector = true) {
       const mx = (x1 + x2) / 2;
 
       const g = _svgEl('g', { class: 'dag-edge' });
-      // Bezier for curved edges when same row, straight otherwise
+      // Orthogonal path: same row → straight; different row → elbow
+      const d = (Math.abs(y1 - y2) < 4)
+        ? `M${x1},${y1} L${x2},${y2}`
+        : `M${x1},${y1} H${mx} V${y2} H${x2}`;
       const p = _svgEl('path', {
-        d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`,
-        fill: 'none', stroke: '#9ca3af', 'stroke-width': '1.5',
+        d,
+        fill: 'none',
         'marker-end': 'url(#arrow)',
       });
       g.appendChild(p);
@@ -221,31 +230,55 @@ export function renderDAG(tasks, svgSelector, enableInspector = true) {
 
     const rect = _svgEl('rect', {
       width: NODE_W, height: NODE_H,
-      rx: '6', ry: '6', 'stroke-width': '1.5',
+      rx: '7', ry: '7', 'stroke-width': '1.5',
     });
 
-    const label = task.task_id.length > 15
-      ? task.task_id.slice(0, 13) + '…'
-      : task.task_id;
-
-    const text = _svgEl('text', {
-      x: NODE_W / 2, y: NODE_H / 2 + 4,
-      'text-anchor': 'middle',
+    // Primary label: task_id (truncated)
+    const label = task.task_id.length > 18 ? task.task_id.slice(0, 16) + '…' : task.task_id;
+    const idText = _svgEl('text', {
+      x: NODE_W / 2, y: 20,
+      'text-anchor': 'middle', class: 'dag-node-id',
     });
-    text.textContent = label;
+    idText.textContent = label;
 
-    // Tooltip
+    // Secondary label: description or module (truncated)
+    const rawDesc = (task.description || task.module || '').trim();
+    const descLabel = rawDesc.length > 24 ? rawDesc.slice(0, 22) + '…' : rawDesc;
+    const descText = _svgEl('text', {
+      x: NODE_W / 2, y: 37,
+      'text-anchor': 'middle', class: 'dag-node-desc',
+    });
+    descText.textContent = descLabel;
+
+    // Status icon (top-right corner)
+    const iconChar = STATUS_ICONS[status] || '';
+    if (iconChar) {
+      const iconEl = _svgEl('text', {
+        x: NODE_W - 7, y: 15,
+        'text-anchor': 'end', class: 'dag-node-icon',
+      });
+      iconEl.textContent = iconChar;
+      g.appendChild(iconEl);
+    }
+
+    // Tooltip (native SVG title — shown on hover)
     const title = _svgEl('title');
-    title.textContent = `${task.task_id} [${status}]\n${task.description || ''}\n${task.result ? 'Result: ' + task.result.slice(0, 120) : ''}${task.error ? 'Error: ' + task.error.slice(0, 120) : ''}`;
+    title.textContent = [
+      `${task.task_id} [${status}]`,
+      task.description || '',
+      task.depends_on?.length ? `depends: ${task.depends_on.join(', ')}` : '',
+      task.result  ? `result: ${task.result.slice(0, 160)}`  : '',
+      task.error   ? `error: ${task.error.slice(0, 160)}`    : '',
+    ].filter(Boolean).join('\n');
 
     g.appendChild(rect);
-    g.appendChild(text);
+    g.appendChild(idText);
+    g.appendChild(descText);
     g.appendChild(title);
     svg.appendChild(g);
 
     // Double-click opens the inspector for this node
     if (enableInspector) {
-      g.style.cursor = 'pointer';
       g.addEventListener('dblclick', () => openNodeInspector(task));
     }
   }
@@ -256,6 +289,69 @@ export function renderDAG(tasks, svgSelector, enableInspector = true) {
 function _escHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+// ── Thinking panel helpers ────────────────────────────────────────────────────
+
+function _thinkingShow(title) {
+  const panel = $('plan-thinking-panel');
+  const titleEl = $('plan-thinking-title');
+  if (panel) panel.classList.remove('hidden');
+  if (titleEl) titleEl.textContent = title;
+  _thinkingCollapsed = false;
+  const body = $('plan-thinking-body');
+  if (body) body.parentElement?.classList.remove('thinking-collapsed');
+  const toggle = $('plan-thinking-toggle');
+  if (toggle) toggle.textContent = '▾';
+}
+
+function _thinkingClear() {
+  const body = $('plan-thinking-body');
+  if (body) body.textContent = '';
+}
+
+function _thinkingCollapse() {
+  _thinkingCollapsed = true;
+  const body = $('plan-thinking-body');
+  if (body) body.parentElement?.classList.add('thinking-collapsed');
+  const toggle = $('plan-thinking-toggle');
+  if (toggle) toggle.textContent = '▸';
+}
+
+function _thinkingAppend(stepIndex, thought, action, obs) {
+  const body = $('plan-thinking-body');
+  if (!body) return;
+  let text = `\n[Step ${stepIndex + 1}]`;
+  if (thought) text += `\n💭 ${thought}`;
+  if (action)  text += `\n🔧 ${action}`;
+  if (obs)     text += `\n👁 ${obs.slice(0, 300)}`;
+  text += '\n';
+  body.textContent += text;
+  body.scrollTop = body.scrollHeight;
+}
+
+function _thinkingAppendRaw(text) {
+  const body = $('plan-thinking-body');
+  if (!body) return;
+  body.textContent += '\n' + text + '\n';
+  body.scrollTop = body.scrollHeight;
+}
+
+function _bindThinkingToggle() {
+  $('plan-thinking-toggle')?.addEventListener('click', () => {
+    _thinkingCollapsed = !_thinkingCollapsed;
+    const body = $('plan-thinking-body');
+    const toggle = $('plan-thinking-toggle');
+    if (_thinkingCollapsed) {
+      body?.parentElement?.classList.add('thinking-collapsed');
+      if (toggle) toggle.textContent = '▸';
+    } else {
+      body?.parentElement?.classList.remove('thinking-collapsed');
+      if (toggle) toggle.textContent = '▾';
+    }
+  });
+}
+
+// ── History helpers ───────────────────────────────────────────────────────────
 
 function _renderStepCard(step, index) {
   const isSub = step.type === 'sub_agent';
@@ -361,9 +457,22 @@ function _updateNode(taskId, status) {
 
 // ── SSE connection ─────────────────────────────────────────────────────────────
 
+function _startLogPolling() {
+  if (_logPollInterval) return;
+  _logPollInterval = setInterval(() => refreshLogs(), 2000);
+}
+
+function _stopLogPolling() {
+  if (_logPollInterval) {
+    clearInterval(_logPollInterval);
+    _logPollInterval = null;
+  }
+}
+
 function _connectSSE() {
   if (_sse) { _sse.close(); _sse = null; }
   _sse = new EventSource(API.stream);
+  _startLogPolling();
 
   _sse.onmessage = (e) => {
     let ev;
@@ -371,29 +480,56 @@ function _connectSSE() {
     ev = JSON.parse(e.data);
 
     switch (ev.type) {
+      case 'lifecycle_state':
+        if (ev.state === 'planning') {
+          _thinkingShow('规划中…');
+          _thinkingClear();
+        }
+        break;
+
       case 'plan_start':
         _planId = ev.plan_id;
+        _tasks = [];
+        renderDAG([]);
         _setText('plan-title', ev.title || 'Plan Mode');
         _setBadge('running');
-        _setBadge('running');
+        _thinkingCollapse();
+        // Planning is done — fetch full doc with depends_on populated
+        setTimeout(refreshStatus, 600);
+        break;
+
+      case 'task_start':
+        // Stream placeholder nodes as they register (no deps yet)
+        if (!_tasks.find(t => t.task_id === ev.task_id)) {
+          _tasks.push({
+            task_id:     ev.task_id,
+            status:      'pending',
+            module:      ev.module  || '',
+            profile:     ev.profile || '',
+            depends_on:  [],
+            description: '',
+          });
+          renderDAG(_tasks);
+        }
         break;
 
       case 'task_running':
         _updateNode(ev.task_id, 'running');
         break;
 
-      case 'task_complete':
+      case 'task_complete': {
         _updateNode(ev.task_id, 'done');
-        // Update task result for tooltip
         const t = _tasks.find(x => x.task_id === ev.task_id);
         if (t) t.result = ev.result_preview;
         break;
+      }
 
-      case 'task_failed':
+      case 'task_failed': {
         _updateNode(ev.task_id, 'failed');
         const tf = _tasks.find(x => x.task_id === ev.task_id);
         if (tf) tf.error = ev.error;
         break;
+      }
 
       case 'task_skipped':
         _updateNode(ev.task_id, 'skipped');
@@ -404,17 +540,37 @@ function _connectSSE() {
         refreshStatus();
         break;
 
+      case 'planner_step':
+        _thinkingAppend(ev.step_index, ev.thought, ev.action, ev.observation);
+        break;
+
+      case 'replanner_start':
+        _thinkingShow(`重规划中 (${ev.trigger}, cycle ${ev.cycle})…`);
+        _thinkingClear();
+        break;
+
+      case 'replanner_complete': {
+        const summary = `决策: ${ev.decision}  patches: ${ev.patches_count}\n${ev.reason || ''}`;
+        _thinkingAppendRaw(summary);
+        setTimeout(() => _thinkingCollapse(), 3000);
+        break;
+      }
+
       case 'plan_complete':
       case 'done':
         _setBadge('done');
+        _stopLogPolling();
         if (_sse) { _sse.close(); _sse = null; }
         refreshSnapshots();
         refreshLogs();
+        refreshHistory();
         break;
 
       case 'plan_abort':
         _setBadge('failed');
+        _stopLogPolling();
         if (_sse) { _sse.close(); _sse = null; }
+        refreshHistory();
         break;
 
       case 'snapshot':
@@ -431,6 +587,7 @@ function _connectSSE() {
   };
 
   _sse.onerror = () => {
+    _stopLogPolling();
     if (_sse) { _sse.close(); _sse = null; }
   };
 }
@@ -439,7 +596,7 @@ function _connectSSE() {
 
 async function refreshStatus() {
   const res = await fetch(API.status).then(r => r.json()).catch(() => null);
-  if (!res || !res.doc) return;
+  if (!res || !res.doc) return res?.status || 'idle';
 
   const doc = res.doc;
   _planId = doc.plan_id;
@@ -459,6 +616,7 @@ async function refreshStatus() {
   // Update status badge
   const allDone = tasks.every(t => ['done', 'skipped', 'failed'].includes(t.status));
   _setBadge(allDone ? 'done' : (doc.metadata?.paused ? 'paused' : 'running'));
+  return res.status;
 }
 
 // ── Minimal doc→markdown for shadow editor ────────────────────────────────────
@@ -545,6 +703,69 @@ function _escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// ── History ────────────────────────────────────────────────────────────────────
+
+async function refreshHistory() {
+  const records = await fetch(API.history).then(r => r.json()).catch(() => []);
+  const container = $('plan-history-list');
+  if (!container) return;
+
+  if (!records.length) {
+    container.innerHTML = '<span class="plan-empty-msg">暂无历史记录。</span>';
+    return;
+  }
+
+  container.innerHTML = records.map(r => {
+    const ts = new Date((r.completed_at || 0) * 1000).toLocaleString();
+    const statusCls = r.status === 'done' ? 'badge-done' : (r.status === 'failed' ? 'badge-failed' : 'badge-aborted');
+    const qPreview = _escapeHtml((r.question || '').slice(0, 60));
+    const ansPreview = _escapeHtml((r.answer || '').slice(0, 200));
+    return `<div class="plan-hist-item" data-pid="${r.plan_id}">
+      <div class="plan-hist-summary">
+        <span class="plan-hist-ts">${ts}</span>
+        <span class="plan-hist-badge ${statusCls}">${r.status}</span>
+        <span class="plan-hist-q">${qPreview}</span>
+        <div class="plan-hist-actions">
+          <button class="hist-btn-expand" data-pid="${r.plan_id}" title="展开详情">▾</button>
+          <button class="hist-btn-rerun" data-q="${_escapeHtml(r.question || '')}" title="重新运行">↺</button>
+          <button class="hist-btn-del" data-pid="${r.plan_id}" title="删除">✕</button>
+        </div>
+      </div>
+      <div class="plan-hist-detail hidden" id="plan-hist-detail-${r.plan_id}">
+        <div class="hist-detail-row"><b>Task count:</b> ${r.task_count || 0}  |  <b>Elapsed:</b> ${r.elapsed_sec || '?'}s</div>
+        <div class="hist-detail-row"><b>Question:</b> ${_escapeHtml(r.question || '')}</div>
+        <div class="hist-detail-row"><b>Answer:</b><br>${ansPreview}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  container.querySelectorAll('.hist-btn-expand').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const detail = $(`plan-hist-detail-${btn.dataset.pid}`);
+      const isHidden = detail?.classList.contains('hidden');
+      detail?.classList.toggle('hidden');
+      btn.textContent = isHidden ? '▴' : '▾';
+    });
+  });
+
+  container.querySelectorAll('.hist-btn-rerun').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const qEl = $('plan-question');
+      if (qEl) {
+        qEl.value = btn.dataset.q;
+        qEl.focus();
+      }
+    });
+  });
+
+  container.querySelectorAll('.hist-btn-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await fetch(API.historyDel(btn.dataset.pid), { method: 'DELETE' }).catch(() => null);
+      refreshHistory();
+    });
+  });
+}
+
 // ── Run plan ───────────────────────────────────────────────────────────────────
 
 async function runPlan() {
@@ -556,6 +777,9 @@ async function runPlan() {
   _setBadge('running');
   _setText('plan-title', 'Planning…');
   renderDAG([]);
+  _thinkingClear();
+  const thinkPanel = $('plan-thinking-panel');
+  if (thinkPanel) thinkPanel.classList.add('hidden');
 
   const body = {
     question,
@@ -569,11 +793,8 @@ async function runPlan() {
     body: JSON.stringify(body),
   });
 
-  // Connect SSE for live updates
+  // Connect SSE for live updates — DAG will populate via plan_start + task_start events
   _connectSSE();
-
-  // Poll status once after a short delay to get initial DAG
-  setTimeout(refreshStatus, 1500);
 }
 
 // ── Pause / Resume ─────────────────────────────────────────────────────────────
@@ -611,6 +832,8 @@ function _bind() {
   $('plan-btn-resume')?.addEventListener('click', togglePause);
   $('plan-btn-snapshot')?.addEventListener('click', takeSnapshot);
   $('plan-btn-refresh-logs')?.addEventListener('click', () => refreshLogs());
+  $('plan-btn-refresh-history')?.addEventListener('click', () => refreshHistory());
+  _bindThinkingToggle();
   // pi-close is handled by Inspector.initGlobalKeyHandler() in app.js
 }
 
@@ -621,9 +844,15 @@ let _initialized = false;
 export function init() {
   if (_initialized) {
     // Re-entering the plan screen — refresh existing state
-    refreshStatus();
+    refreshStatus().then(status => {
+      // If a plan is actively running and no SSE is connected, reconnect
+      if (!_sse && status === 'running') {
+        _connectSSE();
+      }
+    });
     refreshSnapshots();
     refreshLogs();
+    refreshHistory();
     return;
   }
   _initialized = true;
@@ -631,6 +860,7 @@ export function init() {
   refreshStatus();
   refreshSnapshots();
   refreshLogs();
+  refreshHistory();
 }
 
 // ── Sub-panel (embedded in chat area) ─────────────────────────────────────────

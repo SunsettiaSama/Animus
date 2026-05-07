@@ -10,7 +10,7 @@ from ...memory.memory import Step
 if TYPE_CHECKING:
     from infra.llm import BaseLLM
 
-_STEP_TEMPLATE = (
+_STEP_TEMPLATE_LEGACY = (
     "Thought: {thought}\n"
     "Action: {action}\n"
     "Action Input: {action_input}\n"
@@ -37,7 +37,22 @@ Output only the distillate, no preamble."""
 
 
 def _step_to_text(step: Step) -> str:
-    return _STEP_TEMPLATE.format(
+    """Render a Step to a plain-text string for distillation and token counting.
+
+    Multi-call steps (step.calls is set) use the new Output:[...] format so that
+    all parallel actions are visible in the distillation context.
+    Legacy single-call steps (step.calls is None) use the old Action:/Action Input:
+    format for backward compatibility with existing distillates.
+    """
+    if step.calls:
+        calls_json = json.dumps(step.calls, ensure_ascii=False)
+        obs_label = "Observations" if len(step.calls) > 1 else "Observation"
+        return (
+            f"Thought: {step.thought}\n"
+            f"Output: {calls_json}\n"
+            f"{obs_label}: {step.observation}"
+        )
+    return _STEP_TEMPLATE_LEGACY.format(
         thought=step.thought,
         action=step.action,
         action_input=json.dumps(step.action_input, ensure_ascii=False),

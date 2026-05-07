@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from agent.scheduler.event import TimelineEvent
 
-_CREW_TOOL_NAMES = frozenset({"delegate_task"})
+_TIMELINE_TOOL_NAMES = frozenset({"delegate_task"})
 
 
 class TimelineStore:
@@ -42,7 +42,7 @@ class TimelineStore:
         self,
         filter_names: frozenset[str] | None = None,
     ) -> Callable[[str, dict, str], None]:
-        watched = filter_names if filter_names is not None else _CREW_TOOL_NAMES
+        watched = filter_names if filter_names is not None else _TIMELINE_TOOL_NAMES
 
         def _sink(action_name: str, args: dict, result: str) -> None:
             if action_name not in watched:

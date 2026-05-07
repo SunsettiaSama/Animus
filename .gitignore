@@ -22,6 +22,7 @@ npm-debug.log
 yarn-error.log
 __pycache__/
 .github/
+.cursor/
 
 idea/
 corpus/

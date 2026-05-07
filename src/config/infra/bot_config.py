@@ -9,8 +9,12 @@ class BotConfig:
     # ── 通用 ──────────────────────────────────────────────────────────────────
     enabled: bool = False            # 是否在启动时自动连接
     transport: str = "forward_ws"   # "forward_ws" | "qq_official"
-    allowed_private_users: list[int] = field(default_factory=list)
-    allowed_groups: list[int] = field(default_factory=list)
+    # Whitelist keys — semantics depend on transport:
+    #   forward_ws  → QQ number strings, e.g. ["1219584142"]
+    #   qq_official → raw openid strings from QQ Open Platform
+    # Empty list = deny all (most restrictive).
+    allowed_private_users: list[str] = field(default_factory=list)
+    allowed_groups: list[str] = field(default_factory=list)
     command_prefix: str = ""
     max_sessions: int = 100
     session_ttl_hours: float = 24.0
@@ -24,6 +28,12 @@ class BotConfig:
     appid: str = ""
     secret: str = ""
     is_sandbox: bool = False
+
+    # ── 邀请码自动入白名单 ─────────────────────────────────────────────────
+    # 用户向 bot 发送此字符串即可自动加入白名单（留空则禁用此功能）。
+    # 每自然日最多允许 invite_daily_limit 个新用户通过邀请码入网。
+    invite_code: str = ""
+    invite_daily_limit: int = 4
 
     def to_yaml(self, path: str | Path) -> None:
         import yaml
@@ -46,6 +56,9 @@ class BotConfig:
             "appid":                  self.appid,
             "secret":                 self.secret,
             "is_sandbox":             self.is_sandbox,
+            # invite
+            "invite_code":            self.invite_code,
+            "invite_daily_limit":     self.invite_daily_limit,
         }
         with open(path, "w", encoding="utf-8") as f:
             yaml.safe_dump(data, f, allow_unicode=True)
@@ -67,10 +80,10 @@ class BotConfig:
             enabled=bool(data.get("enabled", False)),
             transport=str(data.get("transport", "forward_ws")),
             allowed_private_users=[
-                int(x) for x in data.get("allowed_private_users") or []
+                str(x) for x in data.get("allowed_private_users") or []
             ],
             allowed_groups=[
-                int(x) for x in data.get("allowed_groups") or []
+                str(x) for x in data.get("allowed_groups") or []
             ],
             command_prefix=str(data.get("command_prefix", "")),
             max_sessions=int(data.get("max_sessions", 100)),
@@ -83,4 +96,7 @@ class BotConfig:
             appid=str(data.get("appid", "")),
             secret=str(data.get("secret", "")),
             is_sandbox=bool(data.get("is_sandbox", False)),
+            # invite
+            invite_code=str(data.get("invite_code", "")),
+            invite_daily_limit=int(data.get("invite_daily_limit", 4)),
         )

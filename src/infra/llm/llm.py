@@ -291,7 +291,6 @@ class OpenAILLM(BaseLLM):
             base_url=cfg.base_url,
             max_tokens=cfg.max_tokens,
             temperature=cfg.temperature,
-            model_kwargs={"stream_options": {"include_usage": True}},
         )
         self._system_message = SystemMessage(content=cfg.system_prompt) if cfg.system_prompt else None
 

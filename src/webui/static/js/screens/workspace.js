@@ -97,6 +97,12 @@ async function _runReact(question) {
     onStepStart:     i     => { _stepI = i; ctrl.showActivity(`Step ${i + 1}…`); },
     onChunk:         (i, chunk) => ctrl.appendChunk(i, chunk),
     onStep:          step  => { ctrl.addStep(step); _stepHistory.push(step); },
+    onStepPause: (i, output, reqId) => {
+      ctrl.addStepPause(i, output, reqId,
+        id => session.sendContinue(id),
+        id => { session.sendStop(id); },
+      );
+    },
     onRetry:         (i, reason) => showToast(`Retry ${i}: ${reason}`),
     onApprovalRequest: (reqId, tool, args) => _promptApproval(session, reqId, tool, args),
     onSubStart:  (action, instr) => ctrl.openSubAgent(action, instr),

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from typing import Any
 
 from infra.base_service import BaseServiceManager
@@ -50,6 +51,10 @@ class BotService(BaseServiceManager, EventHandler):
         )
         self._svc_state: str = "stopped"
 
+        # ── Invite-code daily quota ────────────────────────────────────────────
+        self._invite_day: str = ""    # date string "YYYY-MM-DD" of last reset
+        self._invite_today: int = 0   # invites issued today
+
     # ── BaseServiceManager ────────────────────────────────────────────────────
 
     def start(self, **kwargs) -> None:
@@ -82,7 +87,18 @@ class BotService(BaseServiceManager, EventHandler):
 
     async def on_message(self, event: MessageEvent, bot: BotAPI) -> None:
         if not self._is_allowed(event):
+            if await self._try_invite(event, bot):
+                return
+            logger.warning(
+                "[BotService] BLOCKED | session=%s | user_key=%r | "
+                "add to allowed_private_users / allowed_groups in bot_config.yaml | %r",
+                event.session_id, event.user_key, event.plain_text[:80],
+            )
             return
+        logger.info(
+            "[BotService] enqueue | session=%s | %r",
+            event.session_id, event.plain_text[:80],
+        )
         session = self._get_or_create(event)
         await session.enqueue(event.plain_text)
 
@@ -122,14 +138,60 @@ class BotService(BaseServiceManager, EventHandler):
             if not event.plain_text.startswith(self._cfg.command_prefix):
                 return False
         if event.message_type == "group":
-            if self._cfg.allowed_groups and event.group_id not in self._cfg.allowed_groups:
+            # empty list = deny all; match against human-readable group_key
+            if not self._cfg.allowed_groups or event.group_key not in self._cfg.allowed_groups:
                 return False
             return True
         if event.message_type == "private":
-            if self._cfg.allowed_private_users and event.user_id not in self._cfg.allowed_private_users:
+            # empty list = deny all; match against human-readable user_key
+            if not self._cfg.allowed_private_users or event.user_key not in self._cfg.allowed_private_users:
                 return False
             return True
         return False
+
+    # ── Invite-code flow ──────────────────────────────────────────────────────
+
+    async def _try_invite(self, event: MessageEvent, bot: BotAPI) -> bool:
+        """Return True if the message was an invite code and was handled."""
+        code = self._cfg.invite_code.strip()
+        if not code or event.plain_text.strip() != code:
+            return False
+
+        today = date.today().isoformat()
+        if self._invite_day != today:
+            self._invite_day    = today
+            self._invite_today  = 0
+
+        if self._invite_today >= self._cfg.invite_daily_limit:
+            logger.warning(
+                "[BotService] invite daily limit reached (%d/%d) | rejected user_key=%r",
+                self._invite_today, self._cfg.invite_daily_limit, event.user_key,
+            )
+            await bot.send_reply(event, "今日邀请名额已满，请明日再试。")
+            return True
+
+        # Add to whitelist
+        if event.message_type == "group" and event.group_key:
+            if event.group_key not in self._cfg.allowed_groups:
+                self._cfg.allowed_groups = [*self._cfg.allowed_groups, event.group_key]
+        else:
+            if event.user_key not in self._cfg.allowed_private_users:
+                self._cfg.allowed_private_users = [
+                    *self._cfg.allowed_private_users, event.user_key
+                ]
+
+        self._invite_today += 1
+        self._save_cfg()
+        logger.info(
+            "[BotService] invite accepted | user_key=%r | today=%d/%d",
+            event.user_key, self._invite_today, self._cfg.invite_daily_limit,
+        )
+        await bot.send_reply(event, "验证成功，已加入白名单，现在可以正常使用了。")
+        return True
+
+    def _save_cfg(self) -> None:
+        from config import paths
+        self._cfg.to_yaml(paths.root / "config" / "infra" / "bot_config.yaml")
 
     def _get_or_create(self, event: MessageEvent) -> AgentSession:
         sid = event.session_id
@@ -137,10 +199,35 @@ class BotService(BaseServiceManager, EventHandler):
             self._sessions[sid] = self._build_session(event)
         return self._sessions[sid]
 
+    def send_scheduled_reply(self, reply_target: dict, task_name: str, answer: str) -> None:
+        """由全局 SchedulerEngine.notify_fn 调用，将提醒结果推送给对应 Bot 用户/群组。"""
+        loop = self._state.main_event_loop
+        if loop is None:
+            return
+        text = f"[提醒] {task_name}\n{answer}"
+        if reply_target.get("message_type") == "private":
+            uid = reply_target.get("user_id")
+            if uid:
+                asyncio.run_coroutine_threadsafe(
+                    self._bot_api.send_private_msg(uid, text), loop
+                )
+        else:
+            gid = reply_target.get("group_id")
+            if gid:
+                asyncio.run_coroutine_threadsafe(
+                    self._bot_api.send_group_msg(gid, text), loop
+                )
+
     def _build_session(self, event: MessageEvent) -> AgentSession:
         from agent.react.factory import build_conv_loop
 
-        conv_loop = build_conv_loop(self._state)
+        reply_target = {
+            "type": "bot",
+            "message_type": event.message_type,
+            "user_id": event.user_id,
+            "group_id": event.group_id,
+        }
+        conv_loop = build_conv_loop(self._state, reply_target=reply_target)
         bot_api   = self._bot_api
 
         async def _reply(text: str) -> None:

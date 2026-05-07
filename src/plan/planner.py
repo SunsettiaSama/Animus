@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Generator
+from typing import Any, Callable, Generator
 
 from agent.base import AgentBase, AgentResult
 from plan.config import PlannerConfig
@@ -54,7 +55,12 @@ class PlannerAgent(AgentBase):
         self._llm_cfg_path = llm_cfg_path
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="planner")
 
-    async def run(self, instruction: str, **ctx: Any) -> AgentResult:
+    async def run(
+        self,
+        instruction: str,
+        step_callback: Callable | None = None,
+        **ctx: Any,
+    ) -> AgentResult:
         agent_id = str(uuid.uuid4())
         if self._cfg.mode == "interactive":
             raise RuntimeError(
@@ -63,12 +69,11 @@ class PlannerAgent(AgentBase):
             )
         doc = await asyncio.get_event_loop().run_in_executor(
             self._executor,
-            self._run_auto_sync,
-            instruction,
+            functools.partial(self._run_auto_sync, instruction, step_callback),
         )
         return AgentResult(agent_id=agent_id, role=self.role, status="done", output=doc)
 
-    def _run_auto_sync(self, instruction: str) -> PlanDocument:
+    def _run_auto_sync(self, instruction: str, step_callback: Callable | None = None) -> PlanDocument:
         from config.llm_core.config import LLMConfig
         from config.agent.tao_config import TaoConfig
         from config.agent.prompt_config import PromptConfig
@@ -117,6 +122,15 @@ class PlannerAgent(AgentBase):
             for event in tao.stream(full_prompt):
                 if isinstance(event, FinishEvent):
                     answer = event.answer
+                elif step_callback is not None:
+                    from agent.react.tao import StepEvent
+                    if isinstance(event, StepEvent):
+                        step_callback(
+                            event.index,
+                            event.thought or "",
+                            event.action or "",
+                            event.observation or "",
+                        )
 
             try:
                 doc = PlanParser.parse(answer)

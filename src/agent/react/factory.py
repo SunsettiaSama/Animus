@@ -10,6 +10,8 @@ def build_conv_loop(
     max_steps: int = 10,
     primary_tools: list[str] | None = None,
     enable_kb: bool = False,
+    scheduler_engine: Any = None,
+    reply_target: dict | None = None,
 ) -> Any:
     """Create a fresh ConvLoop (wrapping a new TaoLoop) from AppState.
 
@@ -75,6 +77,9 @@ def build_conv_loop(
         agent=SubAgentConfig(llm_cfg_path=state.llm_config_yaml),
     )
 
+    # Prefer the caller-supplied global engine; fall back to per-loop creation via cfg.scheduler.
+    _sched_engine = scheduler_engine if scheduler_engine is not None else getattr(state, "scheduler_engine", None)
+
     risk_gate = RiskGate.from_config(RiskConfig())
     tao = TaoLoop(
         llm=state.llm_service.handle,
@@ -84,5 +89,7 @@ def build_conv_loop(
         tool_category_summary=category_summary,
         sandbox=state.sandbox_manager,
         risk_gate=risk_gate,
+        scheduler_engine=_sched_engine,
+        reply_target=reply_target,
     )
     return ConvLoop(tao)

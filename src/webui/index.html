@@ -103,22 +103,22 @@
           <div class="mc-body" id="mc-voice-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
 
-        <!-- 通信接口 -->
+        <!-- Bot -->
         <div class="module-card" data-tab="bot">
           <div class="mc-header">
             <span class="mc-icon">💬</span>
-            <span class="mc-title">通信接口</span>
+            <span class="mc-title">Bot</span>
             <span class="mc-badge off" id="mc-bot-badge">—</span>
-            <button class="mc-settings-btn icon-btn" title="设置">⚙</button>
+            <button class="mc-settings-btn icon-btn" title="Settings">⚙</button>
           </div>
           <div class="mc-body" id="mc-bot-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
 
-        <!-- Scheduler & Crew -->
-        <div class="module-card">
+        <!-- Scheduler -->
+        <div class="module-card" id="mc-scheduler">
           <div class="mc-header">
             <span class="mc-icon">🗓</span>
-            <span class="mc-title">Scheduler &amp; Crew</span>
+            <span class="mc-title">Scheduler</span>
           </div>
           <div class="mc-body" id="mc-scheduler-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
@@ -326,7 +326,7 @@
           <span class="snav-icon">🛡</span> Sandbox
         </button>
         <button class="snav-item"        id="snav-btn-bot"    >
-          <span class="snav-icon">💬</span> 通信接口
+          <span class="snav-icon">💬</span> Bot
         </button>
       </nav>
 
@@ -970,14 +970,17 @@
       <div id="tab-bot" class="hidden">
 
         <!-- Enabled toggle -->
-        <div class="section-divider" style="margin-top:0">Bot 服务开关</div>
-        <label class="toggle-row" style="margin-bottom:12px">
-          <input id="s-bot-enabled" type="checkbox" />
-          <span>启用通信接口 <span style="font-weight:400;color:var(--text3)">（保存后下次启动生效）</span></span>
-        </label>
+        <div class="section-divider" style="margin-top:0">Bot Service</div>
+        <div class="toggle-row" style="margin-bottom:12px">
+          <div class="toggle-label">
+            <span class="toggle-title">Enable bot</span>
+            <span class="toggle-desc">Takes effect after save &amp; restart</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-bot-enabled"><span class="slider"></span></label>
+        </div>
 
         <!-- Status bar -->
-        <div class="section-divider">Bot 服务状态</div>
+        <div class="section-divider">Status</div>
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
           <span class="bot-status-badge off" id="s-bot-status-badge">unknown</span>
           <span style="font-size:12px;color:var(--text3)" id="s-bot-sessions-count"></span>
@@ -989,79 +992,98 @@
         </div>
 
         <!-- Connection -->
-        <div class="section-divider">连接配置</div>
+        <div class="section-divider">Connection</div>
         <div class="form-group">
-          <label>通信方式 <span style="font-weight:400;color:var(--text3)">Transport</span></label>
+          <label>Transport</label>
           <select id="s-bot-transport" onchange="onBotTransportChange()">
             <option value="forward_ws">OneBot 11 WebSocket (NapCat / go-cqhttp)</option>
-            <option value="qq_official">QQ 官方机器人 API (qq-botpy)</option>
+            <option value="qq_official">QQ Official Bot API (qq-botpy)</option>
           </select>
         </div>
 
-        <!-- forward_ws 专有字段 -->
+        <!-- forward_ws fields -->
         <div id="bot-forward-ws-section">
           <div class="form-group">
-            <label>WebSocket URL <span style="font-weight:400;color:var(--text3)">OneBot 11 正向 WS 地址（NapCat 默认 ws://127.0.0.1:3001）</span></label>
+            <label>WebSocket URL <span style="font-weight:400;color:var(--text3)">OneBot 11 forward WS URL (NapCat default: ws://127.0.0.1:3001)</span></label>
             <input id="s-bot-ws-url" type="text" placeholder="ws://127.0.0.1:3001" />
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Access Token <span style="font-weight:400;color:var(--text3)">留空则不鉴权</span></label>
-              <input id="s-bot-token" type="password" placeholder="（可选）" />
+              <label>Access Token <span style="font-weight:400;color:var(--text3)">Leave empty for no auth</span></label>
+              <input id="s-bot-token" type="password" placeholder="(optional)" />
             </div>
             <div class="form-group">
-              <label>重连间隔（秒）<span style="font-weight:400;color:var(--text3)">reconnect_interval_sec</span></label>
+              <label>Reconnect interval (s) <span style="font-weight:400;color:var(--text3)">reconnect_interval_sec</span></label>
               <input id="s-bot-reconnect" type="number" value="5" min="1" max="60" />
             </div>
           </div>
         </div>
 
-        <!-- qq_official 专有字段 -->
+        <!-- qq_official fields -->
         <div id="bot-official-section" class="hidden">
           <div class="form-group">
-            <label>AppID <span style="font-weight:400;color:var(--text3)">QQ 开放平台 AppID</span></label>
-            <input id="s-bot-appid" type="text" placeholder="QQ 开放平台 AppID" />
+            <label>AppID <span style="font-weight:400;color:var(--text3)">QQ Open Platform AppID</span></label>
+            <input id="s-bot-appid" type="text" placeholder="QQ Open Platform AppID" />
           </div>
           <div class="form-group">
             <label>AppSecret <span style="font-weight:400;color:var(--text3)">AppSecret</span></label>
             <input id="s-bot-secret" type="password" placeholder="AppSecret" />
           </div>
-          <label class="toggle-row">
-            <input id="s-bot-sandbox" type="checkbox" />
-            <span>沙箱模式 <span style="font-weight:400;color:var(--text3)">is_sandbox</span></span>
-          </label>
+          <div class="toggle-row">
+            <div class="toggle-label">
+              <span class="toggle-title">Sandbox mode <span style="font-weight:400;color:var(--text3)">is_sandbox</span></span>
+              <span class="toggle-desc">Only QQ Open Platform sandbox allowlist accounts can trigger messages</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-bot-sandbox"><span class="slider"></span></label>
+          </div>
         </div>
 
         <!-- Access control -->
-        <div class="section-divider">访问控制</div>
+        <div class="section-divider">Access Control</div>
         <div class="form-group">
-          <label>允许私聊用户 QQ <span style="font-weight:400;color:var(--text3)">逗号分隔，留空 = 允许所有人</span></label>
+          <label>Allowed DM users <span style="font-weight:400;color:var(--text3)">Comma-separated QQ IDs; empty = allow all</span></label>
           <input id="s-bot-users" type="text" placeholder="12345678, 87654321" />
         </div>
         <div class="form-group">
-          <label>允许响应的群号 <span style="font-weight:400;color:var(--text3)">逗号分隔，留空 = 允许所有群</span></label>
+          <label>Allowed groups <span style="font-weight:400;color:var(--text3)">Comma-separated group IDs; empty = allow all</span></label>
           <input id="s-bot-groups" type="text" placeholder="100000001, 100000002" />
         </div>
         <div class="form-group">
-          <label>指令前缀 <span style="font-weight:400;color:var(--text3)">留空则响应所有消息；填写后仅响应以该前缀开头的消息</span></label>
-          <input id="s-bot-prefix" type="text" placeholder="（可选，如 /ai）" />
+          <label>Command prefix <span style="font-weight:400;color:var(--text3)">Empty = respond to all; if set, only messages starting with this prefix are processed</span></label>
+          <input id="s-bot-prefix" type="text" placeholder="(optional, e.g. /ai)" />
         </div>
 
         <!-- Session management -->
-        <div class="section-divider">会话管理</div>
+        <div class="section-divider">Session Management</div>
         <div class="form-row">
           <div class="form-group">
-            <label>最大并发会话数 <span style="font-weight:400;color:var(--text3)">max_sessions</span></label>
+            <label>Max concurrent sessions <span style="font-weight:400;color:var(--text3)">max_sessions</span></label>
             <input id="s-bot-max-sessions" type="number" value="100" min="1" max="1000" />
           </div>
           <div class="form-group">
-            <label>会话超时（小时）<span style="font-weight:400;color:var(--text3)">session_ttl_hours</span></label>
+            <label>Session timeout (hours) <span style="font-weight:400;color:var(--text3)">session_ttl_hours</span></label>
             <input id="s-bot-ttl" type="number" value="24" min="1" max="720" />
           </div>
         </div>
 
+        <!-- Invite code -->
+        <div class="section-divider">Invite Code</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px">
+          New users who send this code to the bot are automatically added to the allowlist. Leave empty to disable. At most the set number of new users may join per calendar day.
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:2">
+            <label>Invite code <span style="font-weight:400;color:var(--text3)">invite_code</span></label>
+            <input id="s-bot-invite-code" type="text" placeholder="Leave empty to disable" />
+          </div>
+          <div class="form-group" style="flex:1">
+            <label>Daily quota <span style="font-weight:400;color:var(--text3)">invite_daily_limit</span></label>
+            <input id="s-bot-invite-limit" type="number" value="4" min="1" max="100" />
+          </div>
+        </div>
+
         <div style="display:flex;gap:8px;margin-top:4px">
-          <button id="btn-bot-save" class="btn-primary" style="flex:1">保存 Bot 配置</button>
+          <button id="btn-bot-save" class="btn-primary" style="flex:1">Save Bot Settings</button>
         </div>
         <div id="bot-cfg-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
 
@@ -1081,6 +1103,10 @@
 </div>
 
   <div id="toast" class="toast"></div>
+  <div id="notify-bar" class="notify-bar">
+    <span class="notify-spinner"></span>
+    <span class="notify-msg"></span>
+  </div>
 
 <!-- ══════════════════════════════════
      PLAN SCREEN
@@ -1107,7 +1133,7 @@
     <!-- DAG panel (left 60%) -->
     <div class="plan-dag-wrap" id="plan-dag-wrap">
       <div class="plan-dag-header">
-        <span>Execution DAG <span style="font-size:11px;color:var(--text3);font-weight:400">(double-click node to inspect)</span></span>
+        <span>执行 DAG <span style="font-size:11px;color:var(--text3);font-weight:400">（双击节点查看执行详情）</span></span>
         <span class="plan-dag-legend">
           <span class="dag-legend-item dag-pending">pending</span>
           <span class="dag-legend-item dag-running">running</span>
@@ -1116,6 +1142,16 @@
           <span class="dag-legend-item dag-skipped">skipped</span>
         </span>
       </div>
+
+      <!-- Thinking panel: shows planner/replanner LLM steps in real time -->
+      <div id="plan-thinking-panel" class="plan-thinking hidden">
+        <div class="plan-thinking-hdr">
+          <span id="plan-thinking-title">规划中…</span>
+          <button id="plan-thinking-toggle" class="icon-btn" title="折叠/展开">▾</button>
+        </div>
+        <pre id="plan-thinking-body" class="plan-thinking-body"></pre>
+      </div>
+
       <svg id="plan-dag-svg" class="plan-dag-svg"></svg>
 
     </div>
@@ -1157,6 +1193,17 @@
         </div>
         <div id="plan-logs-container" class="plan-logs-container">
           <span class="plan-empty-msg">No logs yet.</span>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div class="plan-panel" id="plan-history-panel">
+        <div class="plan-panel-title">
+          历史记录
+          <button id="plan-btn-refresh-history" class="icon-btn" title="刷新历史" style="font-size:12px">↻</button>
+        </div>
+        <div id="plan-history-list" class="plan-history-list">
+          <span class="plan-empty-msg">暂无历史记录。</span>
         </div>
       </div>
 

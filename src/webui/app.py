@@ -10,7 +10,7 @@ sys.path.insert(0, _HERE)
 # src/ — for config, react, llm_core, etc.
 sys.path.insert(0, os.path.join(_HERE, ".."))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -21,6 +21,18 @@ from state import get_state
 _HERE = os.path.dirname(__file__)
 
 app = FastAPI(title="ReAct Agent")
+
+
+@app.middleware("http")
+async def _no_cache_js(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static/js/") or request.url.path.startswith("/static/css/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 app.mount(
     "/static",
     StaticFiles(directory=os.path.join(_HERE, "static")),
@@ -48,6 +60,21 @@ for _r in [
 def _startup():
     state = get_state()
     state.main_event_loop = asyncio.get_event_loop()
+    state.notify_queue = asyncio.Queue()
+
+    def _make_scheduler_notify_fn(st):
+        def _notify(task, answer: str) -> None:
+            rt = task.reply_target
+            if rt is None:
+                return
+            if rt.get("type") == "webui":
+                if st.notify_queue is not None and st.main_event_loop is not None:
+                    item = {"type": "scheduled_reply", "task_name": task.name, "answer": answer}
+                    st.main_event_loop.call_soon_threadsafe(st.notify_queue.put_nowait, item)
+            elif rt.get("type") == "bot":
+                if st.bot_service is not None:
+                    st.bot_service.send_scheduled_reply(rt, task.name, answer)
+        return _notify
 
     def _bg() -> None:
         if not os.path.exists(state.llm_config_yaml):
@@ -58,6 +85,22 @@ def _startup():
             return
         state.llm_service.start(cfg)
         print(f"[webui] LLM auto-loaded  model={cfg.model!r}")
+
+        # Create and start the global scheduler engine (single polling loop for all sessions).
+        from agent.scheduler import SchedulerEngine, SchedulerConfig
+        sch_cfg = SchedulerConfig(
+            scheduler_dir=state.cache.scheduler_dir,
+            llm_cfg_path=state.llm_config_yaml,
+        )
+        state.scheduler_engine = SchedulerEngine(
+            sch_cfg,
+            notify_fn=_make_scheduler_notify_fn(state),
+        )
+        future = asyncio.run_coroutine_threadsafe(
+            state.scheduler_engine.start(), state.main_event_loop
+        )
+        state.scheduler_future = future
+        print("[webui] Global scheduler engine started")
 
         from routers.react import ReactInitRequest, _do_react_init
         state.react_init_event.clear()
@@ -89,6 +132,13 @@ def _startup():
 @app.on_event("shutdown")
 def _shutdown():
     state = get_state()
+    # Unblock any open SSE /api/plan/stream connections so they exit before
+    # uvicorn forcefully cancels them (avoids CancelledError in the logs).
+    state.plan_broadcast({"type": "done", "status": "shutdown", "answer": ""})
+    if state.notify_queue is not None:
+        state.notify_queue.put_nowait(None)
+    if state.scheduler_future is not None and not state.scheduler_future.done():
+        state.scheduler_future.cancel()
     state.task_runner.shutdown(wait=True, timeout=15)
     state.service_registry.stop_all()
     if state.active_tao is not None:

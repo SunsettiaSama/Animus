@@ -26,6 +26,7 @@ export const PATHS = {
     reset:   '/api/react/reset',
     abort:   '/api/react/abort',
     tools:   '/api/react/tools',
+    notify:  '/api/react/notify',
   },
   memory: {
     get:         '/api/memory',

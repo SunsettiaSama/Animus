@@ -30,7 +30,7 @@ from .memory.milestone.init import make_milestone
 from .memory.milestone.memory import MilestoneMemory
 from .memory.processor import MemoryProcessor, MemoryResult
 from .prompt.block import MemoryBlock, PromptBlock
-from .prompt.parser import ParseQuality, diagnose, parse_llm_output
+from .prompt.parser import ParseQuality, ParseResult, diagnose, parse_llm_output
 from .prompt.repair import repair
 from .persona import PersonaManager
 from .prompt.manager import PromptManager, StaticPromptParts
@@ -58,6 +58,21 @@ class StepEvent:
     action: str
     action_input: dict
     observation: str
+    calls: list[dict] | None = None  # [{"action": str, "args": dict}, ...] for parallel steps
+    output: str = ""                  # <O> tag content; user-visible output for this step
+
+
+@dataclass
+class StepPauseEvent:
+    """Yielded after every non-finish step to request user confirmation.
+
+    The frontend should display the <O> output (if any) and present
+    Continue / Stop controls.  The backend blocks until resolve_step_decision()
+    is called with the matching request_id.
+    """
+    index: int
+    output: str      # <O> content; empty string when the step produced no output
+    request_id: str  # UUID matched by the user's continue/stop WebSocket message
 
 
 @dataclass
@@ -129,7 +144,7 @@ class SubAgentErrorEvent:
 
 
 TaoEvent = Union[
-    StepStartEvent, ChunkEvent, StepEvent, FinishEvent,
+    StepStartEvent, ChunkEvent, StepEvent, StepPauseEvent, FinishEvent,
     PromptPreviewEvent, RetryEvent, ApprovalRequestEvent,
     SubAgentStartEvent, SubAgentChunkEvent, SubAgentStepEvent,
     SubAgentFinishEvent, SubAgentErrorEvent,
@@ -158,6 +173,8 @@ class TaoLoop:
         tool_category_summary: str = "",
         sandbox: SandboxManager | None = None,
         risk_gate: RiskGate | None = None,
+        scheduler_engine=None,   # SchedulerEngine | None — 优先使用全局实例
+        reply_target: dict | None = None,  # 持久化投递目标，注入到 SchedulerAddAction
     ):
         self._llm = llm   # canonical handle from LLMService — shared by all sub-components
         self._executor = executor
@@ -180,10 +197,15 @@ class TaoLoop:
         # Sub-agent event sink — set by the WS router to forward nested events.
         self._sub_event_sink = None
 
-        # Approval gate state: maps request_id → (threading.Event, approved: bool | None)
+        # Approval gate state: maps request_id → threading.Event
         self._pending_approvals: dict[str, threading.Event] = {}
         self._approval_results: dict[str, bool] = {}
         self._approval_lock = threading.Lock()
+
+        # Step-pause gate state: maps request_id → (threading.Event, decision)
+        self._pending_step_decisions: dict[str, threading.Event] = {}
+        self._step_decision_results: dict[str, str] = {}   # "continue" | "stop"
+        self._step_decision_lock = threading.Lock()
 
         # Build memory stores before PromptManager so the recall tool can be
         # injected into the executor and its description added to the prompt.
@@ -285,20 +307,25 @@ class TaoLoop:
                 self._executor.register_instance(doc_summary_skill)
                 effective_descriptions[doc_summary_skill.name] = doc_summary_skill.description
 
-        # Inject scheduler tools when a scheduler config is provided.
+        # Inject scheduler tools.
+        # Prefer a pre-built global engine (scheduler_engine kwarg); fall back to
+        # creating one from cfg.scheduler if no global engine was provided.
         self._scheduler_engine = None
-        if cfg.scheduler is not None:
+        _engine_to_use = scheduler_engine
+        if _engine_to_use is None and cfg.scheduler is not None:
             from agent.scheduler.engine import SchedulerEngine
-            from .action.tools.impl.scheduler_add import SchedulerAddAction
-            from .action.tools.impl.scheduler_list import SchedulerListAction
-            from .action.tools.impl.scheduler_cancel import SchedulerCancelAction
-            self._scheduler_engine = SchedulerEngine(
+            _engine_to_use = SchedulerEngine(
                 cfg.scheduler,
                 long_term=self._long_term,
                 timeline=self._timeline,
             )
+        if _engine_to_use is not None:
+            from .action.tools.impl.scheduler_add import SchedulerAddAction
+            from .action.tools.impl.scheduler_list import SchedulerListAction
+            from .action.tools.impl.scheduler_cancel import SchedulerCancelAction
+            self._scheduler_engine = _engine_to_use
             for action in (
-                SchedulerAddAction(engine=self._scheduler_engine),
+                SchedulerAddAction(engine=self._scheduler_engine, reply_target=reply_target),
                 SchedulerListAction(engine=self._scheduler_engine),
                 SchedulerCancelAction(engine=self._scheduler_engine),
             ):
@@ -425,6 +452,39 @@ class TaoLoop:
             self._approval_results[request_id] = approved
         event.set()
         return True
+
+    # ── Step-pause gate ───────────────────────────────────────────────────────
+
+    def resolve_step_decision(self, request_id: str, decision: str) -> bool:
+        """
+        Called by the WebSocket handler when the user clicks Continue or Stop.
+
+        decision must be "continue" or "stop".
+        Returns True if the request_id was found and resolved, False otherwise.
+        """
+        with self._step_decision_lock:
+            event = self._pending_step_decisions.get(request_id)
+            if event is None:
+                return False
+            self._step_decision_results[request_id] = decision
+        event.set()
+        return True
+
+    def _wait_for_step_decision(self, request_id: str) -> str:
+        """Block until the user resolves the step pause.  Returns "continue" or "stop"."""
+        ev = threading.Event()
+        with self._step_decision_lock:
+            self._pending_step_decisions[request_id] = ev
+        # Abort signal released → treat as stop
+        while not ev.wait(timeout=0.1):
+            if self._stop_event.is_set():
+                with self._step_decision_lock:
+                    self._pending_step_decisions.pop(request_id, None)
+                    self._step_decision_results.pop(request_id, None)
+                return "stop"
+        with self._step_decision_lock:
+            self._pending_step_decisions.pop(request_id, None)
+            return self._step_decision_results.pop(request_id, "continue")
 
     # ── Core streaming loop ───────────────────────────────────────────────────
 
@@ -576,26 +636,48 @@ class TaoLoop:
 
             # ── Parse robustness — escalation chain ───────────────────────────
             # Escalation order (cheapest → most expensive):
-            #   L1  strict regex + L1b lenient inference  (parser, free)
-            #   L2  in-context correction retry            (main LLM, 1 call per attempt)
-            #   L3  isolated repair LLM                   (separate call, no conversation ctx)
-            #   L4  safe degradation → implicit finish
+            #   L1   strict XML <T><A><O> / Output:[...] / Action:/Input: parsing (parser, free)
+            #   L1b  lenient action inference within parser (free)
+            #   LENIENT nudge — LENIENT quality appends a lightweight format hint to
+            #        messages for the NEXT turn only; does NOT trigger a full L2 retry
+            #        to avoid the cost of re-generating for every old-format response.
+            #   L2   in-context correction retry (main LLM, 1 call per attempt)
+            #   L3   isolated repair LLM (separate call, no conversation ctx)
+            #   L4   explicit degradation → force finish with raw/output content
             tool_names = frozenset(self._executor.available_actions)
             result = parse_llm_output(raw_output, tool_names=tool_names)
 
-            # L2: in-context correction — inject a bilingual format reminder into
-            # the existing conversation and retry the main LLM.  Runs first
-            # because the model already has full context and self-correction is
-            # cheapest before we resort to an isolated repair call.
-            # Also triggers for FINISH_DEGRADED: finish was detected but the
-            # Action Input JSON could not be parsed, so the answer fell back to
-            # Thought or raw text.  A targeted reminder asking for double-quoted
-            # JSON is usually enough for the model to self-correct.
+            # LENIENT nudge: append a lightweight format reminder to messages
+            # so the next turn gets a gentle nudge toward the XML format.
+            # This is cheaper than a full L2 retry and avoids cost amplification
+            # during the migration period when many models still use the old format.
+            if result.quality == ParseQuality.LENIENT:
+                _lenient_nudge = (
+                    "Note: please use the XML tag format for future responses:\n"
+                    "<T>reasoning</T>\n"
+                    '<A>[{"action": "tool_name", "args": {...}}]</A>\n'
+                    "<O>optional user-visible output</O>\n\n"
+                    "注意：请使用 XML 标签格式输出：\n"
+                    "<T>推理过程</T>\n"
+                    '<A>[{"action": "工具名", "args": {...}}]</A>\n'
+                    "<O>可选的用户可见输出</O>"
+                )
+                messages = messages + [
+                    AIMessage(content=raw_output),
+                    HumanMessage(content=_lenient_nudge),
+                ]
+
+            # _needs_retry: triggers full L2/L3 loop for truly broken outputs.
+            # LENIENT is handled separately above with a cheaper nudge.
             def _needs_retry(r: "ParseResult") -> bool:  # type: ignore[name-defined]
                 return (
                     r.quality == ParseQuality.FAILED and not r.is_finish
                 ) or r.quality == ParseQuality.FINISH_DEGRADED
 
+            # L2: in-context correction — inject a bilingual format reminder into
+            # the existing conversation and retry the main LLM.  Runs first
+            # because the model already has full context and self-correction is
+            # cheapest before we resort to an isolated repair call.
             if _needs_retry(result):
                 for _attempt in range(self._cfg.prompt.retry_on_bad_parse):
                     _retry_reason = diagnose(result)
@@ -607,30 +689,36 @@ class TaoLoop:
                         event_type="retry_l2",
                         diagnosis=_retry_reason,
                     ))
-                    # Use a finish-specific correction when the problem is only
-                    # the JSON encoding of the answer, not the overall structure.
                     if result.quality == ParseQuality.FINISH_DEGRADED:
                         _correction = (
-                            "Your Action Input is not valid JSON. "
-                            "Since you want to finish, please rewrite using double-quoted JSON:\n"
-                            "Thought: <your reasoning>\n"
-                            "Action: finish\n"
-                            'Action Input: {"answer": "your complete answer here"}\n\n'
-                            "Action Input 不是合法 JSON（请使用双引号）。请按以下格式重新输出 finish：\n"
-                            "Thought: <思考过程>\n"
-                            "Action: finish\n"
-                            'Action Input: {"answer": "完整回答内容"}'
+                            "Your <A> args are not valid JSON. "
+                            "Since you want to finish, please rewrite using the XML format:\n"
+                            "<T>your reasoning</T>\n"
+                            '<A>[{"action": "finish", "args": {"answer": "your complete answer"}}]</A>\n'
+                            "<O>your complete answer visible to the user</O>\n\n"
+                            "<A> 的 args 不是合法 JSON。请按以下 XML 格式重新输出 finish：\n"
+                            "<T>推理过程</T>\n"
+                            '<A>[{"action": "finish", "args": {"answer": "完整回答内容"}}]</A>\n'
+                            "<O>在此填写给用户的完整回答</O>"
                         )
                     else:
                         _correction = (
-                            "Your output format is incorrect. Please rewrite strictly following this format:\n"
-                            "Thought: <your reasoning>\n"
-                            "Action: <tool_name>\n"
-                            'Action Input: {"key": "value"}\n\n'
-                            "格式有误，请严格按照以下格式重新输出：\n"
-                            "Thought: <思考过程>\n"
-                            "Action: <工具名>\n"
-                            'Action Input: {"key": "value"}'
+                            "Your output format is incorrect. Please rewrite strictly using XML tags:\n"
+                            "<T>your reasoning</T>\n"
+                            '<A>[{"action": "tool_name", "args": {"key": "value"}}]</A>\n'
+                            "<O>optional user-visible message</O>\n\n"
+                            "For finishing:\n"
+                            "<T>your reasoning</T>\n"
+                            '<A>[{"action": "finish", "args": {"answer": "..."}}]</A>\n'
+                            "<O>your complete answer</O>\n\n"
+                            "格式有误，请严格按照 XML 标签格式重新输出：\n"
+                            "<T>推理过程</T>\n"
+                            '<A>[{"action": "工具名", "args": {"key": "value"}}]</A>\n'
+                            "<O>可选的用户可见输出</O>\n\n"
+                            "结束时：\n"
+                            "<T>推理过程</T>\n"
+                            '<A>[{"action": "finish", "args": {"answer": "..."}}]</A>\n'
+                            "<O>给用户的完整回答</O>"
                         )
                     correction_msgs = messages + [
                         AIMessage(content=raw_output),
@@ -649,8 +737,7 @@ class TaoLoop:
             # L3: isolated repair LLM — only reached when all in-context retries
             # failed.  Calls the repair model with a focused reformat prompt
             # (no conversation history) and verifies the result re-parses before
-            # accepting it.  Also covers FINISH_DEGRADED where L2 could not coax
-            # the model into producing valid Action Input JSON.
+            # accepting it.
             if (
                 _needs_retry(result)
                 and self._cfg.prompt.repair_enabled
@@ -672,12 +759,42 @@ class TaoLoop:
                     ))
                     result = parse_llm_output(_repaired, tool_names=tool_names)
 
-            # L4: all layers exhausted — the parser's implicit-finish path
-            # (action="" branch) is the safest degradation; the LLM's raw
-            # output (or thought) is surfaced as the answer.
+            # L4: explicit degradation — all layers exhausted.
+            # Force a finish using <O> content if present, otherwise raw_output.
+            if _needs_retry(result):
+                _l4_answer = result.output or result.action_input.get("answer") or raw_output
+                _obs.emit(_ParseEvent(
+                    session_id=_session_id,
+                    ts=_time.time(),
+                    step_index=i,
+                    event_type="degraded_l4",
+                    diagnosis="all escalation layers exhausted; forcing finish",
+                ))
+                result = ParseResult(
+                    thought=result.thought,
+                    action="finish",
+                    action_input={"answer": _l4_answer},
+                    raw=raw_output,
+                    is_finish=True,
+                    quality=ParseQuality.FAILED,
+                    calls=None,
+                    output=result.output,
+                )
 
             if result.is_finish:
-                answer = result.action_input.get("answer", raw_output)
+                # <O> is the primary user-visible answer; args.answer is fallback.
+                answer = result.output or result.action_input.get("answer", raw_output)
+
+                # Update prompt state synchronously before yielding so the
+                # next turn can start immediately without waiting for the
+                # background post_process to finish.  These three calls are
+                # fast (~ms) and run in the current generator thread where
+                # there is no concurrency with post_process yet.
+                self._manager.add_turn(question, answer)
+                self._maybe_consolidate()
+                self._static_cache = self._manager.build_static(
+                    extra_system_blocks=persona_blocks,
+                )
 
                 # Store commit payload — caller invokes post_process() in
                 # background AFTER FinishEvent is delivered to the client.
@@ -699,57 +816,90 @@ class TaoLoop:
                 return
 
             # ── Tool execution ───────────────────────────────────────────────
-            action_json = json.dumps(
-                {"action": result.action, "args": result.action_input},
-                ensure_ascii=False,
-            )
+            # Resolve the calls list: prefer result.calls (new Output:[...] format);
+            # fall back to a single-element list built from action/action_input.
+            exec_calls: list[dict] = result.calls or [
+                {"action": result.action, "args": result.action_input}
+            ]
+
             _t_tool_start = _time.perf_counter()
 
-            # ── Risk gate check ──────────────────────────────────────────────
+            # ── Risk gate check — all calls pre-screened before any executes ──
             if self._risk_gate is not None and self._risk_gate.cfg.enabled:
-                risk = self._risk_gate.check(result.action, result.action_input)
-                if self._risk_gate.requires_approval(risk):
-                    request_id = str(uuid.uuid4())
-                    event = threading.Event()
-                    with self._approval_lock:
-                        self._pending_approvals[request_id] = event
+                # Collect approval events for every high-risk call first.
+                pending_approvals: list[tuple[dict, str, threading.Event]] = []
+                for call in exec_calls:
+                    risk = self._risk_gate.check(call["action"], call.get("args", {}))
+                    if self._risk_gate.requires_approval(risk):
+                        req_id = str(uuid.uuid4())
+                        ev = threading.Event()
+                        with self._approval_lock:
+                            self._pending_approvals[req_id] = ev
+                        timeout_secs = self._risk_gate.cfg.approval_timeout_secs
+                        yield ApprovalRequestEvent(
+                            request_id=req_id,
+                            tool_name=call["action"],
+                            args=call.get("args", {}),
+                            risk_level=risk.level.value,
+                            reason=risk.reason,
+                            deadline_secs=timeout_secs,
+                        )
+                        pending_approvals.append((call, req_id, ev))
 
+                # Wait for all approvals; if any is denied, abort the entire batch.
+                denied_labels: list[str] = []
+                for call, req_id, ev in pending_approvals:
                     timeout_secs = self._risk_gate.cfg.approval_timeout_secs
-                    yield ApprovalRequestEvent(
-                        request_id=request_id,
-                        tool_name=result.action,
-                        args=result.action_input,
-                        risk_level=risk.level.value,
-                        reason=risk.reason,
-                        deadline_secs=timeout_secs,
-                    )
-
-                    granted = event.wait(timeout=timeout_secs)
+                    granted = ev.wait(timeout=timeout_secs)
                     with self._approval_lock:
-                        self._pending_approvals.pop(request_id, None)
-                        approved = self._approval_results.pop(request_id, False)
-
+                        self._pending_approvals.pop(req_id, None)
+                        approved = self._approval_results.pop(req_id, False)
                     if not granted or not approved:
                         label = "超时未响应" if not granted else "用户拒绝"
-                        observation = f"[{label}] 操作 {result.action!r} 未获批准，已取消执行。"
-                        step = Step(
-                            thought=result.thought,
-                            action=result.action,
-                            action_input=result.action_input,
-                            observation=observation,
-                        )
-                        processor.add(step)
-                        yield StepEvent(
-                            index=i,
-                            thought=result.thought,
-                            action=result.action,
-                            action_input=result.action_input,
-                            observation=observation,
-                        )
-                        continue
+                        denied_labels.append(f"[{label}] {call['action']!r}")
 
-            observation = self._executor.run(action_json)
-            observation = self._trunc(observation, self._cfg.prompt.max_observation_chars)
+                if denied_labels:
+                    observation = "操作未获批准，已取消执行：" + "、".join(denied_labels)
+                    step = Step(
+                        thought=result.thought,
+                        action=result.action,
+                        action_input=result.action_input,
+                        observation=observation,
+                        calls=exec_calls if result.calls else None,
+                        output=result.output,
+                    )
+                    processor.add(step)
+                    yield StepEvent(
+                        index=i,
+                        thought=result.thought,
+                        action=result.action,
+                        action_input=result.action_input,
+                        observation=observation,
+                        calls=exec_calls if result.calls else None,
+                        output=result.output,
+                    )
+                    _pause_id = str(uuid.uuid4())
+                    yield StepPauseEvent(index=i, output=result.output, request_id=_pause_id)
+                    if self._wait_for_step_decision(_pause_id) == "stop":
+                        return
+                    continue
+
+            # ── Execute — parallel for multi-call, single for one call ────────
+            if len(exec_calls) > 1:
+                obs_list = self._executor.run_many(exec_calls)
+                obs_list = [
+                    self._trunc(o, self._cfg.prompt.max_observation_chars) for o in obs_list
+                ]
+                observation = "Observations:\n" + "\n".join(
+                    f"[{c['action']}] → {o}" for c, o in zip(exec_calls, obs_list)
+                )
+            else:
+                action_json = json.dumps(
+                    {"action": exec_calls[0]["action"], "args": exec_calls[0].get("args", {})},
+                    ensure_ascii=False,
+                )
+                observation = self._executor.run(action_json)
+                observation = self._trunc(observation, self._cfg.prompt.max_observation_chars)
 
             _t_tool_end = _time.perf_counter()
             _obs.emit(_ToolCallEvent(
@@ -758,7 +908,7 @@ class TaoLoop:
                 step_index=i,
                 tool_name=result.action,
                 latency_ms=(_t_tool_end - _t_tool_start) * 1000,
-                input_summary=action_json[:200],
+                input_summary=json.dumps(exec_calls, ensure_ascii=False)[:200],
                 output_summary=observation[:200],
             ))
 
@@ -767,6 +917,8 @@ class TaoLoop:
                 action=result.action,
                 action_input=result.action_input,
                 observation=observation,
+                calls=exec_calls if result.calls else None,
+                output=result.output,
             )
             processor.add(step)
 
@@ -776,7 +928,15 @@ class TaoLoop:
                 action=result.action,
                 action_input=result.action_input,
                 observation=observation,
+                calls=exec_calls if result.calls else None,
+                output=result.output,
             )
+
+            # ── Step-pause gate: wait for user confirmation before next step ──
+            _pause_id = str(uuid.uuid4())
+            yield StepPauseEvent(index=i, output=result.output, request_id=_pause_id)
+            if self._wait_for_step_decision(_pause_id) == "stop":
+                return
 
         yield MaxStepsEvent(max_steps=self._cfg.max_steps)
         _obs.emit(_SessionEvent(
@@ -791,12 +951,11 @@ class TaoLoop:
     # ── Post-processing (runs in background after FinishEvent is delivered) ───
 
     def post_process(self) -> None:
-        """Commit memory, evolve persona, update history, and rebuild the static
-        prompt cache for the next turn.
+        """Persist memory and evolve persona in the background.
 
-        This method is designed to be called from a background thread *after*
-        :class:`FinishEvent` has already been sent to the client, so the user
-        does not wait for embedding / disk-write / LLM-distillation operations.
+        Prompt-state updates (add_turn / build_static) have already been done
+        synchronously inside stream() before FinishEvent was yielded, so this
+        method only handles heavy I/O that must not block the next turn.
         """
         pf = self._pending_finish
         if pf is None:
@@ -815,15 +974,6 @@ class TaoLoop:
 
         if self._persona is not None:
             self._persona.evolve(pf.question, pf.answer, pf.processor.trace)
-
-        self._manager.add_turn(pf.question, pf.answer)
-        self._maybe_consolidate()
-
-        # Pre-build the static parts for the next turn while the user is
-        # reading the current answer (or typing the next question).
-        self._static_cache = self._manager.build_static(
-            extra_system_blocks=pf.persona_blocks,
-        )
 
     # ── Misc ─────────────────────────────────────────────────────────────────
 

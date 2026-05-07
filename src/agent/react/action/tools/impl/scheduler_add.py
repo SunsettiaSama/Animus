@@ -42,7 +42,8 @@ class SchedulerAddAction(BaseAction):
     )
     args_model: ClassVar[type[BaseModel]] = SchedulerAddArgs
 
-    engine: Any = None  # SchedulerEngine，构造时注入
+    engine: Any = None        # SchedulerEngine，构造时注入
+    reply_target: Any = None  # dict | None，构造时注入，持久化到任务中
 
     def execute(
         self,
@@ -66,7 +67,10 @@ class SchedulerAddAction(BaseAction):
                     at_dt = at_dt.replace(tzinfo=timezone.utc)
             except ValueError:
                 return f"at 参数格式无效，请使用 ISO8601（如 2026-04-29T17:00:00）：{at}"
-            task = self.engine.schedule_once(name, instruction, at_dt, profile)
+            task = self.engine.schedule_once(
+                name, instruction, at_dt, profile,
+                reply_target=self.reply_target,
+            )
             return (
                 f"已预约一次性任务。\n"
                 f"task_id: {task.id}\n"
@@ -78,7 +82,10 @@ class SchedulerAddAction(BaseAction):
         if trigger_type == "interval":
             if interval_seconds <= 0:
                 return "trigger_type=interval 时 interval_seconds 必须 > 0。"
-            task = self.engine.schedule_interval(name, instruction, interval_seconds, profile)
+            task = self.engine.schedule_interval(
+                name, instruction, interval_seconds, profile,
+                reply_target=self.reply_target,
+            )
             return (
                 f"已预约周期性任务。\n"
                 f"task_id: {task.id}\n"

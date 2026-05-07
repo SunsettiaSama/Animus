@@ -211,6 +211,16 @@ function _bind() {
     });
   });
 
+  // Benchmark / Scheduler cards → double-click navigates to their screens
+  document.getElementById('mc-benchmark')?.addEventListener('dblclick', () => {
+    goBenchmark();
+    benchMod.init();
+  });
+  document.getElementById('mc-scheduler')?.addEventListener('dblclick', () => {
+    goScheduler();
+    schedulerMod.init();
+  });
+
   // Download helpers
   document.querySelector('[data-action="download-tts"]')?.addEventListener('click', () => doDownloadModel('tts'));
   document.querySelector('[data-action="download-stt"]')?.addEventListener('click', () => doDownloadModel('stt'));
@@ -250,6 +260,24 @@ async function boot() {
 
   updateReactBadge();
   loadWorkstation();
+
+  // Keep bot badge in sync: fast 5-s poll until the bot is "on", then slow 30-s poll.
+  let _botPollFast = null;
+  function _startSlowPoll() {
+    setInterval(() => botMod.updateWorkstationCard(), 30_000);
+  }
+  _botPollFast = setInterval(async () => {
+    const st = await botMod.getStatus().catch(() => null);
+    if (!st) return;
+    const s   = (st.state         ?? '').trim();
+    const svc = (st.service_state ?? '').trim();
+    const isOn = s === 'running' || s === 'connected' || svc === 'running';
+    botMod.updateWorkstationCard();
+    if (isOn) {
+      clearInterval(_botPollFast);
+      _startSlowPoll();
+    }
+  }, 5_000);
 }
 
 document.addEventListener('DOMContentLoaded', boot);

@@ -228,12 +228,30 @@ export function appendReactMsg(id) {
     appendChunk(index, chunk) {
       const s = _ensureStep(index);
       s.streamed += chunk;
-      s.rawEl.textContent = s.streamed;
+      // During streaming, show only the <T> thought content to avoid exposing
+      // raw JSON inside <A> and raw output inside <O> before they are structured.
+      const thoughtMatch = s.streamed.match(/<T>([\s\S]*?)(?:<\/T>|$)/i);
+      s.rawEl.textContent = thoughtMatch ? thoughtMatch[1] : s.streamed.replace(/<[TAO]>[\s\S]*?<\/[TAO]>/gi, '').trim();
+      // Open the detail automatically on first chunk so the streaming text is visible.
+      if (!s.detail.classList.contains('open')) {
+        s.detail.classList.add('open');
+        s.hdr.classList.add('open');
+      }
       scrollBottom();
     },
     addStep(stepObj) {
       const s = _ensureStep(stepObj.index);
       s.hdr.querySelector('.step-streaming-label').remove();
+
+      // Add a brief thought summary (≤50 chars) to the step header.
+      if (stepObj.thought) {
+        const raw = stepObj.thought.trim();
+        const summary = raw.length > 50 ? raw.slice(0, 50).replace(/\s\S*$/, '') + '…' : raw;
+        const summaryEl = document.createElement('span');
+        summaryEl.className = 'step-summary';
+        summaryEl.textContent = summary;
+        s.hdr.appendChild(summaryEl);
+      }
       // Build structured view
       s.detail.innerHTML = '';
       const secs = document.createElement('div');
@@ -264,22 +282,103 @@ export function appendReactMsg(id) {
         return sec;
       };
       if (stepObj.thought) secs.appendChild(mkSec('thought', 'Thought', stepObj.thought, { markdown: true }));
-      if (stepObj.action)  secs.appendChild(mkSec('action-sec', 'Action', stepObj.action));
-      if (stepObj.action_input) {
-        const ai = typeof stepObj.action_input === 'string'
-          ? stepObj.action_input
-          : JSON.stringify(stepObj.action_input, null, 2);
-        secs.appendChild(mkSec('action-sec', 'Input', ai, { code: true }));
+
+      // Render action(s): multi-call steps (calls array) get one card per call;
+      // legacy single-call steps fall back to the original Action/Input display.
+      if (Array.isArray(stepObj.calls) && stepObj.calls.length > 1) {
+        const callsWrap = document.createElement('div');
+        callsWrap.className = 'step-sec action-sec';
+        const callsLbl = document.createElement('div');
+        callsLbl.className = 'sec-lbl';
+        callsLbl.textContent = `Actions (${stepObj.calls.length} parallel)`;
+        callsWrap.appendChild(callsLbl);
+        stepObj.calls.forEach((call, idx) => {
+          const callEl = document.createElement('div');
+          callEl.className = 'parallel-call';
+          const argsStr = JSON.stringify(call.args ?? {}, null, 2);
+          callEl.innerHTML = `<span class="call-idx">${idx + 1}.</span> <code>${_esc(call.action)}</code>`;
+          const pre = document.createElement('pre');
+          const codeEl = document.createElement('code');
+          codeEl.className = 'language-json';
+          codeEl.textContent = argsStr;
+          if (typeof hljs !== 'undefined') hljs.highlightElement(codeEl);
+          pre.appendChild(codeEl);
+          callEl.appendChild(pre);
+          callsWrap.appendChild(callEl);
+        });
+        secs.appendChild(callsWrap);
+      } else {
+        if (stepObj.action) secs.appendChild(mkSec('action-sec', 'Action', stepObj.action));
+        if (stepObj.action_input) {
+          const ai = typeof stepObj.action_input === 'string'
+            ? stepObj.action_input
+            : JSON.stringify(stepObj.action_input, null, 2);
+          secs.appendChild(mkSec('action-sec', 'Input', ai, { code: true }));
+        }
       }
+
       if (stepObj.observation) secs.appendChild(mkSec('observation', 'Observation', stepObj.observation, { markdown: true }));
+
+      // Render <O> output section when present (inside the step detail).
+      if (stepObj.output) {
+        secs.appendChild(mkSec('output-sec', 'Output', stepObj.output, { markdown: true }));
+      }
+
       s.detail.appendChild(secs);
 
-      // Mark step done
+      // Mark step done and ensure detail stays open.
       const doneEl = document.createElement('span');
       doneEl.className = 'step-done';
       doneEl.textContent = '✓';
       s.hdr.appendChild(doneEl);
+      s.detail.classList.add('open');
+      s.hdr.classList.add('open');
       scrollBottom();
+    },
+    addStepPause(index, output, requestId, onContinue, onStop) {
+      const pauseEl = document.createElement('div');
+      pauseEl.className = 'step-pause-bar';
+      pauseEl.dataset.requestId = requestId;
+
+      if (output) {
+        const outEl = document.createElement('div');
+        outEl.className = 'step-pause-output';
+        renderMarkdown(outEl, output);
+        pauseEl.appendChild(outEl);
+      }
+
+      const controls = document.createElement('div');
+      controls.className = 'step-pause-controls';
+
+      const contBtn = document.createElement('button');
+      contBtn.className = 'step-pause-btn continue-btn';
+      contBtn.textContent = '继续下一步 ▶';
+      contBtn.addEventListener('click', () => {
+        contBtn.disabled = true;
+        stopBtn.disabled = true;
+        contBtn.textContent = '继续中…';
+        onContinue(requestId);
+      });
+
+      const stopBtn = document.createElement('button');
+      stopBtn.className = 'step-pause-btn stop-btn';
+      stopBtn.textContent = '停止 ✕';
+      stopBtn.addEventListener('click', () => {
+        contBtn.disabled = true;
+        stopBtn.disabled = true;
+        stopBtn.textContent = '停止中…';
+        onStop(requestId);
+      });
+
+      controls.append(contBtn, stopBtn);
+      pauseEl.appendChild(controls);
+      _msgsEl().appendChild(pauseEl);
+      scrollBottom();
+      return pauseEl;
+    },
+    removeStepPause(requestId) {
+      const el = _msgsEl()?.querySelector(`.step-pause-bar[data-request-id="${requestId}"]`);
+      el?.remove();
     },
     openSubAgent(action, instruction) {
       const lastStep = _steps[_stepI];

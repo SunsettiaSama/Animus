@@ -108,6 +108,31 @@ class TaskStepEvent:
     step: dict   # { type, index, thought, action, action_input, observation }
 
 
+@dataclass
+class PlannerStepEvent:
+    plan_id: str
+    phase: str         # "planning"
+    step_index: int
+    thought: str
+    action: str
+    observation: str
+
+
+@dataclass
+class ReplannerStartEvent:
+    plan_id: str
+    trigger: str
+    cycle: int
+
+
+@dataclass
+class ReplannerCompleteEvent:
+    plan_id: str
+    decision: str      # done | continue | modify | abort
+    reason: str
+    patches_count: int
+
+
 PlanEvent = Union[
     PlanStartEvent,
     TaskStartEvent,
@@ -122,4 +147,7 @@ PlanEvent = Union[
     PlanAbortEvent,
     LifecycleStateEvent,
     TaskStepEvent,
+    PlannerStepEvent,
+    ReplannerStartEvent,
+    ReplannerCompleteEvent,
 ]

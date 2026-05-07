@@ -17,6 +17,25 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+# ── Shared QdrantClient registry ──────────────────────────────────────────────
+# QdrantLocal (file-based) acquires a portalocker file lock on __init__ and
+# holds it for its entire lifetime.  Only ONE QdrantClient per path may exist
+# at a time.  We keep a module-level registry so that multiple LongTermStore
+# instances that share the same qdrant_path (e.g. the WebUI session and a bot
+# AgentSession) reuse the same client rather than each trying to acquire the
+# lock independently, which raises "already accessed by another instance".
+
+_CLIENT_REGISTRY: dict[str, QdrantClient] = {}
+_CLIENT_REGISTRY_LOCK = threading.Lock()
+
+
+def _get_or_create_client(path: str) -> QdrantClient:
+    with _CLIENT_REGISTRY_LOCK:
+        if path not in _CLIENT_REGISTRY:
+            os.makedirs(path, exist_ok=True)
+            _CLIENT_REGISTRY[path] = QdrantClient(path=path)
+        return _CLIENT_REGISTRY[path]
+
 from config.agent.memory.memory_config import LongTermMemoryConfig
 from embedding.embedder import Embedder, infer_dim
 
@@ -66,7 +85,6 @@ class LongTermStore:
         self._entries = entries
         self._cfg = cfg
         self._embedder: Embedder | None = None
-        self._client: QdrantClient | None = None
         self._collection_ready = False
         self._lock = threading.RLock()
 
@@ -86,11 +104,7 @@ class LongTermStore:
         return self._embedder
 
     def _get_client(self) -> QdrantClient:
-        with self._lock:
-            if self._client is None:
-                os.makedirs(self._cfg.qdrant_path, exist_ok=True)
-                self._client = QdrantClient(path=self._cfg.qdrant_path)
-        return self._client
+        return _get_or_create_client(self._cfg.qdrant_path)
 
     def _ensure_collection(self) -> None:
         client = self._get_client()
@@ -109,8 +123,11 @@ class LongTermStore:
     # ── Preload ───────────────────────────────────────────────────────────────
 
     def preload(self) -> None:
-        """后台预热：初始化 Embedder 和 Qdrant，检测数据一致性并在必要时重建。"""
+        """后台预热：初始化 Embedder（加载模型权重）和 Qdrant，检测数据一致性并在必要时重建。"""
         self._ensure_collection()
+        # Always warm up the embedding model regardless of whether entries exist,
+        # so the first user message doesn't pay the model-load cost.
+        self._get_embedder().warm_up()
         client = self._get_client()
         with self._lock:
             if not self._entries:
@@ -119,8 +136,6 @@ class LongTermStore:
             stored = info.points_count or 0
         if stored != len(self._entries):
             self.rebuild_index()
-        else:
-            self._get_embedder()
 
     # ── Index ─────────────────────────────────────────────────────────────────
 
@@ -225,11 +240,12 @@ class LongTermStore:
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def close(self) -> None:
+        # The QdrantClient is shared via the module-level registry and must not
+        # be closed here — other LongTermStore instances may still be using it.
+        # Just reset this instance's collection-ready flag so the next access
+        # re-validates the collection state.
         with self._lock:
-            if self._client is not None:
-                self._client.close()
-                self._client = None
-                self._collection_ready = False
+            self._collection_ready = False
 
     # ── Timeline ───────────────────────────────────────────────────────────────
 

@@ -46,6 +46,11 @@ class ScheduledTask:
     next_run_at: str | None = None   # 下次触发时间（ISO8601 UTC）
     last_run_at: str | None = None
     last_result_path: str | None = None
+    # 持久化回复目标，用于任务执行后将结果路由回用户
+    # WebUI: {"type": "webui"}
+    # Bot:   {"type": "bot", "message_type": "private"|"group",
+    #         "user_id": int (private), "group_id": int (group)}
+    reply_target: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -59,6 +64,7 @@ class ScheduledTask:
             "next_run_at": self.next_run_at,
             "last_run_at": self.last_run_at,
             "last_result_path": self.last_result_path,
+            "reply_target": self.reply_target,
         }
 
     @classmethod
@@ -74,4 +80,5 @@ class ScheduledTask:
             next_run_at=d.get("next_run_at"),
             last_run_at=d.get("last_run_at"),
             last_result_path=d.get("last_result_path"),
+            reply_target=d.get("reply_target"),
         )

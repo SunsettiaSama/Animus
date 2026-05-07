@@ -42,6 +42,7 @@ class AppState:
 
     # ── Async event loop ──────────────────────────────────────────────────────
     main_event_loop: Any = None       # asyncio.AbstractEventLoop | None
+    scheduler_engine: Any = None      # SchedulerEngine | None — global singleton
     scheduler_future: Any = None
     preload_future: Any = None
 
@@ -55,7 +56,10 @@ class AppState:
 
     # ── Plan orchestration ────────────────────────────────────────────────────
     active_orchestrator: Any = None   # PlanOrchestrator | None
-    plan_event_queue: Any = None      # asyncio.Queue[PlanEvent] | None
+    plan_subscribers: list = field(default_factory=list)  # list[asyncio.Queue]
+
+    # ── Background task notifications ─────────────────────────────────────────
+    notify_queue: Any = None          # asyncio.Queue[dict | None] | None
 
     # ── Knowledge base ────────────────────────────────────────────────────────
     kb: Any = None
@@ -109,6 +113,21 @@ class AppState:
             self._is_streaming = True
             self.current_gen_id = gen_id
             return True
+
+    # ── Plan pub-sub broadcast ────────────────────────────────────────────────
+
+    def plan_subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue()
+        self.plan_subscribers.append(q)
+        return q
+
+    def plan_unsubscribe(self, q: asyncio.Queue) -> None:
+        if q in self.plan_subscribers:
+            self.plan_subscribers.remove(q)
+
+    def plan_broadcast(self, event: dict) -> None:
+        for q in list(self.plan_subscribers):
+            q.put_nowait(event)
 
     # ── Private helpers ───────────────────────────────────────────────────────
 

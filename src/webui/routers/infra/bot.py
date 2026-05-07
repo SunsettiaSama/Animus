@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from state import get_state
 
@@ -20,11 +20,21 @@ class BotConfigPayload(BaseModel):
     appid:                   str       = ""
     secret:                  str       = ""
     is_sandbox:              bool      = False
-    allowed_private_users:   list[int] = []
-    allowed_groups:          list[int] = []
+    allowed_private_users:   list[str] = []
+    allowed_groups:          list[str] = []
     command_prefix:          str       = ""
     max_sessions:            int       = 100
     session_ttl_hours:       float     = 24.0
+    invite_code:             str       = ""
+    invite_daily_limit:      int       = 4
+
+    # Accept both string and integer items (old JS sent ints, new JS sends strings)
+    @field_validator("allowed_private_users", "allowed_groups", mode="before")
+    @classmethod
+    def _coerce_to_str_list(cls, v: object) -> list[str]:
+        if isinstance(v, list):
+            return [str(x) for x in v if str(x).strip()]
+        return []
 
 
 @router.get("/config")
@@ -45,6 +55,8 @@ def get_bot_config():
         "command_prefix":         cfg.command_prefix,
         "max_sessions":           cfg.max_sessions,
         "session_ttl_hours":      cfg.session_ttl_hours,
+        "invite_code":            cfg.invite_code,
+        "invite_daily_limit":     cfg.invite_daily_limit,
     }
 
 
@@ -67,6 +79,8 @@ def save_bot_config(req: BotConfigPayload):
         command_prefix=req.command_prefix,
         max_sessions=req.max_sessions,
         session_ttl_hours=req.session_ttl_hours,
+        invite_code=req.invite_code,
+        invite_daily_limit=req.invite_daily_limit,
     )
     new_cfg.to_yaml(app_paths.bot_config_yaml)
     # Push live changes to the running service

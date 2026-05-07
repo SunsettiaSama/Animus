@@ -27,6 +27,7 @@ import * as voiceMod                      from './modules/voice.js';
 import * as infraMod                      from './modules/infra.js';
 import * as benchMod                      from './modules/benchmark.js';
 import * as botMod                        from './modules/bot.js';
+import * as notifyMod                     from './modules/notify.js';
 import { renderRecentLanding }            from './history.js';
 
 // ── Module callback wiring ────────────────────────────────────────────────────
@@ -46,6 +47,31 @@ history.setCallbacks({
   onToast: _toast,
   onLoad:  (msgs) => { _rebuildFromHistory(msgs); },
 });
+
+notifyMod.setCallbacks({
+  onShow: (message, isDone) => {
+    const bar = document.getElementById('notify-bar');
+    if (!bar) return;
+    bar.querySelector('.notify-msg').textContent = message;
+    bar.classList.toggle('done', !!isDone);
+    bar.classList.add('show');
+  },
+  onHide: () => {
+    const bar = document.getElementById('notify-bar');
+    if (bar) bar.classList.remove('show', 'done');
+  },
+  onScheduledReply: (taskName, answer) => {
+    if (!answer) return;
+    goWorkspace();
+    const ctrl = render.appendAssistantMsg();
+    if (!ctrl) return;
+    ctrl.append(answer);
+    ctrl.finalize();
+    history.pushMessage({ role: 'assistant', content: answer });
+    history.saveConversation();
+  },
+});
+notifyMod.connect();
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
@@ -174,6 +200,12 @@ async function _runReact(question) {
     onStepStart: i  => { _stepI = i; ctrl.showActivity(`Step ${i + 1}…`); },
     onChunk:    (i, chunk) => ctrl.appendChunk(i, chunk),
     onStep:      step  => { ctrl.addStep(step); _stepHistory.push(step); },
+    onStepPause: (i, output, reqId) => {
+      ctrl.addStepPause(i, output, reqId,
+        id => session.sendContinue(id),
+        id => { session.sendStop(id); },
+      );
+    },
     onRetry:    (i, reason) => _showToast(`Retry ${i}: ${reason}`),
     onApprovalRequest: (reqId, tool, args) => _promptApproval(session, reqId, tool, args),
     onSubStart:  (action, instr) => ctrl.openSubAgent(action, instr),
@@ -447,6 +479,10 @@ function _bind() {
     });
   });
 
+  // Screen-navigation cards (no settings tab — navigate to their own screen)
+  document.getElementById('mc-scheduler')?.addEventListener('dblclick', goScheduler);
+  document.getElementById('mc-benchmark')?.addEventListener('dblclick', goBenchmark);
+
   // Settings nav tab buttons
   ['model','memory','persona','voice','vllm','sandbox','bot'].forEach(tab => {
     document.getElementById(`snav-btn-${tab}`)?.addEventListener('click', () => settings.setTab(tab));
@@ -526,6 +562,25 @@ async function boot() {
 
   _updateReactBadge();
   loadWorkstation();
+
+  // Keep bot badge in sync: poll every 5 s until the bot is "on", then every 30 s.
+  let _botPollFast = null;
+  let _botPollSlow = null;
+  function _scheduleBotSlowPoll() {
+    _botPollSlow = setInterval(() => botMod.updateWorkstationCard(), 30_000);
+  }
+  _botPollFast = setInterval(async () => {
+    const st = await botMod.getStatus().catch(() => null);
+    if (!st) return;
+    const s   = (st.state         ?? '').trim();
+    const svc = (st.service_state ?? '').trim();
+    const isOn = s === 'running' || s === 'connected' || svc === 'running';
+    botMod.updateWorkstationCard();
+    if (isOn) {
+      clearInterval(_botPollFast);
+      _scheduleBotSlowPoll();
+    }
+  }, 5_000);
 }
 
 document.addEventListener('DOMContentLoaded', boot);

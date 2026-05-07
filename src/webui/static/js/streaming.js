@@ -62,6 +62,7 @@ export class ReactSession extends BaseSession {
     this._onStepStart       = opts.onStepStart       ?? (() => {});
     this._onChunk           = opts.onChunk           ?? (() => {});
     this._onStep            = opts.onStep            ?? (() => {});
+    this._onStepPause       = opts.onStepPause       ?? (() => {});
     this._onRetry           = opts.onRetry           ?? (() => {});
     this._onApprovalRequest = opts.onApprovalRequest ?? (() => {});
     this._onFinish          = opts.onFinish          ?? (() => {});
@@ -71,6 +72,7 @@ export class ReactSession extends BaseSession {
     this._onSubStep         = opts.onSubStep         ?? (() => {});
     this._onSubFinish       = opts.onSubFinish       ?? (() => {});
     this._onSubError        = opts.onSubError        ?? (() => {});
+    this._onMaxSteps        = opts.onMaxSteps        ?? null;
     this._aborted           = false;
   }
 
@@ -104,6 +106,9 @@ export class ReactSession extends BaseSession {
               break;
             case 'step':
               this._onStep(msg);
+              break;
+            case 'step_pause':
+              this._onStepPause(msg.index, msg.output, msg.request_id);
               break;
             case 'retry':
               this._onRetry(msg.index, msg.reason);
@@ -170,6 +175,20 @@ export class ReactSession extends BaseSession {
     if (this._ws && this._ws.readyState === WebSocket.OPEN) {
       this._aborted = true;
       this._ws.send(JSON.stringify({ type: 'abort', gen_id: this._genId }));
+    }
+  }
+
+  /** Confirm continuation after a step_pause event. */
+  sendContinue(requestId) {
+    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify({ type: 'continue', request_id: requestId }));
+    }
+  }
+
+  /** Stop the agent after a step_pause event. */
+  sendStop(requestId) {
+    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify({ type: 'stop', request_id: requestId }));
     }
   }
 

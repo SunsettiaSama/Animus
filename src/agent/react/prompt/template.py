@@ -39,7 +39,7 @@ class ReActTemplate:
     short_term_distillate: MemoryTierLabel
     question_prefix: str
     suffix: str
-    step_format: PromptTemplate
+    step_format: PromptTemplate       # kept for legacy single-call steps (calls=None)
     separator: str
 
 
@@ -48,15 +48,26 @@ EN = ReActTemplate(
         "You are a ReAct (Reasoning + Acting) agent. "
         "Solve the given question step by step using the available tools.\n\n"
         "Available tools:\n{tool_list}\n\n"
-        "Format your response STRICTLY as:\n"
-        "Thought: <your reasoning>\n"
-        "Action: <tool name>\n"
-        "Action Input: <JSON object with arguments>\n\n"
+        "Format your response STRICTLY using these XML tags:\n\n"
+        "<T>Your reasoning about what to do next</T>\n"
+        "<A>[{{\"action\": \"<tool name>\", \"args\": {{<JSON arguments>}}}}]</A>\n"
+        "<O>What you want to tell the user (optional on intermediate steps, REQUIRED on finish)</O>\n\n"
+        "Rules:\n"
+        "- <T> contains your private reasoning — always required.\n"
+        "- <A> contains a JSON array of tool calls — always required.\n"
+        "  You may call multiple tools in parallel by listing them:\n"
+        "  <A>[\n"
+        "    {{\"action\": \"tool_a\", \"args\": {{\"key\": \"value\"}}}},\n"
+        "    {{\"action\": \"tool_b\", \"args\": {{\"key\": \"value\"}}}}\n"
+        "  ]</A>\n"
+        "- <O> is the ONLY thing the user sees. Include it when you have something\n"
+        "  meaningful to communicate (progress update, partial result, clarification).\n"
+        "  On the final step you MUST use finish and MUST include <O> with your answer.\n\n"
         "When you have the final answer, use:\n"
-        "Thought: I now know the final answer.\n"
-        "Action: finish\n"
-        'Action Input: {{"answer": "<your answer>"}}\n\n'
-        "Do NOT skip any field. Always output Thought, Action, and Action Input."
+        "<T>I now know the final answer.</T>\n"
+        "<A>[{{\"action\": \"finish\", \"args\": {{\"answer\": \"<your answer>\"}}}}]</A>\n"
+        "<O>Your complete answer to the user here</O>\n\n"
+        "Do NOT use Thought:/Output: format. Always use the XML tags above."
     ),
     react_role=MemoryTierLabel(
         title="## [ReAct Agent]",
@@ -91,11 +102,11 @@ EN = ReActTemplate(
         desc="Compressed summary of reasoning steps evicted from this session's scratchpad.",
     ),
     question_prefix="Question:",
-    suffix="Thought:",
+    suffix="<T>",
+    # Legacy single-call step format (used when Step.calls is None — old sessions)
     step_format=PromptTemplate.from_template(
         "Thought: {thought}\n"
-        "Action: {action}\n"
-        "Action Input: {action_input}\n"
+        "Output: [{{\"action\": \"{action}\", \"args\": {action_input}}}]\n"
         "Observation: {observation}"
     ),
     separator="---",
@@ -105,15 +116,25 @@ CN = ReActTemplate(
     system=PromptTemplate.from_template(
         "你是一个 ReAct（推理 + 行动）智能体，请使用可用工具逐步解决用户的问题。\n\n"
         "可用工具：\n{tool_list}\n\n"
-        "请严格按照以下格式输出：\n"
-        "Thought: <你的推理过程>\n"
-        "Action: <工具名称>\n"
-        "Action Input: <JSON 格式的参数>\n\n"
+        "请严格使用以下 XML 标签格式输出：\n\n"
+        "<T>你对下一步的推理过程</T>\n"
+        "<A>[{{\"action\": \"<工具名称>\", \"args\": {{<JSON 参数>}}}}]</A>\n"
+        "<O>你想告诉用户的内容（中间步骤可选，finish 步必须填写）</O>\n\n"
+        "规则：\n"
+        "- <T> 包含你的私有推理，始终必须填写。\n"
+        "- <A> 包含工具调用的 JSON 数组，始终必须填写。\n"
+        "  如需在同一步骤并行调用多个工具，在数组中列出：\n"
+        "  <A>[\n"
+        "    {{\"action\": \"工具A\", \"args\": {{\"key\": \"value\"}}}},\n"
+        "    {{\"action\": \"工具B\", \"args\": {{\"key\": \"value\"}}}}\n"
+        "  ]</A>\n"
+        "- <O> 是用户唯一能看到的内容。当你有有意义的内容要传达时（进度更新、\n"
+        "  阶段结果、说明）请填写。在最终步骤，你必须使用 finish 并且必须在 <O> 中写入你的回答。\n\n"
         "当你得出最终答案时，使用：\n"
-        "Thought: 我现在知道最终答案了。\n"
-        "Action: finish\n"
-        'Action Input: {{"answer": "<你的答案>"}}\n\n'
-        "不要省略任何字段，每次必须输出 Thought、Action 和 Action Input。"
+        "<T>我现在知道最终答案了。</T>\n"
+        "<A>[{{\"action\": \"finish\", \"args\": {{\"answer\": \"<你的答案>\"}}}}]</A>\n"
+        "<O>在此写下给用户的完整回答</O>\n\n"
+        "不要使用 Thought:/Output: 格式，始终使用上方的 XML 标签。"
     ),
     react_role=MemoryTierLabel(
         title="## 【ReAct 智能体】",
@@ -147,11 +168,11 @@ CN = ReActTemplate(
         desc="本 session 因窗口溢出被驱逐的早期推理步骤压缩摘要。",
     ),
     question_prefix="问题：",
-    suffix="Thought:",
+    suffix="<T>",
+    # Legacy single-call step format (used when Step.calls is None — old sessions)
     step_format=PromptTemplate.from_template(
         "Thought: {thought}\n"
-        "Action: {action}\n"
-        "Action Input: {action_input}\n"
+        "Output: [{{\"action\": \"{action}\", \"args\": {action_input}}}]\n"
         "Observation: {observation}"
     ),
     separator="---",

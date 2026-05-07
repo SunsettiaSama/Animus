@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from langchain_core.tools import BaseTool
 from pydantic import ValidationError
@@ -73,6 +74,33 @@ class ActionExecutor:
         return tool
 
     # ── 执行 ──────────────────────────────────────────────────────────────────
+
+    def run_many(self, calls: list[dict]) -> list[str]:
+        """Execute multiple action calls in parallel using ThreadPoolExecutor.
+
+        Each entry in *calls* must be ``{"action": str, "args": dict}``.
+        Results are returned in the same order as *calls* regardless of
+        completion order.  Exceptions inside individual calls are caught and
+        returned as error strings so that one failure does not abort the batch.
+        """
+        if not calls:
+            return []
+        if len(calls) == 1:
+            return [self.run(json.dumps({"action": calls[0]["action"], "args": calls[0].get("args", {})}))]
+
+        results: list[str] = [""] * len(calls)
+        with ThreadPoolExecutor(max_workers=len(calls)) as pool:
+            futures = {
+                pool.submit(
+                    self.run,
+                    json.dumps({"action": c["action"], "args": c.get("args", {})}, ensure_ascii=False),
+                ): idx
+                for idx, c in enumerate(calls)
+            }
+            for future in as_completed(futures):
+                idx = futures[future]
+                results[idx] = future.result()
+        return results
 
     def run(self, json_input: str) -> str:
         payload: dict = json.loads(json_input)

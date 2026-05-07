@@ -10,6 +10,7 @@ class PromptConfig:
     max_observation_chars: int = 0
     repair_enabled: bool = True      # enable Layer-2 repair LLM on bad parse
     retry_on_bad_parse: int = 1      # Layer-0 retry attempts (0 = disabled)
+    system_note: str = ""            # extra text appended to the system prompt
 
     @classmethod
     def from_dict(cls, d: dict) -> PromptConfig:

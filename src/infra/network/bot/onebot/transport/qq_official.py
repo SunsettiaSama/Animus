@@ -139,6 +139,17 @@ class QQOfficialTransport(BaseTransport):
     def _run_botpy(self) -> None:
         import botpy  # type: ignore[import]
 
+        from config import paths
+        from botpy.logging import DEFAULT_FILE_HANDLER
+
+        # Redirect botpy file log from cwd to .react/logs/
+        _log_dir = paths.cache_root / "logs"
+        _log_dir.mkdir(parents=True, exist_ok=True)
+        _file_handler = {
+            **DEFAULT_FILE_HANDLER,
+            "filename": str(_log_dir / "%(name)s.log"),
+        }
+
         transport = self
 
         class _QQClient(botpy.Client):
@@ -152,6 +163,11 @@ class QQOfficialTransport(BaseTransport):
                 openid = message.author.user_openid
                 uid    = _openid_to_id(openid)
                 sid    = f"private_{uid}"
+                content = getattr(message, "content", "") or ""
+                logger.info(
+                    "[QQ←C2C ] uid=%d | msg_id=%s | %r",
+                    uid, message.id, content[:100],
+                )
                 transport._session_ctx[sid] = _SessionCtx(
                     target_id=openid,
                     last_msg_id=message.id,
@@ -165,6 +181,11 @@ class QQOfficialTransport(BaseTransport):
                 gid = _openid_to_id(group_openid)
                 uid = _openid_to_id(user_openid)
                 sid = f"group_{gid}"
+                content = getattr(message, "content", "") or ""
+                logger.info(
+                    "[QQ←GROUP] gid=%d uid=%d | msg_id=%s | %r",
+                    gid, uid, message.id, content[:100],
+                )
                 transport._session_ctx[sid] = _SessionCtx(
                     target_id=group_openid,
                     last_msg_id=message.id,
@@ -173,22 +194,41 @@ class QQOfficialTransport(BaseTransport):
                 transport._fire(raw)
 
         loop = asyncio.new_event_loop()
+        loop.set_exception_handler(
+            lambda _loop, ctx: logger.error(
+                "[QQOfficialTransport] unhandled async error: %s",
+                ctx.get("message", "unknown"),
+                exc_info=ctx.get("exception"),
+            )
+        )
         asyncio.set_event_loop(loop)
         self._bot_loop = loop
 
-        # group_and_c2c_event 对应官方 Intent 中的 GROUP_AND_C2C_EVENT (bit 25)
-        intents       = botpy.Intents(group_and_c2c_event=True)
-        self._client  = _QQClient(intents=intents, is_sandbox=self._is_sandbox)
+        # public_messages 对应官方 Intent 中的 GROUP_AND_C2C_EVENT (bit 25)
+        # qq-botpy <=1.2.x 中该旗标名为 public_messages，高版本改名为 group_and_c2c_event
+        intents       = botpy.Intents(public_messages=True)
+        self._client  = _QQClient(
+            intents=intents,
+            is_sandbox=self._is_sandbox,
+            ext_handlers=_file_handler,
+        )
 
         loop.run_until_complete(
             self._client.start(appid=self._appid, secret=self._secret)
         )
+        self._state = "stopped"
+        logger.warning("[QQOfficialTransport] botpy loop exited, transport stopped")
 
     def _fire(self, raw: dict) -> None:
         """跨线程将事件投递到主 event loop。"""
         if self.on_event and self._main_loop:
-            asyncio.run_coroutine_threadsafe(
+            fut = asyncio.run_coroutine_threadsafe(
                 self.on_event(raw), self._main_loop
+            )
+            fut.add_done_callback(
+                lambda f: logger.error(
+                    "[QQOfficialTransport] dispatch error: %s", f.exception()
+                ) if not f.cancelled() and f.exception() else None
             )
 
     # ── 在 botpy loop 中执行 API 调用 ─────────────────────────────────────────
@@ -204,10 +244,15 @@ class QQOfficialTransport(BaseTransport):
                     f"No active C2C session for user_id={uid}; "
                     "user must send a message first (passive-reply only)"
                 )
+            text = str(params["message"])
+            logger.info(
+                "[QQ→C2C ] uid=%d | seq=%d | %r",
+                uid, ctx.msg_seq, text[:100],
+            )
             result = await api.post_c2c_message(
                 openid=ctx.target_id,
                 msg_type=0,
-                content=str(params["message"]),
+                content=text,
                 msg_id=ctx.last_msg_id,
                 msg_seq=ctx.msg_seq,
             )
@@ -225,10 +270,15 @@ class QQOfficialTransport(BaseTransport):
                     f"No active group session for group_id={gid}; "
                     "user must @bot first (passive-reply only)"
                 )
+            text = str(params["message"])
+            logger.info(
+                "[QQ→GROUP] gid=%d | seq=%d | %r",
+                gid, ctx.msg_seq, text[:100],
+            )
             result = await api.post_group_message(
                 group_openid=ctx.target_id,
                 msg_type=0,
-                content=str(params["message"]),
+                content=text,
                 msg_id=ctx.last_msg_id,
                 msg_seq=ctx.msg_seq,
             )
@@ -248,6 +298,7 @@ class QQOfficialTransport(BaseTransport):
 
     def _c2c_to_onebot(self, message: Any, uid: int) -> dict:
         content = getattr(message, "content", "") or ""
+        openid  = message.author.user_openid
         return {
             "post_type":    "message",
             "message_type": "private",
@@ -255,9 +306,10 @@ class QQOfficialTransport(BaseTransport):
             "time":         self._parse_ts(message),
             "self_id":      0,
             "user_id":      uid,
+            "user_key":     openid,          # raw openid — used for whitelist matching
             "message":      [{"type": "text", "data": {"text": content}}],
             "raw_message":  content,
-            "message_id":   message.id,
+            "message_id":   _openid_to_id(message.id),
             "font":         0,
             "sender": {
                 "user_id":  uid,
@@ -268,8 +320,10 @@ class QQOfficialTransport(BaseTransport):
         }
 
     def _group_to_onebot(self, message: Any, gid: int, uid: int) -> dict:
-        raw_content = getattr(message, "content", "") or ""
-        content     = _AT_RE.sub("", raw_content).strip()
+        raw_content  = getattr(message, "content", "") or ""
+        content      = _AT_RE.sub("", raw_content).strip()
+        group_openid = message.group_openid
+        user_openid  = message.author.member_openid
         return {
             "post_type":    "message",
             "message_type": "group",
@@ -278,9 +332,11 @@ class QQOfficialTransport(BaseTransport):
             "self_id":      0,
             "group_id":     gid,
             "user_id":      uid,
+            "user_key":     user_openid,     # raw openid — used for whitelist matching
+            "group_key":    group_openid,    # raw group openid — used for whitelist matching
             "message":      [{"type": "text", "data": {"text": content}}],
             "raw_message":  content,
-            "message_id":   message.id,
+            "message_id":   _openid_to_id(message.id),
             "font":         0,
             "sender": {
                 "user_id":  uid,

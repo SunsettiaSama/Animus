@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import APIRouter
@@ -73,6 +75,29 @@ def _plan_event_to_dict(event) -> dict:
     from plan.event import TaskStepEvent
     if isinstance(event, TaskStepEvent):
         return {"type": "task_step", "plan_id": event.plan_id, "task_id": event.task_id, "step": event.step}
+    from plan.event import PlannerStepEvent
+    if isinstance(event, PlannerStepEvent):
+        return {
+            "type": "planner_step",
+            "plan_id": event.plan_id,
+            "phase": event.phase,
+            "step_index": event.step_index,
+            "thought": event.thought,
+            "action": event.action,
+            "observation": event.observation,
+        }
+    from plan.event import ReplannerStartEvent
+    if isinstance(event, ReplannerStartEvent):
+        return {"type": "replanner_start", "plan_id": event.plan_id, "trigger": event.trigger, "cycle": event.cycle}
+    from plan.event import ReplannerCompleteEvent
+    if isinstance(event, ReplannerCompleteEvent):
+        return {
+            "type": "replanner_complete",
+            "plan_id": event.plan_id,
+            "decision": event.decision,
+            "reason": event.reason,
+            "patches_count": event.patches_count,
+        }
     return {"type": "unknown"}
 
 
@@ -96,18 +121,33 @@ async def run_plan(req: RunPlanRequest) -> JSONResponse:
 
     orchestrator = PlanOrchestrator(cfg=cfg, llm_cfg_path=llm_cfg_path)
 
-    event_queue: asyncio.Queue = asyncio.Queue()
-
     def _on_event(event) -> None:
-        event_queue.put_nowait(_plan_event_to_dict(event))
+        state.plan_broadcast(_plan_event_to_dict(event))
 
     orchestrator.subscribe(_on_event)
     state.active_orchestrator = orchestrator
-    state.plan_event_queue = event_queue
 
     async def _run() -> None:
+        t_start = time.time()
         result = await orchestrator.run(req.question)
-        await event_queue.put({"type": "done", "status": result.status, "answer": result.answer})
+        state.plan_broadcast({"type": "done", "status": result.status, "answer": result.answer or ""})
+        # Persist history record
+        from plan.history import PlanHistoryStore
+        from config import paths
+        history_dir = Path(paths.cache_root) / "plans" / "history"
+        store = PlanHistoryStore(str(history_dir))
+        doc = result.doc
+        store.save({
+            "plan_id": result.plan_id,
+            "question": req.question,
+            "title": doc.title if doc else "",
+            "status": result.status,
+            "answer": result.answer or "",
+            "task_count": len(doc.all_tasks()) if doc else 0,
+            "plan_dir": req.plan_dir,
+            "completed_at": time.time(),
+            "elapsed_sec": round(time.time() - t_start, 1),
+        })
 
     asyncio.create_task(_run())
     return JSONResponse({"status": "started", "message": "Plan execution started."})
@@ -134,17 +174,17 @@ def plan_status() -> JSONResponse:
 @router.get("/api/plan/stream")
 async def plan_stream() -> StreamingResponse:
     state = get_state()
+    q = state.plan_subscribe()
 
     async def _generator() -> AsyncGenerator[str, None]:
-        queue = state.plan_event_queue
-        if queue is None:
-            yield "data: {}\n\n"
-            return
-        while True:
-            event_dict = await queue.get()
-            yield f"data: {json.dumps(event_dict, ensure_ascii=False)}\n\n"
-            if event_dict.get("type") in ("done", "plan_complete", "plan_abort"):
-                break
+        try:
+            while True:
+                event_dict = await q.get()
+                yield f"data: {json.dumps(event_dict, ensure_ascii=False)}\n\n"
+                if event_dict.get("type") in ("done", "plan_complete", "plan_abort"):
+                    break
+        finally:
+            state.plan_unsubscribe(q)
 
     return StreamingResponse(_generator(), media_type="text/event-stream")
 
@@ -243,3 +283,25 @@ def plan_skip(task_id: str, req: SkipRequest = SkipRequest()) -> JSONResponse:
         return JSONResponse({"error": "No active plan"}, status_code=400)
     orch._current_doc.skip(task_id, cascade=req.cascade)
     return JSONResponse({"status": "skipped", "task_id": task_id})
+
+
+# ── GET /api/plan/history ──────────────────────────────────────────────────────
+
+def _get_history_store():
+    from plan.history import PlanHistoryStore
+    from config import paths
+    history_dir = Path(paths.cache_root) / "plans" / "history"
+    return PlanHistoryStore(str(history_dir))
+
+
+@router.get("/api/plan/history")
+def plan_history_list() -> JSONResponse:
+    store = _get_history_store()
+    return JSONResponse(store.list_all())
+
+
+@router.delete("/api/plan/history/{plan_id}")
+def plan_history_delete(plan_id: str) -> JSONResponse:
+    store = _get_history_store()
+    store.delete(plan_id)
+    return JSONResponse({"status": "deleted", "plan_id": plan_id})

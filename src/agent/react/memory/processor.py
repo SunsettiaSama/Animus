@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -27,7 +28,7 @@ Answer: {answer}
 
 Output only the distilled knowledge entry, no preamble."""
 
-_CREW_ACTIONS = frozenset({"delegate_task"})
+_DELEGATE_ACTIONS = frozenset({"delegate_task"})
 
 
 @dataclass
@@ -90,22 +91,43 @@ class MemoryProcessor:
         short_distillate = self._short.distillate if self._short is not None else ""
         medium_text = self._medium.render() if self._medium is not None else ""
 
-        long_text = ""
-        if include_long_term and self._long is not None:
+        need_lt = include_long_term and self._long is not None
+        need_ms = self._milestone is not None and bool(query)
+
+        if need_lt and need_ms:
             short_ctx = "\n".join(
                 f"{s.thought} {s.observation}" for s in short_steps
             )
-            long_text = self._long.smart_recall(
-                query=query,
-                is_session_start=self._is_session_start,
-                short_term_context=short_ctx,
-                medium_term_context=medium_text,
-            )
+            _is_start = self._is_session_start
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                lt_fut = ex.submit(
+                    self._long.smart_recall,
+                    query,
+                    _is_start,
+                    short_ctx,
+                    medium_text,
+                )
+                ms_fut = ex.submit(self._milestone.retrieve, query)
+                long_text      = lt_fut.result()
+                milestone_text = ms_fut.result()
             self._is_session_start = False
+        else:
+            long_text = ""
+            if need_lt:
+                short_ctx = "\n".join(
+                    f"{s.thought} {s.observation}" for s in short_steps
+                )
+                long_text = self._long.smart_recall(
+                    query=query,
+                    is_session_start=self._is_session_start,
+                    short_term_context=short_ctx,
+                    medium_term_context=medium_text,
+                )
+                self._is_session_start = False
 
-        milestone_text = ""
-        if self._milestone is not None and query:
-            milestone_text = self._milestone.retrieve(query)
+            milestone_text = ""
+            if need_ms:
+                milestone_text = self._milestone.retrieve(query)
 
         return MemoryResult(
             short_term=short_steps,
@@ -146,9 +168,8 @@ class MemoryProcessor:
         - distill_enabled=True + llm available: ask the LLM to extract a
           concise knowledge summary from Q+A; fall back to answer-only on error.
 
-        Crew action observations (delegate_task, await_agent, etc.) are appended
-        as a supplement so sub-agent outputs are captured in L3 even when the
-        main agent's answer is brief.
+        delegate_task observations are appended as a supplement so sub-agent
+        outputs are captured in L3 even when the main agent's answer is brief.
         """
         cfg = self._cfg.long_term
         if cfg.distill_enabled and self._llm is not None:
@@ -167,10 +188,10 @@ class MemoryProcessor:
 
         crew_obs = [
             s.observation for s in self._trace
-            if s.action in _CREW_ACTIONS and s.observation
+            if s.action in _DELEGATE_ACTIONS and s.observation
         ]
         if crew_obs:
-            supplement = "\n\n[Crew 执行摘要]\n" + "\n---\n".join(crew_obs[:3])
+            supplement = "\n\n[子任务执行摘要]\n" + "\n---\n".join(crew_obs[:3])
             return base_entry + supplement
         return base_entry
 

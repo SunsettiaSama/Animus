@@ -47,6 +47,21 @@ class AgentSession:
         """Spawn the background consumer task."""
         loop = asyncio.get_event_loop()
         self._task = loop.create_task(self._run_forever(), name=f"session:{self._id}")
+        self._task.add_done_callback(self._on_task_done)
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        logger.error(
+            "[AgentSession] session %s crashed, restarting: %s",
+            self._id, exc, exc_info=exc,
+        )
+        loop = asyncio.get_event_loop()
+        self._task = loop.create_task(self._run_forever(), name=f"session:{self._id}")
+        self._task.add_done_callback(self._on_task_done)
 
     async def enqueue(self, text: str) -> None:
         self._last_active = time.time()
@@ -68,20 +83,34 @@ class AgentSession:
         while True:
             question = await self._queue.get()
             self._last_active = time.time()
+            logger.info("[AgentSession] %s ← %r", self._id, question[:80])
             answer = await loop.run_in_executor(
                 self._executor,
                 self._process_sync,
                 question,
             )
             if answer:
+                logger.info("[AgentSession] %s → %r", self._id, answer[:80])
                 await self._reply_fn(answer)
+            else:
+                logger.warning("[AgentSession] %s got empty answer for %r", self._id, question[:80])
 
     def _process_sync(self, question: str) -> str:
-        from agent.react.tao import FinishEvent
+        from agent.react.tao import FinishEvent, StepEvent
         answer = ""
+        summaries: list[str] = []
         for event in self._conv.stream(question):
-            if isinstance(event, FinishEvent):
+            if isinstance(event, StepEvent) and event.thought:
+                # Collect a brief thought snippet (≤40 chars) for each reasoning step.
+                snippet = event.thought.strip()[:40].rstrip()
+                if len(event.thought.strip()) > 40:
+                    snippet += "…"
+                summaries.append(snippet)
+            elif isinstance(event, FinishEvent):
                 answer = event.answer
                 break
         self._conv.post_process()
+        if summaries and answer:
+            chain = " → ".join(f"[{i + 1}] {s}" for i, s in enumerate(summaries))
+            answer = f"💭 {chain}\n\n{answer}"
         return answer

@@ -6,9 +6,11 @@ from dataclasses import dataclass, field
 @dataclass
 class Step:
     thought: str
-    action: str
-    action_input: dict
-    observation: str
+    action: str         # first/only action (for finish detection + compat)
+    action_input: dict  # first/only args (for compat)
+    observation: str    # combined observation string (multi-call: "Observations:\n[t] → obs")
+    calls: list[dict] | None = None  # [{"action": str, "args": dict}, ...] when <A> or Output:[...] used
+    output: str = ""                  # <O> tag content; user-visible output for this step
 
 
 class Memory:

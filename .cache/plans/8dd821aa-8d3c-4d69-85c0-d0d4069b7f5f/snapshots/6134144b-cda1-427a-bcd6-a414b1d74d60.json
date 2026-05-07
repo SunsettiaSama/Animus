@@ -1,0 +1,75 @@
+{
+  "snapshot_id": "6134144b-cda1-427a-bcd6-a414b1d74d60",
+  "plan_id": "8dd821aa-8d3c-4d69-85c0-d0d4069b7f5f",
+  "timestamp": 1778169059.592466,
+  "trigger": "initial",
+  "cycle": 0,
+  "doc_dict": {
+    "plan_id": "8dd821aa-8d3c-4d69-85c0-d0d4069b7f5f",
+    "title": "Create three Python scripts for sine and cosine curves",
+    "objective": "Create two standalone Python scripts that individually plot sine and cosine waves, and a third script that plots both curves together using matplotlib.",
+    "modules": [
+      {
+        "name": "scripts",
+        "tasks": [
+          {
+            "task_id": "write_sin_curve",
+            "description": "Write `sin_curve.py` to generate and display a sine wave using matplotlib.",
+            "module": "scripts",
+            "profile": "executor",
+            "max_steps": 10,
+            "depends_on": [],
+            "writes": [],
+            "parallel": false,
+            "status": "pending",
+            "result": null,
+            "error": null,
+            "params": {},
+            "execution_ctx": null
+          },
+          {
+            "task_id": "write_cos_curve",
+            "description": "Write `cos_curve.py` to generate and display a cosine wave using matplotlib.",
+            "module": "scripts",
+            "profile": "executor",
+            "max_steps": 10,
+            "depends_on": [],
+            "writes": [],
+            "parallel": false,
+            "status": "pending",
+            "result": null,
+            "error": null,
+            "params": {},
+            "execution_ctx": null
+          },
+          {
+            "task_id": "write_plot_both",
+            "description": "Write `plot_both.py` to generate and display both sine and cosine waves on the same figure using matplotlib.",
+            "module": "scripts",
+            "profile": "executor",
+            "max_steps": 10,
+            "depends_on": [
+              "write_sin_curve",
+              "write_cos_curve"
+            ],
+            "writes": [],
+            "parallel": false,
+            "status": "pending",
+            "result": null,
+            "error": null,
+            "params": {},
+            "execution_ctx": null
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "max_replan_cycles": 3,
+      "checkpoint": "per_module",
+      "timeout": null,
+      "paused": false
+    },
+    "replan_notes": [],
+    "conclusion": null
+  }
+}
