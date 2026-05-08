@@ -38,11 +38,13 @@ class BotAPI:
         self,
         event: "MessageEvent",
         msg: "Union[str, Message]",
-    ) -> "Union[int, str]":
-        text = str(msg)
-        if event.message_type == "group" and event.group_id is not None:
-            return await self.send_group_msg(event.group_id, text)
-        return await self.send_private_msg(event.user_id, text)
+    ) -> None:
+        target = {
+            "message_type": event.message_type,
+            "user_id": event.user_id,
+            "group_id": event.group_id,
+        }
+        await self._transport.send_text(target, str(msg))
 
     # ── Primitives ────────────────────────────────────────────────────────────
 

@@ -16,6 +16,7 @@ except ImportError:
     _AIOFILES = False
 
 from plan.config import LogConfig
+from typing import Callable
 
 
 class LogLevel(IntEnum):
@@ -41,6 +42,11 @@ class PlanLogger:
         except KeyError:
             self._min_level = LogLevel.DEBUG
         self._lock = asyncio.Lock()
+        self._line_sink: Callable[[dict], None] | None = None
+
+    def set_line_sink(self, sink: Callable[[dict], None] | None) -> None:
+        """Register a callback that receives each log record for real-time SSE push."""
+        self._line_sink = sink
 
     # ── Core write ────────────────────────────────────────────────────────────
 
@@ -62,6 +68,10 @@ class PlanLogger:
                     await f.write(line)
             else:
                 self._path.open("a", encoding="utf-8").write(line)
+
+        # Push to SSE stream if a sink is registered
+        if self._line_sink is not None:
+            self._line_sink({"type": "log_line", "plan_id": self._plan_id, **record})
 
         # Simple size-based rotation
         self._maybe_rotate()

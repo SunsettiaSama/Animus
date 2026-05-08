@@ -157,24 +157,17 @@ class AppState:
         from config.infra.sandbox_config import SandboxConfig
         from config import paths
 
-        self.task_runner      = BackgroundTaskRunner(max_workers=8)
-        _vllm_cfg_path = self.vllm_config_yaml
-        import os as _os
-        if _os.path.exists(_vllm_cfg_path):
-            from config.llm_core.vllm_config import VLLMConfig as _VLLMCfg
-            _startup_vllm_cfg = _VLLMCfg.from_yaml(_vllm_cfg_path)
-        else:
-            from config.llm_core.vllm_config import VLLMConfig as _VLLMCfg
-            _startup_vllm_cfg = _VLLMCfg()
+        self.task_runner = BackgroundTaskRunner(max_workers=8)
 
-        if _startup_vllm_cfg.provider == "custom":
-            from infra.llm.custom import CustomVLLMManager
-            _vllm_manager = CustomVLLMManager()
-        else:
-            from infra.llm.official import OfficialVLLMManager
-            _vllm_manager = OfficialVLLMManager()
+        from infra.llm.transformers.manager import TransformersBackend
+        from infra.llm.official import OfficialVLLMManager
+        from infra.llm.custom import CustomVLLMManager
 
-        self.llm_service      = LLMService(_vllm_manager)
+        _transformers_backend = TransformersBackend()
+        _vllm_manager         = OfficialVLLMManager()
+        _clone_manager        = CustomVLLMManager()
+
+        self.llm_service = LLMService(_transformers_backend, _vllm_manager, _clone_manager)
 
         run_cfg = RunConfig.load()
         self.searxng_manager = SearXNGManager(
@@ -187,10 +180,9 @@ class AppState:
 
         self.sandbox_manager  = SandboxManager()
         self.service_registry = ServiceRegistry()
-        self.service_registry.register("llm",     self.llm_service)
-        self.service_registry.register("vllm",    _vllm_manager)
-        self.service_registry.register("searxng", self.searxng_manager)
-        self.service_registry.register("sandbox", self.sandbox_manager)
+        self.service_registry.register("vllm", _vllm_manager)
+        self.service_registry.register("searxng",      self.searxng_manager)
+        self.service_registry.register("sandbox",      self.sandbox_manager)
 
         # Sandbox config
         if os.path.exists(self.sandbox_config_yaml):

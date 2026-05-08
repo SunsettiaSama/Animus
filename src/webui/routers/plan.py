@@ -31,21 +31,30 @@ class SkipRequest(BaseModel):
     cascade: bool = False
 
 
+class TaskPatchRequest(BaseModel):
+    description: str | None = None
+    profile: str | None = None
+    max_steps: int | None = None
+
+
+class HumanMessageRequest(BaseModel):
+    message: str
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _plan_event_to_dict(event) -> dict:
+    # Raw dicts (log_line, replanner_thinking) pass through unchanged
+    if isinstance(event, dict):
+        return event
     from plan.event import (
-        HumanPatchEvent,
-        PlanAbortEvent,
-        PlanCompleteEvent,
-        PlanStartEvent,
-        ReplanEvent,
-        SnapshotEvent,
-        TaskCompleteEvent,
-        TaskFailedEvent,
-        TaskRunningEvent,
-        TaskSkippedEvent,
-        TaskStartEvent,
+        HumanPatchEvent, LifecycleStateEvent,
+        LogLineEvent, NodeExpansionRequestEvent,
+        PlanAbortEvent, PlanCompleteEvent, PlanStartEvent,
+        PlannerStepEvent, ReplanEvent,
+        ReplannerCompleteEvent, ReplannerStartEvent, ReplannerThinkingEvent,
+        SnapshotEvent, TaskCompleteEvent, TaskFailedEvent,
+        TaskRunningEvent, TaskSkippedEvent, TaskStartEvent, TaskStepEvent,
     )
     if isinstance(event, PlanStartEvent):
         return {"type": "plan_start", "plan_id": event.plan_id, "title": event.title, "task_count": event.task_count}
@@ -69,13 +78,10 @@ def _plan_event_to_dict(event) -> dict:
         return {"type": "plan_complete", "plan_id": event.plan_id, "conclusion": event.conclusion}
     if isinstance(event, PlanAbortEvent):
         return {"type": "plan_abort", "plan_id": event.plan_id, "reason": event.reason}
-    from plan.event import LifecycleStateEvent
     if isinstance(event, LifecycleStateEvent):
         return {"type": "lifecycle_state", "plan_id": event.plan_id, "state": event.state}
-    from plan.event import TaskStepEvent
     if isinstance(event, TaskStepEvent):
         return {"type": "task_step", "plan_id": event.plan_id, "task_id": event.task_id, "step": event.step}
-    from plan.event import PlannerStepEvent
     if isinstance(event, PlannerStepEvent):
         return {
             "type": "planner_step",
@@ -86,10 +92,8 @@ def _plan_event_to_dict(event) -> dict:
             "action": event.action,
             "observation": event.observation,
         }
-    from plan.event import ReplannerStartEvent
     if isinstance(event, ReplannerStartEvent):
         return {"type": "replanner_start", "plan_id": event.plan_id, "trigger": event.trigger, "cycle": event.cycle}
-    from plan.event import ReplannerCompleteEvent
     if isinstance(event, ReplannerCompleteEvent):
         return {
             "type": "replanner_complete",
@@ -98,6 +102,18 @@ def _plan_event_to_dict(event) -> dict:
             "reason": event.reason,
             "patches_count": event.patches_count,
         }
+    if isinstance(event, ReplannerThinkingEvent):
+        return {"type": "replanner_thinking", "plan_id": event.plan_id, "stage": event.stage, "cycle": event.cycle}
+    if isinstance(event, NodeExpansionRequestEvent):
+        return {
+            "type": "node_expansion_request",
+            "plan_id": event.plan_id,
+            "task_id": event.task_id,
+            "reason": event.reason,
+            "suggested_subtasks": event.suggested_subtasks,
+        }
+    if isinstance(event, LogLineEvent):
+        return {"type": "log_line", "plan_id": event.plan_id, "level": event.level, "event": event.event, **event.payload}
     return {"type": "unknown"}
 
 
@@ -283,6 +299,55 @@ def plan_skip(task_id: str, req: SkipRequest = SkipRequest()) -> JSONResponse:
         return JSONResponse({"error": "No active plan"}, status_code=400)
     orch._current_doc.skip(task_id, cascade=req.cascade)
     return JSONResponse({"status": "skipped", "task_id": task_id})
+
+
+# ── PATCH /api/plan/tasks/{task_id} ───────────────────────────────────────────
+
+@router.patch("/api/plan/tasks/{task_id}")
+async def plan_task_patch(task_id: str, req: TaskPatchRequest) -> JSONResponse:
+    state = get_state()
+    orch = state.active_orchestrator
+    if orch is None or orch._current_doc is None:
+        return JSONResponse({"error": "No active plan"}, status_code=400)
+    from plan.document import TaskStatus
+    task = orch._current_doc.get_task(task_id)
+    if task.status != TaskStatus.pending:
+        return JSONResponse(
+            {"error": f"Task '{task_id}' is not in pending state (current: {task.status.value})"},
+            status_code=409,
+        )
+    updates: dict = {}
+    if req.description is not None:
+        updates["description"] = req.description
+    if req.profile is not None:
+        updates["profile"] = req.profile
+    if req.max_steps is not None:
+        updates["max_steps"] = req.max_steps
+    if updates:
+        await orch._current_doc.update_task(task_id, **updates)
+        state.plan_broadcast({"type": "task_updated", "task_id": task_id, "updates": updates})
+    return JSONResponse({"status": "ok", "task_id": task_id, "updates": updates})
+
+
+# ── POST /api/plan/human-request ───────────────────────────────────────────────
+
+@router.post("/api/plan/human-request")
+async def plan_human_request(req: HumanMessageRequest) -> JSONResponse:
+    state = get_state()
+    orch = state.active_orchestrator
+    if orch is None or orch._current_doc is None:
+        return JSONResponse({"error": "No active plan"}, status_code=400)
+    from plan.patch import HumanPatch, PatchOp
+    replan_patch = HumanPatch(op=PatchOp.replan, task_id=None, payload={"human_message": req.message})
+    logger = orch._current_logger
+    snapshots = orch._current_snapshots
+    plan_id = orch.current_plan_id or ""
+    if logger and snapshots:
+        await orch._call_replanner(
+            orch._current_doc, snapshots, logger, plan_id, trigger="on_human_request"
+        )
+    state.plan_broadcast({"type": "human_request_received", "message": req.message})
+    return JSONResponse({"status": "ok", "message": "Human request forwarded to replanner."})
 
 
 # ── GET /api/plan/history ──────────────────────────────────────────────────────

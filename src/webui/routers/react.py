@@ -69,7 +69,6 @@ def _event_to_dict(event) -> dict | None:
         PromptPreviewEvent,
         RetryEvent,
         StepEvent,
-        StepPauseEvent,
         StepStartEvent,
     )
     if isinstance(event, PromptPreviewEvent):
@@ -90,13 +89,6 @@ def _event_to_dict(event) -> dict | None:
             "observation": event.observation,
             "calls": event.calls,    # list[{action, args}] | None — parallel calls
             "output": event.output,  # <O> content; empty string when absent
-        }
-    if isinstance(event, StepPauseEvent):
-        return {
-            "type": "step_pause",
-            "index": event.index,
-            "output": event.output,
-            "request_id": event.request_id,
         }
     if isinstance(event, FinishEvent):
         return {"type": "finish", "answer": event.answer}
@@ -443,11 +435,6 @@ async def ws_react_run(websocket: WebSocket):
                     state.conv_loop._tao.resolve_approval(
                         msg.get("request_id", ""),
                         bool(msg.get("approved", False)),
-                    )
-                elif mtype in ("continue", "stop") and state.conv_loop is not None:
-                    state.conv_loop._tao.resolve_step_decision(
-                        msg.get("request_id", ""),
-                        mtype,
                     )
                 elif mtype == "abort":
                     if msg.get("gen_id") == state.current_gen_id:

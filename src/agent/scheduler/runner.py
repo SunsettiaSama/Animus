@@ -5,11 +5,14 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from agent.scheduler.config import SchedulerConfig
 from agent.scheduler.store import TaskStore
-from agent.scheduler.task import ScheduledTask, TaskStatus
+from agent.scheduler.task import DeliveryMode, ScheduledTask, TaskStatus
+
+if TYPE_CHECKING:
+    from agent.scheduler.engine import SchedulerEngine
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +44,13 @@ class TaskRunner:
         long_term=None,
         timeline=None,
         notify_fn: Callable[[ScheduledTask, str], None] | None = None,
+        engine: "SchedulerEngine | None" = None,
     ):
         self._cfg = cfg
         self._long_term = long_term
         self._timeline = timeline
         self._notify_fn = notify_fn
+        self._engine = engine  # set post-init for task chain scheduling
 
     async def run(self, task: ScheduledTask, store: TaskStore) -> None:
         store.update(task.id, status=TaskStatus.running, last_run_at=_utcnow_iso())
@@ -69,17 +74,18 @@ class TaskRunner:
         try:
             await asyncio.to_thread(_run_sync)
         except BaseException as exc:
-            store.update(task.id, status=TaskStatus.failed)
-            logger.error("[TaskRunner] task %s (%s) failed: %s", task.id[:8], task.name, exc)
+            self._handle_failure(task, store, exc)
             raise
 
         result_path = _write_result(task, answer, self._cfg.scheduler_dir)
 
+        # ── LTM write (always, independent of delivery) ───────────────────────
         if self._long_term is not None:
             summary = f"[调度任务] {task.name}\n指令: {task.instruction}\n结果: {answer}"
             self._long_term.add(summary, source="scheduler", question=task.instruction)
             self._long_term.save()
 
+        # ── Timeline write ────────────────────────────────────────────────────
         if self._timeline is not None:
             self._timeline.append("scheduled_task", {
                 "task_id": task.id,
@@ -88,6 +94,7 @@ class TaskRunner:
                 "answer": answer[:500],
             })
 
+        # ── Advance next_run_at ───────────────────────────────────────────────
         if task.trigger.type == "interval" and task.trigger.interval_seconds:
             next_run = datetime.now(timezone.utc) + timedelta(seconds=task.trigger.interval_seconds)
             store.update(
@@ -95,12 +102,56 @@ class TaskRunner:
                 status=TaskStatus.pending,
                 next_run_at=next_run.isoformat(),
                 last_result_path=result_path,
+                retry_count=0,
             )
+        elif task.trigger.type == "cron" and task.trigger.cron_expr:
+            store.update(task.id, last_result_path=result_path, retry_count=0)
+            store.advance_cron(task.id)
         else:
-            store.update(task.id, status=TaskStatus.done, last_result_path=result_path)
+            store.update(task.id, status=TaskStatus.done, last_result_path=result_path, retry_count=0)
 
-        if self._notify_fn is not None:
+        # ── Task chain ────────────────────────────────────────────────────────
+        if task.on_complete and self._engine is not None:
+            ctx = task.context or {}
+            next_instruction = task.on_complete.format(result=answer, **ctx)
+            self._engine.schedule_once(
+                name=f"{task.name}__chain",
+                instruction=next_instruction,
+                at=datetime.now(timezone.utc),
+                profile=task.config_profile,
+                reply_target=task.reply_target,
+                delivery=task.delivery,
+                on_complete=None,
+            )
+
+        # ── Delivery / Notification ───────────────────────────────────────────
+        effective_delivery = task.delivery
+        if not self._cfg.proactive_enabled and effective_delivery == DeliveryMode.push:
+            effective_delivery = DeliveryMode.silent
+
+        if effective_delivery == DeliveryMode.push and self._notify_fn is not None:
             try:
                 self._notify_fn(task, answer)
             except Exception as exc:
                 logger.error("[TaskRunner] notify_fn error for task %s: %s", task.id[:8], exc)
+        elif effective_delivery == DeliveryMode.store_only and self._long_term is not None:
+            summary = f"[调度任务-归档] {task.name}\n{answer}"
+            self._long_term.add(summary, source="scheduler_store_only", question=task.instruction)
+            self._long_term.save()
+
+    def _handle_failure(self, task: ScheduledTask, store: TaskStore, exc: BaseException) -> None:
+        logger.error("[TaskRunner] task %s (%s) failed: %s", task.id[:8], task.name, exc)
+        if task.retry_count < task.max_retries:
+            next_run = datetime.now(timezone.utc) + timedelta(seconds=task.retry_delay_seconds)
+            store.update(
+                task.id,
+                status=TaskStatus.pending,
+                next_run_at=next_run.isoformat(),
+                retry_count=task.retry_count + 1,
+            )
+            logger.info(
+                "[TaskRunner] task %s rescheduled (attempt %d/%d) at %s",
+                task.id[:8], task.retry_count + 1, task.max_retries, next_run.isoformat(),
+            )
+        else:
+            store.update(task.id, status=TaskStatus.failed)

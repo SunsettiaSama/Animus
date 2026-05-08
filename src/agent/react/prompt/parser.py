@@ -25,6 +25,11 @@ _RE_T = re.compile(r"<T>(.*?)</T>", re.DOTALL | re.IGNORECASE)
 _RE_A = re.compile(r"<A>(.*?)</A>", re.DOTALL | re.IGNORECASE)
 _RE_O = re.compile(r"<O>(.*?)</O>", re.DOTALL | re.IGNORECASE)
 
+# Fallback: when the prompt suffix included "<T>", the LLM output starts with
+# thought content followed by </T> (no opening tag in the output).
+# e.g. "I need to search...</T><A>[...]</A>"
+_RE_T_SUFFIX = re.compile(r"^(.*?)</T>", re.DOTALL | re.IGNORECASE)
+
 # ── Section boundary helpers ──────────────────────────────────────────────────
 
 # Listed most-specific first so "Action Input" is checked before "Action".
@@ -104,6 +109,38 @@ def _clean_finish_answer(text: str) -> str:
 _RE_CODE_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.DOTALL)
 
 
+def _repair_json_strings(s: str) -> str:
+    """Escape literal control characters (newline, tab, CR) inside JSON string values.
+
+    LLMs frequently emit multi-line content (e.g. Python source) as a raw
+    string value without properly escaping newlines.  This character-by-character
+    walk mirrors a minimal JSON tokeniser so that only characters *inside* a
+    string literal are touched.
+    """
+    out: list[str] = []
+    in_str = False
+    escaped = False
+    for ch in s:
+        if escaped:
+            out.append(ch)
+            escaped = False
+        elif ch == "\\" and in_str:
+            out.append(ch)
+            escaped = True
+        elif ch == '"':
+            out.append(ch)
+            in_str = not in_str
+        elif in_str and ch == "\n":
+            out.append("\\n")
+        elif in_str and ch == "\r":
+            out.append("\\r")
+        elif in_str and ch == "\t":
+            out.append("\\t")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def _extract_json(text: str) -> dict | None:
     """
     Progressively attempt to extract a JSON object from *text*.
@@ -122,28 +159,33 @@ def _extract_json(text: str) -> dict | None:
 
     fence = _RE_CODE_FENCE.search(text)
     if fence:
+        inner = fence.group(1).strip()
+        for candidate in (inner, _repair_json_strings(inner)):
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+    for candidate in (text, _repair_json_strings(text)):
         try:
-            return json.loads(fence.group(1).strip())
+            return json.loads(candidate)
         except json.JSONDecodeError:
             pass
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
 
     start = text.find("{")
     end   = text.rfind("}")
     if start != -1 and end > start:
         blob = text[start : end + 1]
-        try:
-            return json.loads(blob)
-        except json.JSONDecodeError:
-            for candidate_end in (m.start() for m in re.finditer(r"\}", blob)):
-                try:
-                    return json.loads(blob[: candidate_end + 1])
-                except json.JSONDecodeError:
-                    continue
+        repaired_blob = _repair_json_strings(blob)
+        for b in (blob, repaired_blob):
+            try:
+                return json.loads(b)
+            except json.JSONDecodeError:
+                for candidate_end in (m.start() for m in re.finditer(r"\}", b)):
+                    try:
+                        return json.loads(b[: candidate_end + 1])
+                    except json.JSONDecodeError:
+                        continue
 
         # Pass 4: ast.literal_eval — handles Python-style dicts with single quotes
         # that json.loads rejects (e.g. {'answer': 'text'} from some LLM outputs).
@@ -174,38 +216,42 @@ def _extract_json_array(text: str) -> list | None:
     fence = _RE_CODE_FENCE.search(text)
     if fence:
         inner = fence.group(1).strip()
+        for candidate in (inner, _repair_json_strings(inner)):
+            try:
+                val = json.loads(candidate)
+                if isinstance(val, list):
+                    return val
+            except json.JSONDecodeError:
+                pass
+
+    # Pass 2 — direct parse
+    for candidate in (text, _repair_json_strings(text)):
         try:
-            val = json.loads(inner)
+            val = json.loads(candidate)
             if isinstance(val, list):
                 return val
         except json.JSONDecodeError:
             pass
-
-    # Pass 2 — direct parse
-    try:
-        val = json.loads(text)
-        if isinstance(val, list):
-            return val
-    except json.JSONDecodeError:
-        pass
 
     # Pass 3 — blob scan from first '[' to last ']'
     start = text.find("[")
     end   = text.rfind("]")
     if start != -1 and end > start:
         blob = text[start : end + 1]
-        try:
-            val = json.loads(blob)
-            if isinstance(val, list):
-                return val
-        except json.JSONDecodeError:
-            for candidate_end in (m.start() for m in re.finditer(r"\]", blob)):
-                try:
-                    val = json.loads(blob[: candidate_end + 1])
-                    if isinstance(val, list):
-                        return val
-                except json.JSONDecodeError:
-                    continue
+        repaired_blob = _repair_json_strings(blob)
+        for b in (blob, repaired_blob):
+            try:
+                val = json.loads(b)
+                if isinstance(val, list):
+                    return val
+            except json.JSONDecodeError:
+                for candidate_end in (m.start() for m in re.finditer(r"\]", b)):
+                    try:
+                        val = json.loads(b[: candidate_end + 1])
+                        if isinstance(val, list):
+                            return val
+                    except json.JSONDecodeError:
+                        continue
 
         # Pass 4: ast.literal_eval for Python-style lists
         try:
@@ -374,7 +420,13 @@ class ReActOutputParser(BaseOutputParser[ParseResult]):
         output_content = o_m.group(1).strip() if o_m else ""
 
         if a_m:
-            thought = t_m.group(1).strip() if t_m else ""
+            if t_m:
+                thought = t_m.group(1).strip()
+            else:
+                # The prompt suffix may have included "<T>", so LLM output starts
+                # with the thought content followed by "</T>" without an opening tag.
+                ts_m = _RE_T_SUFFIX.match(text)
+                thought = ts_m.group(1).strip() if ts_m else ""
             raw_a = a_m.group(1).strip()
             items = _extract_json_array(raw_a)
             if items:

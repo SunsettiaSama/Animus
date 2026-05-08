@@ -267,13 +267,8 @@ async function boot() {
     setInterval(() => botMod.updateWorkstationCard(), 30_000);
   }
   _botPollFast = setInterval(async () => {
-    const st = await botMod.getStatus().catch(() => null);
-    if (!st) return;
-    const s   = (st.state         ?? '').trim();
-    const svc = (st.service_state ?? '').trim();
-    const isOn = s === 'running' || s === 'connected' || svc === 'running';
-    botMod.updateWorkstationCard();
-    if (isOn) {
+    const result = await botMod.updateWorkstationCard().catch(() => null);
+    if (result?.isOn) {
       clearInterval(_botPollFast);
       _startSlowPoll();
     }

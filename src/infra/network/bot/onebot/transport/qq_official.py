@@ -92,6 +92,9 @@ class QQOfficialTransport(BaseTransport):
         # session_id → 发送上下文
         self._session_ctx: dict[str, _SessionCtx] = {}
 
+        # botpy 线程实际探测到的出口 IP（连 QQ 前通过 aiohttp 探测，与 botpy 使用同一代理）
+        self._outbound_ip: str | None = None
+
     # ── BaseTransport ─────────────────────────────────────────────────────────
 
     async def start(self) -> None:
@@ -114,6 +117,9 @@ class QQOfficialTransport(BaseTransport):
         if self._thread is not None:
             self._thread.join(timeout=10)
             self._thread = None
+        # 清空引用，确保 stop 后 call_action / send_text 快速失败而非对关闭的 loop 投递
+        self._client   = None
+        self._bot_loop = None
 
     async def call_action(
         self,
@@ -132,7 +138,11 @@ class QQOfficialTransport(BaseTransport):
         return await asyncio.wait_for(asyncio.wrap_future(cf), timeout)
 
     def status(self) -> dict:
-        return {"state": self._state, "appid": self._appid}
+        return {
+            "state":       self._state,
+            "appid":       self._appid,
+            "outbound_ip": self._outbound_ip,
+        }
 
     # ── botpy 后台线程 ────────────────────────────────────────────────────────
 
@@ -141,6 +151,54 @@ class QQOfficialTransport(BaseTransport):
 
         from config import paths
         from botpy.logging import DEFAULT_FILE_HANDLER
+
+        # botpy 底层使用 aiohttp，aiohttp.ClientSession 默认 trust_env=False，
+        # 不会自动读取 HTTP_PROXY / HTTPS_PROXY 等系统代理环境变量。
+        # 此处 monkey-patch 使其默认开启 trust_env，从而让代理环境变量对 botpy 生效。
+        import os as _os
+        import aiohttp as _aiohttp
+        _orig_cs_init = _aiohttp.ClientSession.__init__
+
+        def _trust_env_init(self, *args, **kwargs):
+            kwargs.setdefault("trust_env", True)
+            _orig_cs_init(self, *args, **kwargs)
+
+        _aiohttp.ClientSession.__init__ = _trust_env_init
+
+        # 若配置文件指定了代理，写入环境变量供 trust_env 读取；
+        # 不覆盖用户已手动设置的同名变量。
+        from config.infra.bot_config import BotConfig as _BotConfig
+        _cfg_proxy = _BotConfig.load().proxy.strip()
+        if _cfg_proxy:
+            _os.environ.setdefault("HTTP_PROXY",  _cfg_proxy)
+            _os.environ.setdefault("HTTPS_PROXY", _cfg_proxy)
+            logger.info("[QQOfficialTransport] using proxy: %s", _cfg_proxy)
+
+        # botpy v1.2.1 已知 bug：任意 API 请求超时时，botpy/http.py 的 request()
+        # 捕获 TimeoutError 后仅打印警告并 return None，调用方没有防御判空。
+        # 根源修复：patch BotHttp.request，对 None 结果自动重试，覆盖所有 API 调用。
+        # Ref: https://github.com/AstrBotDevs/AstrBot/issues/6858
+        import asyncio as _asyncio
+        import botpy.http as _botpy_http
+        _orig_request = _botpy_http.BotHttp.request
+
+        async def _retrying_request(http_self, route, **kwargs):
+            for _attempt in range(1, 6):
+                result = await _orig_request(http_self, route, **kwargs)
+                if result is not None:
+                    return result
+                logger.warning(
+                    "[QQOfficialTransport] %s %s 返回 None"
+                    "（尝试 %d/5，可能是网络超时），5 秒后重试…",
+                    route.method, route.path, _attempt,
+                )
+                await _asyncio.sleep(5)
+            raise RuntimeError(
+                f"{route.method} {route.path} 连续 5 次返回 None，"
+                "请检查网络连通性或代理设置"
+            )
+
+        _botpy_http.BotHttp.request = _retrying_request
 
         # Redirect botpy file log from cwd to .react/logs/
         _log_dir = paths.cache_root / "logs"
@@ -213,9 +271,36 @@ class QQOfficialTransport(BaseTransport):
             ext_handlers=_file_handler,
         )
 
-        loop.run_until_complete(
-            self._client.start(appid=self._appid, secret=self._secret)
-        )
+        async def _probe_ip() -> None:
+            # 探测实际出口 IP——仅供日志参考，失败不影响 bot 启动。
+            _timeout = _aiohttp.ClientTimeout(total=8)
+            async with _aiohttp.ClientSession(timeout=_timeout) as _sess:
+                async with _sess.get("https://api.ipify.org?format=json") as _r:
+                    _d = await _r.json(content_type=None)
+                    self._outbound_ip = _d.get("ip", "unknown")
+            logger.info(
+                "[QQOfficialTransport] botpy 实际出口 IP: %s  "
+                "（若与 QQ 开放平台白名单不符，请更新白名单或配置代理）",
+                self._outbound_ip,
+            )
+
+        def _on_probe_done(t: _asyncio.Task) -> None:
+            if not t.cancelled() and t.exception() is not None:
+                logger.warning(
+                    "[QQOfficialTransport] 出口 IP 探测失败（网络不通或代理未就绪）: %s",
+                    t.exception(),
+                )
+            if self._outbound_ip is None:
+                self._outbound_ip = "unknown"
+
+        async def _probe_then_start() -> None:
+            # 以后台 Task 运行 IP 探测，不阻塞 bot 启动；
+            # 超时或网络异常由 _on_probe_done 回调处理。
+            probe = loop.create_task(_probe_ip())
+            probe.add_done_callback(_on_probe_done)
+            await self._client.start(appid=self._appid, secret=self._secret)
+
+        loop.run_until_complete(_probe_then_start())
         self._state = "stopped"
         logger.warning("[QQOfficialTransport] botpy loop exited, transport stopped")
 
@@ -231,62 +316,79 @@ class QQOfficialTransport(BaseTransport):
                 ) if not f.cancelled() and f.exception() else None
             )
 
+    # ── BaseTransport: high-level send_text ───────────────────────────────────
+
+    async def send_text(self, target: dict, text: str) -> None:
+        """Send a plain-text message, bridging from the main loop to the bot loop."""
+        if self._client is None or self._bot_loop is None:
+            raise RuntimeError(
+                f"QQOfficialTransport not running (state={self._state})"
+            )
+        if target.get("message_type") == "group" and target.get("group_id") is not None:
+            cf = asyncio.run_coroutine_threadsafe(
+                self._do_send_group(target["group_id"], text),
+                self._bot_loop,
+            )
+        else:
+            cf = asyncio.run_coroutine_threadsafe(
+                self._do_send_c2c(target["user_id"], text),
+                self._bot_loop,
+            )
+        # 不设外层 timeout：_retrying_request 在 5 次失败后会 raise RuntimeError，
+        # 届时异常由 _send_loop 的 future.result() 捕获，线程退出后由 _run_forever 重建。
+        # 若在此加 wait_for timeout，会在重试 sleep 期间提前 cancel cf，
+        # 导致 TimeoutError 早于 RuntimeError 到达，且 BOT_LOOP 中的协程状态不一致。
+        await asyncio.wrap_future(cf)
+
     # ── 在 botpy loop 中执行 API 调用 ─────────────────────────────────────────
 
-    async def _do_call_action(self, action: str, params: dict) -> dict:
-        api = self._client.api
+    async def _do_send_c2c(self, uid: int, text: str) -> str:
+        """Send a C2C (private) message. Runs inside the botpy event loop."""
+        ctx = self._session_ctx.get(f"private_{uid}")
+        if ctx is None:
+            raise RuntimeError(
+                f"No active C2C session for user_id={uid}; "
+                "user must send a message first (passive-reply only)"
+            )
+        logger.info("[QQ→C2C ] uid=%d | seq=%d | %r", uid, ctx.msg_seq, text[:100])
+        result = await self._client.api.post_c2c_message(
+            openid=ctx.target_id,
+            msg_type=0,
+            content=text,
+            msg_id=ctx.last_msg_id,
+            msg_seq=ctx.msg_seq,
+        )
+        ctx.msg_seq += 1
+        logger.info("[QQ→C2C ] result: %r", result)
+        return (result or {}).get("id", "")
 
+    async def _do_send_group(self, gid: int, text: str) -> str:
+        """Send a group message. Runs inside the botpy event loop."""
+        ctx = self._session_ctx.get(f"group_{gid}")
+        if ctx is None:
+            raise RuntimeError(
+                f"No active group session for group_id={gid}; "
+                "user must @bot first (passive-reply only)"
+            )
+        logger.info("[QQ→GROUP] gid=%d | seq=%d | %r", gid, ctx.msg_seq, text[:100])
+        result = await self._client.api.post_group_message(
+            group_openid=ctx.target_id,
+            msg_type=0,
+            content=text,
+            msg_id=ctx.last_msg_id,
+            msg_seq=ctx.msg_seq,
+        )
+        ctx.msg_seq += 1
+        return (result or {}).get("id", "")
+
+    async def _do_call_action(self, action: str, params: dict) -> dict:
         if action == "send_private_msg":
-            uid = params["user_id"]
-            ctx = self._session_ctx.get(f"private_{uid}")
-            if ctx is None:
-                raise RuntimeError(
-                    f"No active C2C session for user_id={uid}; "
-                    "user must send a message first (passive-reply only)"
-                )
-            text = str(params["message"])
-            logger.info(
-                "[QQ→C2C ] uid=%d | seq=%d | %r",
-                uid, ctx.msg_seq, text[:100],
-            )
-            result = await api.post_c2c_message(
-                openid=ctx.target_id,
-                msg_type=0,
-                content=text,
-                msg_id=ctx.last_msg_id,
-                msg_seq=ctx.msg_seq,
-            )
-            ctx.msg_seq += 1
-            return {
-                "status": "ok",
-                "data": {"message_id": (result or {}).get("id", "")},
-            }
+            msg_id = await self._do_send_c2c(params["user_id"], str(params["message"]))
+            return {"status": "ok", "data": {"message_id": msg_id}}
 
         if action == "send_group_msg":
-            gid = params["group_id"]
-            ctx = self._session_ctx.get(f"group_{gid}")
-            if ctx is None:
-                raise RuntimeError(
-                    f"No active group session for group_id={gid}; "
-                    "user must @bot first (passive-reply only)"
-                )
-            text = str(params["message"])
-            logger.info(
-                "[QQ→GROUP] gid=%d | seq=%d | %r",
-                gid, ctx.msg_seq, text[:100],
-            )
-            result = await api.post_group_message(
-                group_openid=ctx.target_id,
-                msg_type=0,
-                content=text,
-                msg_id=ctx.last_msg_id,
-                msg_seq=ctx.msg_seq,
-            )
-            ctx.msg_seq += 1
-            return {
-                "status": "ok",
-                "data": {"message_id": (result or {}).get("id", "")},
-            }
+            msg_id = await self._do_send_group(params["group_id"], str(params["message"]))
+            return {"status": "ok", "data": {"message_id": msg_id}}
 
         return {
             "status": "failed",

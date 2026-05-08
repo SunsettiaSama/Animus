@@ -6,6 +6,15 @@ export function onBotTransportChange() {
   const t = _v('s-bot-transport');
   $('bot-forward-ws-section')?.classList.toggle('hidden', t !== 'forward_ws');
   $('bot-official-section')?.classList.toggle('hidden', t !== 'qq_official');
+  if (t === 'qq_official') _loadPublicIp();
+}
+
+async function _loadPublicIp() {
+  const el = $('s-bot-public-ip');
+  if (!el) return;
+  el.textContent = '查询中…';
+  const d = await botMod.getPublicIp().catch(() => null);
+  el.textContent = d?.ip ?? '查询失败';
 }
 
 export async function load() {
@@ -19,6 +28,7 @@ export async function load() {
   _si('s-bot-appid',        d.appid ?? '');
   _si('s-bot-secret',       d.secret ?? '');
   _sc('s-bot-sandbox',      d.is_sandbox ?? false);
+  _si('s-bot-proxy',        d.proxy ?? '');
   _si('s-bot-users',        (d.allowed_private_users ?? []).join(', '));
   _si('s-bot-groups',       (d.allowed_groups ?? []).join(', '));
   _si('s-bot-prefix',       d.command_prefix ?? '');
@@ -26,6 +36,8 @@ export async function load() {
   _si('s-bot-ttl',          d.session_ttl_hours ?? 24);
   _si('s-bot-invite-code',  d.invite_code ?? '');
   _si('s-bot-invite-limit', d.invite_daily_limit ?? 4);
+  _sc('s-bot-show-step-progress', d.show_step_progress    ?? false);
+  _si('s-bot-debounce',          d.message_debounce_secs ?? 2);
   onBotTransportChange();
 
   const st    = await infraMod.bot.status().catch(() => null);
@@ -38,7 +50,7 @@ export async function load() {
     badge.textContent = state;
     badge.className   = 'bot-status-badge ' + (isOn ? 'ok' : isLoading ? 'loading' : 'off');
     const sessEl = $('s-bot-sessions-count');
-    if (sessEl) sessEl.textContent = `${st.active_sessions ?? 0} active sessions`;
+    if (sessEl) sessEl.textContent = `${st.active_sessions ?? 0} 个活跃会话`;
   }
 }
 
@@ -53,12 +65,15 @@ export async function save() {
     appid:                  _v('s-bot-appid'),
     secret:                 _v('s-bot-secret'),
     is_sandbox:             _c('s-bot-sandbox'),
+    proxy:                  _v('s-bot-proxy').trim(),
     allowed_private_users:  _ids('s-bot-users'),
     allowed_groups:         _ids('s-bot-groups'),
     command_prefix:         _v('s-bot-prefix'),
     max_sessions:           parseInt(_v('s-bot-max-sessions')) || 100,
     session_ttl_hours:      parseFloat(_v('s-bot-ttl')) || 24,
-    invite_code:            _v('s-bot-invite-code').trim(),
-    invite_daily_limit:     parseInt(_v('s-bot-invite-limit')) || 4,
+    invite_code:              _v('s-bot-invite-code').trim(),
+    invite_daily_limit:       parseInt(_v('s-bot-invite-limit')) || 4,
+    show_step_progress:    _c('s-bot-show-step-progress'),
+    message_debounce_secs: parseFloat(_v('s-bot-debounce')) || 0,
   });
 }

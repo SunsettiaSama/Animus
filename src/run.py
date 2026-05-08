@@ -222,7 +222,7 @@ def run_webui(host: str, port: int, llm_config: Path, no_searxng: bool) -> None:
     check_llm(llm_config)
     print(f"\n{_bold('启动 WebUI')}  →  http://{host}:{port}\n")
 
-    uvicorn.run("webui.app:app", host=host, port=port, reload=False, timeout_graceful_shutdown=5)
+    uvicorn.run("webui.app:app", host=host, port=port, reload=False, timeout_graceful_shutdown=30)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

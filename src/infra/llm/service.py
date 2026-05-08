@@ -1,51 +1,80 @@
 from __future__ import annotations
 
 import dataclasses
+import sys
 from typing import TYPE_CHECKING
 
 from infra.base_service import BaseServiceManager
-from infra.llm.llm import LLM
+from infra.llm.backend import BaseInferenceBackend
+from infra.llm.base import VLLM_LINUX_ONLY
 from infra.llm.handle import LLMHandle
 
 if TYPE_CHECKING:
     from config.llm_core.config import LLMConfig
     from config.llm_core.vllm_config import VLLMConfig
-    from infra.llm.base import BaseVLLMManager
 
 
 class LLMService(BaseServiceManager):
-    """Unified LLM infrastructure service.
+    """Unified LLM infrastructure coordinator.
 
-    Manages the full lifecycle of an LLM backend:
-    - backend="vllm"         : starts/stops the vLLM subprocess, patches cfg.base_url
-    - backend="openai"       : creates OpenAILLM directly (no subprocess)
-    - backend="transformers" : loads model in-process
+    Holds one instance of each of the three inference backends and
+    selects the appropriate one based on platform and the requested
+    ``cfg.backend`` value:
 
-    Owns the single canonical LLMHandle.  All consumers (TaoLoop, PersonaManager,
-    etc.) receive this handle at init time.  Calling start() or reload() with a
-    new LLMConfig calls handle.update(new_llm) internally — callers never need
-    to do anything to pick up the change.
+    +-----------------+------------------+-----------------------------+
+    | backend value   | platform         | selected backend            |
+    +=================+==================+=============================+
+    | "transformers"  | any              | TransformersBackend         |
+    | "vllm"          | Linux            | OfficialVLLMManager         |
+    | "vllm"          | Windows          | TransformersBackend (degrade)|
+    | "vllm-clone"    | Linux            | CustomVLLMManager           |
+    | "vllm-clone"    | Windows          | TransformersBackend (degrade)|
+    | "openai"        | any              | no subprocess; OpenAILLM    |
+    +-----------------+------------------+-----------------------------+
+
+    External callers (TaoLoop, PersonaManager, etc.) receive the single
+    canonical ``LLMHandle`` at init time.  Calling ``start()`` or
+    ``reload()`` updates the handle in-place — callers never need to do
+    anything to pick up backend changes.
+
+    ``status()`` exposes a ``degraded_reason`` key when an automatic
+    backend downgrade occurred.
     """
 
-    def __init__(self, vllm_manager: BaseVLLMManager) -> None:
-        self._vllm = vllm_manager
+    def __init__(
+        self,
+        transformers_backend: BaseInferenceBackend,
+        vllm_backend: BaseInferenceBackend,
+        clone_backend: BaseInferenceBackend,
+    ) -> None:
+        self._backends: dict[str, BaseInferenceBackend] = {
+            "transformers": transformers_backend,
+            "vllm":         vllm_backend,
+            "vllm-clone":   clone_backend,
+        }
         self._handle: LLMHandle | None = None
         self._cfg: LLMConfig | None = None
         self._state: str = "stopped"
+        self._degraded_reason: str | None = None
 
     # ── BaseServiceManager interface ──────────────────────────────────────────
 
     def start(self, cfg: LLMConfig, vllm_cfg: VLLMConfig | None = None, **kwargs) -> None:
-        from config.llm_core.config import LLMConfig as _LLMConfig
-        if cfg.backend == "vllm":
-            if self._vllm.status().get("state") != "running":
-                if vllm_cfg is None:
-                    from config.llm_core.vllm_config import VLLMConfig
-                    vllm_cfg = VLLMConfig()
-                self._vllm.start(cfg.model, vllm_cfg)
-            cfg = dataclasses.replace(cfg, base_url=self._vllm.base_url)
+        self._degraded_reason = None
 
-        llm = LLM(cfg)
+        if cfg.backend in ("vllm", "vllm-clone") and sys.platform == "win32":
+            self._degraded_reason = VLLM_LINUX_ONLY
+            cfg = dataclasses.replace(cfg, backend="transformers")
+
+        if cfg.backend in self._backends:
+            from config.llm_core.vllm_config import VLLMConfig as _VLLMConfig
+            backend = self._backends[cfg.backend]
+            backend.start(cfg.model, vllm_cfg or _VLLMConfig())
+            llm = backend.build_llm(cfg)
+        else:
+            from infra.llm.llm import LLM
+            llm = LLM(cfg)
+
         if self._handle is None:
             self._handle = LLMHandle(llm)
         else:
@@ -55,15 +84,16 @@ class LLMService(BaseServiceManager):
         self._state = "running"
 
     def stop(self) -> None:
-        if self._cfg and self._cfg.backend == "vllm":
-            self._vllm.stop()
+        if self._cfg and self._cfg.backend in self._backends:
+            self._backends[self._cfg.backend].stop()
         self._state = "stopped"
 
     def status(self) -> dict:
         return {
-            "state":   self._state,
-            "model":   self._cfg.model   if self._cfg else None,
-            "backend": self._cfg.backend if self._cfg else None,
+            "state":          self._state,
+            "model":          self._cfg.model   if self._cfg else None,
+            "backend":        self._cfg.backend if self._cfg else None,
+            "degraded_reason": self._degraded_reason,
         }
 
     # ── Public interface for consumers ────────────────────────────────────────

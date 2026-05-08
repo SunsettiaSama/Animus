@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from datetime import datetime, timezone
 
 from agent.scheduler.task import ScheduledTask, TaskStatus
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_utc(iso: str) -> datetime:
+    t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t
 
 
 class TaskStore:
@@ -68,8 +78,29 @@ class TaskStore:
             self._save(data)
         return True
 
+    def pause(self, task_id: str) -> bool:
+        with self._lock:
+            data = self._load()
+            if task_id not in data:
+                return False
+            if data[task_id].get("status") not in (TaskStatus.pending.value,):
+                return False
+            data[task_id]["status"] = TaskStatus.paused.value
+            self._save(data)
+        return True
+
+    def resume(self, task_id: str) -> bool:
+        with self._lock:
+            data = self._load()
+            if task_id not in data:
+                return False
+            if data[task_id].get("status") != TaskStatus.paused.value:
+                return False
+            data[task_id]["status"] = TaskStatus.pending.value
+            self._save(data)
+        return True
+
     def reset_stale_running(self) -> int:
-        """将遗留的 running 状态任务重置为 pending（服务重启后调用）。"""
         with self._lock:
             data = self._load()
             count = 0
@@ -93,11 +124,38 @@ class TaskStore:
             if not next_run:
                 continue
             try:
-                t = datetime.fromisoformat(next_run.replace("Z", "+00:00"))
-                if t.tzinfo is None:
-                    t = t.replace(tzinfo=timezone.utc)
+                t = _parse_utc(next_run)
                 if t <= now_utc:
                     due.append(ScheduledTask.from_dict(raw))
             except ValueError:
                 continue
         return due
+
+    def advance_cron(self, task_id: str) -> str | None:
+        """Compute and store the next cron fire time. Returns the new next_run_at ISO string."""
+        with self._lock:
+            data = self._load()
+            raw = data.get(task_id)
+            if raw is None:
+                return None
+            cron_expr = raw.get("trigger", {}).get("cron_expr")
+            if not cron_expr:
+                return None
+            now = datetime.now(timezone.utc)
+            next_dt = _next_cron(cron_expr, now)
+            if next_dt is None:
+                return None
+            raw["next_run_at"] = next_dt.isoformat()
+            raw["status"] = TaskStatus.pending.value
+            self._save(data)
+        return next_dt.isoformat()
+
+
+def _next_cron(expr: str, after: datetime) -> datetime | None:
+    try:
+        from croniter import croniter
+        it = croniter(expr, after)
+        return it.get_next(datetime).replace(tzinfo=timezone.utc)
+    except Exception as exc:
+        logger.warning("[TaskStore] cron calculation failed for %r: %s", expr, exc)
+        return None

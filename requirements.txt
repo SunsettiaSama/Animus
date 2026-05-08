@@ -25,6 +25,7 @@ pyyaml
 numpy
 httpx
 html2text
+croniter
 
 # Knowledge base
 pymysql

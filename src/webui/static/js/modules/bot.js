@@ -13,13 +13,14 @@ export const getStatus   = () => http.get(PATHS.infra.bot.status);
 export const getSessions = () => http.get(PATHS.infra.bot.sessions);
 export const start       = () => http.post(PATHS.infra.bot.start, {}).then(d => { _cb.onToast('Bot service starting…'); return d; });
 export const stop        = () => http.post(PATHS.infra.bot.stop,  {}).then(() => _cb.onToast('Bot service stopped'));
+export const getPublicIp = () => http.get(PATHS.infra.bot.publicIp);
 
 // ── Workstation card ──────────────────────────────────────────────────────────
 
 export async function updateWorkstationCard() {
   const badgeEl = document.getElementById('mc-bot-badge');
   const bodyEl  = document.getElementById('mc-bot-body');
-  if (!bodyEl) return;
+  if (!bodyEl) return null;
 
   const [cfg, st] = await Promise.allSettled([loadConfig(), getStatus()]);
   const c = cfg.status === 'fulfilled' ? cfg.value : null;
@@ -56,6 +57,8 @@ export async function updateWorkstationCard() {
       <span class="mc-val">${sessions} 活跃</span></div>
     <div class="mc-row"><span class="mc-key">前缀</span>
       <span class="mc-val">${prefix}</span></div>`;
+
+  return { isOn, state, svcState };
 }
 
 function _stateLabel(state) {

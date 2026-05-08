@@ -62,6 +62,9 @@ class ConvLoop:
     def reset(self) -> None:
         self._tao.reset()
 
+    def preload_with_recall(self) -> None:
+        self._tao.preload_with_recall()
+
     @property
     def turn_count(self) -> int:
         return self._tao._manager.turn_count

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import dataclasses
 import urllib.request
 
+from config.llm_core.config import LLMConfig
 from config.llm_core.vllm_config import VLLMConfig
 from infra.llm.base import BaseVLLMManager
+from infra.llm.llm import BaseLLM, OpenAILLM
 
 
 class OfficialVLLMManager(BaseVLLMManager):
@@ -17,7 +20,7 @@ class OfficialVLLMManager(BaseVLLMManager):
         mgr = OfficialVLLMManager()
         mgr.start("Qwen/Qwen2.5-7B-Instruct", VLLMConfig(tensor_parallel_size=2))
         # poll mgr.health_check() or mgr.status()["state"] == "running"
-        llm = OpenAILLM(base_url=mgr.base_url, api_key="EMPTY", ...)
+        llm = mgr.build_llm(llm_cfg)
         ...
         mgr.stop()
     """
@@ -51,7 +54,7 @@ class OfficialVLLMManager(BaseVLLMManager):
             "pid":      pid,
             "base_url": self.base_url,
             "healthy":  self._port_is_open() if state == "running" else False,
-            "provider": "official",
+            "provider": self.provider,
         }
 
     @property
@@ -68,3 +71,12 @@ class OfficialVLLMManager(BaseVLLMManager):
         url = f"http://{cfg.host}:{cfg.port}/health"
         result = urllib.request.urlopen(urllib.request.Request(url), timeout=2)
         return result.status == 200
+
+    # ── BaseInferenceBackend interface ────────────────────────────────────────
+
+    def build_llm(self, cfg: LLMConfig) -> BaseLLM:
+        return OpenAILLM(dataclasses.replace(cfg, base_url=self.base_url))
+
+    @property
+    def provider(self) -> str:
+        return "vllm"

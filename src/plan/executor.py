@@ -13,10 +13,18 @@ from plan.document import PlanDocument, PlanTask, TaskExecutionContext, TaskStat
 class ExecutorAgent(AgentBase):
     role = "executor"
 
-    def __init__(self, llm_cfg_path: str, agent_cfg: Any = None) -> None:
+    def __init__(
+        self,
+        llm_cfg_path: str,
+        agent_cfg: Any = None,
+        executor_pool: ThreadPoolExecutor | None = None,
+    ) -> None:
         self._llm_cfg_path = llm_cfg_path
         self._agent_cfg = agent_cfg
-        self._executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="executor")
+        self._owned_pool = executor_pool is None
+        self._executor = executor_pool or ThreadPoolExecutor(
+            max_workers=8, thread_name_prefix="executor"
+        )
 
     async def run(self, instruction: str, **ctx: Any) -> AgentResult:
         task: PlanTask = ctx["task"]
@@ -29,7 +37,7 @@ class ExecutorAgent(AgentBase):
         profile_name = task.params.get("profile", task.profile)
         max_steps = task.params.get("max_steps", task.max_steps)
 
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             self._executor,
             self._run_sync,
             instruction,

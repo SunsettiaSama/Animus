@@ -20,6 +20,7 @@ class BotConfigPayload(BaseModel):
     appid:                   str       = ""
     secret:                  str       = ""
     is_sandbox:              bool      = False
+    proxy:                   str       = ""
     allowed_private_users:   list[str] = []
     allowed_groups:          list[str] = []
     command_prefix:          str       = ""
@@ -27,6 +28,8 @@ class BotConfigPayload(BaseModel):
     session_ttl_hours:       float     = 24.0
     invite_code:             str       = ""
     invite_daily_limit:      int       = 4
+    show_step_progress:      bool      = False
+    message_debounce_secs:   float     = 2.0
 
     # Accept both string and integer items (old JS sent ints, new JS sends strings)
     @field_validator("allowed_private_users", "allowed_groups", mode="before")
@@ -50,13 +53,16 @@ def get_bot_config():
         "appid":                  cfg.appid,
         "secret":                 cfg.secret,
         "is_sandbox":             cfg.is_sandbox,
+        "proxy":                  cfg.proxy,
         "allowed_private_users":  cfg.allowed_private_users,
         "allowed_groups":         cfg.allowed_groups,
         "command_prefix":         cfg.command_prefix,
         "max_sessions":           cfg.max_sessions,
         "session_ttl_hours":      cfg.session_ttl_hours,
-        "invite_code":            cfg.invite_code,
-        "invite_daily_limit":     cfg.invite_daily_limit,
+        "invite_code":           cfg.invite_code,
+        "invite_daily_limit":    cfg.invite_daily_limit,
+        "show_step_progress":    cfg.show_step_progress,
+        "message_debounce_secs": cfg.message_debounce_secs,
     }
 
 
@@ -74,6 +80,7 @@ def save_bot_config(req: BotConfigPayload):
         appid=req.appid,
         secret=req.secret,
         is_sandbox=req.is_sandbox,
+        proxy=req.proxy,
         allowed_private_users=req.allowed_private_users,
         allowed_groups=req.allowed_groups,
         command_prefix=req.command_prefix,
@@ -81,6 +88,8 @@ def save_bot_config(req: BotConfigPayload):
         session_ttl_hours=req.session_ttl_hours,
         invite_code=req.invite_code,
         invite_daily_limit=req.invite_daily_limit,
+        show_step_progress=req.show_step_progress,
+        message_debounce_secs=req.message_debounce_secs,
     )
     new_cfg.to_yaml(app_paths.bot_config_yaml)
     # Push live changes to the running service
@@ -123,3 +132,25 @@ def bot_stop():
         return JSONResponse(status_code=503, content={"error": "BotService not initialized."})
     state.bot_service.stop()
     return {"status": "ok"}
+
+
+@router.get("/public-ip")
+def get_public_ip():
+    # 优先返回 botpy 线程实际探测到的出口 IP（与 QQ 平台看到的 IP 完全一致）
+    state = get_state()
+    if state.bot_service is not None:
+        transport = getattr(state.bot_service, "_transport", None)
+        outbound_ip = getattr(transport, "_outbound_ip", None)
+        if outbound_ip:
+            return {"ip": outbound_ip, "source": "botpy"}
+
+    # Bot 未启动时，回退到 urllib 探测（走系统/环境变量代理）
+    import json
+    import urllib.request
+    req = urllib.request.Request(
+        "https://api.ipify.org?format=json",
+        headers={"User-Agent": "ReAct-Agent/1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read())
+    return {"ip": data.get("ip", "unknown"), "source": "urllib"}

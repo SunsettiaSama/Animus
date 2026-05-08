@@ -99,16 +99,24 @@ class RunPlanSkill(BaseSkill):
         run_state = self.skill_set._start_run()
 
         # Register event_sink subscriber before running
+        _on_event_ref: list = []
+
         if event_sink is not None:
-            from plan.event import LifecycleStateEvent
-
             def _on_event(event) -> None:
-                if isinstance(event, LifecycleStateEvent):
-                    event_sink({"type": "lifecycle_state", "plan_id": event.plan_id, "state": event.state})
-                else:
-                    event_sink(_serialize_plan_event(event))
+                event_sink(_serialize_plan_event(event))
 
+            _on_event_ref.append(_on_event)
             orchestrator.subscribe(_on_event)
+
+        # Register orchestrator globally so REST APIs can find it
+        _state_ref: list = []
+        try:
+            from state import get_state
+            state = get_state()
+            state.active_orchestrator = orchestrator
+            _state_ref.append(state)
+        except Exception:
+            pass
 
         def _run_thread() -> None:
             loop = asyncio.new_event_loop()
@@ -117,6 +125,9 @@ class RunPlanSkill(BaseSkill):
             run_state.result = result
             run_state.done_event.set()
             loop.close()
+            # Unsubscribe event callback to prevent leaks on re-use
+            if _on_event_ref and _on_event_ref[0] in orchestrator._event_callbacks:
+                orchestrator._event_callbacks.remove(_on_event_ref[0])
 
         thread = threading.Thread(target=_run_thread, daemon=True)
         thread.start()
@@ -262,13 +273,18 @@ def _format_plan_status(orchestrator: Any) -> str:
 # ── Plan event serialisation (no webui dependency) ────────────────────────────
 
 def _serialize_plan_event(event: Any) -> dict:
-    """Convert a PlanEvent dataclass to a JSON-serialisable dict for the event_sink."""
+    """Convert a PlanEvent dataclass or raw dict to a JSON-serialisable dict for the event_sink."""
+    # Raw dicts are forwarded as-is (e.g. replanner_thinking, log_line)
+    if isinstance(event, dict):
+        return event
     from plan.event import (
         HumanPatchEvent, LifecycleStateEvent,
         PlanAbortEvent, PlanCompleteEvent, PlanStartEvent,
-        ReplanEvent, SnapshotEvent,
-        TaskCompleteEvent, TaskFailedEvent, TaskRunningEvent,
-        TaskSkippedEvent, TaskStartEvent,
+        PlannerStepEvent, ReplanEvent, ReplannerCompleteEvent,
+        ReplannerStartEvent, ReplannerThinkingEvent,
+        SnapshotEvent, TaskCompleteEvent, TaskFailedEvent,
+        TaskRunningEvent, TaskSkippedEvent, TaskStartEvent,
+        TaskStepEvent, NodeExpansionRequestEvent, LogLineEvent,
     )
     if isinstance(event, PlanStartEvent):
         return {"type": "plan_start", "plan_id": event.plan_id, "title": event.title, "task_count": event.task_count}
@@ -294,4 +310,38 @@ def _serialize_plan_event(event: Any) -> dict:
         return {"type": "plan_abort", "plan_id": event.plan_id, "reason": event.reason}
     if isinstance(event, LifecycleStateEvent):
         return {"type": "lifecycle_state", "plan_id": event.plan_id, "state": event.state}
+    if isinstance(event, TaskStepEvent):
+        return {"type": "task_step", "plan_id": event.plan_id, "task_id": event.task_id, "step": event.step}
+    if isinstance(event, PlannerStepEvent):
+        return {
+            "type": "planner_step",
+            "plan_id": event.plan_id,
+            "phase": event.phase,
+            "step_index": event.step_index,
+            "thought": event.thought,
+            "action": event.action,
+            "observation": event.observation,
+        }
+    if isinstance(event, ReplannerStartEvent):
+        return {"type": "replanner_start", "plan_id": event.plan_id, "trigger": event.trigger, "cycle": event.cycle}
+    if isinstance(event, ReplannerCompleteEvent):
+        return {
+            "type": "replanner_complete",
+            "plan_id": event.plan_id,
+            "decision": event.decision,
+            "reason": event.reason,
+            "patches_count": event.patches_count,
+        }
+    if isinstance(event, ReplannerThinkingEvent):
+        return {"type": "replanner_thinking", "plan_id": event.plan_id, "stage": event.stage, "cycle": event.cycle}
+    if isinstance(event, NodeExpansionRequestEvent):
+        return {
+            "type": "node_expansion_request",
+            "plan_id": event.plan_id,
+            "task_id": event.task_id,
+            "reason": event.reason,
+            "suggested_subtasks": event.suggested_subtasks,
+        }
+    if isinstance(event, LogLineEvent):
+        return {"type": "log_line", "plan_id": event.plan_id, "level": event.level, "event": event.event, **event.payload}
     return {"type": "unknown"}

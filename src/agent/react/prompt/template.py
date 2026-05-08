@@ -51,7 +51,7 @@ EN = ReActTemplate(
         "Format your response STRICTLY using these XML tags:\n\n"
         "<T>Your reasoning about what to do next</T>\n"
         "<A>[{{\"action\": \"<tool name>\", \"args\": {{<JSON arguments>}}}}]</A>\n"
-        "<O>What you want to tell the user (optional on intermediate steps, REQUIRED on finish)</O>\n\n"
+        "<O>What you want to tell the user (OPTIONAL on intermediate steps, REQUIRED on finish)</O>\n\n"
         "Rules:\n"
         "- <T> contains your private reasoning — always required.\n"
         "- <A> contains a JSON array of tool calls — always required.\n"
@@ -60,8 +60,10 @@ EN = ReActTemplate(
         "    {{\"action\": \"tool_a\", \"args\": {{\"key\": \"value\"}}}},\n"
         "    {{\"action\": \"tool_b\", \"args\": {{\"key\": \"value\"}}}}\n"
         "  ]</A>\n"
-        "- <O> is the ONLY thing the user sees. Include it when you have something\n"
-        "  meaningful to communicate (progress update, partial result, clarification).\n"
+        "- <O> is the ONLY thing the user sees. Use it on EVERY intermediate step to\n"
+        "  share your current progress, what you are doing, or what you just found.\n"
+        "  Staying silent (empty <O>) across multiple steps makes the experience feel\n"
+        "  unresponsive — always keep the user informed as you work.\n"
         "  On the final step you MUST use finish and MUST include <O> with your answer.\n\n"
         "When you have the final answer, use:\n"
         "<T>I now know the final answer.</T>\n"
@@ -102,7 +104,7 @@ EN = ReActTemplate(
         desc="Compressed summary of reasoning steps evicted from this session's scratchpad.",
     ),
     question_prefix="Question:",
-    suffix="<T>",
+    suffix="",
     # Legacy single-call step format (used when Step.calls is None — old sessions)
     step_format=PromptTemplate.from_template(
         "Thought: {thought}\n"
@@ -119,7 +121,7 @@ CN = ReActTemplate(
         "请严格使用以下 XML 标签格式输出：\n\n"
         "<T>你对下一步的推理过程</T>\n"
         "<A>[{{\"action\": \"<工具名称>\", \"args\": {{<JSON 参数>}}}}]</A>\n"
-        "<O>你想告诉用户的内容（中间步骤可选，finish 步必须填写）</O>\n\n"
+        "<O>你想告诉用户的内容（可以有选择性地填写以给予用户反馈，但finish 步必须填写）</O>\n\n"
         "规则：\n"
         "- <T> 包含你的私有推理，始终必须填写。\n"
         "- <A> 包含工具调用的 JSON 数组，始终必须填写。\n"
@@ -128,8 +130,11 @@ CN = ReActTemplate(
         "    {{\"action\": \"工具A\", \"args\": {{\"key\": \"value\"}}}},\n"
         "    {{\"action\": \"工具B\", \"args\": {{\"key\": \"value\"}}}}\n"
         "  ]</A>\n"
-        "- <O> 是用户唯一能看到的内容。当你有有意义的内容要传达时（进度更新、\n"
-        "  阶段结果、说明）请填写。在最终步骤，你必须使用 finish 并且必须在 <O> 中写入你的回答。\n\n"
+        "- <O> 是用户唯一能看到的内容。请在每个中间步骤都填写 <O>，\n"
+        "  告知用户你当前的进展、正在做什么或刚刚发现了什么。\n"
+        "  连续多步保持沉默（空 <O>）会让用户感觉没有反馈，体验较差——\n"
+        "  请在推理过程中有选择性地与用户进行互动，注意推理链间的互动保持简单，一到两句话说明即可。\n"
+        "  在最终步骤，你必须使用 finish 并且必须在 <O> 中写入你的回答。\n\n"
         "当你得出最终答案时，使用：\n"
         "<T>我现在知道最终答案了。</T>\n"
         "<A>[{{\"action\": \"finish\", \"args\": {{\"answer\": \"<你的答案>\"}}}}]</A>\n"
@@ -168,7 +173,7 @@ CN = ReActTemplate(
         desc="本 session 因窗口溢出被驱逐的早期推理步骤压缩摘要。",
     ),
     question_prefix="问题：",
-    suffix="<T>",
+    suffix="",
     # Legacy single-call step format (used when Step.calls is None — old sessions)
     step_format=PromptTemplate.from_template(
         "Thought: {thought}\n"

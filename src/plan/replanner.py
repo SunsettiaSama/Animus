@@ -124,32 +124,53 @@ Respond with ONLY the JSON object, no other text.
 class ReplannerAgent(AgentBase):
     role = "replanner"
 
-    def __init__(self, cfg: ReplannerConfig, llm_cfg_path: str) -> None:
+    def __init__(
+        self,
+        cfg: ReplannerConfig,
+        llm_cfg_path: str,
+        executor_pool: ThreadPoolExecutor | None = None,
+        event_sink=None,
+    ) -> None:
         self._cfg = cfg
         self._llm_cfg_path = llm_cfg_path
         self._builder = ReplannerInputBuilder(cfg)
-        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="replanner")
+        self._owned_pool = executor_pool is None
+        self._executor = executor_pool or ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="replanner"
+        )
+        self._event_sink = event_sink  # callable(dict) or None
+
+    def set_event_sink(self, sink) -> None:
+        self._event_sink = sink
+
+    def _emit(self, event_dict: dict) -> None:
+        if self._event_sink is not None:
+            self._event_sink(event_dict)
 
     async def run(self, instruction: str, **ctx: Any) -> AgentResult:
         doc: PlanDocument = ctx["doc"]
         trigger: str = ctx.get("trigger", "manual")
         cycle: int = ctx.get("cycle", 0)
+        plan_id: str = ctx.get("plan_id", "")
 
         agent_id = str(uuid.uuid4())
-        decision = await asyncio.get_event_loop().run_in_executor(
+        self._emit({"type": "replanner_thinking", "plan_id": plan_id, "stage": "building_prompt", "cycle": cycle})
+        decision = await asyncio.get_running_loop().run_in_executor(
             self._executor,
             self._replan_sync,
             doc,
             trigger,
             cycle,
+            plan_id,
         )
         return AgentResult(agent_id=agent_id, role=self.role, status="done", output=decision)
 
-    def _replan_sync(self, doc: PlanDocument, trigger: str, cycle: int) -> ReplanDecision:
+    def _replan_sync(self, doc: PlanDocument, trigger: str, cycle: int, plan_id: str = "") -> ReplanDecision:
         from langchain_core.messages import HumanMessage, SystemMessage
         from config.llm_core.config import LLMConfig
         from infra.llm import LLM
 
+        self._emit({"type": "replanner_thinking", "plan_id": plan_id, "stage": "calling_llm", "cycle": cycle})
         llm = LLM(LLMConfig.from_yaml(self._llm_cfg_path))
         context = self._builder.build(doc, trigger, cycle)
 
@@ -159,6 +180,7 @@ class ReplannerAgent(AgentBase):
         ]
         response = llm.generate_messages(messages)
 
+        self._emit({"type": "replanner_thinking", "plan_id": plan_id, "stage": "parsing", "cycle": cycle})
         return self._parse_decision(response, trigger)
 
     def _parse_decision(self, text: str, trigger: str) -> ReplanDecision:

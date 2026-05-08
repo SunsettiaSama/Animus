@@ -133,6 +133,29 @@ class ReplannerCompleteEvent:
     patches_count: int
 
 
+@dataclass
+class ReplannerThinkingEvent:
+    plan_id: str
+    stage: str   # building_prompt | calling_llm | parsing
+    cycle: int = 0
+
+
+@dataclass
+class NodeExpansionRequestEvent:
+    plan_id: str
+    task_id: str
+    reason: str
+    suggested_subtasks: list[str]
+
+
+@dataclass
+class LogLineEvent:
+    plan_id: str
+    level: str
+    event: str
+    payload: dict
+
+
 PlanEvent = Union[
     PlanStartEvent,
     TaskStartEvent,
@@ -150,4 +173,7 @@ PlanEvent = Union[
     PlannerStepEvent,
     ReplannerStartEvent,
     ReplannerCompleteEvent,
+    ReplannerThinkingEvent,
+    NodeExpansionRequestEvent,
+    LogLineEvent,
 ]

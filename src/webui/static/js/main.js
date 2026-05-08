@@ -191,7 +191,7 @@ async function _runReact(question) {
   set('genId', genId);
   setState('streaming');
 
-  const ctrl          = render.appendReactMsg();
+  let   ctrl          = render.appendReactMsg();
   let   _stepI        = -1;
   const _stepHistory  = [];   // collect completed steps for persistence
 
@@ -199,12 +199,13 @@ async function _runReact(question) {
     onPromptPreview: msgs => ctrl.showPrompt(msgs),
     onStepStart: i  => { _stepI = i; ctrl.showActivity(`Step ${i + 1}…`); },
     onChunk:    (i, chunk) => ctrl.appendChunk(i, chunk),
-    onStep:      step  => { ctrl.addStep(step); _stepHistory.push(step); },
-    onStepPause: (i, output, reqId) => {
-      ctrl.addStepPause(i, output, reqId,
-        id => session.sendContinue(id),
-        id => { session.sendStop(id); },
-      );
+    onStep: step => {
+      ctrl.addStep(step);
+      _stepHistory.push(step);
+      if (step.output && step.action !== 'finish') {
+        ctrl.finalize(step.output, false);
+        ctrl = render.appendReactMsg();
+      }
     },
     onRetry:    (i, reason) => _showToast(`Retry ${i}: ${reason}`),
     onApprovalRequest: (reqId, tool, args) => _promptApproval(session, reqId, tool, args),
@@ -345,28 +346,37 @@ function onSchedTriggerChange() {
   const t = document.querySelector('input[name="sched-trigger-radio"]:checked')?.value ?? 'once';
   document.getElementById('sched-once-fields').style.display     = t === 'once'     ? '' : 'none';
   document.getElementById('sched-interval-fields').style.display = t === 'interval' ? '' : 'none';
+  const cronEl = document.getElementById('sched-cron-fields');
+  if (cronEl) cronEl.style.display = t === 'cron' ? '' : 'none';
 }
 
 async function createSchedulerTask() {
   const $ = id => document.getElementById(id);
   const triggerType = document.querySelector('input[name="sched-trigger-radio"]:checked')?.value ?? 'once';
+  const onComplete  = $('sched-on-complete')?.value?.trim() ?? '';
   const payload = {
     name:             $('sched-name')?.value ?? '',
     instruction:      $('sched-instruction')?.value ?? '',
     trigger_type:     triggerType,
     profile:          $('sched-profile')?.value ?? 'minimal',
+    delivery:         $('sched-delivery')?.value ?? 'push',
+    max_retries:      parseInt($('sched-max-retries')?.value ?? '0'),
+    on_complete:      onComplete || undefined,
     at:               triggerType === 'once'     ? $('sched-at')?.value       : undefined,
     interval_seconds: triggerType === 'interval' ? parseInt($('sched-interval')?.value) : undefined,
+    cron_expr:        triggerType === 'cron'     ? $('sched-cron-expr')?.value : undefined,
   };
   const msgEl = $('sched-form-msg');
   if (msgEl) msgEl.textContent = 'Creating…';
-  await schedulerMod.createTask(payload).catch(e => {
+  const result = await schedulerMod.createTask(payload).catch(e => {
     if (msgEl) msgEl.textContent = e.message;
     return null;
   });
+  if (!result) return;
   if (msgEl) msgEl.textContent = '';
   toggleSchedulerForm();
   schedulerMod.renderTaskTable();
+  schedulerMod.renderTimelineAxis();
 }
 
 // ── KB panel ──────────────────────────────────────────────────────────────────
@@ -484,7 +494,7 @@ function _bind() {
   document.getElementById('mc-benchmark')?.addEventListener('dblclick', goBenchmark);
 
   // Settings nav tab buttons
-  ['model','memory','persona','voice','vllm','sandbox','bot'].forEach(tab => {
+  ['model','memory','persona','voice','sandbox','bot'].forEach(tab => {
     document.getElementById(`snav-btn-${tab}`)?.addEventListener('click', () => settings.setTab(tab));
   });
 
@@ -570,13 +580,8 @@ async function boot() {
     _botPollSlow = setInterval(() => botMod.updateWorkstationCard(), 30_000);
   }
   _botPollFast = setInterval(async () => {
-    const st = await botMod.getStatus().catch(() => null);
-    if (!st) return;
-    const s   = (st.state         ?? '').trim();
-    const svc = (st.service_state ?? '').trim();
-    const isOn = s === 'running' || s === 'connected' || svc === 'running';
-    botMod.updateWorkstationCard();
-    if (isOn) {
+    const result = await botMod.updateWorkstationCard().catch(() => null);
+    if (result?.isOn) {
       clearInterval(_botPollFast);
       _scheduleBotSlowPoll();
     }

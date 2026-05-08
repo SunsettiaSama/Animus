@@ -36,7 +36,12 @@ export const PATHS = {
     clearPersona:'/api/react/persona/clear',
   },
   persona:   { get: '/api/persona', save: '/api/persona/save' },
-  scheduler: { tasks: '/api/scheduler/tasks', task: id => `/api/scheduler/tasks/${id}` },
+  scheduler: {
+    tasks:     '/api/scheduler/tasks',
+    task:      id => `/api/scheduler/tasks/${id}`,
+    axis:      '/api/scheduler/axis',
+    proactive: '/api/scheduler/proactive',
+  },
   knowledge: {
     docs:    '/api/kb/documents',
     doc:     id => `/api/kb/documents/${id}`,
@@ -61,6 +66,7 @@ export const PATHS = {
       sessions: '/api/bot/sessions',
       start:    '/api/bot/start',
       stop:     '/api/bot/stop',
+      publicIp: '/api/bot/public-ip',
     },
     services:{
       status:  '/api/services/status',

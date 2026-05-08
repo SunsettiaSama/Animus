@@ -62,11 +62,19 @@ def service_status(name: str):
 
 @router.post("/api/services/{name}/start")
 def service_start(name: str):
+    import sys
+    if name in ("vllm", "vllm-clone") and sys.platform == "win32":
+        return JSONResponse(status_code=503, content={
+            "error":          f"'{name}' is not available on Windows.",
+            "recommendation": "Run this project inside WSL2 (ubuntu-24.04+).",
+            "fallback":       "Use backend='transformers' in LLM config instead.",
+        })
+
     state = get_state()
     mgr   = state.service_registry.get(name)
     if mgr is None:
         return JSONResponse(status_code=404, content={"error": f"Unknown service: {name!r}"})
-    if name == "vllm":
+    if name in ("vllm", "vllm-clone"):
         if state.llm_cfg is None or not state.llm_cfg.model:
             return JSONResponse(
                 status_code=400,

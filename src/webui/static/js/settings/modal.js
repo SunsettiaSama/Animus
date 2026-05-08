@@ -9,7 +9,6 @@ import * as tabLlm     from './tabs/llm.js';
 import * as tabMemory  from './tabs/memory.js';
 import * as tabPersona from './tabs/persona.js';
 import * as tabVoice   from './tabs/voice.js';
-import * as tabVllm    from './tabs/vllm.js';
 import * as tabSandbox from './tabs/sandbox.js';
 import * as tabBot     from './tabs/bot.js';
 
@@ -20,7 +19,6 @@ const _TABS = {
   memory:  tabMemory,
   persona: tabPersona,
   voice:   tabVoice,
-  vllm:    tabVllm,
   sandbox: tabSandbox,
   bot:     tabBot,
 };
@@ -75,7 +73,7 @@ export const saveModelTab   = ()  => tabLlm.save();
 export const saveMemoryTab  = ()  => tabMemory.save();
 export const savePersonaTab = ()  => tabPersona.save();
 export const saveVoiceTab   = ()  => tabVoice.save();
-export const saveVLLMTab    = ()  => tabVllm.save();
+export const saveVLLMTab    = ()  => Promise.resolve(); // vLLM tab merged into Core tab; btn-vllm-save handles this directly
 export const saveSandboxTab = ()  => tabSandbox.save();
 export const saveBotTab     = ()  => tabBot.save();
 

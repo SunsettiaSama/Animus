@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from asyncio import Semaphore
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable
+from typing import Any, Callable
 
 from plan.channel import HumanEditChannel
-from plan.config import OrchestratorConfig, PlanConfig
+from plan.config import OrchestratorConfig
 from plan.document import PlanDocument, TaskStatus
+from plan.execution_context import PlanExecutionContext
 from plan.event import (
     HumanPatchEvent,
     LifecycleStateEvent,
@@ -43,12 +43,17 @@ class PlanOrchestrator:
         cfg: OrchestratorConfig,
         llm_cfg_path: str,
         agent_cfg: Any = None,
+        execution_context: PlanExecutionContext | None = None,
     ) -> None:
         self._cfg = cfg
         self._llm_cfg_path = llm_cfg_path
-        self._planner = PlannerAgent(cfg.planner, llm_cfg_path)
-        self._replanner = ReplannerAgent(cfg.replanner, llm_cfg_path)
-        self._executor = ExecutorAgent(llm_cfg_path, agent_cfg=agent_cfg)
+        self._agent_cfg = agent_cfg
+        # Agents are initialized lazily after execution context is set up
+        self._planner: PlannerAgent | None = None
+        self._replanner: ReplannerAgent | None = None
+        self._executor_agent: ExecutorAgent | None = None
+        self._external_ctx = execution_context  # caller-supplied context (or None → build lazily)
+        self._ctx: PlanExecutionContext | None = None
         self._events: list[PlanEvent] = []
         self._event_callbacks: list[Callable[[PlanEvent], None]] = []
         self._cycle = 0
@@ -61,6 +66,26 @@ class PlanOrchestrator:
         # Per-task TAO step capture (task_id → list of step dicts)
         self._task_steps: dict[str, list[dict]] = {}
         self._main_loop = None
+
+    def _build_agents(self) -> None:
+        ctx = self._ctx
+        assert ctx is not None
+        self._planner = PlannerAgent(
+            self._cfg.planner, self._llm_cfg_path, executor_pool=ctx.planner_pool
+        )
+        self._replanner = ReplannerAgent(
+            self._cfg.replanner, self._llm_cfg_path, executor_pool=ctx.replanner_pool
+        )
+        # Wire replanner event sink so it can emit thinking events back to subscribers
+        self._replanner.set_event_sink(self._emit_raw_dict)
+        self._executor_agent = ExecutorAgent(
+            self._llm_cfg_path, agent_cfg=self._agent_cfg, executor_pool=ctx.worker_pool
+        )
+
+    def _emit_raw_dict(self, d: dict) -> None:
+        """Forward a raw dict emitted by sub-agents (e.g. replanner_thinking) to subscribers."""
+        for cb in self._event_callbacks:
+            cb(d)  # type: ignore[arg-type]
 
     # ── Lifecycle state properties ────────────────────────────────────────────
 
@@ -96,7 +121,7 @@ class PlanOrchestrator:
         plan_id = str(uuid.uuid4())
         self._current_plan_id = plan_id
         self._task_steps = {}
-        self._main_loop = asyncio.get_event_loop()
+        self._main_loop = asyncio.get_running_loop()
         # Shared file-I/O lock: serialises snapshot writes, shadow-file writes, and
         # pause-state dumps so that concurrent coroutines never interleave file I/O
         # for the same plan directory.
@@ -113,8 +138,22 @@ class PlanOrchestrator:
         self._current_logger = logger
         self._current_snapshots = snapshots
 
+        # Wire real-time log line push to SSE subscribers
+        def _log_line_sink(record: dict) -> None:
+            for cb in self._event_callbacks:
+                cb(record)  # type: ignore[arg-type]
+        logger.set_line_sink(_log_line_sink)
+
         # ── Plan phase ───────────────────────────────────────────────────────
+        # Build a temporary context just for the planner phase (doc not available yet)
+        _pre_ctx = self._external_ctx or PlanExecutionContext(
+            plan_id=plan_id, effective_width=max(self._cfg.parallel_limit, 1)
+        )
+        self._ctx = _pre_ctx
+        self._build_agents()
+
         self._set_lifecycle(PlanLifecycleState.planning, plan_id)
+        assert self._planner is not None
         try:
             planner_result = await self._planner.run(
                 question,
@@ -129,6 +168,17 @@ class PlanOrchestrator:
         doc.plan_id = plan_id
         task_count = len(doc.all_tasks())
         self._current_doc = doc
+
+        # Rebuild execution context now that we have the DAG structure
+        if self._external_ctx is None:
+            self._ctx = PlanExecutionContext.from_config(
+                plan_id=plan_id,
+                parallel_limit=self._cfg.parallel_limit,
+                doc=doc,
+            )
+            # Re-wire agents to new pools
+            self._build_agents()
+
         self._emit(PlanStartEvent(plan_id=plan_id, title=doc.title, task_count=task_count))
         await logger.info("plan_created", title=doc.title, task_count=task_count)
 
@@ -173,6 +223,10 @@ class PlanOrchestrator:
         self._emit(PlanCompleteEvent(plan_id=plan_id, conclusion=conclusion))
         await logger.info("plan_complete", status=status, conclusion=conclusion[:200])
 
+        # Shut down execution context if we own it
+        if self._external_ctx is None and self._ctx is not None:
+            self._ctx.shutdown(wait=False)
+
         return PlanResult(plan_id=plan_id, status=status, answer=conclusion, doc=doc)
 
     # ── Event subscription ────────────────────────────────────────────────────
@@ -196,7 +250,8 @@ class PlanOrchestrator:
         plan_id: str,
         plan_file_lock: asyncio.Lock,
     ) -> None:
-        semaphore = Semaphore(self._cfg.parallel_limit)
+        assert self._ctx is not None
+        semaphore = self._ctx.semaphore
         resource_cond: asyncio.Condition = asyncio.Condition()
         in_use_writes: set[str] = set()
 
@@ -275,7 +330,8 @@ class PlanOrchestrator:
                 self._emit(TaskRunningEvent(plan_id=plan_id, task_id=task_id))
                 await logger.info("task_start", task_id=task_id, profile=task.profile)
 
-                result = await self._executor.run(
+                assert self._executor_agent is not None
+                result = await self._executor_agent.run(
                     instruction=task.description,
                     task=task,
                     doc=doc,
@@ -328,7 +384,7 @@ class PlanOrchestrator:
                     if new_tasks:
                         for t in new_tasks:
                             done_events[t.task_id] = asyncio.Event()
-                        asyncio.gather(*[run_when_ready(t.task_id) for t in new_tasks])
+                        await asyncio.gather(*[run_when_ready(t.task_id) for t in new_tasks])
 
         # Launch all pending tasks simultaneously
         pending = [t for t in doc.all_tasks() if t.status == TaskStatus.pending]
@@ -413,11 +469,13 @@ class PlanOrchestrator:
         await logger.info("replan_triggered", trigger=trigger, cycle=self._cycle)
         self._emit(ReplannerStartEvent(plan_id=plan_id, trigger=trigger, cycle=self._cycle))
 
+        assert self._replanner is not None
         result = await self._replanner.run(
             instruction="",
             doc=doc,
             trigger=trigger,
             cycle=self._cycle,
+            plan_id=plan_id,
         )
         decision: ReplanDecision = result.output
 
@@ -476,6 +534,42 @@ class PlanOrchestrator:
         await logger.info("patch_applied", patches_count=len(patches), ops=ops)
 
         channel.materialize(doc)
+
+    def _handle_expansion_request(self, ev: "NodeExpansionRequestEvent") -> None:
+        """
+        Called from call_soon_threadsafe when a SubAgent requests node expansion.
+        Emits the event for SSE subscribers and schedules an async replan coroutine.
+        """
+        from plan.event import NodeExpansionRequestEvent
+        self._emit(ev)
+        # Pause the expanding node and trigger async replan
+        if self._current_doc is not None:
+            from plan.document import TaskStatus
+            task = self._current_doc.get_task(ev.task_id)
+            task.status = TaskStatus.paused
+        if self._main_loop is not None and self._main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self._expansion_replan(ev),
+                self._main_loop,
+            )
+
+    async def _expansion_replan(self, ev: "NodeExpansionRequestEvent") -> None:
+        if self._current_doc is None or self._current_logger is None or self._current_snapshots is None:
+            return
+        trigger = f"expansion_request:{ev.task_id}"
+        decision = await self._call_replanner(
+            self._current_doc,
+            self._current_snapshots,
+            self._current_logger,
+            ev.plan_id,
+            trigger=trigger,
+        )
+        # Mark original node as done if replanner added replacement tasks
+        if decision.patches and self._current_doc is not None:
+            from plan.document import TaskStatus
+            task = self._current_doc.get_task(ev.task_id)
+            if task.status == TaskStatus.paused:
+                task.status = TaskStatus.skipped
 
     async def _emit_pause_snapshot(
         self,

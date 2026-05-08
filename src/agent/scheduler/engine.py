@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
+from agent.scheduler.clock import TemporalClock
 from agent.scheduler.config import SchedulerConfig
 from agent.scheduler.runner import TaskRunner
 from agent.scheduler.store import TaskStore
-from agent.scheduler.task import ScheduledTask, TaskStatus, Trigger
+from agent.scheduler.task import DeliveryMode, ScheduledTask, TaskStatus, Trigger
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,12 @@ def _utcnow_iso() -> str:
 
 
 class SchedulerEngine:
+    """Top-level scheduler facade.
+
+    Internally uses a :class:`TemporalClock` running on a dedicated daemon
+    thread — completely isolated from the uvicorn asyncio event loop.
+    """
+
     def __init__(
         self,
         cfg: SchedulerConfig,
@@ -26,19 +32,28 @@ class SchedulerEngine:
         timeline=None,
         notify_fn: Callable[[ScheduledTask, str], None] | None = None,
     ):
-        self._cfg    = cfg
-        self._store  = TaskStore(cfg.scheduler_dir)
-        self._notify_fn = notify_fn
+        self._cfg = cfg
+        self._store = TaskStore(cfg.scheduler_dir)
         self._runner = TaskRunner(
             cfg,
             long_term=long_term,
             timeline=timeline,
             notify_fn=notify_fn,
+            engine=self,
         )
+        self._clock = TemporalClock(cfg, self._store, self._runner)
 
     def set_notify_fn(self, fn: Callable[[ScheduledTask, str], None]) -> None:
-        self._notify_fn = fn
         self._runner._notify_fn = fn
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        """Start the clock thread (synchronous, non-blocking)."""
+        self._clock.start()
+
+    def stop(self) -> None:
+        self._clock.stop()
 
     # ── Scheduling API ────────────────────────────────────────────────────────
 
@@ -49,6 +64,11 @@ class SchedulerEngine:
         at: datetime,
         profile: str = "minimal",
         reply_target: dict | None = None,
+        delivery: DeliveryMode | str = DeliveryMode.push,
+        max_retries: int = 0,
+        retry_delay_seconds: int = 60,
+        on_complete: str | None = None,
+        context: dict | None = None,
     ) -> ScheduledTask:
         if at.tzinfo is None:
             at = at.replace(tzinfo=timezone.utc)
@@ -62,6 +82,11 @@ class SchedulerEngine:
             created_at=_utcnow_iso(),
             next_run_at=at.isoformat(),
             reply_target=reply_target,
+            delivery=DeliveryMode(delivery),
+            max_retries=max_retries,
+            retry_delay_seconds=retry_delay_seconds,
+            on_complete=on_complete,
+            context=context,
         )
         self._store.add(task)
         return task
@@ -74,6 +99,11 @@ class SchedulerEngine:
         profile: str = "minimal",
         start_at: datetime | None = None,
         reply_target: dict | None = None,
+        delivery: DeliveryMode | str = DeliveryMode.push,
+        max_retries: int = 0,
+        retry_delay_seconds: int = 60,
+        on_complete: str | None = None,
+        context: dict | None = None,
     ) -> ScheduledTask:
         first_run = start_at or datetime.now(timezone.utc)
         if first_run.tzinfo is None:
@@ -88,6 +118,47 @@ class SchedulerEngine:
             created_at=_utcnow_iso(),
             next_run_at=first_run.isoformat(),
             reply_target=reply_target,
+            delivery=DeliveryMode(delivery),
+            max_retries=max_retries,
+            retry_delay_seconds=retry_delay_seconds,
+            on_complete=on_complete,
+            context=context,
+        )
+        self._store.add(task)
+        return task
+
+    def schedule_cron(
+        self,
+        name: str,
+        instruction: str,
+        cron_expr: str,
+        profile: str = "minimal",
+        reply_target: dict | None = None,
+        delivery: DeliveryMode | str = DeliveryMode.push,
+        max_retries: int = 0,
+        retry_delay_seconds: int = 60,
+        on_complete: str | None = None,
+        context: dict | None = None,
+    ) -> ScheduledTask:
+        from agent.scheduler.store import _next_cron
+        first_run = _next_cron(cron_expr, datetime.now(timezone.utc))
+        if first_run is None:
+            raise ValueError(f"Invalid cron expression: {cron_expr!r}")
+        task = ScheduledTask(
+            id=str(uuid.uuid4()),
+            name=name,
+            instruction=instruction,
+            trigger=Trigger(type="cron", cron_expr=cron_expr),
+            config_profile=profile,
+            status=TaskStatus.pending,
+            created_at=_utcnow_iso(),
+            next_run_at=first_run.isoformat(),
+            reply_target=reply_target,
+            delivery=DeliveryMode(delivery),
+            max_retries=max_retries,
+            retry_delay_seconds=retry_delay_seconds,
+            on_complete=on_complete,
+            context=context,
         )
         self._store.add(task)
         return task
@@ -95,38 +166,66 @@ class SchedulerEngine:
     def cancel(self, task_id: str) -> bool:
         return self._store.cancel(task_id)
 
+    def pause(self, task_id: str) -> bool:
+        return self._store.pause(task_id)
+
+    def resume(self, task_id: str) -> bool:
+        return self._store.resume(task_id)
+
     def list_timeline(self) -> list[ScheduledTask]:
         return self._store.list_all()
 
     def get(self, task_id: str) -> ScheduledTask | None:
         return self._store.get(task_id)
 
-    # ── Async polling loop ────────────────────────────────────────────────────
+    # ── Built-in convenience tasks ────────────────────────────────────────────
 
-    async def start(self) -> None:
-        recovered = self._store.reset_stale_running()
-        if recovered:
-            logger.info("[SchedulerEngine] recovered %d stale running task(s) → pending", recovered)
+    def schedule_daily_planner(
+        self,
+        hour: int = 8,
+        reply_target: dict | None = None,
+    ) -> ScheduledTask:
+        """Register a daily cron task that asks the agent to plan today's schedule."""
+        cron_expr = f"0 {hour} * * *"
+        name = "__daily_planner__"
+        existing = [t for t in self._store.list_all() if t.name == name and t.status != TaskStatus.cancelled]
+        if existing:
+            return existing[0]
+        instruction = (
+            "请使用 timeline_read 工具查看今天已有的事件和任务，"
+            "然后根据当前记忆和目标，为今天剩余时间制定一个合理的行动计划，"
+            "并使用 scheduler_add 工具将具体任务预约到时间轴上。"
+        )
+        return self.schedule_cron(
+            name=name,
+            instruction=instruction,
+            cron_expr=cron_expr,
+            profile="with_memory",
+            reply_target=reply_target,
+            delivery=DeliveryMode.push,
+        )
 
-        while True:
-            try:
-                now = datetime.now(timezone.utc)
-                for task in self._store.get_due_tasks(now):
-                    t = asyncio.create_task(
-                        self._runner.run(task, self._store),
-                        name=f"scheduler:{task.id[:8]}",
-                    )
-                    t.add_done_callback(self._on_task_done)
-            except Exception as exc:
-                logger.error("[SchedulerEngine] polling iteration error: %s", exc)
-            await asyncio.sleep(self._cfg.poll_interval)
-
-    def _on_task_done(self, t: asyncio.Task) -> None:
-        if t.cancelled():
-            return
-        exc = t.exception()
-        if exc is not None:
-            logger.error("[SchedulerEngine] task coroutine raised: %s", exc)
-
-    def start_background(self) -> asyncio.Task:
-        return asyncio.create_task(self.start())
+    def schedule_daily_review(
+        self,
+        hour: int = 22,
+        reply_target: dict | None = None,
+    ) -> ScheduledTask:
+        """Register a daily cron task that reviews today's timeline and writes to LTM."""
+        cron_expr = f"0 {hour} * * *"
+        name = "__daily_review__"
+        existing = [t for t in self._store.list_all() if t.name == name and t.status != TaskStatus.cancelled]
+        if existing:
+            return existing[0]
+        instruction = (
+            "请使用 timeline_read 工具读取今天的所有事件，"
+            "总结今天完成了什么、遇到了什么问题、有什么值得记住的经验，"
+            "并将这份今日回顾写入长期记忆。"
+        )
+        return self.schedule_cron(
+            name=name,
+            instruction=instruction,
+            cron_expr=cron_expr,
+            profile="with_memory",
+            reply_target=reply_target,
+            delivery=DeliveryMode.store_only,
+        )

@@ -38,3 +38,24 @@ class BaseTransport(ABC):
     def status(self) -> dict:
         """Return a dict with at least a ``"state"`` key."""
         raise NotImplementedError
+
+    async def send_text(self, target: dict, text: str) -> None:
+        """Send a plain-text message to the target.
+
+        ``target`` must contain ``"message_type"`` (``"private"`` or ``"group"``),
+        ``"user_id"``, and optionally ``"group_id"``.
+
+        Default implementation delegates to ``call_action`` so that transports
+        which only implement the low-level RPC interface (e.g. ForwardWSTransport)
+        work without any changes.  Subclasses may override for a more direct path.
+        """
+        if target.get("message_type") == "group" and target.get("group_id") is not None:
+            await self.call_action(
+                "send_group_msg",
+                {"group_id": target["group_id"], "message": text},
+            )
+        else:
+            await self.call_action(
+                "send_private_msg",
+                {"user_id": target["user_id"], "message": text},
+            )

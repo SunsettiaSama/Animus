@@ -50,10 +50,18 @@ Use scratchpad to:
 class PlannerAgent(AgentBase):
     role = "planner"
 
-    def __init__(self, cfg: PlannerConfig, llm_cfg_path: str) -> None:
+    def __init__(
+        self,
+        cfg: PlannerConfig,
+        llm_cfg_path: str,
+        executor_pool: ThreadPoolExecutor | None = None,
+    ) -> None:
         self._cfg = cfg
         self._llm_cfg_path = llm_cfg_path
-        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="planner")
+        self._owned_pool = executor_pool is None
+        self._executor = executor_pool or ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="planner"
+        )
 
     async def run(
         self,
@@ -67,7 +75,7 @@ class PlannerAgent(AgentBase):
                 "PlannerAgent.run() is for auto mode. "
                 "Use ConvPlanner for interactive mode."
             )
-        doc = await asyncio.get_event_loop().run_in_executor(
+        doc = await asyncio.get_running_loop().run_in_executor(
             self._executor,
             functools.partial(self._run_auto_sync, instruction, step_callback),
         )
@@ -172,11 +180,19 @@ class ConvPlanner:
     When the user signals finalization, the latest draft is parsed and validated.
     """
 
-    def __init__(self, cfg: PlannerConfig, llm_cfg_path: str) -> None:
+    def __init__(
+        self,
+        cfg: PlannerConfig,
+        llm_cfg_path: str,
+        executor_pool: ThreadPoolExecutor | None = None,
+    ) -> None:
         self._cfg = cfg
         self._llm_cfg_path = llm_cfg_path
         self._loop: Any | None = None
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="conv_planner")
+        self._owned_pool = executor_pool is None
+        self._executor = executor_pool or ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="conv_planner"
+        )
 
     def _build_loop(self) -> Any:
         from config.llm_core.config import LLMConfig
@@ -231,7 +247,7 @@ class ConvPlanner:
         return self._loop
 
     async def chat(self, message: str) -> tuple[str, PlanDocument | None]:
-        response_text, finalize = await asyncio.get_event_loop().run_in_executor(
+        response_text, finalize = await asyncio.get_running_loop().run_in_executor(
             self._executor,
             self._chat_sync,
             message,

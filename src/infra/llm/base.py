@@ -9,10 +9,16 @@ from collections import deque
 from typing import Literal
 
 from config.llm_core.vllm_config import VLLMConfig
-from infra.base_service import BaseServiceManager
+from infra.llm.backend import BaseInferenceBackend
+
+VLLM_LINUX_ONLY = (
+    "vLLM requires a Linux environment. "
+    "On Windows, run this project inside WSL2 (ubuntu-24.04+). "
+    "Falling back to backend='transformers'."
+)
 
 
-class BaseVLLMManager(BaseServiceManager):
+class BaseVLLMManager(BaseInferenceBackend):
     """Abstract base for all vLLM server managers.
 
     Encapsulates the shared lifecycle infrastructure used by every
@@ -31,6 +37,8 @@ class BaseVLLMManager(BaseServiceManager):
     - ``status()``           — return a state dict (include ``"provider"`` key)
     - ``base_url``           — property returning the OpenAI-compat base URL
     - ``health_check()``     — full HTTP health probe
+    - ``build_llm(cfg)``     — return the LLM instance pointed at this server
+    - ``provider``           — string identifier for this backend
 
     Shared helpers available to subclasses:
 
@@ -41,7 +49,7 @@ class BaseVLLMManager(BaseServiceManager):
     """
 
     _LOG_MAXLEN: int = 500
-    _LOG_TAG:    str = "vllm"        # override in subclass for log prefix
+    _LOG_TAG:    str = "vllm"
 
     def __init__(self) -> None:
         self._state: Literal["stopped", "starting", "running", "error"] = "stopped"
@@ -77,7 +85,13 @@ class BaseVLLMManager(BaseServiceManager):
     # ── Shared helpers for subclasses ─────────────────────────────────────────
 
     def _launch_subprocess(self, cmd: list[str]) -> None:
-        """Spawn *cmd* as a subprocess and start log-capture / health-watch threads."""
+        """Spawn *cmd* as a subprocess and start log-capture / health-watch threads.
+
+        Raises RuntimeError immediately on Windows — vLLM requires Linux.
+        """
+        if sys.platform == "win32":
+            raise RuntimeError(VLLM_LINUX_ONLY)
+
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,

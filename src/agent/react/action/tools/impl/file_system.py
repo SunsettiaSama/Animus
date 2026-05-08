@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field
@@ -57,7 +58,7 @@ class FileWriteAction(BaseAction):
     sandbox: Any = None
 
     def execute(self, path: str, content: str, mode: str = "write", encoding: str = "utf-8", **kwargs) -> str:
-        resolved = self.sandbox.resolve_path(path) if self.sandbox else path
+        resolved = self.sandbox.resolve_path(path) if self.sandbox else Path(path)
         resolved.parent.mkdir(parents=True, exist_ok=True)
         open_mode = "a" if mode == "append" else "w"
         with open(resolved, open_mode, encoding=encoding) as f:

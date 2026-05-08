@@ -86,21 +86,20 @@ def _startup():
         state.llm_service.start(cfg)
         print(f"[webui] LLM auto-loaded  model={cfg.model!r}")
 
-        # Create and start the global scheduler engine (single polling loop for all sessions).
-        from agent.scheduler import SchedulerEngine, SchedulerConfig
+        # Create and start the global scheduler engine.
+        # TemporalClock runs on its own daemon thread — no run_coroutine_threadsafe needed.
+        from agent.scheduler import SchedulerEngine, SchedulerConfig, TimelineStore
         sch_cfg = SchedulerConfig(
             scheduler_dir=state.cache.scheduler_dir,
             llm_cfg_path=state.llm_config_yaml,
         )
         state.scheduler_engine = SchedulerEngine(
             sch_cfg,
+            timeline=TimelineStore(state.cache.timeline_dir),
             notify_fn=_make_scheduler_notify_fn(state),
         )
-        future = asyncio.run_coroutine_threadsafe(
-            state.scheduler_engine.start(), state.main_event_loop
-        )
-        state.scheduler_future = future
-        print("[webui] Global scheduler engine started")
+        state.scheduler_engine.start()
+        print("[webui] Global scheduler engine started (TemporalClock thread)")
 
         from routers.react import ReactInitRequest, _do_react_init
         state.react_init_event.clear()
@@ -137,8 +136,8 @@ def _shutdown():
     state.plan_broadcast({"type": "done", "status": "shutdown", "answer": ""})
     if state.notify_queue is not None:
         state.notify_queue.put_nowait(None)
-    if state.scheduler_future is not None and not state.scheduler_future.done():
-        state.scheduler_future.cancel()
+    if state.scheduler_engine is not None:
+        state.scheduler_engine.stop()
     state.task_runner.shutdown(wait=True, timeout=15)
     state.service_registry.stop_all()
     if state.active_tao is not None:

@@ -55,6 +55,12 @@ class BotService(BaseServiceManager, EventHandler):
         self._invite_day: str = ""    # date string "YYYY-MM-DD" of last reset
         self._invite_today: int = 0   # invites issued today
 
+        # ── Message debounce (per-session) ─────────────────────────────────────
+        # Accumulated text not yet enqueued (session_id → str).
+        self._pending_texts:   dict[str, str]                    = {}
+        # Active asyncio timer handles (session_id → TimerHandle).
+        self._pending_handles: dict[str, asyncio.TimerHandle]    = {}
+
     # ── BaseServiceManager ────────────────────────────────────────────────────
 
     def start(self, **kwargs) -> None:
@@ -95,12 +101,43 @@ class BotService(BaseServiceManager, EventHandler):
                 event.session_id, event.user_key, event.plain_text[:80],
             )
             return
-        logger.info(
-            "[BotService] enqueue | session=%s | %r",
-            event.session_id, event.plain_text[:80],
-        )
+
+        # Session is created immediately on the first message so that
+        # preload_with_recall() can start in parallel with the debounce window.
         session = self._get_or_create(event)
-        await session.enqueue(event.plain_text)
+        sid     = event.session_id
+        debounce = self._cfg.message_debounce_secs
+
+        if debounce <= 0:
+            # Debounce disabled — pass through directly.
+            logger.info(
+                "[BotService] enqueue | session=%s | %r",
+                sid, event.plain_text[:80],
+            )
+            await session.enqueue(event.plain_text)
+            return
+
+        # Accumulate text; reset the timer on every new message.
+        prev = self._pending_texts.get(sid, "")
+        self._pending_texts[sid] = (
+            prev + "\n" + event.plain_text if prev else event.plain_text
+        )
+        if sid in self._pending_handles:
+            self._pending_handles[sid].cancel()
+
+        loop = asyncio.get_running_loop()
+
+        def _flush(sid: str = sid, session: "AgentSession" = session) -> None:
+            self._pending_handles.pop(sid, None)
+            text = self._pending_texts.pop(sid, "")
+            if text:
+                logger.info(
+                    "[BotService] enqueue (debounced) | session=%s | %r",
+                    sid, text[:80],
+                )
+                asyncio.ensure_future(session.enqueue(text))
+
+        self._pending_handles[sid] = loop.call_later(debounce, _flush)
 
     async def on_meta(self, event: MetaEvent, bot: BotAPI) -> None:
         pass  # heartbeat / lifecycle — intentionally ignored
@@ -127,6 +164,13 @@ class BotService(BaseServiceManager, EventHandler):
             await self.on_meta(event, self._bot_api)
 
     async def _async_stop(self) -> None:
+        # 先摘除事件回调，防止 botpy 线程在会话关闭期间继续投递新消息
+        self._transport.on_event = None
+        # Cancel all pending debounce timers and flush their accumulated text.
+        for handle in list(self._pending_handles.values()):
+            handle.cancel()
+        self._pending_handles.clear()
+        self._pending_texts.clear()
         for session in list(self._sessions.values()):
             await session.close()
         self._sessions.clear()
@@ -240,5 +284,8 @@ class BotService(BaseServiceManager, EventHandler):
             executor=self._executor,
         )
         session.start()
+        # Kick off embedder warm-up + LTM pre-fetch in the background so the
+        # first user message doesn't pay the cold-start cost.
+        self._executor.submit(conv_loop.preload_with_recall)
         logger.info("[BotService] new session %s", event.session_id)
         return session

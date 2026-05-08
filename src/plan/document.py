@@ -181,6 +181,33 @@ class PlanDocument:
             and all(dep in done_ids for dep in t.depends_on)
         ]
 
+    def compute_dag_width(self) -> int:
+        """BFS topological layering; returns the maximum single-wave concurrency width."""
+        tasks = self.all_tasks()
+        if not tasks:
+            return 1
+        in_degree: dict[str, int] = {t.task_id: 0 for t in tasks}
+        children: dict[str, list[str]] = {t.task_id: [] for t in tasks}
+        all_ids = {t.task_id for t in tasks}
+        for t in tasks:
+            for dep in t.depends_on:
+                if dep in all_ids:
+                    in_degree[t.task_id] += 1
+                    children[dep].append(t.task_id)
+        queue = [tid for tid, deg in in_degree.items() if deg == 0]
+        max_width = max(len(queue), 1)
+        while queue:
+            next_wave: list[str] = []
+            for tid in queue:
+                for child in children[tid]:
+                    in_degree[child] -= 1
+                    if in_degree[child] == 0:
+                        next_wave.append(child)
+            if next_wave:
+                max_width = max(max_width, len(next_wave))
+            queue = next_wave
+        return max_width
+
     def is_complete(self) -> bool:
         return all(
             t.status in (TaskStatus.done, TaskStatus.skipped, TaskStatus.failed)

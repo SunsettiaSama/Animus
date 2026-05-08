@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import uuid
 from dataclasses import dataclass, field
 from typing import Generator, Union
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -60,19 +63,6 @@ class StepEvent:
     observation: str
     calls: list[dict] | None = None  # [{"action": str, "args": dict}, ...] for parallel steps
     output: str = ""                  # <O> tag content; user-visible output for this step
-
-
-@dataclass
-class StepPauseEvent:
-    """Yielded after every non-finish step to request user confirmation.
-
-    The frontend should display the <O> output (if any) and present
-    Continue / Stop controls.  The backend blocks until resolve_step_decision()
-    is called with the matching request_id.
-    """
-    index: int
-    output: str      # <O> content; empty string when the step produced no output
-    request_id: str  # UUID matched by the user's continue/stop WebSocket message
 
 
 @dataclass
@@ -144,7 +134,7 @@ class SubAgentErrorEvent:
 
 
 TaoEvent = Union[
-    StepStartEvent, ChunkEvent, StepEvent, StepPauseEvent, FinishEvent,
+    StepStartEvent, ChunkEvent, StepEvent, FinishEvent,
     PromptPreviewEvent, RetryEvent, ApprovalRequestEvent,
     SubAgentStartEvent, SubAgentChunkEvent, SubAgentStepEvent,
     SubAgentFinishEvent, SubAgentErrorEvent,
@@ -201,11 +191,6 @@ class TaoLoop:
         self._pending_approvals: dict[str, threading.Event] = {}
         self._approval_results: dict[str, bool] = {}
         self._approval_lock = threading.Lock()
-
-        # Step-pause gate state: maps request_id → (threading.Event, decision)
-        self._pending_step_decisions: dict[str, threading.Event] = {}
-        self._step_decision_results: dict[str, str] = {}   # "continue" | "stop"
-        self._step_decision_lock = threading.Lock()
 
         # Build memory stores before PromptManager so the recall tool can be
         # injected into the executor and its description added to the prompt.
@@ -323,11 +308,13 @@ class TaoLoop:
             from .action.tools.impl.scheduler_add import SchedulerAddAction
             from .action.tools.impl.scheduler_list import SchedulerListAction
             from .action.tools.impl.scheduler_cancel import SchedulerCancelAction
+            from .action.tools.impl.timeline_read import TimelineReadAction
             self._scheduler_engine = _engine_to_use
             for action in (
                 SchedulerAddAction(engine=self._scheduler_engine, reply_target=reply_target),
                 SchedulerListAction(engine=self._scheduler_engine),
                 SchedulerCancelAction(engine=self._scheduler_engine),
+                TimelineReadAction(timeline=self._timeline),
             ):
                 self._executor.register_instance(action)
                 effective_descriptions[action.name] = action.description
@@ -409,6 +396,12 @@ class TaoLoop:
             LLMHandle(LLM(cfg.repair_llm)) if cfg.repair_llm is not None else self._llm
         )
 
+        # Pre-fetched long-term memory for bot sessions.
+        # Set once by preload_with_recall() in a background thread; stream() step 0
+        # uses this value directly and skips the per-query vector search.
+        # None means the preload has not completed (or LTM is disabled).
+        self._prefetched_lt: str | None = None
+
     @staticmethod
     def _trunc(text: str, limit: int) -> str:
         return text[:limit] if limit > 0 and len(text) > limit else text
@@ -452,39 +445,6 @@ class TaoLoop:
             self._approval_results[request_id] = approved
         event.set()
         return True
-
-    # ── Step-pause gate ───────────────────────────────────────────────────────
-
-    def resolve_step_decision(self, request_id: str, decision: str) -> bool:
-        """
-        Called by the WebSocket handler when the user clicks Continue or Stop.
-
-        decision must be "continue" or "stop".
-        Returns True if the request_id was found and resolved, False otherwise.
-        """
-        with self._step_decision_lock:
-            event = self._pending_step_decisions.get(request_id)
-            if event is None:
-                return False
-            self._step_decision_results[request_id] = decision
-        event.set()
-        return True
-
-    def _wait_for_step_decision(self, request_id: str) -> str:
-        """Block until the user resolves the step pause.  Returns "continue" or "stop"."""
-        ev = threading.Event()
-        with self._step_decision_lock:
-            self._pending_step_decisions[request_id] = ev
-        # Abort signal released → treat as stop
-        while not ev.wait(timeout=0.1):
-            if self._stop_event.is_set():
-                with self._step_decision_lock:
-                    self._pending_step_decisions.pop(request_id, None)
-                    self._step_decision_results.pop(request_id, None)
-                return "stop"
-        with self._step_decision_lock:
-            self._pending_step_decisions.pop(request_id, None)
-            return self._step_decision_results.pop(request_id, "continue")
 
     # ── Core streaming loop ───────────────────────────────────────────────────
 
@@ -535,16 +495,27 @@ class TaoLoop:
             self._persona.all_blocks() if self._persona is not None else None
         )
 
+        # Track the previous step's action for step-label logging.
+        _prev_action: str = ""
+
         for i in range(self._cfg.max_steps):
             # ── Memory recall ────────────────────────────────────────────────
             if i == 0:
-                # Full recall on step 0: long-term vector search + milestone
-                # retrieval + medium-term render.  Results are cached for
-                # all subsequent steps in this question.
-                result = processor.recall(recall_query, include_long_term=True)
-                _cached_lt        = result.long_term
-                _cached_milestone = result.milestone
-                _cached_medium    = result.medium_term
+                if self._prefetched_lt is not None:
+                    # Bot session: preload_with_recall() already ran; skip the
+                    # per-query vector search and inject the cached LT result.
+                    result = processor.recall(recall_query, include_long_term=False)
+                    _cached_lt        = self._prefetched_lt
+                    _cached_milestone = result.milestone
+                    _cached_medium    = result.medium_term
+                else:
+                    # Full recall on step 0: long-term vector search + milestone
+                    # retrieval + medium-term render.  Results are cached for
+                    # all subsequent steps in this question.
+                    result = processor.recall(recall_query, include_long_term=True)
+                    _cached_lt        = result.long_term
+                    _cached_milestone = result.milestone
+                    _cached_medium    = result.medium_term
             else:
                 # Steps > 0: only short-term memory grows (new tool observations
                 # are appended via processor.add()).  Reuse cached values for the
@@ -620,6 +591,15 @@ class TaoLoop:
                 _preview = []
 
             yield StepStartEvent(index=i)
+
+            # ── Step-label log ───────────────────────────────────────────────
+            if i == 0:
+                _step_label = "initial call"
+            elif _prev_action:
+                _step_label = f"prev={_prev_action}"
+            else:
+                _step_label = "continuation"
+            logger.info("[Step %d] %s → LLM call", i, _step_label)
 
             # ── LLM generation ───────────────────────────────────────────────
             raw_output = ""
@@ -878,10 +858,6 @@ class TaoLoop:
                         calls=exec_calls if result.calls else None,
                         output=result.output,
                     )
-                    _pause_id = str(uuid.uuid4())
-                    yield StepPauseEvent(index=i, output=result.output, request_id=_pause_id)
-                    if self._wait_for_step_decision(_pause_id) == "stop":
-                        return
                     continue
 
             # ── Execute — parallel for multi-call, single for one call ────────
@@ -921,6 +897,7 @@ class TaoLoop:
                 output=result.output,
             )
             processor.add(step)
+            _prev_action = result.action
 
             yield StepEvent(
                 index=i,
@@ -931,12 +908,6 @@ class TaoLoop:
                 calls=exec_calls if result.calls else None,
                 output=result.output,
             )
-
-            # ── Step-pause gate: wait for user confirmation before next step ──
-            _pause_id = str(uuid.uuid4())
-            yield StepPauseEvent(index=i, output=result.output, request_id=_pause_id)
-            if self._wait_for_step_decision(_pause_id) == "stop":
-                return
 
         yield MaxStepsEvent(max_steps=self._cfg.max_steps)
         _obs.emit(_SessionEvent(
@@ -978,9 +949,27 @@ class TaoLoop:
     # ── Misc ─────────────────────────────────────────────────────────────────
 
     def preload(self) -> None:
-        """触发长期记忆的后台预热（嵌入模型 + FAISS 索引）。"""
+        """触发长期记忆的后台预热（嵌入模型 + Qdrant 索引）。"""
         if self._long_term is not None:
             self._long_term.store.preload()
+
+    def preload_with_recall(self) -> None:
+        """预热 embedder + Qdrant，然后执行会话级长期记忆检索并缓存结果。
+
+        设计意图（bot 会话专用）：
+        - 在 _build_session 后立即由 executor 后台提交，与用户打字的 debounce
+          窗口并行运行，首条消息到达时 embedder 大概率已就绪。
+        - 检索结果写入 _prefetched_lt；stream() step 0 检测到非 None 时直接
+          注入 _cached_lt，跳过每次查询触发的向量搜索。
+        - "不再改了"：_prefetched_lt 写入后本 session 内不再更新，即本轮新增
+          记忆不会反映在后续查询的 LT 上下文中——这是可接受的 trade-off。
+        """
+        if self._long_term is None:
+            return
+        self._long_term.store.preload()
+        self._prefetched_lt = self._long_term.smart_recall(
+            "", is_session_start=True
+        )
 
     def close(self) -> None:
         if self._long_term is not None:

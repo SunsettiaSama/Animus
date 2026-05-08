@@ -159,9 +159,9 @@ export function appendReactMsg(id) {
   div.append(avatar, body);
   el.appendChild(div);
 
-  // Activity strip (spinner + current label)
+  // Activity strip (spinner + current label) — hidden until showActivity() is called.
   const activity = document.createElement('div');
-  activity.className = 'react-activity';
+  activity.className = 'react-activity hidden';
   activity.innerHTML = `<div class="ra-spinner"></div><span class="ra-text">Thinking…</span>`;
   body.appendChild(activity);
 
@@ -223,10 +223,12 @@ export function appendReactMsg(id) {
       scrollBottom();
     },
     hideActivity() {
-      activity.remove();
+      activity.classList.add('hidden');
     },
     appendChunk(index, chunk) {
       const s = _ensureStep(index);
+      // Hide the activity spinner on the very first chunk — step card takes over.
+      if (!s.streamed) activity.classList.add('hidden');
       s.streamed += chunk;
       // During streaming, show only the <T> thought content to avoid exposing
       // raw JSON inside <A> and raw output inside <O> before they are structured.
@@ -319,12 +321,25 @@ export function appendReactMsg(id) {
 
       if (stepObj.observation) secs.appendChild(mkSec('observation', 'Observation', stepObj.observation, { markdown: true }));
 
-      // Render <O> output section when present (inside the step detail).
-      if (stepObj.output) {
-        secs.appendChild(mkSec('output-sec', 'Output', stepObj.output, { markdown: true }));
-      }
-
       s.detail.appendChild(secs);
+
+      // Raw model output — collapsed by default, shows full <T><A><O> XML.
+      if (s.streamed) {
+        const rawWrap = document.createElement('div');
+        rawWrap.className = 'step-raw-wrap';
+        const rawToggle = document.createElement('div');
+        rawToggle.className = 'step-raw-toggle';
+        rawToggle.innerHTML = '<span class="raw-chevron">▶</span> 原始输出';
+        const rawPre = document.createElement('pre');
+        rawPre.className = 'step-raw-pre';
+        rawPre.textContent = s.streamed;
+        rawWrap.append(rawToggle, rawPre);
+        rawToggle.addEventListener('click', () => {
+          const open = rawPre.classList.toggle('open');
+          rawToggle.classList.toggle('open', open);
+        });
+        s.detail.appendChild(rawWrap);
+      }
 
       // Mark step done and ensure detail stays open.
       const doneEl = document.createElement('span');
@@ -333,52 +348,8 @@ export function appendReactMsg(id) {
       s.hdr.appendChild(doneEl);
       s.detail.classList.add('open');
       s.hdr.classList.add('open');
+
       scrollBottom();
-    },
-    addStepPause(index, output, requestId, onContinue, onStop) {
-      const pauseEl = document.createElement('div');
-      pauseEl.className = 'step-pause-bar';
-      pauseEl.dataset.requestId = requestId;
-
-      if (output) {
-        const outEl = document.createElement('div');
-        outEl.className = 'step-pause-output';
-        renderMarkdown(outEl, output);
-        pauseEl.appendChild(outEl);
-      }
-
-      const controls = document.createElement('div');
-      controls.className = 'step-pause-controls';
-
-      const contBtn = document.createElement('button');
-      contBtn.className = 'step-pause-btn continue-btn';
-      contBtn.textContent = '继续下一步 ▶';
-      contBtn.addEventListener('click', () => {
-        contBtn.disabled = true;
-        stopBtn.disabled = true;
-        contBtn.textContent = '继续中…';
-        onContinue(requestId);
-      });
-
-      const stopBtn = document.createElement('button');
-      stopBtn.className = 'step-pause-btn stop-btn';
-      stopBtn.textContent = '停止 ✕';
-      stopBtn.addEventListener('click', () => {
-        contBtn.disabled = true;
-        stopBtn.disabled = true;
-        stopBtn.textContent = '停止中…';
-        onStop(requestId);
-      });
-
-      controls.append(contBtn, stopBtn);
-      pauseEl.appendChild(controls);
-      _msgsEl().appendChild(pauseEl);
-      scrollBottom();
-      return pauseEl;
-    },
-    removeStepPause(requestId) {
-      const el = _msgsEl()?.querySelector(`.step-pause-bar[data-request-id="${requestId}"]`);
-      el?.remove();
     },
     openSubAgent(action, instruction) {
       const lastStep = _steps[_stepI];

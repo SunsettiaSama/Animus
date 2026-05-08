@@ -175,3 +175,58 @@ class RunPlanAction(BaseAction):
             self.orchestrator.run(question)
         )
         return f"[plan:{result.plan_id}] status={result.status}\n{result.answer}"
+
+
+# ── request_node_expansion ────────────────────────────────────────────────────
+
+class RequestNodeExpansionArgs(BaseModel):
+    task_id: str = Field(..., description="当前正在执行的、需要被拆分的任务 task_id")
+    reason: str = Field(..., description="为何该任务过于复杂，需要拆分为子任务的原因说明")
+    suggested_subtasks: list[str] = Field(
+        default_factory=list,
+        description="建议的子任务描述列表（可选），由 Replanner 参考决定拆分方式",
+    )
+
+
+class RequestNodeExpansionAction(BaseAction):
+    """
+    Called by a SubAgent TaoLoop when a task proves too complex to execute
+    in a single step.  Instead of nesting a new plan (which is forbidden),
+    the SubAgent signals the Orchestrator to delegate node expansion to the
+    Replanner, which transforms the DAG (splits the node into sub-nodes).
+    """
+
+    name: str = "request_node_expansion"
+    description: str = (
+        "【仅限 Plan 子节点使用】当当前任务过于复杂无法在单次执行中完成时，"
+        "请求 Orchestrator 将本节点拆分为多个子节点（图变换），而非嵌套新计划。"
+        "参数：task_id（当前任务ID），reason（拆分原因），suggested_subtasks（建议的子任务描述列表）。"
+    )
+    args_model: ClassVar[type[BaseModel]] = RequestNodeExpansionArgs
+
+    orchestrator: Any = None  # PlanOrchestrator，由编排器注入
+
+    def execute(
+        self,
+        task_id: str,
+        reason: str,
+        suggested_subtasks: list[str] | None = None,
+        **kwargs: Any,
+    ) -> str:
+        if self.orchestrator is None:
+            return "[request_node_expansion] 编排器未初始化，无法请求节点扩展。"
+        main_loop = getattr(self.orchestrator, "_main_loop", None)
+        if main_loop is None or not main_loop.is_running():
+            return "[request_node_expansion] 编排器主循环不可用。"
+        from plan.event import NodeExpansionRequestEvent
+        ev = NodeExpansionRequestEvent(
+            plan_id=self.orchestrator.current_plan_id or "",
+            task_id=task_id,
+            reason=reason,
+            suggested_subtasks=list(suggested_subtasks or []),
+        )
+        main_loop.call_soon_threadsafe(self.orchestrator._handle_expansion_request, ev)
+        return (
+            f"[request_node_expansion] 已向编排器发送节点扩展请求（task_id={task_id}）。"
+            f"Replanner 将对该节点进行图变换，请等待重规划完成。"
+        )

@@ -1,39 +1,36 @@
 from __future__ import annotations
 
+import dataclasses
 import sys
 import urllib.request
 
+from config.llm_core.config import LLMConfig
 from config.llm_core.vllm_config import VLLMConfig
 from infra.llm.base import BaseVLLMManager
+from infra.llm.llm import BaseLLM, OpenAILLM
 
 
 class CustomVLLMManager(BaseVLLMManager):
     """Manages the lifecycle of the custom (reproduced) vLLM server.
 
-    Mirrors the interface of ``OfficialVLLMManager`` but drives a
-    user-supplied serving entrypoint instead of the official
-    ``vllm serve`` CLI.
+    This is the insertion point for the vllm-clone implementation.
+    Override ``_build_cmd`` in a subclass (or directly here) to return
+    the shell command that launches the custom inference server::
 
-    Extension point
-    ---------------
-    Override ``_build_cmd`` in a subclass to return the shell command
-    that launches your custom server::
-
-        class MyVLLMManager(CustomVLLMManager):
-            def _build_cmd(self, model, cfg):
-                return [
-                    sys.executable, "-m", "my_vllm.server",
-                    "--model", model,
-                    "--host", cfg.host,
-                    "--port", str(cfg.port),
-                ]
+        def _build_cmd(self, model, cfg):
+            return [
+                sys.executable, "-m", "my_vllm.server",
+                "--model", model,
+                "--host", cfg.host,
+                "--port", str(cfg.port),
+            ]
 
     Until ``_build_cmd`` is implemented it returns ``None``, which causes
     ``start()`` to transition immediately to the ``"error"`` state and emit
     a descriptive log entry.
     """
 
-    _LOG_TAG = "custom-vllm"
+    _LOG_TAG = "vllm-clone"
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -49,8 +46,8 @@ class CustomVLLMManager(BaseVLLMManager):
         cmd = self._build_cmd(model, cfg)
         if cmd is None:
             msg = (
-                "[custom-vllm] No serving command defined. "
-                "Override CustomVLLMManager._build_cmd() to provide "
+                "[vllm-clone] No serving command defined. "
+                "Implement CustomVLLMManager._build_cmd() to provide "
                 "the custom vLLM server entrypoint."
             )
             print(msg, file=sys.stderr, flush=True)
@@ -75,7 +72,7 @@ class CustomVLLMManager(BaseVLLMManager):
             "pid":      pid,
             "base_url": self.base_url,
             "healthy":  self._port_is_open() if state == "running" else False,
-            "provider": "custom",
+            "provider": self.provider,
         }
 
     @property
@@ -92,6 +89,15 @@ class CustomVLLMManager(BaseVLLMManager):
         url = f"http://{cfg.host}:{cfg.port}/health"
         result = urllib.request.urlopen(urllib.request.Request(url), timeout=2)
         return result.status == 200
+
+    # ── BaseInferenceBackend interface ────────────────────────────────────────
+
+    def build_llm(self, cfg: LLMConfig) -> BaseLLM:
+        return OpenAILLM(dataclasses.replace(cfg, base_url=self.base_url))
+
+    @property
+    def provider(self) -> str:
+        return "vllm-clone"
 
     # ── Extension point ───────────────────────────────────────────────────────
 

@@ -65,8 +65,9 @@ class VLLMConfig:
             yaml.dump(self.to_dict(), f, allow_unicode=True, default_flow_style=False)
 
     def to_cli_args(self, model: str) -> list[str]:
+        import sys
         args = [
-            "vllm", "serve", model,
+            sys.executable, "-m", "vllm", "serve", model,
             "--host", self.host,
             "--port", str(self.port),
             "--tensor-parallel-size", str(self.tensor_parallel_size),

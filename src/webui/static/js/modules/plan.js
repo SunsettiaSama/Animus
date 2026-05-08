@@ -15,17 +15,19 @@ import { Inspector } from '../components/Inspector.js';
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const API = {
-  run:       '/api/plan/run',
-  status:    '/api/plan/status',
-  stream:    '/api/plan/stream',
-  snapshots: '/api/plan/snapshots',
-  rollback:  '/api/plan/rollback',
-  logs:      '/api/plan/logs',
-  pause:     '/api/plan/pause',
-  resume:    '/api/plan/resume',
-  skip:      (tid) => `/api/plan/skip/${tid}`,
-  history:   '/api/plan/history',
-  historyDel: (pid) => `/api/plan/history/${pid}`,
+  run:           '/api/plan/run',
+  status:        '/api/plan/status',
+  stream:        '/api/plan/stream',
+  snapshots:     '/api/plan/snapshots',
+  rollback:      '/api/plan/rollback',
+  logs:          '/api/plan/logs',
+  pause:         '/api/plan/pause',
+  resume:        '/api/plan/resume',
+  skip:          (tid) => `/api/plan/skip/${tid}`,
+  taskPatch:     (tid) => `/api/plan/tasks/${tid}`,
+  humanRequest:  '/api/plan/human-request',
+  history:       '/api/plan/history',
+  historyDel:    (pid) => `/api/plan/history/${pid}`,
 };
 
 const NODE_W  = 164;
@@ -387,11 +389,57 @@ export async function openNodeInspector(task) {
   if (_inspectorSse) { _inspectorSse.close(); _inspectorSse = null; }
   _inspectorTaskId = task.task_id;
 
+  const isPending = task.status === 'pending';
+
   Inspector.open({
     title:       task.task_id,
     badge:       task.status || 'pending',
     description: task.description || '',
   });
+
+  // Inject edit controls for pending tasks (T5)
+  if (isPending) {
+    const descEl = document.getElementById('pi-description');
+    if (descEl) {
+      const editBtn = document.createElement('button');
+      editBtn.textContent = '编辑';
+      editBtn.className = 'pi-edit-btn';
+      editBtn.style.cssText = 'margin-left:8px;font-size:12px;padding:2px 8px;cursor:pointer;';
+      descEl.after(editBtn);
+
+      editBtn.addEventListener('click', () => {
+        const isEditing = editBtn.dataset.editing === '1';
+        if (!isEditing) {
+          // Enter edit mode
+          const textarea = document.createElement('textarea');
+          textarea.id = 'pi-desc-edit';
+          textarea.value = task.description || '';
+          textarea.style.cssText = 'width:100%;min-height:80px;margin-top:6px;font-size:13px;';
+          descEl.after(textarea);
+          editBtn.textContent = '保存';
+          editBtn.dataset.editing = '1';
+        } else {
+          // Save
+          const textarea = document.getElementById('pi-desc-edit');
+          const newDesc = textarea?.value?.trim() || '';
+          textarea?.remove();
+          editBtn.textContent = '编辑';
+          editBtn.dataset.editing = '0';
+          if (newDesc && newDesc !== task.description) {
+            fetch(API.taskPatch(task.task_id), {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ description: newDesc }),
+            }).then(r => r.json()).then(() => {
+              task.description = newDesc;
+              if (descEl) descEl.textContent = newDesc;
+              refreshStatus();
+            }).catch(() => {});
+          }
+        }
+      });
+    }
+  }
 
   // Register SSE cleanup when user closes inspector
   Inspector.onClose(() => {
@@ -469,10 +517,26 @@ function _stopLogPolling() {
   }
 }
 
+function _appendLogLine(record) {
+  const container = $('plan-logs-container');
+  if (!container) return;
+  const empty = container.querySelector('.plan-empty-msg');
+  if (empty) empty.remove();
+  const lvl = record.level || 'debug';
+  const ts = new Date((record.ts || Date.now() / 1000) * 1000).toLocaleTimeString();
+  const msg = `[${ts}] [${lvl.toUpperCase()}] ${record.event || ''}${record.task_id ? ' task=' + record.task_id : ''}`;
+  const span = document.createElement('span');
+  span.className = `plan-log-line log-${lvl}`;
+  span.textContent = msg;
+  container.appendChild(span);
+  container.appendChild(document.createTextNode('\n'));
+  container.scrollTop = container.scrollHeight;
+}
+
 function _connectSSE() {
   if (_sse) { _sse.close(); _sse = null; }
   _sse = new EventSource(API.stream);
-  _startLogPolling();
+  // No polling — logs arrive via log_line SSE events (T3)
 
   _sse.onmessage = (e) => {
     let ev;
@@ -481,9 +545,29 @@ function _connectSSE() {
 
     switch (ev.type) {
       case 'lifecycle_state':
-        if (ev.state === 'planning') {
-          _thinkingShow('规划中…');
-          _thinkingClear();
+        // Full state mapping (T9)
+        switch (ev.state) {
+          case 'planning':
+            _thinkingShow('规划中…');
+            _thinkingClear();
+            _setBadge('planning');
+            break;
+          case 'running':
+            _setBadge('running');
+            _thinkingCollapse();
+            break;
+          case 'replanning':
+            _setBadge('replanning');
+            break;
+          case 'done':
+            _setBadge('done');
+            break;
+          case 'failed':
+            _setBadge('failed');
+            break;
+          case 'aborted':
+            _setBadge('aborted');
+            break;
         }
         break;
 
@@ -535,9 +619,37 @@ function _connectSSE() {
         _updateNode(ev.task_id, 'skipped');
         break;
 
+      case 'task_updated':
+        // Patch applied to a pending task — reload full DAG
+        refreshStatus();
+        break;
+
       case 'replan':
         // Reload full plan after replanning (task list may change)
         refreshStatus();
+        break;
+
+      case 'human_patch': {
+        // T9: user-applied patch — show in log area and refresh DAG
+        const note = ev.patch_ops ? `操作: ${ev.patch_ops.join(', ')}` : '';
+        _appendLogLine({ level: 'info', event: `用户干预 (${ev.patches_count} patches) ${note}`, ts: Date.now() / 1000 });
+        refreshStatus();
+        break;
+      }
+
+      case 'human_request_received': {
+        _appendLogLine({ level: 'info', event: `用户提问已发送给 Replanner: ${(ev.message || '').slice(0, 80)}`, ts: Date.now() / 1000 });
+        break;
+      }
+
+      case 'node_expansion_request': {
+        _appendLogLine({ level: 'info', event: `节点扩展请求: task=${ev.task_id}  reason=${(ev.reason || '').slice(0, 80)}`, ts: Date.now() / 1000 });
+        break;
+      }
+
+      case 'log_line':
+        // T3: real-time log push
+        _appendLogLine(ev);
         break;
 
       case 'planner_step':
@@ -549,6 +661,13 @@ function _connectSSE() {
         _thinkingClear();
         break;
 
+      case 'replanner_thinking': {
+        // T4: show replanner stages in thinking panel
+        const stageLabel = { building_prompt: '构建上下文…', calling_llm: '调用 LLM…', parsing: '解析决策…' }[ev.stage] || ev.stage;
+        _thinkingAppendRaw(`[Replanner] ${stageLabel}`);
+        break;
+      }
+
       case 'replanner_complete': {
         const summary = `决策: ${ev.decision}  patches: ${ev.patches_count}\n${ev.reason || ''}`;
         _thinkingAppendRaw(summary);
@@ -559,7 +678,6 @@ function _connectSSE() {
       case 'plan_complete':
       case 'done':
         _setBadge('done');
-        _stopLogPolling();
         if (_sse) { _sse.close(); _sse = null; }
         refreshSnapshots();
         refreshLogs();
@@ -568,7 +686,6 @@ function _connectSSE() {
 
       case 'plan_abort':
         _setBadge('failed');
-        _stopLogPolling();
         if (_sse) { _sse.close(); _sse = null; }
         refreshHistory();
         break;
@@ -587,7 +704,6 @@ function _connectSSE() {
   };
 
   _sse.onerror = () => {
-    _stopLogPolling();
     if (_sse) { _sse.close(); _sse = null; }
   };
 }
@@ -824,6 +940,32 @@ async function takeSnapshot() {
   await refreshSnapshots();
 }
 
+// ── Human request (T6) ─────────────────────────────────────────────────────────
+
+async function sendHumanRequest() {
+  const inputEl = $('plan-human-input');
+  if (!inputEl) return;
+  const message = inputEl.value.trim();
+  if (!message) return;
+
+  inputEl.value = '';
+  inputEl.disabled = true;
+  const statusEl = $('plan-human-status');
+  if (statusEl) statusEl.textContent = '发送中…';
+
+  await fetch(API.humanRequest, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  }).then(r => r.json()).catch(() => null);
+
+  if (statusEl) {
+    statusEl.textContent = '已发送，等待重规划…';
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+  }
+  inputEl.disabled = false;
+}
+
 // ── Bind events ───────────────────────────────────────────────────────────────
 
 function _bind() {
@@ -833,6 +975,10 @@ function _bind() {
   $('plan-btn-snapshot')?.addEventListener('click', takeSnapshot);
   $('plan-btn-refresh-logs')?.addEventListener('click', () => refreshLogs());
   $('plan-btn-refresh-history')?.addEventListener('click', () => refreshHistory());
+  $('plan-btn-human-send')?.addEventListener('click', sendHumanRequest);
+  $('plan-human-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendHumanRequest(); }
+  });
   _bindThinkingToggle();
   // pi-close is handled by Inspector.initGlobalKeyHandler() in app.js
 }
