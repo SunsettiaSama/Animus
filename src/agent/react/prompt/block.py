@@ -76,9 +76,9 @@ def _render_step(step: Step, legacy_fmt: PromptTemplate) -> str:
         thought_tag = f"<T>{step.thought}</T>" if step.thought else "<T></T>"
         action_tag  = f"<A>{calls_json}</A>"
         if len(step.calls) > 1:
-            obs_section = f"Observations:\n{step.observation}"
+            obs_section = f"[系统工具反馈]\n{step.observation}"
         else:
-            obs_section = f"Observation: {step.observation}"
+            obs_section = f"[系统工具反馈]: {step.observation}"
         parts = [thought_tag, action_tag]
         if step.output:
             parts.append(f"<O>{step.output}</O>")

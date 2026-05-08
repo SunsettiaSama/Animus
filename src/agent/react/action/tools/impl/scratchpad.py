@@ -56,7 +56,8 @@ class NoteWriteArgs(BaseModel):
 class NoteWriteAction(BaseAction):
     name: str = "note_write"
     description: str = (
-        "向会话草稿本写入一条笔记（K-V 存储）。适合跨推理步骤保存中间结果。"
+        "向会话草稿本写入一条笔记（K-V 存储）。适合跨推理步骤保存任务相关的中间结果（数据、计划、工具输出等）。"
+        "禁止用于记录格式自省、格式修正笔记或行为反思内容——如发现格式有误，直接在下一步输出中更正即可。"
         "参数：key（键名），content（内容）"
     )
     args_model: ClassVar[type[BaseModel]] = NoteWriteArgs

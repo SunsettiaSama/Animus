@@ -264,6 +264,8 @@ class BotService(BaseServiceManager, EventHandler):
 
     def _build_session(self, event: MessageEvent) -> AgentSession:
         from agent.react.factory import build_conv_loop
+        from config.infra.bot_config import BotConfig
+        from infra.network.bot.tao_adapter import BotTaoAdapter
 
         reply_target = {
             "type": "bot",
@@ -272,6 +274,8 @@ class BotService(BaseServiceManager, EventHandler):
             "group_id": event.group_id,
         }
         conv_loop = build_conv_loop(self._state, reply_target=reply_target)
+        cfg       = BotConfig.load()
+        adapter   = BotTaoAdapter(conv_loop, cfg)
         bot_api   = self._bot_api
 
         async def _reply(text: str) -> None:
@@ -279,7 +283,7 @@ class BotService(BaseServiceManager, EventHandler):
 
         session = AgentSession(
             session_id=event.session_id,
-            conv_loop=conv_loop,
+            adapter=adapter,
             reply_fn=_reply,
             executor=self._executor,
         )

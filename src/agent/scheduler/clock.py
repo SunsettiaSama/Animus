@@ -48,9 +48,12 @@ class TemporalClock:
     def start(self) -> None:
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 5.0) -> None:
+        """Signal the clock to stop and block until the thread exits."""
         self._stopped = True
-        self._loop.call_soon_threadsafe(self._loop.stop)
+        if not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(timeout=timeout)
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
@@ -59,8 +62,26 @@ class TemporalClock:
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _run(self) -> None:
+        """Thread entry point.
+
+        Runs _tick_loop as a Task inside run_forever() so that loop.stop()
+        from the main thread returns cleanly without raising
+        'Event loop stopped before Future completed'.  After the loop exits,
+        any pending tasks (e.g. in-flight scheduler coroutines) are cancelled
+        and awaited before the loop is closed.
+        """
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._tick_loop())
+        self._loop.create_task(self._tick_loop(), name="temporal-clock-tick")
+        self._loop.run_forever()
+
+        # Cancel any tasks that were still running when loop.stop() was called.
+        pending = [t for t in asyncio.all_tasks(self._loop) if not t.done()]
+        if pending:
+            for t in pending:
+                t.cancel()
+            self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+        self._loop.close()
 
     async def _tick_loop(self) -> None:
         recovered = self._store.reset_stale_running()

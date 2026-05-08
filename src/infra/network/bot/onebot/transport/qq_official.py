@@ -152,27 +152,26 @@ class QQOfficialTransport(BaseTransport):
         from config import paths
         from botpy.logging import DEFAULT_FILE_HANDLER
 
-        # botpy 底层使用 aiohttp，aiohttp.ClientSession 默认 trust_env=False，
-        # 不会自动读取 HTTP_PROXY / HTTPS_PROXY 等系统代理环境变量。
-        # 此处 monkey-patch 使其默认开启 trust_env，从而让代理环境变量对 botpy 生效。
+        # 代理支持：仅当 bot_config 明确配置了 proxy 时才启用。
+        # 注意：不能无条件设置 trust_env=True——那会让 botpy 拾取系统 / IDE /
+        # VPN 写入的 HTTP_PROXY 环境变量，导致出口 IP 与 QQ 开放平台白名单不符。
         import os as _os
         import aiohttp as _aiohttp
-        _orig_cs_init = _aiohttp.ClientSession.__init__
-
-        def _trust_env_init(self, *args, **kwargs):
-            kwargs.setdefault("trust_env", True)
-            _orig_cs_init(self, *args, **kwargs)
-
-        _aiohttp.ClientSession.__init__ = _trust_env_init
-
-        # 若配置文件指定了代理，写入环境变量供 trust_env 读取；
-        # 不覆盖用户已手动设置的同名变量。
         from config.infra.bot_config import BotConfig as _BotConfig
         _cfg_proxy = _BotConfig.load().proxy.strip()
         if _cfg_proxy:
             _os.environ.setdefault("HTTP_PROXY",  _cfg_proxy)
             _os.environ.setdefault("HTTPS_PROXY", _cfg_proxy)
             logger.info("[QQOfficialTransport] using proxy: %s", _cfg_proxy)
+
+            # 只在显式配置代理时才 patch，让 aiohttp 读取上面写入的 env var。
+            _orig_cs_init = _aiohttp.ClientSession.__init__
+
+            def _trust_env_init(self, *args, **kwargs):
+                kwargs.setdefault("trust_env", True)
+                _orig_cs_init(self, *args, **kwargs)
+
+            _aiohttp.ClientSession.__init__ = _trust_env_init
 
         # botpy v1.2.1 已知 bug：任意 API 请求超时时，botpy/http.py 的 request()
         # 捕获 TimeoutError 后仅打印警告并 return None，调用方没有防御判空。
@@ -273,15 +272,30 @@ class QQOfficialTransport(BaseTransport):
 
         async def _probe_ip() -> None:
             # 探测实际出口 IP——仅供日志参考，失败不影响 bot 启动。
-            _timeout = _aiohttp.ClientTimeout(total=8)
+            # 依次尝试多个探测源，优先使用国内可达的服务，任一成功即止。
+            _ip_services = [
+                # 国内可达
+                ("https://4.ipw.cn",              lambda t: t.strip()),
+                ("https://myip.ipip.net/json",    lambda t: __import__("json").loads(t).get("data", {}).get("ip", "")),
+                # 国际备用
+                ("https://api.ipify.org?format=json", lambda t: __import__("json").loads(t).get("ip", "")),
+                ("https://ifconfig.me/ip",        lambda t: t.strip()),
+            ]
+            _timeout = _aiohttp.ClientTimeout(total=6)
             async with _aiohttp.ClientSession(timeout=_timeout) as _sess:
-                async with _sess.get("https://api.ipify.org?format=json") as _r:
-                    _d = await _r.json(content_type=None)
-                    self._outbound_ip = _d.get("ip", "unknown")
+                for _url, _parse in _ip_services:
+                    try:
+                        async with _sess.get(_url) as _r:
+                            _ip = _parse(await _r.text())
+                            if _ip:
+                                self._outbound_ip = _ip
+                                break
+                    except Exception:
+                        continue
             logger.info(
                 "[QQOfficialTransport] botpy 实际出口 IP: %s  "
                 "（若与 QQ 开放平台白名单不符，请更新白名单或配置代理）",
-                self._outbound_ip,
+                self._outbound_ip or "unknown",
             )
 
         def _on_probe_done(t: _asyncio.Task) -> None:
@@ -350,15 +364,16 @@ class QQOfficialTransport(BaseTransport):
                 f"No active C2C session for user_id={uid}; "
                 "user must send a message first (passive-reply only)"
             )
-        logger.info("[QQ→C2C ] uid=%d | seq=%d | %r", uid, ctx.msg_seq, text[:100])
+        seq = ctx.msg_seq
+        ctx.msg_seq += 1
+        logger.info("[QQ→C2C ] uid=%d | seq=%d | %r", uid, seq, text[:100])
         result = await self._client.api.post_c2c_message(
             openid=ctx.target_id,
             msg_type=0,
             content=text,
             msg_id=ctx.last_msg_id,
-            msg_seq=ctx.msg_seq,
+            msg_seq=seq,
         )
-        ctx.msg_seq += 1
         logger.info("[QQ→C2C ] result: %r", result)
         return (result or {}).get("id", "")
 
@@ -370,15 +385,16 @@ class QQOfficialTransport(BaseTransport):
                 f"No active group session for group_id={gid}; "
                 "user must @bot first (passive-reply only)"
             )
-        logger.info("[QQ→GROUP] gid=%d | seq=%d | %r", gid, ctx.msg_seq, text[:100])
+        seq = ctx.msg_seq
+        ctx.msg_seq += 1
+        logger.info("[QQ→GROUP] gid=%d | seq=%d | %r", gid, seq, text[:100])
         result = await self._client.api.post_group_message(
             group_openid=ctx.target_id,
             msg_type=0,
             content=text,
             msg_id=ctx.last_msg_id,
-            msg_seq=ctx.msg_seq,
+            msg_seq=seq,
         )
-        ctx.msg_seq += 1
         return (result or {}).get("id", "")
 
     async def _do_call_action(self, action: str, params: dict) -> dict:

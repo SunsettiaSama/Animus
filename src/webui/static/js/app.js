@@ -42,6 +42,7 @@ import { startNew, handleSend, handleMicClick,
          initTTSHandler, initLifecycleListeners,
          openKBPanel, registerModules as regWorkspace }
                                     from './screens/workspace.js';
+import { setAgentAvatar }           from './render.js';
 
 // ── Module dependency injection ───────────────────────────────────────────────
 
@@ -63,6 +64,11 @@ reactMod.setCallbacks({
   onReady:        () => updateReactBadge(),
   onError:        msg => { showToast(msg); },
   onStatusUpdate: () => {},
+});
+
+personaMod.setCallbacks({
+  onToast:        _toast,
+  onPersonaLoad:  name => setAgentAvatar(name ? name.charAt(0) : '⚡'),
 });
 
 historyMod.setCallbacks({
@@ -259,6 +265,9 @@ async function boot() {
   }
 
   updateReactBadge();
+  personaMod.loadConfig().then(p => {
+    if (p?.enabled && p.name) setAgentAvatar(p.name.charAt(0));
+  }).catch(() => {});
   loadWorkstation();
 
   // Keep bot badge in sync: fast 5-s poll until the bot is "on", then slow 30-s poll.

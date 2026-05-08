@@ -9,7 +9,7 @@ from typing import Generator, Union
 
 logger = logging.getLogger(__name__)
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage  # SystemMessage used for format corrections
 
 from config.agent.tao_config import TaoConfig
 from infra.sandbox import SandboxManager
@@ -633,18 +633,20 @@ class TaoLoop:
             # during the migration period when many models still use the old format.
             if result.quality == ParseQuality.LENIENT:
                 _lenient_nudge = (
-                    "Note: please use the XML tag format for future responses:\n"
+                    "[SYSTEM FORMAT REMINDER] Your previous response used the deprecated "
+                    "Action:/Action Input: format. Please use XML tags in all future responses:\n"
                     "<T>reasoning</T>\n"
                     '<A>[{"action": "tool_name", "args": {...}}]</A>\n'
                     "<O>optional user-visible output</O>\n\n"
-                    "注意：请使用 XML 标签格式输出：\n"
+                    "[系统格式提示] 上一步使用了已弃用的 Action:/Action Input: 格式，"
+                    "请在后续所有步骤使用 XML 标签格式：\n"
                     "<T>推理过程</T>\n"
                     '<A>[{"action": "工具名", "args": {...}}]</A>\n'
                     "<O>可选的用户可见输出</O>"
                 )
                 messages = messages + [
                     AIMessage(content=raw_output),
-                    HumanMessage(content=_lenient_nudge),
+                    SystemMessage(content=_lenient_nudge),
                 ]
 
             # _needs_retry: triggers full L2/L3 loop for truly broken outputs.
@@ -671,19 +673,21 @@ class TaoLoop:
                     ))
                     if result.quality == ParseQuality.FINISH_DEGRADED:
                         _correction = (
-                            "Your <A> args are not valid JSON. "
+                            "[SYSTEM FORMAT CORRECTION] Your <A> args are not valid JSON. "
                             "Since you want to finish, please rewrite using the XML format:\n"
                             "<T>your reasoning</T>\n"
                             '<A>[{"action": "finish", "args": {"answer": "your complete answer"}}]</A>\n'
                             "<O>your complete answer visible to the user</O>\n\n"
-                            "<A> 的 args 不是合法 JSON。请按以下 XML 格式重新输出 finish：\n"
+                            "[系统格式修正] <A> 的 args 不是合法 JSON。"
+                            "请按以下 XML 格式重新输出 finish：\n"
                             "<T>推理过程</T>\n"
                             '<A>[{"action": "finish", "args": {"answer": "完整回答内容"}}]</A>\n'
                             "<O>在此填写给用户的完整回答</O>"
                         )
                     else:
                         _correction = (
-                            "Your output format is incorrect. Please rewrite strictly using XML tags:\n"
+                            "[SYSTEM FORMAT CORRECTION] Your output format is incorrect. "
+                            "Please rewrite strictly using XML tags:\n"
                             "<T>your reasoning</T>\n"
                             '<A>[{"action": "tool_name", "args": {"key": "value"}}]</A>\n'
                             "<O>optional user-visible message</O>\n\n"
@@ -691,7 +695,7 @@ class TaoLoop:
                             "<T>your reasoning</T>\n"
                             '<A>[{"action": "finish", "args": {"answer": "..."}}]</A>\n'
                             "<O>your complete answer</O>\n\n"
-                            "格式有误，请严格按照 XML 标签格式重新输出：\n"
+                            "[系统格式修正] 格式有误，请严格按照 XML 标签格式重新输出：\n"
                             "<T>推理过程</T>\n"
                             '<A>[{"action": "工具名", "args": {"key": "value"}}]</A>\n'
                             "<O>可选的用户可见输出</O>\n\n"
@@ -702,7 +706,7 @@ class TaoLoop:
                         )
                     correction_msgs = messages + [
                         AIMessage(content=raw_output),
-                        HumanMessage(content=_correction),
+                        SystemMessage(content=_correction),
                     ]
                     raw_output = ""
                     for chunk in self._llm.stream_generate_messages(correction_msgs):

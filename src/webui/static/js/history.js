@@ -84,17 +84,39 @@ export async function clearAllHistory() {
 
 // ── Sidebar rendering ─────────────────────────────────────────────────────────
 
+let _histCollapsed = false;
+
 export async function renderSidebar() {
   const listEl = document.getElementById('sidebar-list');
   if (!listEl) return;
 
   const { conversations } = await http.get(PATHS.history.list);
+
+  listEl.innerHTML = '';
+
+  // Collapse toggle header
+  const toggleRow = document.createElement('div');
+  toggleRow.className = `sh-toggle${_histCollapsed ? ' collapsed' : ''}`;
+  toggleRow.innerHTML =
+    `<span class="sh-label">对话历史 <span class="sh-count">${conversations.length}</span></span>` +
+    `<span class="sh-chevron">▾</span>`;
+
+  const bodyEl = document.createElement('div');
+  bodyEl.className = `sh-body${_histCollapsed ? ' hidden' : ''}`;
+
+  toggleRow.addEventListener('click', () => {
+    _histCollapsed = !_histCollapsed;
+    toggleRow.classList.toggle('collapsed', _histCollapsed);
+    bodyEl.classList.toggle('hidden', _histCollapsed);
+  });
+
+  listEl.append(toggleRow, bodyEl);
+
   if (!conversations.length) {
-    listEl.innerHTML = '<div class="sidebar-empty">No history yet</div>';
+    bodyEl.innerHTML = '<div class="sidebar-empty">No history yet</div>';
     return;
   }
 
-  listEl.innerHTML = '';
   conversations.forEach(c => {
     const icon = c.mode === 'react' ? '⚡' : '💬';
     const item = document.createElement('div');
@@ -117,7 +139,7 @@ export async function renderSidebar() {
       await deleteConversation(c.id);
       _cb.onToast('Conversation deleted');
     });
-    listEl.appendChild(item);
+    bodyEl.appendChild(item);
   });
 }
 

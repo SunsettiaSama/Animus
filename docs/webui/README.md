@@ -344,11 +344,22 @@ GET /api/react/status  (react.py:233)
             │      StepEvent(thought, action, observation)
             │      FinishEvent(answer=...)
             │
-            │  前端收到事件 (streaming.js:onmessage)
-            │      chunk    → render.appendChunk()
-            │      step     → render.appendReactStep()
-            │      finish   → resolve Promise, setState('idle')
-            │      error    → reject Promise, setState('error')
+            │  前端收到事件 (streaming.js:onmessage → main.js 回调)
+            │      chunk    → ctrl.appendChunk(i, chunk)
+            │                   仅提取 <T>…</T> 内容显示，屏蔽 <A>/<O> 原始 JSON
+            │      step     → ctrl.addStep(step)
+            │                   若 step.output 非空且 step.action !== 'finish'：
+            │                     ctrl.close() → appendAssistantMsg() 显示 output
+            │                     → 新建 appendReactMsg() 继续后续步骤（多气泡分割）
+            │      sub_start  → ctrl.openSubAgent(action, instruction)
+            │      sub_chunk  → ctrl.addSubChunk(index, chunk)
+            │      sub_step   → ctrl.addSubStep(stepObj)
+            │      sub_finish → ctrl.closeSubAgent(answer, false)
+            │      sub_error  → ctrl.closeSubAgent(error, true)
+            │      max_steps  → toast 提示，resolve Promise（步骤数据保留）
+            │      finish   → ctrl.close() / el.remove() → appendAssistantMsg(answer)
+            │                   → resolve Promise, setState('idle')
+            │      error    → reject Promise, setState('idle')
             │
             └─ finish 后：
                    后端: task_runner.submit("post_process", conv_loop.post_process)
@@ -362,13 +373,7 @@ GET /api/react/status  (react.py:233)
 
 ### Chat 模式（/ws/chat）
 
-```
-用户点击 Send（mode = 'chat'）
-    └─ streaming.js: ChatSession.run(question, history)
-            ├─ wsFactory('/ws/chat')
-            ├─ send({ question, history, gen_id })
-            └─ 仅收 chunk / finish / error（无 step 类事件）
-```
+> **注意**：`ChatSession` 已从 `streaming.js` 移除，`main.js` 的 `handleSend` 始终调用 `_runReact`，前端不再有独立的 Chat 分支。`/ws/chat` 后端路由保留但当前前端不主动使用。
 
 ### 中止
 
@@ -378,6 +383,84 @@ GET /api/react/status  (react.py:233)
     │        → _receive_client() 匹配 gen_id → conv_loop._tao.abort()
     │          → TaoLoop._stop_event.set() → stream() 在下个 chunk 边界 return
     └─ 方式 B：POST /api/react/abort（WS 断开备用）
+```
+
+---
+
+## 前端 TAO 渲染详解
+
+`render.js` 提供 `appendReactMsg()` 工厂，返回一个控制器对象，统一管理从流式 token 到结构化步骤卡片的全部 DOM 操作。
+
+### 流式阶段（`appendChunk`）
+
+每个 `chunk` 事件到达时：
+
+1. 将 chunk 追加到当前步骤的累积字符串 `s.streamed`。
+2. 用正则从累积文本中提取 `<T>…</T>` 内容，**仅显示思维链文本**；`<A>` 中的工具调用 JSON 和 `<O>` 中的输出文本在结构化完成前不暴露给用户。
+3. 首次 chunk 到达时自动展开步骤卡片（添加 `open` 类），同时隐藏 Activity spinner。
+
+### 结构化阶段（`addStep`）
+
+`step` 事件到达后，调用 `ctrl.addStep(stepObj)`，按以下顺序构建步骤卡片内容：
+
+| 区块 | 来源字段 | 渲染方式 |
+|---|---|---|
+| Thought | `stepObj.thought` | Markdown（`marked.parse` + `hljs`）|
+| Action（单工具） | `stepObj.action` + `stepObj.action_input` | Action 纯文本；Input 渲染为 JSON code block |
+| Actions（并行） | `stepObj.calls`（length > 1）| 标题「Actions (N parallel)」，每项显示序号 + `action` + args JSON code block |
+| Observation | `stepObj.observation` | Markdown |
+| 原始输出 | `s.streamed`（流式累积文本）| 折叠的 `<pre>` 块，点击展开，显示完整 `<T><A><O>` XML |
+
+步骤完成后：移除 streaming 标签，在标题追加思维链摘要（≤50 字符）和 ✓ 徽章，并将卡片折叠（移除 `open` 类）。
+
+### 中间气泡分割（`step.output` 非 finish 步骤）
+
+当一个非 finish 步骤携带非空 `output` 字段时，`main.js` 执行多气泡分割：
+
+```
+ctrl.close()                   // 关闭当前 ReAct 卡片（移除 activity 和 answerBubble）
+appendAssistantMsg()           // 插入普通 assistant 气泡，显示 step.output
+ctrl = appendReactMsg()        // 新建 ReAct 卡片，继续后续步骤
+```
+
+这允许 Agent 在中间步骤向用户输出可见内容，同时保持推理链继续执行。
+
+### 子 Agent 块渲染
+
+`sub_start` 触发 `ctrl.openSubAgent(action, instruction)`，在当前父步骤的 detail 区（或 stepsWrap）内创建 `.sub-agent-block`，包含：
+
+- 可折叠标题（`Sub-agent: <action>`）
+- instruction 预览（最多 120 字符）
+- 子步骤行（`addSubStep`）：Thought / Action / Input / Observation，逐步追加
+- 流式文本区（`addSubChunk`）：每次 sub_chunk 追加到 `.sub-stream`，下一个 sub_step 到达时自动清除
+
+`sub_finish` / `sub_error` 触发 `ctrl.closeSubAgent(text, isError)`：在标题追加 ✓ done / ✗ error 徽章，并在 body 追加答案摘要（最多 300 字符）或错误横幅。
+
+### 历史重建（`_rebuildFromHistory`）
+
+切换历史对话时，`main.js._rebuildFromHistory(messages)` 对每条 assistant 消息：
+
+- 若含 `steps` 数组（ReAct 记录）：依次调用 `ctrl.addStep(step)`，遇到 `step.output` 非 finish 步骤时同样执行多气泡分割，最后调用 `ctrl.close()` 并显示 `m.content` 最终答案气泡。
+- 若无 `steps`（Chat 或旧格式）：调用 `appendAssistantMsg()` 直接渲染内容。
+
+历史记录格式：
+
+```json
+{
+  "role": "assistant",
+  "content": "最终答案文本",
+  "steps": [
+    {
+      "index": 0,
+      "thought": "…",
+      "action": "tool_name",
+      "action_input": {},
+      "observation": "…",
+      "calls": null,
+      "output": ""
+    }
+  ]
+}
 ```
 
 ---
@@ -421,11 +504,17 @@ GET /api/react/status  (react.py:233)
 | `prompt_preview` | S→C | `messages: list[dict]` | 完整 Prompt 组装结果（首步前推送一次）|
 | `step_start` | S→C | `index: int` | 开始第 N 步推理 |
 | `chunk` | S→C | `index: int`, `chunk: str` | LLM 流式输出片段 |
-| `step` | S→C | `index`, `thought`, `action`, `action_input`, `observation` | 单步推理完整记录 |
+| `step` | S→C | `index`, `thought`, `action`, `action_input`, `observation`, `calls: list[{action,args}] \| null`, `output: str` | 单步推理完整记录；`calls` 在并行工具时非空，`output` 为 `<O>` 内容（无时为空字符串）|
 | `retry` | S→C | `index: int`, `reason: str` | 当前步骤重试 |
 | `approval_request` | S→C | `request_id`, `tool_name`, `args`, `risk_level`, `reason`, `deadline_secs` | 高风险工具等待用户审批 |
+| `max_steps` | S→C | `max_steps: int` | 已达步数上限；前端 toast 提示并保留已完成步骤数据 |
 | `finish` | S→C | `answer: str`, `aborted: bool` | 最终答案（WebSocket 随后关闭）|
 | `error` | S→C | `message: str` | 推理过程中发生异常 |
+| `sub_start` | S→C | `action: str`, `instruction: str` | 子 Agent 启动，携带委托动作名与指令文本 |
+| `sub_chunk` | S→C | `index: int`, `chunk: str` | 子 Agent LLM 流式 token |
+| `sub_step` | S→C | `index`, `thought`, `action`, `action_input`, `observation`, `is_error: bool` | 子 Agent 完整步骤记录 |
+| `sub_finish` | S→C | `answer: str` | 子 Agent 正常完成，返回最终答案 |
+| `sub_error` | S→C | `error: str` | 子 Agent 出错 |
 | `abort` | C→S | `type: "abort"`, `gen_id: str` | 客户端中止 |
 | `approval_response` | C→S | `type: "approval_response"`, `request_id: str`, `approved: bool` | 工具审批回应 |
 

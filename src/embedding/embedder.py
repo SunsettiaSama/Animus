@@ -46,7 +46,7 @@ def _get_or_create_hf(key: _EmbedKey) -> HuggingFaceEmbeddings:
             model_name, device, use_fp16, batch_size, query_prefix, passage_prefix = key
             model_kwargs: dict = {"device": device}
             if use_fp16 and device != "cpu":
-                model_kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
+                model_kwargs["model_kwargs"] = {"dtype": torch.float16, "attn_implementation": "eager"}
             encode_kwargs: dict = {
                 "normalize_embeddings": True,
                 "batch_size": batch_size,

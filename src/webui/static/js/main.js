@@ -193,6 +193,7 @@ async function _runReact(question) {
 
   let   ctrl          = render.appendReactMsg();
   let   _stepI        = -1;
+  let   _ctrlHasSteps = false;
   const _stepHistory  = [];   // collect completed steps for persistence
 
   const session = new streaming.ReactSession(question, genId, {
@@ -201,9 +202,14 @@ async function _runReact(question) {
     onChunk:    (i, chunk) => ctrl.appendChunk(i, chunk),
     onStep: step => {
       ctrl.addStep(step);
+      _ctrlHasSteps = true;
       _stepHistory.push(step);
       if (step.output && step.action !== 'finish') {
-        ctrl.finalize(step.output, false);
+        ctrl.close();
+        _ctrlHasSteps = false;
+        const ob = render.appendAssistantMsg();
+        ob.append(step.output);
+        ob.finalize();
         ctrl = render.appendReactMsg();
       }
     },
@@ -216,18 +222,30 @@ async function _runReact(question) {
     onSubError:  error           => ctrl.closeSubAgent(error, true),
     onMaxSteps: n => _showToast(`⚠ 已达最大步数限制（${n} 步）`),
     onFinish:   (answer, aborted) => {
-      ctrl.finalize(answer, aborted);
-      if (!aborted && answer) {
+      if (!_ctrlHasSteps) ctrl.el.remove();
+      else ctrl.close();
+      if (!aborted) {
+        if (answer) {
+          const ab = render.appendAssistantMsg();
+          ab.append(answer);
+          ab.finalize();
+        }
         history.pushMessage({ role: 'assistant', content: answer, steps: _stepHistory });
         history.saveConversation();
         _updateTitle(answer);
+      } else {
+        const ab = render.appendAssistantMsg();
+        ab.finalize(true);
       }
       streaming.clearCurrent();
       setState('idle');
     },
     onError: e => {
       _showToast('ReAct error: ' + e.message);
-      ctrl.finalize('', true);
+      if (!_ctrlHasSteps) ctrl.el.remove();
+      else ctrl.close();
+      const ab = render.appendAssistantMsg();
+      ab.finalize(true);
       streaming.clearCurrent();
       setState('idle');
     },
@@ -288,10 +306,28 @@ function _rebuildFromHistory(messages) {
       render.appendUserMsg(m.content);
     } else if (m.role === 'assistant') {
       if (m.steps && m.steps.length > 0) {
-        // ReAct message — restore step cards then show final answer
-        const ctrl = render.appendReactMsg();
-        m.steps.forEach(step => ctrl.addStep(step));
-        ctrl.finalize(m.content, false);
+        // ReAct message — restore step cards with multi-bubble layout
+        let ctrl = render.appendReactMsg();
+        let hasSteps = false;
+        m.steps.forEach(step => {
+          ctrl.addStep(step);
+          hasSteps = true;
+          if (step.output && step.action !== 'finish') {
+            ctrl.close();
+            hasSteps = false;
+            const ob = render.appendAssistantMsg();
+            ob.append(step.output);
+            ob.finalize();
+            ctrl = render.appendReactMsg();
+          }
+        });
+        if (!hasSteps) ctrl.el.remove();
+        else ctrl.close();
+        if (m.content) {
+          const ab = render.appendAssistantMsg();
+          ab.append(m.content);
+          ab.finalize();
+        }
       } else {
         // Chat / old ReAct without step data
         const ctrl = render.appendAssistantMsg();

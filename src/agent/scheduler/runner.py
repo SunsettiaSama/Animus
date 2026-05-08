@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Callable
 
@@ -51,6 +52,7 @@ class TaskRunner:
         self._timeline = timeline
         self._notify_fn = notify_fn
         self._engine = engine  # set post-init for task chain scheduling
+        self._ltm_lock = threading.Lock()
 
     async def run(self, task: ScheduledTask, store: TaskStore) -> None:
         store.update(task.id, status=TaskStatus.running, last_run_at=_utcnow_iso())
@@ -77,22 +79,29 @@ class TaskRunner:
             self._handle_failure(task, store, exc)
             raise
 
-        result_path = _write_result(task, answer, self._cfg.scheduler_dir)
+        # ── Finalize: file I/O + LTM + timeline — offloaded to thread pool ──────
+        long_term   = self._long_term
+        timeline    = self._timeline
+        ltm_lock    = self._ltm_lock
+        scheduler_dir = self._cfg.scheduler_dir
 
-        # ── LTM write (always, independent of delivery) ───────────────────────
-        if self._long_term is not None:
-            summary = f"[调度任务] {task.name}\n指令: {task.instruction}\n结果: {answer}"
-            self._long_term.add(summary, source="scheduler", question=task.instruction)
-            self._long_term.save()
+        def _finalize() -> str:
+            path = _write_result(task, answer, scheduler_dir)
+            if long_term is not None:
+                summary = f"[调度任务] {task.name}\n指令: {task.instruction}\n结果: {answer}"
+                with ltm_lock:
+                    long_term.add(summary, source="scheduler", question=task.instruction)
+                    long_term.save()
+            if timeline is not None:
+                timeline.append("scheduled_task", {
+                    "task_id": task.id,
+                    "task_name": task.name,
+                    "instruction": task.instruction[:200],
+                    "answer": answer[:500],
+                })
+            return path
 
-        # ── Timeline write ────────────────────────────────────────────────────
-        if self._timeline is not None:
-            self._timeline.append("scheduled_task", {
-                "task_id": task.id,
-                "task_name": task.name,
-                "instruction": task.instruction[:200],
-                "answer": answer[:500],
-            })
+        result_path = await asyncio.to_thread(_finalize)
 
         # ── Advance next_run_at ───────────────────────────────────────────────
         if task.trigger.type == "interval" and task.trigger.interval_seconds:
@@ -130,14 +139,23 @@ class TaskRunner:
             effective_delivery = DeliveryMode.silent
 
         if effective_delivery == DeliveryMode.push and self._notify_fn is not None:
+            notify_fn = self._notify_fn
             try:
-                self._notify_fn(task, answer)
+                await asyncio.to_thread(notify_fn, task, answer)
             except Exception as exc:
                 logger.error("[TaskRunner] notify_fn error for task %s: %s", task.id[:8], exc)
         elif effective_delivery == DeliveryMode.store_only and self._long_term is not None:
-            summary = f"[调度任务-归档] {task.name}\n{answer}"
-            self._long_term.add(summary, source="scheduler_store_only", question=task.instruction)
-            self._long_term.save()
+            _ltm     = self._long_term
+            _lock    = self._ltm_lock
+            _summary = f"[调度任务-归档] {task.name}\n{answer}"
+            _instr   = task.instruction
+
+            def _store_only() -> None:
+                with _lock:
+                    _ltm.add(_summary, source="scheduler_store_only", question=_instr)
+                    _ltm.save()
+
+            await asyncio.to_thread(_store_only)
 
     def _handle_failure(self, task: ScheduledTask, store: TaskStore, exc: BaseException) -> None:
         logger.error("[TaskRunner] task %s (%s) failed: %s", task.id[:8], task.name, exc)

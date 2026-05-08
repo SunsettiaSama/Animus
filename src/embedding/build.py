@@ -47,7 +47,7 @@ def build(cfg: BuildConfig) -> None:
     # so SentenceTransformer passes them to AutoModel.from_pretrained.
     model_kwargs: dict = {"device": device}
     if cfg.use_fp16 and device != "cpu":
-        model_kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
+        model_kwargs["model_kwargs"] = {"dtype": torch.float16, "attn_implementation": "eager"}
 
     encode_kwargs: dict = {"normalize_embeddings": True, "batch_size": cfg.batch_size}
     if cfg.passage_prefix:

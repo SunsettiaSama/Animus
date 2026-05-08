@@ -88,32 +88,95 @@ async function _runReact(question) {
   set('genId', genId);
   setState('streaming');
 
-  const ctrl         = render.appendReactMsg();
-  let   _stepI       = -1;
   const _stepHistory = [];
+  let   _strip       = null;   // current live step strip (null = create on demand)
+
+  // <O> streaming state — detect the opening tag in raw chunks and start
+  // streaming into a bot bubble immediately rather than waiting for FinishEvent.
+  let _oBuf      = '';    // raw chunk accumulator (before/during <O> scan)
+  let _liveBub   = null;  // streaming bubble created once <O> is found
+  let _oStreaming = false; // true while inside <O>...</O>
+
+  const _getStrip  = () => { if (!_strip) _strip = render.appendStepStrip(); return _strip; };
+  const _dropStrip = () => { if (_strip) _strip.dismissLoading(); _strip = null; };
 
   const session = new streaming.ReactSession(question, genId, {
-    onPromptPreview: msgs  => ctrl.showPrompt(msgs),
-    onStepStart:     i     => { _stepI = i; ctrl.showActivity(`Step ${i + 1}…`); },
-    onChunk:         (i, chunk) => ctrl.appendChunk(i, chunk),
-    onStep:          step  => { ctrl.addStep(step); _stepHistory.push(step); },
-    onStepPause: (i, output, reqId) => {
-      ctrl.addStepPause(i, output, reqId,
-        id => session.sendContinue(id),
-        id => { session.sendStop(id); },
-      );
+    onPromptPreview: msgs => _getStrip().showPrompt(msgs),
+    onStepStart:     i    => _getStrip().setStreaming(i),
+
+    onChunk: (index, chunk) => {
+      _oBuf += chunk;
+
+      if (!_liveBub) {
+        const oi = _oBuf.indexOf('<O>');
+        if (oi === -1) return;
+        _liveBub   = render.appendAssistantMsg();
+        _oStreaming = true;
+        _oBuf       = _oBuf.slice(oi + 3);
+      }
+
+      if (!_oStreaming) return;  // </O> already consumed
+
+      const ci = _oBuf.indexOf('</O>');
+      if (ci !== -1) {
+        if (ci > 0) _liveBub.append(_oBuf.slice(0, ci));
+        _oStreaming = false;
+        _oBuf       = '';
+      } else if (_oBuf.length > 4) {
+        // Keep last 4 chars buffered as lookahead for a split </O> boundary
+        _liveBub.append(_oBuf.slice(0, -4));
+        _oBuf = _oBuf.slice(-4);
+      }
     },
-    onRetry:         (i, reason) => showToast(`Retry ${i}: ${reason}`),
+
+    onStep: step => {
+      _stepHistory.push(step);
+      const streamed = _liveBub;
+      if (streamed) {
+        streamed.finalize();
+        _liveBub    = null;
+        _oBuf       = '';
+        _oStreaming  = false;
+      }
+      _getStrip().addPill(step);
+      if (step.output && step.action !== 'finish') {
+        _dropStrip();
+        if (!streamed) {
+          const ob = render.appendAssistantMsg();
+          ob.append(step.output);
+          ob.finalize();
+        }
+      }
+    },
+
+    onRetry:           ()                   => {},   // L2/L3 repair runs transparently; no user-visible toast
     onApprovalRequest: (reqId, tool, args) => _promptApproval(session, reqId, tool, args),
-    onSubStart:  (action, instr) => ctrl.openSubAgent(action, instr),
-    onSubChunk:  (i, chunk)      => ctrl.addSubChunk(i, chunk),
-    onSubStep:   step            => ctrl.addSubStep(step),
-    onSubFinish: answer          => ctrl.closeSubAgent(answer, false),
-    onSubError:  error           => ctrl.closeSubAgent(error, true),
-    onMaxSteps: n => showToast(`⚠ 已达最大步数限制（${n} 步）`),
-    onFinish:   (answer, aborted) => {
-      ctrl.finalize(answer, aborted);
-      if (!aborted && answer) {
+    onSubStart:        ()                  => {},
+    onSubChunk:        ()                  => {},
+    onSubStep:         ()                  => {},
+    onSubFinish:       ()                  => {},
+    onSubError:        ()                  => {},
+    onMaxSteps:        n                   => showToast(`⚠ 已达最大步数限制（${n} 步）`),
+
+    onFinish: (answer, aborted) => {
+      const bubble = _liveBub;
+      _liveBub    = null;
+      _oBuf       = '';
+      _oStreaming  = false;
+      _dropStrip();
+
+      if (aborted) {
+        const ab = bubble || render.appendAssistantMsg();
+        ab.finalize(true);
+      } else if (bubble) {
+        bubble.finalize();
+        historyMod.pushMessage({ role: 'assistant', content: answer, steps: _stepHistory });
+        historyMod.saveConversation();
+        _updateTitle(answer);
+      } else if (answer) {
+        const ab = render.appendAssistantMsg();
+        ab.append(answer);
+        ab.finalize();
         historyMod.pushMessage({ role: 'assistant', content: answer, steps: _stepHistory });
         historyMod.saveConversation();
         _updateTitle(answer);
@@ -121,9 +184,10 @@ async function _runReact(question) {
       streaming.clearCurrent();
       setState('idle');
     },
+
     onError: e => {
       showToast('ReAct error: ' + e.message);
-      ctrl.finalize('', true);
+      _dropStrip();
       streaming.clearCurrent();
       setState('idle');
     },
@@ -150,13 +214,26 @@ export function rebuildFromHistory(messages) {
       render.appendUserMsg(m.content);
     } else if (m.role === 'assistant') {
       if (m.steps?.length) {
-        const ctrl = render.appendReactMsg();
-        m.steps.forEach(step => ctrl.addStep(step));
-        ctrl.finalize(m.content, false);
+        let strip = null;
+        m.steps.forEach(step => {
+          if (!strip) strip = render.appendStepStrip();
+          strip.addPill(step);
+          if (step.output && step.action !== 'finish') {
+            strip = null;
+            const ob = render.appendAssistantMsg();
+            ob.append(step.output);
+            ob.finalize();
+          }
+        });
+        if (m.content) {
+          const ab = render.appendAssistantMsg();
+          ab.append(m.content);
+          ab.finalize();
+        }
       } else {
         const ctrl = render.appendAssistantMsg();
         ctrl.append(m.content);
-        ctrl.finalize(false);
+        ctrl.finalize();
       }
     }
   });

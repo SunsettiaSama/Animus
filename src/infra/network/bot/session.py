@@ -20,20 +20,21 @@ class AgentSession:
     synchronous and runs inside a ThreadPoolExecutor to avoid blocking the
     event loop.
 
-    Progressive delivery: whenever a step produces <O> output, it is placed
-    into _send_queue (non-blocking) and delivered by a dedicated _send_thread,
-    so tao reasoning continues without waiting for the QQ API round-trip.
+    Progressive delivery: the BotTaoAdapter translates TaoEvents into plain
+    strings which are placed into _send_queue (non-blocking) and delivered by
+    a dedicated _send_thread, so tao reasoning continues without waiting for
+    the QQ API round-trip.
     """
 
     def __init__(
         self,
         session_id: str,
-        conv_loop: Any,          # ConvLoop
+        adapter: Any,            # BotTaoAdapter
         reply_fn: Callable[[str], Awaitable[None]],
         executor: ThreadPoolExecutor,
     ) -> None:
         self._id       = session_id
-        self._conv     = conv_loop
+        self._adapter  = adapter
         self._reply_fn = reply_fn
         self._executor = executor
         self._queue: asyncio.Queue[str] = asyncio.Queue()
@@ -139,57 +140,20 @@ class AgentSession:
                 break
             logger.info("[AgentSession] %s → %r", self._id, text[:80])
             future = asyncio.run_coroutine_threadsafe(self._reply_fn(text), loop)
-            # 不设外层 timeout：QQ API 重试逻辑自身负责超时（monkey-patch 最多重试 5 次后
-            # raise RuntimeError，届时异常才真正终止线程并触发 _run_forever 的重建机制）。
-            # 若在此设置 60s 上限，重试总耗时超出后线程会过早崩溃，
-            # 而协程仍挂在 loop 里继续运行，导致状态不一致。
-            future.result()
+            try:
+                future.result()
+            except Exception as exc:
+                logger.error(
+                    "[AgentSession] %s send failed, skipping: %s", self._id, exc
+                )
 
     def _process_sync(self, question: str) -> str:
-        """Run the agent loop synchronously and queue messages for progressive delivery.
+        """Run the agent loop via BotTaoAdapter and queue messages for delivery.
 
-        Each step's <O> output is put into _send_queue immediately (non-blocking),
-        letting tao reasoning proceed without waiting for the QQ API response.
-        The dedicated _send_thread consumes the queue and handles delivery.
+        The adapter converts TaoEvents into plain strings; this method only
+        handles the threading/delivery layer and has no knowledge of TaoEvent
+        concrete types.
         """
-        from agent.react.tao import FinishEvent, StepEvent
-        from config.infra.bot_config import BotConfig
-        cfg = BotConfig.load()
-
-        step_index: int = 0
-        final_answer: str = ""
-
-        for event in self._conv.stream(question):
-            if isinstance(event, StepEvent):
-                if event.output and event.action != "finish":
-                    self._send_queue.put(event.output)
-
-                if cfg.show_step_progress and event.action != "finish":
-                    thought_raw = (event.thought or "").strip()
-                    # Truncate thought at a word boundary, max 120 chars.
-                    if len(thought_raw) > 120:
-                        thought_snippet = thought_raw[:120].rsplit(None, 1)[0] + "…"
-                    else:
-                        thought_snippet = thought_raw
-                    obs_raw = (event.observation or "").strip()
-                    obs_snippet = (obs_raw[:80] + "…") if len(obs_raw) > 80 else obs_raw
-
-                    parts = [f"⚙️ 步骤 {step_index + 1}：{event.action}"]
-                    if thought_snippet:
-                        parts.append(f"💭 {thought_snippet}")
-                    if obs_snippet:
-                        parts.append(f"📎 {obs_snippet}")
-                    self._send_queue.put("\n".join(parts))
-
-                step_index += 1
-
-            elif isinstance(event, FinishEvent):
-                final_answer = event.answer
-                break
-
-        self._conv.post_process()
-
-        if final_answer:
-            self._send_queue.put(final_answer)
-
+        for text in self._adapter.messages(question):
+            self._send_queue.put(text)
         return ""

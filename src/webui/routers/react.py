@@ -378,9 +378,10 @@ async def ws_react_run(websocket: WebSocket):
             )
 
         # Chunk batching: accumulate consecutive ChunkEvents from the same step
-        # and flush them as a single WebSocket frame.  This cuts per-token overhead
-        # (call_soon_threadsafe + queue + send_json) by an order of magnitude for
-        # local models that emit many small tokens.
+        # and flush every _CHUNK_FLUSH_N tokens so the frontend receives progressive
+        # updates rather than one giant frame per step.  Step boundaries always
+        # force a flush regardless of buffer size.
+        _CHUNK_FLUSH_N  = 4
         _chunk_buf: list[str] = []
         _chunk_idx: int = -1
 
@@ -401,6 +402,8 @@ async def ws_react_run(websocket: WebSocket):
                     _flush_chunks()
                     _chunk_idx = event.index
                 _chunk_buf.append(event.chunk)
+                if len(_chunk_buf) >= _CHUNK_FLUSH_N:
+                    _flush_chunks()
             else:
                 _flush_chunks()
                 msg = _event_to_dict(event)

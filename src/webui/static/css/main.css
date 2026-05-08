@@ -212,6 +212,24 @@
       padding: 6px;
     }
 
+    /* Sidebar history collapse toggle */
+    .sh-toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 12px; cursor: pointer;
+      font-size: 11px; font-weight: 600; color: var(--text3);
+      user-select: none; border-bottom: 1px solid var(--border);
+      transition: background .1s;
+    }
+    .sh-toggle:hover { background: var(--bg2); }
+    .sh-count {
+      font-weight: 400; background: var(--bg3); border-radius: 8px;
+      padding: 0 5px; margin-left: 4px;
+    }
+    .sh-chevron { transition: transform .2s; }
+    .sh-toggle.collapsed .sh-chevron { transform: rotate(-90deg); }
+    .sh-body { overflow: hidden; }
+    .sh-body.hidden { display: none; }
+
     .hist-item {
       display: flex;
       align-items: center;
@@ -404,6 +422,132 @@
     @keyframes blink { 50% { opacity: 0; } }
 
     .msg-time { font-size: 11px; color: var(--text3); padding: 0 3px; }
+
+    /* ── Step Strip (compact progress bar above bot reply) ───────────────── */
+    .step-strip-row {
+      display: flex; align-items: flex-start; gap: 8px;
+      max-width: 90%; padding: 2px 0;
+    }
+    .strip-icon {
+      width: 32px; height: 32px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; flex-shrink: 0;
+      background: var(--bg3); color: var(--text2);
+    }
+    .strip-body {
+      display: flex; flex-direction: column; gap: 0;
+      min-width: 0; flex: 1;
+    }
+    .strip-pills {
+      display: flex; flex-wrap: wrap; gap: 5px; align-items: flex-start;
+      padding: 4px 0;
+    }
+    .step-pill-wrap {
+      display: flex; flex-direction: column;
+    }
+    .step-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 12px;
+      font-size: 11px; font-weight: 600;
+      cursor: pointer; border: none; user-select: none; white-space: nowrap;
+      background: var(--bg3); color: var(--text2);
+      transition: background .12s, box-shadow .12s;
+    }
+    .step-pill:hover { background: var(--bg2); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .step-pill.streaming { border: 1px dashed var(--border); background: var(--bg); }
+    .step-pill.pill-done  { background: #f0fdf4; color: #166534; }
+    .step-pill.pill-done:hover  { background: #dcfce7; }
+    .step-pill.pill-finish { background: #eff6ff; color: #1d4ed8; }
+    .step-pill.pill-finish:hover { background: #dbeafe; }
+    .step-pill.expanded   { border-bottom-left-radius: 3px; border-bottom-right-radius: 3px; }
+    .pill-sep  { opacity: .35; font-weight: 400; }
+    .pill-check { font-size: 10px; opacity: .7; margin-left: 1px; }
+    @keyframes pulse-dots { 0%,100%{opacity:1}50%{opacity:.2} }
+    .step-pill.streaming .pill-dots { animation: pulse-dots 1.2s ease-in-out infinite; letter-spacing: 1px; }
+
+    /* Expandable detail below a pill */
+    .pill-detail {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-top: none; border-radius: 0 0 8px 8px;
+      padding: 8px 12px; font-size: 12px;
+      max-width: 480px; margin-bottom: 2px;
+    }
+    .pill-detail.hidden { display: none; }
+    .pd-row { margin-bottom: 7px; }
+    .pd-row:last-child { margin-bottom: 0; }
+    .pd-lbl {
+      font-size: 10px; font-weight: 700; letter-spacing: .6px;
+      color: var(--text3); text-transform: uppercase; margin-bottom: 3px;
+    }
+    .pd-val { color: var(--text); white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+    .pd-val pre {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 5px 8px; font-size: 11px;
+      overflow-x: auto; margin: 0;
+    }
+    .pd-val.md-rendered { white-space: normal; }
+
+    /* -- StepBubble (legacy per-step bubble — kept for reference) -- */
+    .message.step-bubble { align-items: flex-start; }
+    .step-bubble .msg-body { width: 100%; max-width: 680px; }
+
+    /* Header row: Step N badge + action tag + summary + done checkmark */
+    .step-bubble-hdr {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 10px 5px 0;
+      font-size: 12px; font-weight: 600; color: var(--text2);
+      user-select: none;
+    }
+    .step-num {
+      font-size: 11px; font-weight: 700;
+      background: var(--bg3); color: var(--text2);
+      padding: 2px 7px; border-radius: 4px;
+      white-space: nowrap;
+    }
+    .step-bubble-hdr .step-action-tag { font-size: 11px; }
+    .step-bubble-hdr .step-summary {
+      font-size: 11px; color: var(--text3); font-weight: 400;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 30ch;
+    }
+    .step-bubble-hdr .step-done { margin-left: auto; }
+
+    /* Bubble body in loading/streaming state */
+    .step-bubble-body {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--r2); padding: 10px 13px;
+      font-size: 13px; color: var(--text2);
+      min-height: 36px;
+    }
+    /* Streaming view inside a step bubble */
+    .step-bubble-stream {
+      display: flex; align-items: center; gap: 9px;
+      min-height: 22px; font-size: 13px; color: var(--text2);
+    }
+    .step-bubble-stream.hidden { display: none; }
+    .sb-spinner {
+      width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      animation: spin .7s linear infinite; flex-shrink: 0;
+    }
+    .sb-text { white-space: pre-wrap; word-break: break-word; }
+
+    /* Structured detail after step finalization */
+    .step-bubble-detail.hidden { display: none; }
+
+    /* Step pause block (human-in-the-loop) */
+    .step-pause-block {
+      margin-top: 6px; padding: 8px 12px;
+      background: #fffbeb; border: 1px solid #fde68a;
+      border-radius: var(--r2); font-size: 13px;
+    }
+    .pause-output { color: #92400e; margin-bottom: 6px; }
+    .pause-btn-row { display: flex; gap: 8px; }
+    .pause-btn-continue, .pause-btn-stop {
+      padding: 4px 12px; border-radius: 5px; font-size: 12px; font-weight: 600;
+      cursor: pointer; border: 1px solid transparent;
+    }
+    .pause-btn-continue { background: var(--accent); color: #fff; }
+    .pause-btn-stop     { background: var(--bg3); color: var(--text2); border-color: var(--border); }
 
     /* -- ReAct steps -- */
     .react-steps { margin-bottom: 6px; }
