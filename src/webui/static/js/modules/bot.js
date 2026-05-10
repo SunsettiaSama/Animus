@@ -22,43 +22,68 @@ export async function updateWorkstationCard() {
   const bodyEl  = document.getElementById('mc-bot-body');
   if (!bodyEl) return null;
 
-  const [cfg, st] = await Promise.allSettled([loadConfig(), getStatus()]);
-  const c = cfg.status === 'fulfilled' ? cfg.value : null;
-  const s = st.status  === 'fulfilled' ? st.value  : null;
+  const [cfgR, stR, barkR, ntfyR] = await Promise.allSettled([
+    loadConfig(),
+    getStatus(),
+    fetch('/api/notify/bark/config').then(r => r.ok ? r.json() : null),
+    fetch('/api/notify/ntfy/config').then(r => r.ok ? r.json() : null),
+  ]);
+  const c    = cfgR.status === 'fulfilled' ? cfgR.value : null;
+  const s    = stR.status  === 'fulfilled' ? stR.value  : null;
+  const bark = barkR.status === 'fulfilled' ? barkR.value : null;
+  const ntfy = ntfyR.status === 'fulfilled' ? ntfyR.value : null;
 
   const state    = (s?.state         ?? 'unavailable').trim();
   const svcState = (s?.service_state ?? '').trim();
-  // Consider the service "on" if either the transport is connected/running OR
-  // the service itself reports running (transport may lag on first connect).
-  const isOn       = state === 'connected' || state === 'running' || svcState === 'running';
-  const isLoading  = !isOn && state === 'connecting';
+  const botOn    = state === 'connected' || state === 'running' || svcState === 'running';
+  const botLoading = !botOn && state === 'connecting';
+  const barkOn   = !!(bark?.enabled && bark?.device_key);
+  const ntfyOn   = !!(ntfy?.enabled && ntfy?.topic);
+  const anyOn    = botOn || barkOn || ntfyOn;
+  const anyLoading = !anyOn && botLoading;
+
   if (badgeEl) {
-    if (isOn)       { badgeEl.textContent = 'ON';  badgeEl.className = 'mc-badge on'; }
-    else if (isLoading) { badgeEl.textContent = '…';   badgeEl.className = 'mc-badge'; }
-    else            { badgeEl.textContent = 'OFF'; badgeEl.className = 'mc-badge off'; }
+    if (anyOn)          { badgeEl.textContent = 'ON';  badgeEl.className = 'mc-badge on'; }
+    else if (anyLoading){ badgeEl.textContent = '…';   badgeEl.className = 'mc-badge'; }
+    else                { badgeEl.textContent = 'OFF'; badgeEl.className = 'mc-badge off'; }
   }
 
-  const transport = c?.transport ?? 'forward_ws';
-  const connInfo  = transport === 'qq_official'
-    ? (c?.appid ? `appid: ${_esc(c.appid)}` : '—')
-    : _esc(c?.ws_url || '—');
-  const connLabel = transport === 'qq_official' ? 'AppID' : 'WS';
-  const sessions  = s?.active_sessions ?? 0;
-  const prefix    = c?.command_prefix
-    ? `<code style="font-size:11px">${_esc(c.command_prefix)}</code>`
-    : '<span style="color:var(--text3)">无前缀</span>';
+  const rows = [];
 
-  bodyEl.innerHTML = `
-    <div class="mc-row"><span class="mc-key">状态</span>
-      <span class="mc-val">${_stateLabel(state)}</span></div>
-    <div class="mc-row"><span class="mc-key">${connLabel}</span>
-      <span class="mc-val mc-truncate" title="${connInfo}">${connInfo}</span></div>
-    <div class="mc-row"><span class="mc-key">会话</span>
-      <span class="mc-val">${sessions} 活跃</span></div>
-    <div class="mc-row"><span class="mc-key">前缀</span>
-      <span class="mc-val">${prefix}</span></div>`;
+  // ── Bark row ────────────────────────────────────────────────────────────────
+  if (bark) {
+    const bLabel = barkOn
+      ? '<span style="color:#16a34a">✓ 已启用</span>'
+      : '<span style="color:var(--text3)">未启用</span>';
+    rows.push(`<div class="mc-row"><span class="mc-key">🍎 Bark</span>
+      <span class="mc-val">${bLabel}</span></div>`);
+  }
 
-  return { isOn, state, svcState };
+  // ── ntfy row ────────────────────────────────────────────────────────────────
+  if (ntfy) {
+    const nLabel = ntfyOn
+      ? '<span style="color:#16a34a">✓ 已启用</span>'
+      : '<span style="color:var(--text3)">未启用</span>';
+    rows.push(`<div class="mc-row"><span class="mc-key">📢 ntfy</span>
+      <span class="mc-val">${nLabel}</span></div>`);
+  }
+
+  // ── Bot row ─────────────────────────────────────────────────────────────────
+  if (c?.enabled !== false) {
+    rows.push(`<div class="mc-row"><span class="mc-key">💬 Bot</span>
+      <span class="mc-val">${_stateLabel(state)}</span></div>`);
+    if (botOn) {
+      const sessions = s?.active_sessions ?? 0;
+      rows.push(`<div class="mc-row"><span class="mc-key" style="padding-left:14px">会话</span>
+        <span class="mc-val">${sessions} 活跃</span></div>`);
+    }
+  }
+
+  bodyEl.innerHTML = rows.length
+    ? rows.join('')
+    : '<span style="color:var(--text3);font-size:13px">暂无已启用渠道</span>';
+
+  return { isOn: anyOn, state, svcState };
 }
 
 function _stateLabel(state) {

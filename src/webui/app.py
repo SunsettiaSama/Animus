@@ -105,7 +105,14 @@ def _startup():
         def _notify(task, answer: str) -> None:
             rt = task.reply_target
             if rt is None:
-                return
+                # Fallback: pick the best available channel automatically.
+                # Priority: bark → ntfy → webui
+                if st.bark_notifier is not None and st.bark_notifier._cfg.enabled:
+                    rt = {"type": "bark"}
+                elif st.ntfy_notifier is not None and st.ntfy_notifier._cfg.enabled:
+                    rt = {"type": "ntfy"}
+                else:
+                    rt = {"type": "webui"}
             target = ReplyTarget.from_task_dict(rt)
             if target is not None:
                 st.channel_router.deliver(target, task.name, answer)

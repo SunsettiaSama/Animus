@@ -1940,6 +1940,16 @@
               </select>
             </div>
             <div>
+              <label>推送渠道 <span style="font-weight:400;color:var(--text3)">push 模式生效</span></label>
+              <select id="sched-reply-channel">
+                <option value="">自动（按已启用渠道优先级）</option>
+                <option value="bark">🍎 Bark（iOS）</option>
+                <option value="ntfy">📢 ntfy（Android / 自建）</option>
+                <option value="bot">💬 Bot（QQ）</option>
+                <option value="webui">🖥 WebUI 通知栏</option>
+              </select>
+            </div>
+            <div>
               <label>Max Retries</label>
               <input id="sched-max-retries" type="number" value="0" min="0" max="10" />
             </div>

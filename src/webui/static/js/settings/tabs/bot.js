@@ -102,6 +102,20 @@ export async function load() {
     if (pri) pri.value = String(ntfy.priority ?? 3);
   }
 
+  // Auto-focus the first enabled channel so users aren't stuck looking at Bot
+  const sel = $('s-channel-select');
+  if (sel) {
+    const botEnabled  = d?.enabled  ?? false;
+    const barkEnabled = bark?.enabled && bark?.device_key;
+    const ntfyEnabled = ntfy?.enabled && ntfy?.topic;
+    if (!botEnabled && barkEnabled) {
+      sel.value = 'bark';
+    } else if (!botEnabled && ntfyEnabled) {
+      sel.value = 'ntfy';
+    }
+    // If bot is enabled (even connecting), keep 'bot' selected by default
+  }
+
   onChannelChange();
 }
 

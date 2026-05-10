@@ -96,11 +96,16 @@ function onSchedTriggerChange() {
 async function createSchedulerTask() {
   const $ = id => document.getElementById(id);
   const triggerType = document.querySelector('input[name="sched-trigger-radio"]:checked')?.value ?? 'once';
+  const delivery      = $('sched-delivery')?.value      ?? 'push';
+  const replyChannel  = $('sched-reply-channel')?.value ?? '';
+  const reply_target  = replyChannel ? { type: replyChannel } : null;
   const payload = {
     name:             $('sched-name')?.value ?? '',
     instruction:      $('sched-instruction')?.value ?? '',
     trigger_type:     triggerType,
     profile:          $('sched-profile')?.value ?? 'minimal',
+    delivery,
+    reply_target,
     at:               triggerType === 'once'     ? $('sched-at')?.value       : undefined,
     interval_seconds: triggerType === 'interval' ? parseInt($('sched-interval')?.value) : undefined,
   };

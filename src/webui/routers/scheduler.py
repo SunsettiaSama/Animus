@@ -22,6 +22,7 @@ class SchedulerTaskCreate(BaseModel):
     cron_expr: str | None = None
     profile: str = "minimal"
     delivery: str = "push"
+    reply_target: dict | None = None
     max_retries: int = 0
     retry_delay_seconds: int = 60
     on_complete: str | None = None
@@ -106,6 +107,7 @@ def scheduler_create(req: SchedulerTaskCreate):
     kwargs = dict(
         profile=req.profile,
         delivery=req.delivery,
+        reply_target=req.reply_target,
         max_retries=req.max_retries,
         retry_delay_seconds=req.retry_delay_seconds,
         on_complete=req.on_complete or None,
