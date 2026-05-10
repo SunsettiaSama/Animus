@@ -59,6 +59,8 @@ class HeartbeatModule:
         self._force_tick: bool = False
         self._escalate_count: int = 0
         self._escalate_date: str = ""
+        self._daily_review_date: str = ""
+        self._life_manager = None  # injected via set_life_manager() after init
         self._lock = threading.Lock()
         self._ensure_heartbeat_file()
 
@@ -94,6 +96,9 @@ class HeartbeatModule:
                 self._escalate_count = 0
             budget_exceeded = self._escalate_count >= self._cfg.max_escalations_per_day
 
+        # ③b Life module hooks (activity logging + daily review)
+        self._run_life_hooks(today)
+
         # ④ Tier-1 precheck
         response = self._checker.precheck(content)
         duration_ms = int((time.monotonic() - t0) * 1000)
@@ -122,6 +127,10 @@ class HeartbeatModule:
         )
         self._tick_log.append(result)
         return result
+
+    def set_life_manager(self, life_manager) -> None:
+        """Inject LifeManager after construction to avoid circular imports."""
+        self._life_manager = life_manager
 
     def force_tick(self) -> None:
         """Signal Clock to trigger a proactive tick on the next loop iteration."""
@@ -163,6 +172,79 @@ class HeartbeatModule:
         start = dtime.fromisoformat(start_str)
         end_ = dtime.fromisoformat(end_str)
         return start <= now_local <= end_
+
+    def _run_life_hooks(self, today: str) -> None:
+        lm = self._life_manager
+        if lm is None:
+            return
+
+        # Activity logging: every N hours write a scheduler-activity narrative
+        if lm.should_write_activity():
+            tasks_text = self._format_recent_tasks()
+            if tasks_text:
+                now = datetime.now(timezone.utc)
+                lm.generate_and_write_activity(
+                    tasks_text=tasks_text,
+                    period_start=now.date().isoformat(),
+                    period_end=now.date().isoformat(),
+                )
+                logger.debug("[Life] wrote activity entry")
+
+        # Daily review: once per calendar day
+        with self._lock:
+            needs_review = self._daily_review_date != today
+
+        if needs_review:
+            with self._lock:
+                self._daily_review_date = today
+            self._run_daily_review(lm)
+
+    def _format_recent_tasks(self) -> str:
+        if self._checker._scheduler_engine is None:
+            return ""
+        timeline = self._checker._scheduler_engine.list_timeline()
+        completed = [
+            t for t in timeline
+            if hasattr(t, "status") and str(t.status.value) in ("done", "completed")
+        ]
+        if not completed:
+            return ""
+        parts = []
+        for t in completed[-5:]:
+            name = getattr(t, "name", "")
+            result = getattr(t, "result", "") or ""
+            if name:
+                parts.append(f"- {name}: {str(result)[:80]}")
+        return "\n".join(parts)
+
+    def _run_daily_review(self, lm) -> None:
+        engine = self._checker._scheduler_engine
+        profile_obj = None
+        emotional_state_obj = None
+
+        if hasattr(lm, "_static_profile"):
+            profile_obj = lm._static_profile
+        # _emotional_state_ref is a callable lambda returning the current state
+        if hasattr(lm, "_emotional_state_ref"):
+            try:
+                emotional_state_obj = lm._emotional_state_ref()
+            except Exception:
+                pass
+
+        if profile_obj is None or emotional_state_obj is None:
+            logger.debug("[Life] daily review skipped — no profile/emotional state available")
+            return
+
+        today_tasks = self._format_recent_tasks()
+        result = lm.run_daily_review(
+            static_profile=profile_obj,
+            emotional_state=emotional_state_obj,
+            today_scheduler_tasks=today_tasks,
+            scheduler_engine=engine,
+        )
+        if result is not None:
+            logger.info("[Life] daily review complete — %d scheduler actions, emotion=%r",
+                        len(result.scheduler_actions), result.emotion_expression[:60] if result.emotion_expression else "")
 
     def _ensure_heartbeat_file(self) -> None:
         path = self._cfg.heartbeat_file

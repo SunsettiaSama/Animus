@@ -11,6 +11,6 @@ export {
   saveModelTab, saveMemoryTab, savePersonaTab,
   saveVoiceTab, saveSandboxTab, saveBotTab, saveSchedulerTab,
   onToggleTools, onTTSProviderChange, onSTTProviderChange,
-  onBotTransportChange, testBark, testNtfy,
+  onBotTransportChange, onChannelChange, testBark, testNtfy,
   doConsolidate, doClearMemory, doClearPersona,
 } from './settings/modal.js';

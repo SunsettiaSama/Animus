@@ -3,6 +3,7 @@ from __future__ import annotations
 from config.agent.persona_config import PersonaConfig
 from infra.llm import BaseLLM
 from ..memory.memory import Step
+from ..persona.emotional import EmotionalState, EmotionalStateBlock, EmotionalStateEvolver, EmotionalStateStore
 from ..persona.engine import EvolutionEngine
 from ..persona.preference.block import PreferenceBlock
 from ..persona.preference.recent import RecentPreference
@@ -53,6 +54,15 @@ class PersonaManager:
                 reflection_enabled=cfg.reflection_enabled,
                 reflect_interval=cfg.reflect_interval,
             )
+            if cfg.evolution_enabled and llm is not None
+            else None
+        )
+
+        # ── 情绪状态（叙事型漂移层，持久化到 emotional_state.json）────────────
+        self._emotional_store = EmotionalStateStore(cfg.persona_dir)
+        self._emotional_state: EmotionalState = self._emotional_store.load()
+        self._emotional_evolver: EmotionalStateEvolver | None = (
+            EmotionalStateEvolver(llm)
             if cfg.evolution_enabled and llm is not None
             else None
         )
@@ -114,6 +124,12 @@ class PersonaManager:
             max_chars=self._cfg.max_preference_chars,
         )
 
+    def emotional_state_block(self) -> EmotionalStateBlock:
+        return EmotionalStateBlock(
+            self._emotional_state,
+            max_chars=getattr(self._cfg, "max_emotional_state_chars", 400),
+        )
+
     def all_blocks(self) -> list[PromptBlock]:
         """返回本轮应注入 Prompt 的全部 persona 块。"""
         blocks: list[PromptBlock] = [self.profile_block()]
@@ -123,6 +139,8 @@ class PersonaManager:
             blocks.append(self.reflection_block())
         if self._cfg.preference_enabled and self._recent_preference.render():
             blocks.append(self.preference_block())
+        if not self._emotional_state.is_empty():
+            blocks.append(self.emotional_state_block())
         return blocks
 
     def bias_query(self, query: str) -> str:
@@ -134,7 +152,14 @@ class PersonaManager:
 
     # ── Evolution ──────────────────────────────────────────────────────────────
 
-    def evolve(self, question: str, answer: str, steps: list[Step]) -> None:
+    def evolve(
+        self,
+        question: str,
+        answer: str,
+        steps: list[Step],
+        life_summary: str = "",
+        medium_term_context: str = "",
+    ) -> None:
         """每轮对话结束后调用，驱动演化引擎并更新内部状态。"""
         self._turn_count += 1
 
@@ -149,6 +174,21 @@ class PersonaManager:
             )
             if new_reflection is not None:
                 self._reflection = new_reflection
+
+        # 叙事型情绪漂移（每轮触发，结果持久化）
+        if self._emotional_evolver is not None:
+            new_state = self._emotional_evolver.evolve(
+                state=self._emotional_state,
+                profile=self._profile,
+                question=question,
+                answer=answer,
+                steps=steps,
+                life_summary=life_summary,
+                medium_term_context=medium_term_context,
+            )
+            if new_state is not self._emotional_state:
+                self._emotional_state = new_state
+                self._emotional_store.save(new_state)
 
         # 近期偏好更新（每 N 轮触发一次）
         if (
@@ -184,6 +224,8 @@ class PersonaManager:
         if os.path.exists(pref_path):
             os.remove(pref_path)
 
+        self._emotional_store.clear()
+
         # Reset in-memory objects
         from ..persona.profile.profile import PersonaProfile
         from ..persona.profile.skills import SkillsLibrary
@@ -192,6 +234,7 @@ class PersonaManager:
         self._profile = PersonaProfile()
         self._skills = SkillsLibrary()
         self._reflection = ""
+        self._emotional_state = EmotionalState()
         self._recent_preference = RecentPreference(
             window_days=self._cfg.preference_window_days,
             max_topics=self._cfg.max_preference_topics,

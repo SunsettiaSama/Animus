@@ -1,13 +1,13 @@
 # agent/react/memory/long_term
 
-基于 BGE Embedding + FAISS 的长期记忆，以进程内向量库形式提供跨会话知识检索，支持持久化到磁盘。
+基于 BGE Embedding + Qdrant（本地嵌入式）的长期记忆，以进程内向量库形式提供跨会话知识检索，支持持久化到磁盘。
 
 ```
 src/agent/react/memory/long_term/
 ├── memory.py       # LongTermMemory — 薄封装，对外接口
-├── store.py        # LongTermStore  — 向量库核心（嵌入 + 索引 + 持久化）
+├── store.py        # LongTermStore  — 向量库核心（嵌入 + Qdrant + 持久化）
 ├── init/           # 工厂：make_memory / load_store / init_empty_store
-└── retrieve/       # 检索器：Retriever + 四场景模式 + 自动触发
+└── retrieve/       # 检索器：Retriever + 五场景模式 + 自动触发
 ```
 
 ## 核心类：`LongTermStore`
@@ -18,16 +18,17 @@ from agent.react.memory.long_term.store import LongTermStore, MemoryEntry
 
 store = LongTermStore(entries=[], cfg=cfg)
 
-# 新增条目后重建索引
-store._entries.append(MemoryEntry.new("用户偏好：喜欢简短回答"))
-store.rebuild_index()
+# 新增条目（懒加载：首次 add 时才初始化 Embedder + Qdrant 集合）
+store.add(MemoryEntry.new("用户偏好：喜欢简短回答"))
 
 # 按查询检索
 text = store.recall("用户喜欢什么风格")
 
-# 持久化
+# 持久化（写入 memories.json；Qdrant 集合自动持久化到 qdrant_path）
 store.save()
 ```
+
+`LongTermStore` 采用**懒加载**设计：`__init__` 阶段不加载嵌入模型，首次 `add` / `recall` 时才初始化 `Embedder` 和 `QdrantClient`。多个共享同一 `qdrant_path` 的实例（如 WebUI 会话与 Bot 会话）通过模块级注册表复用同一 `QdrantClient`，避免文件锁冲突。
 
 ### `MemoryEntry`
 
@@ -44,10 +45,10 @@ class MemoryEntry:
 
 ### 持久化文件
 
-| 文件 | 内容 |
+| 文件/目录 | 内容 |
 |---|---|
-| `memories.json` | 所有 `MemoryEntry` 的 JSON 序列化 |
-| `memory_index.faiss` | FAISS 内积索引（已 L2 归一化，等价余弦相似度） |
+| `memories.json` | 所有 `MemoryEntry` 的 JSON 序列化，维护插入顺序（用于时间线回溯） |
+| `qdrant/` | Qdrant 本地嵌入式集合目录（由 `qdrant_path` 控制，默认 `.react/memory/qdrant`） |
 
 ### BGE 前缀规则
 
@@ -67,7 +68,7 @@ from agent.react.memory.long_term import make_memory, load_store, init_empty_sto
 # 推荐：自动按配置决定是否从磁盘加载
 memory = make_memory(cfg)
 
-# 显式从磁盘加载（memories.json + memory_index.faiss）
+# 显式从磁盘加载（memories.json + Qdrant 集合）
 store = load_store(cfg)
 
 # 显式创建空库
@@ -80,7 +81,7 @@ store = init_empty_store(cfg)
 
 ## 检索器（`long_term/retrieve/`）
 
-### 四种检索场景
+### 五种检索场景
 
 | 模式 | 触发条件 | 默认 top_k | 默认 min_score |
 |---|---|---|---|
@@ -88,6 +89,7 @@ store = init_empty_store(cfg)
 | `HEAVY` | query 含历史依赖关键词 | 8 | 0.5 |
 | `SUPPLEMENT` | 短期+中期上下文过短 | 5 | 0.3 |
 | `PROFILE` | 会话启动时检索用户档案 | 5 | 0.0 |
+| `TIMELINE` | 时态查询（"最近"/"上次"等），按 `created_at` 顺序返回最近条目 | 5 | 0.0 |
 
 ### `Retriever` 用法
 
@@ -115,6 +117,7 @@ result.mode      # RetrieveMode，实际使用的模式
 ```
 is_session_start=True         → PROFILE
 query 含历史关键词             → HEAVY（"之前" / "上次" / "记得" / "earlier" 等）
+query 含时态关键词             → TIMELINE（"最近" / "最后" / "recent" / "latest" 等）
 短期+中期上下文长度 < min_len  → SUPPLEMENT
 其他                          → LIGHT
 ```
@@ -126,12 +129,19 @@ query 含历史关键词             → HEAVY（"之前" / "上次" / "记得" 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `enabled` | `False` | 是否启用长期记忆 |
-| `load_from_disk` | `False` | 启动时是否从 `memory_dir` 加载 |
-| `memory_dir` | `""` | 持久化目录（由 `TaoConfig._propagate_dirs` 自动填充）|
+| `memory_dir` | `""` | 记忆目录（存放 `memories.json`，由 `TaoConfig._propagate_dirs` 自动填充）|
+| `qdrant_path` | `".react/memory/qdrant"` | Qdrant 本地集合目录 |
+| `collection_name` | `"long_term_memory"` | Qdrant 集合名 |
+| `load_from_disk` | `True` | 启动时是否从磁盘加载已有集合 |
 | `top_k` | `5` | `store.recall()` 直接调用时的 top_k |
 | `model_name_or_path` | `"BAAI/bge-small-zh-v1.5"` | BGE 模型路径或 HF id |
 | `query_prefix` | `"query: "` | 检索前缀 |
 | `passage_prefix` | `""` | 入库前缀 |
 | `use_fp16` | `True` | 是否使用 FP16 |
 | `device` | `"auto"` | `cuda` / `cpu` / `auto` |
-| `retrieve` | `RetrieveConfig()` | 四场景检索参数 |
+| `consolidation_k` | `0` | 蒸馏合并条目数（0 = 禁用） |
+| `max_entry_chars` | `2000` | 单条记忆最大字符数 |
+| `max_recall_chars` | `3000` | 召回结果拼接最大字符数 |
+| `distill_enabled` | `False` | 是否启用 LLM 蒸馏压缩 |
+| `max_distill_tokens` | `400` | 蒸馏摘要最大 token 数 |
+| `retrieve` | `RetrieveConfig()` | 五场景检索参数 |

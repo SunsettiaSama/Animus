@@ -35,6 +35,7 @@ from .memory.processor import MemoryProcessor, MemoryResult
 from .prompt.block import MemoryBlock, PromptBlock
 from .prompt.parser import ParseQuality, ParseResult, diagnose, parse_llm_output
 from .prompt.repair import repair
+from .life import LifeManager, LifeProfileBlock
 from .persona import PersonaManager
 from .prompt.manager import PromptManager, StaticPromptParts
 from .trace import TraceStore
@@ -149,6 +150,7 @@ class _PendingFinish:
     answer: str
     processor: MemoryProcessor
     persona_blocks: list[PromptBlock] | None
+    lt_cache: str = ""  # LT result from this turn, seeds _prefetched_lt in post_process
 
 
 # ── TaoLoop ───────────────────────────────────────────────────────────────────
@@ -178,6 +180,16 @@ class TaoLoop:
         )
         self._persona: PersonaManager | None = (
             PersonaManager(cfg.persona, llm=self._llm) if cfg.persona.enabled else None
+        )
+
+        # Life module — optional, enabled when persona is enabled.
+        self._life: LifeManager | None = (
+            LifeManager(
+                life_dir=cfg.storage.life_dir,
+                llm=self._llm,
+            )
+            if cfg.persona.enabled
+            else None
         )
 
         # Timeline store — always created; writes are no-ops until directory exists.
@@ -402,6 +414,21 @@ class TaoLoop:
                 # tool_search, not shown in the primary tool list.
                 self._executor.register_instance(skill)
 
+        # Wire LifeManager into the scheduler heartbeat so the heartbeat tick
+        # can drive activity logging and daily review.
+        if self._life is not None and self._scheduler_engine is not None:
+            hb = getattr(self._scheduler_engine, "heartbeat", None)
+            if hb is not None:
+                self._life._static_profile = (
+                    self._persona.profile if self._persona is not None else None
+                )
+                self._life._emotional_state_ref = (
+                    lambda: self._persona._emotional_state
+                    if self._persona is not None
+                    else None
+                )
+                hb.set_life_manager(self._life)
+
         # Hook the tool-layer event sink after all tools are registered.
         self._executor.set_event_sink(self._timeline.make_tool_sink())
 
@@ -425,11 +452,17 @@ class TaoLoop:
             LLMHandle(LLM(cfg.repair_llm)) if cfg.repair_llm is not None else self._llm
         )
 
-        # Pre-fetched long-term memory for bot sessions.
-        # Set once by preload_with_recall() in a background thread; stream() step 0
-        # uses this value directly and skips the per-query vector search.
-        # None means the preload has not completed (or LTM is disabled).
+        # Pre-fetched long-term memory — seeded once per session, reused for all
+        # subsequent questions.  Bot sessions populate this via preload_with_recall();
+        # WebUI sessions populate it after the first turn's post_process() completes.
+        # step 0 in stream() uses this value directly and skips the vector search.
+        # None means no preload has completed yet (first question of a session).
         self._prefetched_lt: str | None = None
+
+        # Dirty flag: set True when a model tool explicitly writes to LT (e.g. a
+        # future memory_save tool).  post_process() re-runs smart_recall and clears
+        # the flag so the next question sees the updated LT snapshot.
+        self._lt_dirty: bool = False
 
     @staticmethod
     def _trunc(text: str, limit: int) -> str:
@@ -520,9 +553,16 @@ class TaoLoop:
         _cached_medium: str = ""
 
         # Persona blocks are also stable across steps.
-        persona_blocks: list[PromptBlock] | None = (
-            self._persona.all_blocks() if self._persona is not None else None
-        )
+        # Load LifeProfile once per session (daily cache; no-op on subsequent questions).
+        if self._life is not None:
+            self._life.load_profile()
+
+        persona_blocks: list[PromptBlock] | None = None
+        if self._persona is not None:
+            _blocks = self._persona.all_blocks()
+            if self._life is not None and not self._life.profile.is_empty():
+                _blocks = _blocks + [LifeProfileBlock(self._life.profile)]
+            persona_blocks = _blocks
 
         # Track the previous step's action for step-label logging.
         _prev_action: str = ""
@@ -800,11 +840,10 @@ class TaoLoop:
 
                 # Update prompt state synchronously before yielding so the
                 # next turn can start immediately without waiting for the
-                # background post_process to finish.  These three calls are
-                # fast (~ms) and run in the current generator thread where
-                # there is no concurrency with post_process yet.
+                # background post_process to finish.  add_turn and build_static
+                # are fast (~ms); _maybe_consolidate() has been moved to
+                # post_process() to avoid blocking FinishEvent delivery.
                 self._manager.add_turn(question, answer)
-                self._maybe_consolidate()
                 self._static_cache = self._manager.build_static(
                     extra_system_blocks=persona_blocks,
                 )
@@ -816,6 +855,7 @@ class TaoLoop:
                     answer=answer,
                     processor=processor,
                     persona_blocks=persona_blocks,
+                    lt_cache=_cached_lt,
                 )
                 yield FinishEvent(answer=answer)
                 _obs.emit(_SessionEvent(
@@ -960,6 +1000,8 @@ class TaoLoop:
         Prompt-state updates (add_turn / build_static) have already been done
         synchronously inside stream() before FinishEvent was yielded, so this
         method only handles heavy I/O that must not block the next turn.
+        _maybe_consolidate() runs here (not in stream()) to avoid blocking
+        FinishEvent delivery with embed+upsert latency spikes.
         """
         pf = self._pending_finish
         if pf is None:
@@ -967,6 +1009,25 @@ class TaoLoop:
         self._pending_finish = None
 
         pf.processor.commit(pf.question, pf.answer)
+
+        # Consolidate LT memory window if due (moved from stream() finish path
+        # to eliminate 50-300ms latency spike before FinishEvent was yielded).
+        self._maybe_consolidate()
+
+        # Seed _prefetched_lt so subsequent questions in this session skip
+        # the per-query vector search (M1 optimisation).
+        # - First question: _prefetched_lt is None → seed from this turn's result.
+        # - Subsequent questions: keep existing cache (session-level "query once").
+        # - dirty flag: set by a tool that explicitly modifies LT → triggers a
+        #   fresh smart_recall to pick up the change, then clears the flag.
+        if self._long_term is not None:
+            if self._lt_dirty:
+                self._prefetched_lt = self._long_term.smart_recall(
+                    "", is_session_start=False
+                )
+                self._lt_dirty = False
+            elif self._prefetched_lt is None:
+                self._prefetched_lt = pf.lt_cache
 
         self._timeline.append("conversation", {
             "q": pf.question[:300],
@@ -977,7 +1038,25 @@ class TaoLoop:
             self._trace_store.write(pf.question, pf.answer, pf.processor.trace)
 
         if self._persona is not None:
-            self._persona.evolve(pf.question, pf.answer, pf.processor.trace)
+            life_summary = (
+                self._life.profile.render()
+                if self._life is not None and not self._life.profile.is_empty()
+                else ""
+            )
+            # Pass the last ~2 MTM blocks so emotional drift can sense recent
+            # interaction patterns (e.g. repeated questions, topic shifts).
+            medium_term_context = (
+                pf.processor._medium.render()
+                if pf.processor._medium is not None
+                else ""
+            )
+            self._persona.evolve(
+                pf.question,
+                pf.answer,
+                pf.processor.trace,
+                life_summary,
+                medium_term_context,
+            )
 
     # ── Misc ─────────────────────────────────────────────────────────────────
 
@@ -1025,6 +1104,8 @@ class TaoLoop:
         self._manager.clear_history()
         self._static_cache = None
         self._pending_finish = None
+        self._prefetched_lt = None
+        self._lt_dirty = False
         self._scratchpad.reset()
         self._stop_event.clear()
 

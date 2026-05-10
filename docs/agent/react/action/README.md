@@ -24,11 +24,15 @@ src/agent/react/action/
 │       ├── scheduler_add.py
 │       ├── scheduler_list.py
 │       ├── scheduler_cancel.py
+│       ├── timeline_read.py
 │       ├── file_system.py
 │       ├── http_request.py
 │       ├── python_run.py
 │       ├── scratchpad.py
 │       ├── data_tool.py
+│       ├── notify_user.py
+│       ├── send_notification.py
+│       ├── send_bot_message.py
 │       └── plan_tools.py
 ├── mcp/               # MCP 工具协议（Model Context Protocol）
 │   ├── base.py
@@ -39,11 +43,13 @@ src/agent/react/action/
 │   ├── delegate_task.py  # DelegateTaskSkill — 子 Agent 同步委派
 │   ├── domain_learning.py
 │   ├── research.py
-│   └── document_summary.py
+│   ├── document_summary.py
+│   └── plan_skill.py  # PlanSkillSet — Plan 模式技能组
 └── risk/              # 风险评估门控
-    ├── assessor.py
-    ├── gate.py
-    └── level.py
+    ├── level.py       # RiskLevel + OperationRisk
+    ├── assessor.py    # BaseRiskAssessor / RuleBasedAssessor / ExternalAPIAssessor
+    ├── allow_list.py  # AllowList — 允许规则
+    └── gate.py        # RiskGate — 配置驱动的审批/阻断门控
 ```
 
 ---
@@ -154,12 +160,16 @@ class CalculatorAction(BaseAction):
 | scheduler | `scheduler_add` | `TaoConfig.scheduler` 非空 | 预约一次性或周期性 Agent 任务 |
 | scheduler | `scheduler_list` | 同上 | 查看所有调度任务及状态 |
 | scheduler | `scheduler_cancel` | 同上 | 取消调度任务 |
+| scheduler | `timeline_read` | `TaoConfig.scheduler` 非空 | 读取会话时间线事件（`SchedulerEngine` 注入）|
 | filesystem | `file_read` | `SandboxManager` 注入 | 读取沙箱工作区文件内容 |
 | filesystem | `file_write` | 同上 | 向沙箱工作区写入 / 追加文件 |
 | filesystem | `file_list` | 同上 | 列出沙箱目录内容（可递归）|
 | filesystem | `file_exists` | 同上 | 检查沙箱文件或目录是否存在 |
 | network | `http_request` | 同上 | 通用 HTTP 请求（域名受沙箱 allow/block list 约束）|
 | code | `python_run` | 同上 | 受限沙箱中执行 Python 代码片段 |
+| notify | `notify_user` | 始终（TaoLoop 自动注入）| 推理过程中向用户发送中间通知 |
+| notify | `send_notification` | `AppState.bark_notifier` / `ntfy_notifier` 注入 | 通过 Bark / ntfy 推送通知（有频率限制）|
+| notify | `send_bot_message` | `AppState.bot_service` 注入 | 通过 Bot 服务向目标发送消息（有频率限制）|
 | skill | `delegate_task` | `TaoConfig.agent` 非空 | 同步委派子 Agent，阻塞等结果 |
 | plan | `run_plan` | `TaoConfig.plan` 非空 | 启动 Plan-and-Execute 多智能体编排 |
 | plan | `plan_status` | 同上 | 查询当前计划 DAG 执行状态 |
@@ -168,7 +178,7 @@ class CalculatorAction(BaseAction):
 | plan | `plan_snapshot` | 同上 | 手动保存计划快照 |
 | plan | `plan_rollback` | 同上 | 回滚到指定快照 |
 
-> **注意**：`note_write` / `note_read` / `note_delete`（workspace）由 TaoLoop 无条件注入，无需配置。`memory_recall` 由 TaoLoop 在长期记忆或里程碑至少一个启用时注入。
+> **注意**：`note_write` / `note_read` / `note_delete`（workspace）由 TaoLoop 无条件注入，无需配置。`notify_user` 也无条件注入。`memory_recall` 由 TaoLoop 在长期记忆或里程碑至少一个启用时注入。`send_notification` / `send_bot_message` 需要 `AppState` 中对应的通知服务初始化后才注入。
 
 ---
 

@@ -123,7 +123,7 @@ class TaskRunner:
                 from infra.channel_router import ReplyTarget as RT
                 rt = RT.from_task_dict(task.reply_target)
                 if rt is not None:
-                    channel_router.deliver(rt, title, message)
+                    channel_router.deliver(rt, item.get("title", ""), item.get("message", ""))
 
         def _run_sync() -> None:
             nonlocal answer

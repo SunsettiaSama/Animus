@@ -17,13 +17,13 @@ src/
 │   │   ├── trace_config.py
 │   │   └── memory/          #   MemoryConfig + 各层配置
 │   ├── knowledge/           # 知识库配置（MySQL / Redis / Qdrant / 嵌入）
-│   ├── infra/               # 沙箱等基础设施配置
+│   ├── infra/               # 沙箱等基础设施配置（sandbox / bot / bark / ntfy）
 │   └── tts/                 # TTS / STT 配置
 │
 ├── infra/                   # 基础设施层
 │   ├── llm/                 # LLM 抽象层（本地 Transformers + OpenAI 兼容 API）
 │   │   ├── llm.py           #   BaseLLM / CausalLLM / OpenAILLM / LLM
-│   │   ├── handle.py        #   LLMHandle（异步/并发封装）
+│   │   ├── handle.py        #   LLMHandle（可变转发封装，update() 支持热替换）
 │   │   └── service.py       #   LLMService（vLLM 服务管理）
 │   ├── network/             # 网络层（搜索引擎 / Bot 协议）
 │   │   ├── search/          #   WebSearch（DuckDuckGo / Tavily 等）
@@ -39,12 +39,13 @@ src/
 │   ├── react/               # ReAct 核心框架
 │   │   ├── loop.py          #   ConvLoop — 外层多轮对话循环
 │   │   ├── tao.py           #   TaoLoop  — 内层 TAO 推理循环
-│   │   ├── parser.py        #   LLM 输出解析
-│   │   ├── factory.py       #   TaoLoop 工厂函数
+│   │   ├── parser.py        #   re-export prompt/parser.py 公共符号
+│   │   ├── factory.py       #   build_conv_loop 工厂函数
 │   │   ├── action/          #   动作空间（Tool / MCP / Skill）
 │   │   ├── memory/          #   四层记忆系统（L1 / L2 / 里程碑 / L3）
-│   │   ├── prompt/          #   块驱动 Prompt 组装
-│   │   ├── persona/         #   人格演化（稳定层 + 动态层）
+│   │   ├── prompt/          #   块驱动 Prompt 组装（含 parser 实现）
+│   │   ├── persona/         #   人格演化（稳定层 + 动态层 + 情绪层）
+│   │   ├── life/            #   生活状态子系统（活动日志 + 日度综合）
 │   │   └── trace/           #   推理链存档
 │   └── scheduler/           # 时钟触发 Agent 自动化任务
 │       ├── config.py
@@ -75,7 +76,7 @@ src/
 │   ├── tts/                 # TTSEngine + Edge / OpenAI / Kokoro providers
 │   └── stt/                 # STTEngine + OpenAI / faster-whisper providers
 │
-├── embedding/               # BGE 嵌入模型（FAISS 索引构建辅助）
+├── embedding/               # BGE 嵌入模型封装
 ├── storage/                 # StorageConfig（本地文件根目录配置）
 ├── webui/                   # Web 前端（FastAPI + 单页 HTML）
 ├── train/                   # 模型训练（SFT / RL / LoRA / QLoRA）
@@ -92,13 +93,15 @@ src/
 | `agent/react/action` | ✅ | 工具注册、Pydantic 参数校验、执行调度（Tool / MCP / Skill）|
 | `agent/react/memory/short_term` | ✅ | Token 级滑动窗口 L1 短期记忆 + LLM 蒸馏 |
 | `agent/react/memory/medium_term` | ✅ | 跨 session JSONL Q&A 历史（L2），LLM 滚动整合 |
-| `agent/react/memory/long_term` | ✅ | L3 BGE + FAISS，时间戳感知，四场景自动检索 |
+| `agent/react/memory/long_term` | ✅ | L3 BGE + Qdrant（本地嵌入式），时间戳感知，五场景自动检索（含 TIMELINE）|
 | `agent/react/memory/milestone` | ✅ | 里程碑，LLM 重要性评分，关键词精确匹配（jieba 可选），溢出迁移 L3 |
 | `agent/react/prompt` | ✅ | 块驱动组装 + `StaticPromptParts` 静态缓存预热 |
 | `agent/react/persona/profile` | ✅ | 人物画像 + 技能库 + 自省（IROTE），LLM 演化引擎 |
-| `agent/react/persona/preference` | ✅ | 短期偏好动态层（mood / 话题兴趣 / 风格偏移），影响 L3 检索偏置 + Prompt 注入 |
+| `agent/react/persona/preference` | ✅ | 短期偏好动态层（话题兴趣 / 风格偏移），影响 L3 检索偏置 + Prompt 注入 |
+| `agent/react/persona/emotional` | ✅ | 叙事情感层（锚点 + 纹理文本），LLM 演化，`EmotionalStateBlock` 注入 Prompt |
 | `agent/react/trace` | ✅ | 推理链存档（`.react/traces/`）|
 | `agent/react/loop` | ✅ | ConvLoop + TaoLoop 两层循环，异步后台提交，Prompt 预热 |
+| `agent/react/life` | ✅ | 生活状态子系统：活动叙事日志（LifeLog）、LLM 生成生活画像（LifeProfile）、日度综合（DailySynthesizer）|
 | `agent` | ✅ | SubAgentConfig / SubAgentProfile / SubAgentRunner + `DelegateTaskSkill`（同步子 Agent 委派）|
 | `agent/scheduler` | ✅ | 时钟触发的 Agent 自动化任务（一次性 / 周期性），JSON 持久化，async 轮询引擎 |
 | `knowledge` | ✅ | MySQL 文档存储 + Qdrant 向量索引 + Redis 缓存，keyword / semantic / hybrid 三种检索 |
@@ -129,7 +132,8 @@ TaoLoop.stream(question)
     │       └─ 里程碑    → 关键词检索，与 L3 合并注入
     │
     ├─ persona.all_blocks()
-    │       → [ProfileBlock, SkillsBlock?, ReflectionBlock?, PreferenceBlock?]
+    │       → [ProfileBlock, SkillsBlock?, ReflectionBlock?, PreferenceBlock?, EmotionalStateBlock?]
+    │       → [LifeProfileBlock?]
     │
     ├─ build_messages(...)  →  LLM.stream()  →  parse()
     │       │
@@ -149,7 +153,7 @@ TaoLoop.stream(question)
     │                       └─ → PlanOrchestrator（DAG 编排）
     │
     └─ post_process()（后台线程）
-            ├─ commit()  → L2 JSONL / L3 FAISS / 里程碑
+            ├─ commit()  → L2 JSONL / L3 Qdrant / 里程碑
             ├─ trace_store.write()
             ├─ persona.evolve()
             └─ build_static() → _static_cache（预热下轮）
@@ -165,7 +169,7 @@ TaoLoop.stream(question)
 | L1 蒸馏 | 短期蒸馏摘要 | LLM 压缩（内存）| ❌ |
 | L2 | 中期（跨 session Q&A 历史）| JSONL 按时间窗口加载 | ✅ `medium_term.jsonl` |
 | 里程碑 | 重要事件 | 关键词精确子串 + jieba | ✅ `milestones.json` |
-| L3 | 长期 | FAISS 向量相似度 | ✅ FAISS + JSON |
+| L3 | 长期 | Qdrant 向量相似度（含时间线模式）| ✅ `qdrant/` + `memories.json` |
 
 ---
 
@@ -215,7 +219,7 @@ python src/run.py --port 8080
 | [agent/react/action/README.md](./agent/react/action/README.md) | 工具注册与 Pydantic 校验，含 Agent 完整工具一览 |
 | [agent/react/memory/README.md](./agent/react/memory/README.md) | 四层记忆系统 |
 | [agent/react/prompt/README.md](./agent/react/prompt/README.md) | 块驱动 Prompt 组装 |
-| [agent/react/persona/README.md](./agent/react/persona/README.md) | 人格演化引擎详解（稳定层 + 动态层）|
+| [agent/react/persona/README.md](./agent/react/persona/README.md) | 人格演化引擎详解（稳定层 + 动态层 + 情绪层）|
 | [plan/README.md](./plan/README.md) | Plan-and-Execute 多智能体编排：Markdown 计划语言、DAG 调度、Replanner |
 | [knowledge/README.md](./knowledge/README.md) | 知识库：MySQL + Redis + Qdrant，三种检索模式 |
 | [tts/README.md](./tts/README.md) | TTS / STT 引擎与 Provider 配置 |

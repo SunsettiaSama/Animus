@@ -129,8 +129,8 @@ class ActionExecutor:
 
         if action_name in self._instances:
             instance = self._instances[action_name]
-            args = self._coerce(instance, raw_args, source="instance")
             try:
+                args = self._coerce(instance, raw_args, source="instance")
                 result = instance.execute(**args)
                 if self._event_sink is not None:
                     self._event_sink(action_name, args, result)
@@ -148,8 +148,8 @@ class ActionExecutor:
                 return f"[工具执行错误] {type(exc).__name__}: {exc}"
 
         action_cls = self._registry[action_name]
-        args = self._coerce(action_cls, raw_args, source="class")
         try:
+            args = self._coerce(action_cls, raw_args, source="class")
             result = action_cls().execute(**args)
             if self._event_sink is not None:
                 self._event_sink(action_name, args, result)

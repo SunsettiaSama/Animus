@@ -115,13 +115,20 @@ export function appendAssistantMsg(id) {
   scrollBottom();
 
   let _text = '';
+  let _rafPending = false;
   return {
     el,
     bubble,
     append(chunk) {
       _text += chunk;
-      bubble.textContent = _text;
-      scrollBottom();
+      if (!_rafPending) {
+        _rafPending = true;
+        requestAnimationFrame(() => {
+          bubble.textContent = _text;
+          scrollBottom();
+          _rafPending = false;
+        });
+      }
     },
     finalize(aborted = false) {
       bubble.classList.remove('streaming');
@@ -191,9 +198,10 @@ export function appendReactMsg(id) {
   body.appendChild(timeEl);
 
   // Per-step state
-  const _steps = {};   // index → { card, rawEl, sections, streamed }
+  const _steps = {};   // index → { card, rawEl, sections, streamed, _rafPending }
   let   _stepI = -1;
   let   _ansText = '';
+  let   _ansRafPending = false;
   let   _subBlock = null;   // current active sub-agent block element
 
   function _ensureStep(index) {
@@ -232,19 +240,24 @@ export function appendReactMsg(id) {
     },
     appendChunk(index, chunk) {
       const s = _ensureStep(index);
-      // Hide the activity spinner on the very first chunk — step card takes over.
       if (!s.streamed) activity.classList.add('hidden');
       s.streamed += chunk;
-      // During streaming, show only the <T> thought content to avoid exposing
-      // raw JSON inside <A> and raw output inside <O> before they are structured.
-      const thoughtMatch = s.streamed.match(/<T>([\s\S]*?)(?:<\/T>|$)/i);
-      s.rawEl.textContent = thoughtMatch ? thoughtMatch[1] : s.streamed.replace(/<[TAO]>[\s\S]*?<\/[TAO]>/gi, '').trim();
       // Open the detail automatically on first chunk so the streaming text is visible.
       if (!s.detail.classList.contains('open')) {
         s.detail.classList.add('open');
         s.hdr.classList.add('open');
       }
-      scrollBottom();
+      if (!s._rafPending) {
+        s._rafPending = true;
+        requestAnimationFrame(() => {
+          // During streaming, show only the <T> thought content to avoid exposing
+          // raw JSON inside <A> and raw output inside <O> before they are structured.
+          const thoughtMatch = s.streamed.match(/<T>([\s\S]*?)(?:<\/T>|$)/i);
+          s.rawEl.textContent = thoughtMatch ? thoughtMatch[1] : s.streamed.replace(/<[TAO]>[\s\S]*?<\/[TAO]>/gi, '').trim();
+          scrollBottom();
+          s._rafPending = false;
+        });
+      }
     },
     addStep(stepObj) {
       const s = _ensureStep(stepObj.index);
@@ -448,8 +461,14 @@ export function appendReactMsg(id) {
       _ansText += chunk;
       answerBubble.classList.remove('hidden');
       answerBubble.classList.add('streaming');
-      answerBubble.textContent = _ansText;
-      scrollBottom();
+      if (!_ansRafPending) {
+        _ansRafPending = true;
+        requestAnimationFrame(() => {
+          answerBubble.textContent = _ansText;
+          scrollBottom();
+          _ansRafPending = false;
+        });
+      }
     },
     finalize(answer, aborted = false) {
       activity.remove();
@@ -532,6 +551,7 @@ export function appendStepBubble(index) {
   scrollBottom();
 
   let _streamed = '';
+  let _rafPending = false;
   let _subBlock = null;
 
   // ── Sub-agent helpers (reuse appendReactMsg logic) ──────────────────────────
@@ -626,14 +646,20 @@ export function appendStepBubble(index) {
         streamEl.appendChild(textNode);
       }
       _streamed += chunk;
-      // Only show <T> thought content during streaming to avoid JSON noise.
-      const thoughtMatch = _streamed.match(/<T>([\s\S]*?)(?:<\/T>|$)/i);
-      const display = thoughtMatch
-        ? thoughtMatch[1]
-        : _streamed.replace(/<[TAO]>[\s\S]*?<\/[TAO]>/gi, '').trim();
-      const textEl = streamEl.querySelector('.sb-text');
-      if (textEl) textEl.textContent = display;
-      scrollBottom();
+      if (!_rafPending) {
+        _rafPending = true;
+        requestAnimationFrame(() => {
+          // Only show <T> thought content during streaming to avoid JSON noise.
+          const thoughtMatch = _streamed.match(/<T>([\s\S]*?)(?:<\/T>|$)/i);
+          const display = thoughtMatch
+            ? thoughtMatch[1]
+            : _streamed.replace(/<[TAO]>[\s\S]*?<\/[TAO]>/gi, '').trim();
+          const textEl = streamEl.querySelector('.sb-text');
+          if (textEl) textEl.textContent = display;
+          scrollBottom();
+          _rafPending = false;
+        });
+      }
     },
 
     finalize(stepObj) {

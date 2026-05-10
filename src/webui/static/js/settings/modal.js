@@ -85,6 +85,7 @@ export const onToggleTools       = ()  => tabLlm.onToggleTools();
 export const onTTSProviderChange = ()  => tabVoice.onTTSProviderChange();
 export const onSTTProviderChange = ()  => tabVoice.onSTTProviderChange();
 export const onBotTransportChange = () => tabBot.onBotTransportChange();
+export const onChannelChange      = () => tabBot.onChannelChange();
 export const testBark             = () => tabBot.testBark();
 export const testNtfy             = () => tabBot.testNtfy();
 export const doConsolidate       = ()  => tabMemory.doConsolidate();

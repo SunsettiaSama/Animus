@@ -51,7 +51,9 @@ class EvolutionEngine:
         if turn_count % self._evolve_interval == 0:
             delta = self._evolver.evolve_profile(profile, question, answer, steps)
             _apply_profile_delta(profile, delta)
-            self._profile_store.save_profile(profile)
+            # save_profile() intentionally omitted: PersonaProfile is frozen (M3).
+            # The delta's mood/narrative/growth_note are passed back to the caller
+            # (EvolutionEngine.run returns them) for the emotional_state system.
 
             if self._skills_enabled:
                 skill_delta = self._evolver.evolve_skills(
@@ -73,16 +75,11 @@ class EvolutionEngine:
 # ── Pure helpers ───────────────────────────────────────────────────────────────
 
 def _apply_profile_delta(profile: PersonaProfile, delta: ProfileDelta) -> None:
-    for t in delta.traits_add:
-        if t and t not in profile.traits:
-            profile.traits.append(t)
-    profile.traits = [t for t in profile.traits if t not in delta.traits_remove]
-    for v in delta.values_add:
-        if v and v not in profile.values:
-            profile.values.append(v)
-    profile.values = [v for v in profile.values if v not in delta.values_remove]
-    if delta.style_hint:
-        profile.style = delta.style_hint
+    # Static layer (traits / values / style) is intentionally frozen.
+    # The operator-defined core identity must not be mutated by LLM outputs.
+    # mood / narrative / growth_note are consumed by the emotional_state system
+    # (M5 EmotionalStateManager) and do not alter the profile object itself.
+    pass
 
 
 def _apply_skill_delta(skills: SkillsLibrary, delta) -> None:

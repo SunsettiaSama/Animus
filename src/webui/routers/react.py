@@ -453,6 +453,12 @@ async def ws_react_run(websocket: WebSocket):
         if item is None:
             break
         await websocket.send_json(item)
+        # Yield to the event loop so each chunk frame is flushed individually
+        # rather than batched.  Without this, the asyncio event loop drains the
+        # entire queue before doing I/O polling, causing all chunks to arrive at
+        # the browser simultaneously (single-step responses appear non-streaming).
+        if item.get("type") == "chunk":
+            await asyncio.sleep(0)
 
     receive_task.cancel()
     # Await the cancelled task so its CancelledError is retrieved and the

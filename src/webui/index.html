@@ -234,19 +234,6 @@
       </div>
     </div>
 
-    <!-- Workspace timeline strip — always visible at bottom of main area -->
-    <div id="ws-timeline-strip" class="ws-tl-strip collapsed">
-      <div class="ws-tl-header" id="ws-tl-toggle" title="展开/折叠时间轴">
-        <span class="ws-tl-label">🗓 Timeline</span>
-        <span id="ws-tl-badge" class="ws-tl-badge"></span>
-        <span class="ws-tl-chevron">▾</span>
-      </div>
-      <div class="ws-tl-body">
-        <canvas id="ws-tl-canvas" height="42"></canvas>
-        <span id="ws-tl-empty" class="ws-tl-empty hidden">No scheduled tasks</span>
-      </div>
-    </div>
-
   <!-- Knowledge Base Panel -->
   <div id="kb-panel" class="hidden" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
     <div style="height:52px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px;flex-shrink:0;gap:10px">
@@ -1011,7 +998,7 @@
         <!-- Channel selector -->
         <div class="form-group">
           <label>Channel <span style="font-weight:400;color:var(--text3)">切换后点击 Save &amp; Apply 生效</span></label>
-          <select id="s-channel-select" onchange="import('/static/js/settings/tabs/bot.js').then(m => m.onChannelChange())">
+          <select id="s-channel-select" onchange="onChannelChange()">
             <option value="bot">🤖 Bot (QQ) · 即时通讯 OneBot 11 / QQ 开放平台</option>
             <option value="bark">🍎 Bark · iOS 推送通知</option>
             <option value="ntfy">📢 ntfy · Android / 自建推送服务</option>
@@ -1806,91 +1793,9 @@
           </div>
           <div class="tl-detail-card" id="tl-detail-card" style="display:none"></div>
         </div>
-        <!-- Vertical event list below the axis -->
-        <div id="sched-timeline-list" class="sched-timeline-list"></div>
       </div>
 
-      <!-- ② New Task inline collapsible panel -->
-      <div class="sched-newtask-panel" id="sched-newtask-panel">
-        <div class="sched-newtask-hdr" id="sched-newtask-toggle">
-          <span>＋ New Task</span>
-          <span class="sched-nt-chevron">▾</span>
-        </div>
-        <div id="sched-form-wrap" class="sched-form-drawer" style="display:none">
-          <div class="sched-form-body">
-            <div class="sched-form-grid">
-              <div>
-                <label>Task Name</label>
-                <input id="sched-name" type="text" placeholder="daily-summary" />
-              </div>
-              <div>
-                <label>Profile</label>
-                <select id="sched-profile">
-                  <option value="minimal">minimal</option>
-                  <option value="with_memory">with_memory</option>
-                  <option value="full">full</option>
-                </select>
-              </div>
-              <div class="full">
-                <label>Instruction</label>
-                <textarea id="sched-instruction" placeholder="Describe what the agent should do…" rows="3"></textarea>
-              </div>
-              <div class="full">
-                <label>Trigger Type</label>
-                <div class="sched-trigger-tabs">
-                  <label class="sched-trigger-tab">
-                    <input type="radio" name="sched-trigger-radio" id="sched-trigger" value="once" checked />
-                    <span>Once</span>
-                  </label>
-                  <label class="sched-trigger-tab">
-                    <input type="radio" name="sched-trigger-radio" value="interval" />
-                    <span>Interval</span>
-                  </label>
-                  <label class="sched-trigger-tab">
-                    <input type="radio" name="sched-trigger-radio" value="cron" />
-                    <span>Cron</span>
-                  </label>
-                </div>
-              </div>
-              <div>
-                <label>Delivery</label>
-                <select id="sched-delivery">
-                  <option value="push">push — notify on complete</option>
-                  <option value="silent">silent — store only</option>
-                  <option value="store_only">store_only — write to memory</option>
-                </select>
-              </div>
-              <div>
-                <label>Max Retries</label>
-                <input id="sched-max-retries" type="number" value="0" min="0" max="10" />
-              </div>
-              <div class="full">
-                <label>On Complete (chain instruction, use {result} placeholder)</label>
-                <input id="sched-on-complete" type="text" placeholder="Optional: next instruction after this task" />
-              </div>
-            </div>
-            <div class="sched-trigger-fields" id="sched-once-fields">
-              <label>Execute At</label>
-              <input id="sched-at" type="datetime-local" />
-            </div>
-            <div class="sched-trigger-fields" id="sched-interval-fields" style="display:none">
-              <label>Repeat Every (seconds)</label>
-              <input id="sched-interval" type="number" value="3600" min="60" placeholder="3600" />
-            </div>
-            <div class="sched-trigger-fields" id="sched-cron-fields" style="display:none">
-              <label>Cron Expression (e.g. <code>0 8 * * *</code> = daily 8am)</label>
-              <input id="sched-cron-expr" type="text" placeholder="0 8 * * *" />
-            </div>
-            <div class="sched-form-actions">
-              <button id="btn-sched-create" class="btn-primary">Create Task</button>
-              <button id="btn-sched-cancel" class="btn-secondary">Cancel</button>
-            </div>
-            <div class="sched-msg" id="sched-form-msg"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ③ Task list -->
+      <!-- ② Task list -->
       <div class="sched-tasklist-panel">
         <div id="sched-task-list" class="sched-task-list">
           <div class="sched-loading">Loading…</div>
@@ -1917,6 +1822,11 @@
 
     <!-- ── Right side column ── -->
     <div class="sched-side-col">
+
+      <!-- New Task button -->
+      <div class="sched-side-newtask">
+        <button id="sched-side-newtask-btn" class="btn-primary sched-side-newtask-btn">＋ New Task</button>
+      </div>
 
       <!-- ① Mini calendar -->
       <div class="sched-mini-cal" id="sched-mini-cal">
@@ -1977,6 +1887,89 @@
     </div><!-- /sched-side-col -->
 
   </div><!-- /sched-body -->
+
+  <!-- ── New Task Modal ── -->
+  <div class="sched-nt-overlay hidden" id="sched-nt-overlay">
+    <div class="sched-nt-modal">
+      <div class="sched-nt-modal-hdr">
+        <span class="sched-nt-modal-title">New Task</span>
+        <button class="icon-btn" id="sched-nt-close">✕</button>
+      </div>
+      <div class="sched-nt-modal-body">
+        <div class="sched-form-body">
+          <div class="sched-form-grid">
+            <div>
+              <label>Task Name</label>
+              <input id="sched-name" type="text" placeholder="daily-summary" />
+            </div>
+            <div>
+              <label>Profile</label>
+              <select id="sched-profile">
+                <option value="minimal">minimal</option>
+                <option value="with_memory">with_memory</option>
+                <option value="full">full</option>
+              </select>
+            </div>
+            <div class="full">
+              <label>Instruction</label>
+              <textarea id="sched-instruction" placeholder="Describe what the agent should do…" rows="4"></textarea>
+            </div>
+            <div class="full">
+              <label>Trigger Type</label>
+              <div class="sched-trigger-tabs">
+                <label class="sched-trigger-tab">
+                  <input type="radio" name="sched-trigger-radio" id="sched-trigger" value="once" checked />
+                  <span>Once</span>
+                </label>
+                <label class="sched-trigger-tab">
+                  <input type="radio" name="sched-trigger-radio" value="interval" />
+                  <span>Interval</span>
+                </label>
+                <label class="sched-trigger-tab">
+                  <input type="radio" name="sched-trigger-radio" value="cron" />
+                  <span>Cron</span>
+                </label>
+              </div>
+            </div>
+            <div>
+              <label>Delivery</label>
+              <select id="sched-delivery">
+                <option value="push">push — notify on complete</option>
+                <option value="silent">silent — store only</option>
+                <option value="store_only">store_only — write to memory</option>
+              </select>
+            </div>
+            <div>
+              <label>Max Retries</label>
+              <input id="sched-max-retries" type="number" value="0" min="0" max="10" />
+            </div>
+            <div class="full">
+              <label>On Complete (chain instruction, use {result} placeholder)</label>
+              <input id="sched-on-complete" type="text" placeholder="Optional: next instruction after this task" />
+            </div>
+          </div>
+          <div class="sched-trigger-fields" id="sched-once-fields">
+            <label>Execute At</label>
+            <input id="sched-at" type="datetime-local" />
+          </div>
+          <div class="sched-trigger-fields" id="sched-interval-fields" style="display:none">
+            <label>Repeat Every (seconds)</label>
+            <input id="sched-interval" type="number" value="3600" min="60" placeholder="3600" />
+          </div>
+          <div class="sched-trigger-fields" id="sched-cron-fields" style="display:none">
+            <label>Cron Expression (e.g. <code>0 8 * * *</code> = daily 8am)</label>
+            <input id="sched-cron-expr" type="text" placeholder="0 8 * * *" />
+          </div>
+          <div class="sched-form-actions">
+            <button id="btn-sched-create" class="btn-primary">Create Task</button>
+            <button id="btn-sched-cancel" class="btn-secondary">Cancel</button>
+          </div>
+          <div class="sched-msg" id="sched-form-msg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div><!-- /s-scheduler -->
 
 

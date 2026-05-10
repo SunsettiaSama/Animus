@@ -21,7 +21,6 @@ export async function init() {
   _setTlDate();
   _wireFormTriggerTabs();
   _wireProactiveToggle();
-  _wireNewTaskPanel();
   _wireCalendarNav();
   _wireEngineStatClick();
   _wireHeartbeatPanel();
@@ -271,7 +270,6 @@ export async function renderTimelineAxis() {
   _axisData = data;
 
   _buildAxis(canvas, data.events ?? [], data.tasks ?? []);
-  _renderTimelineList(data.events ?? []);
   renderMiniCalendar();
 }
 
@@ -425,50 +423,6 @@ function _showDetail(data, isTask) {
   });
 }
 
-// ── Vertical event list (below axis) ─────────────────────────────────────────
-
-const _TYPE_LABEL = {
-  scheduled_task: 'Scheduled Task',
-  delegate_task:  'Delegated Task',
-  tool_call:      'Tool Call',
-  conversation:   'Conversation',
-  plan_event:     'Plan Event',
-  error:          'Error',
-};
-
-function _renderTimelineList(events) {
-  const el = document.getElementById('sched-timeline-list');
-  if (!el) return;
-
-  // Apply calendar date filter
-  let filtered = _calFilter
-    ? events.filter(ev => ev.ts && ev.ts.slice(0, 10) === _calFilter)
-    : events;
-
-  const reversed = [...filtered].reverse();
-
-  if (!reversed.length) {
-    el.innerHTML = `<div class="sched-tl-empty">${_calFilter ? `${_calFilter} 无活动记录` : 'No activity today.'}</div>`;
-    return;
-  }
-
-  el.innerHTML = reversed.map(ev => {
-    const time   = new Date(ev.ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-    const name   = ev.payload?.task_name ?? ev.payload?.name ?? ev.payload?.summary ?? ev.type;
-    const dotCls = Object.keys(_TYPE_LABEL).includes(ev.type) ? ev.type : 'default';
-    const label  = _TYPE_LABEL[ev.type] ?? ev.type;
-    return `
-      <div class="sched-tl-event">
-        <span class="sched-tl-dot ${_esc(dotCls)}"></span>
-        <div class="sched-tl-body">
-          <div class="sched-tl-name">${_esc(String(name ?? ''))}</div>
-          <div class="sched-tl-type">${_esc(label)}</div>
-        </div>
-        <span class="sched-tl-time">${time}</span>
-      </div>`;
-  }).join('');
-}
-
 // ── Form wiring ───────────────────────────────────────────────────────────────
 
 function _wireFormTriggerTabs() {
@@ -493,17 +447,6 @@ function _wireProactiveToggle() {
 
   cb.addEventListener('change', () => {
     http.patch(PATHS.scheduler.proactive, { proactive_enabled: cb.checked }).catch(() => {});
-  });
-}
-
-function _wireNewTaskPanel() {
-  const toggle = document.getElementById('sched-newtask-toggle');
-  const form   = document.getElementById('sched-form-wrap');
-  if (!toggle || !form) return;
-  toggle.addEventListener('click', () => {
-    const open = form.style.display === 'none';
-    form.style.display = open ? '' : 'none';
-    toggle.classList.toggle('open', open);
   });
 }
 
@@ -663,9 +606,12 @@ export async function renderMiniCalendar() {
       } else {
         _calFilter = dateStr;
       }
+      // Sync Work Journal date picker to the selected calendar date
+      const dateInput = document.getElementById('sched-session-date');
+      if (dateInput) dateInput.value = _calFilter ?? new Date().toISOString().slice(0, 10);
       renderMiniCalendar();
       renderTaskTable();
-      _renderTimelineList(_axisData.events ?? []);
+      _renderSessionJournal();
     });
 
     grid.appendChild(cell);
@@ -824,264 +770,6 @@ function _esc(s) {
 
 // Re-export renderTimeline alias for backward compatibility
 export const renderTimeline = renderTimelineAxis;
-
-// ── Workspace Timeline Strip ───────────────────────────────────────────────────
-
-let _wsRefreshTimer = null;
-
-export async function initWorkspaceStrip() {
-  const strip = document.getElementById('ws-timeline-strip');
-  if (!strip) return;
-
-  // Toggle collapse
-  document.getElementById('ws-tl-toggle')?.addEventListener('click', () => {
-    strip.classList.toggle('collapsed');
-    _renderWsStrip();
-  });
-
-  await _renderWsStrip();
-
-  if (_wsRefreshTimer) clearInterval(_wsRefreshTimer);
-  _wsRefreshTimer = setInterval(_renderWsStrip, 30_000);
-}
-
-async function _renderWsStrip() {
-  const canvas = document.getElementById('ws-tl-canvas');
-  const badge  = document.getElementById('ws-tl-badge');
-  const emptyEl = document.getElementById('ws-tl-empty');
-  if (!canvas) return;
-
-  const strip = document.getElementById('ws-timeline-strip');
-  if (strip?.classList.contains('collapsed')) return;
-
-  const data = await http.get(PATHS.scheduler.axis).catch(() => ({ events: [], tasks: [] }));
-  const tasks = (data.tasks ?? []).filter(t => t.next_run_at && !['done','cancelled','failed'].includes(t.status));
-
-  if (badge) badge.textContent = tasks.length ? String(tasks.length) : '';
-
-  const ctx = canvas.getContext('2d');
-  const W = canvas.offsetWidth || 600;
-  const H = 42;
-  canvas.width  = W;
-  canvas.height = H;
-  ctx.clearRect(0, 0, W, H);
-
-  const today = new Date();
-  const midnightMs = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-
-  // Axis line
-  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#444';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, H / 2);
-  ctx.lineTo(W, H / 2);
-  ctx.stroke();
-
-  // Hour ticks
-  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#888';
-  ctx.font = '9px sans-serif';
-  ctx.textAlign = 'center';
-  [0, 6, 12, 18, 24].forEach(h => {
-    const x = Math.round((h / 24) * W);
-    ctx.fillRect(x, H / 2 - 4, 1, 8);
-    if (h < 24) ctx.fillText(`${String(h).padStart(2, '0')}`, x, H - 3);
-  });
-
-  // Task dots — draggable
-  // Remove old dot elements
-  canvas.parentElement?.querySelectorAll('.ws-tl-dot').forEach(el => el.remove());
-
-  if (emptyEl) emptyEl.classList.toggle('hidden', tasks.length > 0);
-
-  tasks.forEach(t => {
-    const ms   = new Date(t.next_run_at).getTime();
-    const frac = (ms - midnightMs) / 86_400_000;
-    if (frac < 0 || frac > 1) return;
-    const x = frac * W;
-
-    // Draw dot on canvas
-    ctx.beginPath();
-    ctx.arc(x, H / 2, 5, 0, 2 * Math.PI);
-    ctx.fillStyle = t.status === 'running' ? '#3b82f6' : '#f59e0b';
-    ctx.fill();
-
-    // Overlay HTML dot for interaction
-    const dot = document.createElement('div');
-    dot.className = 'ws-tl-dot';
-    dot.style.left = `${x}px`;
-    dot.title = `${t.name}\n${_fmtTime(t.next_run_at)}`;
-    dot.dataset.taskId = t.id;
-    dot.dataset.taskJson = JSON.stringify(t);
-    canvas.parentElement.appendChild(dot);
-
-    dot.addEventListener('click', (e) => {
-      e.stopPropagation();
-      _openEditDrawer(t);
-    });
-
-    if ((t.trigger_type ?? t.trigger?.type) === 'once') {
-      _enableDragOnDot(dot, t, canvas, midnightMs);
-    }
-  });
-
-  // Current time needle
-  const nowFrac = (Date.now() - midnightMs) / 86_400_000;
-  if (nowFrac >= 0 && nowFrac <= 1) {
-    const nx = Math.round(nowFrac * W);
-    ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(nx, 0);
-    ctx.lineTo(nx, H);
-    ctx.stroke();
-  }
-}
-
-// ── 15-minute snapping drag ───────────────────────────────────────────────────
-
-function _enableDragOnDot(dot, task, canvas, midnightMs) {
-  let dragging = false;
-  let previewEl = null;
-
-  dot.style.cursor = 'grab';
-
-  dot.addEventListener('mousedown', (startEvt) => {
-    startEvt.preventDefault();
-    dragging = true;
-    dot.style.cursor = 'grabbing';
-
-    // Create preview bubble
-    previewEl = document.createElement('div');
-    previewEl.className = 'ws-tl-drag-preview';
-    document.body.appendChild(previewEl);
-
-    const onMove = (e) => {
-      if (!dragging) return;
-      const rect = canvas.getBoundingClientRect();
-      const rawFrac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-
-      // 15-min snapping: 96 slots per day
-      const snappedFrac = Math.round(rawFrac * 96) / 96;
-      const snappedMs = midnightMs + snappedFrac * 86_400_000;
-      const snappedDate = new Date(snappedMs);
-
-      dot.style.left = `${snappedFrac * rect.width}px`;
-      previewEl.style.left  = `${e.clientX}px`;
-      previewEl.style.top   = `${e.clientY - 36}px`;
-      previewEl.textContent = snappedDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-      previewEl.dataset.snappedIso = snappedDate.toISOString();
-    };
-
-    const onUp = async (e) => {
-      if (!dragging) return;
-      dragging = false;
-      dot.style.cursor = 'grab';
-      previewEl?.remove();
-      previewEl = null;
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-
-      const rect = canvas.getBoundingClientRect();
-      const rawFrac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const snappedFrac = Math.round(rawFrac * 96) / 96;
-      const snappedMs = midnightMs + snappedFrac * 86_400_000;
-      const snappedIso = new Date(snappedMs).toISOString();
-
-      await fetch(`/api/scheduler/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'edit', at: snappedIso }),
-      }).catch(() => {});
-
-      await _renderWsStrip();
-    };
-
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup',  onUp);
-  });
-}
-
-// ── Edit Drawer ───────────────────────────────────────────────────────────────
-
-function _openEditDrawer(task) {
-  const drawer = document.getElementById('sched-edit-drawer');
-  if (!drawer) return;
-
-  const titleEl = document.getElementById('sched-edit-title');
-  const nameEl  = document.getElementById('sched-edit-name');
-  const atEl    = document.getElementById('sched-edit-at');
-  const atGroup = document.getElementById('sched-edit-at-group');
-  const instrEl = document.getElementById('sched-edit-instruction');
-  const cmdTypeEl = document.getElementById('sched-edit-cmd-type');
-  const cmdGroup  = document.getElementById('sched-edit-cmd-group');
-  const msgEl   = document.getElementById('sched-edit-msg');
-
-  if (titleEl) titleEl.textContent = `Edit: ${task.name}`;
-  if (nameEl)  nameEl.value = task.name ?? '';
-  if (instrEl) instrEl.value = task.instruction ?? '';
-
-  const trigType = task.trigger_type ?? task.trigger?.type ?? 'once';
-  if (atGroup) atGroup.style.display = trigType === 'once' ? '' : 'none';
-  if (atEl && task.next_run_at) {
-    // datetime-local wants 'YYYY-MM-DDTHH:MM'
-    const d = new Date(task.next_run_at);
-    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-      .toISOString().slice(0, 16);
-    atEl.value = local;
-  }
-
-  const cmd = task.command;
-  if (cmdGroup) cmdGroup.style.display = cmd ? '' : 'none';
-  if (cmdTypeEl && cmd) cmdTypeEl.value = cmd.command_type ?? 'run_task';
-
-  if (msgEl) msgEl.textContent = '';
-  drawer.classList.remove('hidden');
-
-  // Cleanup previous listeners
-  const saveBtn   = document.getElementById('sched-edit-save');
-  const cancelBtn = document.getElementById('sched-edit-cancel');
-  const closeBtn  = document.getElementById('sched-edit-close');
-
-  const newSave   = saveBtn.cloneNode(true);
-  const newCancel = cancelBtn.cloneNode(true);
-  const newClose  = closeBtn.cloneNode(true);
-  saveBtn.replaceWith(newSave);
-  cancelBtn.replaceWith(newCancel);
-  closeBtn.replaceWith(newClose);
-
-  const closeDrawer = () => drawer.classList.add('hidden');
-
-  newCancel.addEventListener('click', closeDrawer);
-  newClose.addEventListener('click',  closeDrawer);
-
-  newSave.addEventListener('click', async () => {
-    if (msgEl) msgEl.textContent = 'Saving…';
-    const body = { action: 'edit' };
-    if (nameEl.value.trim()) body.name = nameEl.value.trim();
-    if (instrEl.value.trim()) body.instruction = instrEl.value.trim();
-    if (atEl.value && trigType === 'once') {
-      body.at = new Date(atEl.value).toISOString();
-    }
-    if (cmd && cmdTypeEl) {
-      body.command = { ...cmd, command_type: cmdTypeEl.value };
-    }
-
-    const res = await fetch(`/api/scheduler/tasks/${task.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      if (msgEl) msgEl.textContent = err.error ?? 'Save failed';
-      return;
-    }
-    if (msgEl) { msgEl.textContent = 'Saved ✓'; }
-    setTimeout(closeDrawer, 800);
-    await Promise.allSettled([renderTaskTable(), renderTimelineAxis(), _renderWsStrip()]);
-  });
-}
 
 // ── Journal Session Window ────────────────────────────────────────────────────
 

@@ -114,8 +114,19 @@ class TemporalClock:
         if recovered:
             logger.info("[TemporalClock] recovered %d stale running task(s) → pending", recovered)
 
+        # Restore last heartbeat time from the persisted tick log so a process
+        # restart does not fire an immediate beat when the configured interval
+        # has not elapsed yet since the previous run.
         _last_proactive = _EPOCH
-        _last_cleanup   = _EPOCH
+        if self._heartbeat_module is not None:
+            recent = self._heartbeat_module._tick_log.recent(1)
+            if recent:
+                try:
+                    _last_proactive = datetime.fromisoformat(recent[0]["ts"])
+                except (KeyError, ValueError):
+                    pass
+
+        _last_cleanup = _EPOCH
 
         while not self._stopped:
             if not self._paused:

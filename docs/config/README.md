@@ -14,6 +14,7 @@ src/config/
 │   └── vllm_config.py              # VLLMConfig
 ├── agent/                          # Agent 各子模块配置
 │   ├── tao_config.py               # TaoConfig（顶层）
+│   ├── run_config.py               # RunConfig（WebUI host/port、SearXNG 设置）
 │   ├── persona_config.py           # PersonaConfig
 │   ├── prompt_config.py            # PromptConfig
 │   ├── risk_config.py              # RiskConfig
@@ -28,7 +29,10 @@ src/config/
 │   └── __init__.py                 # EmbeddingConfig
 ├── knowledge/                      # 知识库配置
 ├── infra/
-│   └── sandbox_config.py           # SandboxConfig
+│   ├── sandbox_config.py           # SandboxConfig
+│   ├── bot_config.py               # BotConfig（OneBot / QQ Official）
+│   ├── bark_config.py              # BarkConfig（Bark 推送）
+│   └── ntfy_config.py              # NtfyConfig（ntfy 推送）
 ├── network/
 │   └── web_search_config.py        # WebSearchConfig
 ├── tts/                            # TTS / STT 配置
@@ -120,13 +124,20 @@ class MediumTermMemoryConfig:
 class LongTermMemoryConfig:
     enabled: bool = False
     memory_dir: str = ""
+    qdrant_path: str = ".react/memory/qdrant"  # Qdrant 本地集合目录
+    collection_name: str = "long_term_memory"
     load_from_disk: bool = True
     top_k: int = 5
     model_name_or_path: str = "BAAI/bge-small-zh-v1.5"
+    query_prefix: str = "query: "
+    passage_prefix: str = ""
     use_fp16: bool = True
     device: str = "auto"
+    consolidation_k: int = 0
     max_entry_chars: int = 2000
     max_recall_chars: int = 3000
+    distill_enabled: bool = False
+    max_distill_tokens: int = 400
     retrieve: RetrieveConfig = ...
 ```
 
@@ -167,12 +178,33 @@ class StorageConfig:
     root: str = ".react"
 
     @property
-    def memory_dir(self) -> str: ...
+    def history_dir(self) -> str: ...      # .react/history
     @property
-    def milestones_dir(self) -> str: ...
+    def memory_dir(self) -> str: ...       # .react/memory
     @property
-    def persona_dir(self) -> str: ...
+    def milestones_dir(self) -> str: ...   # .react/milestones
     @property
-    def traces_dir(self) -> str: ...
+    def persona_dir(self) -> str: ...      # .react/persona
     @property
-    def scheduler_dir(self) -> str: ...
+    def traces_dir(self) -> str: ...       # .react/traces
+    @property
+    def scheduler_dir(self) -> str: ...    # .react/scheduler
+    @property
+    def workspace_dir(self) -> str: ...    # .react/workspace
+    @property
+    def timeline_dir(self) -> str: ...     # .react/timeline
+    @property
+    def life_dir(self) -> str: ...         # .react/life
+    @property
+    def benchmark_dir(self) -> str: ...    # .react/benchmark
+    @property
+    def obs_dir(self) -> str: ...          # .react/logs
+    @property
+    def train_dir(self) -> str: ...        # .react/train
+    @property
+    def checkpoints_dir(self) -> str: ...  # .react/train/checkpoints
+    @property
+    def adapters_dir(self) -> str: ...     # .react/train/adapters
+    @property
+    def merged_dir(self) -> str: ...       # .react/train/merged
+```

@@ -79,9 +79,12 @@ historyMod.setCallbacks({
 // ── Scheduler form helpers ────────────────────────────────────────────────────
 
 function toggleSchedulerForm() {
-  const el = document.getElementById('sched-form-wrap');
-  if (!el) return;
-  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  const overlay = document.getElementById('sched-nt-overlay');
+  if (!overlay) return;
+  overlay.classList.toggle('hidden');
+  if (!overlay.classList.contains('hidden')) {
+    document.getElementById('sched-name')?.focus();
+  }
 }
 
 function onSchedTriggerChange() {
@@ -174,11 +177,16 @@ function _bind() {
   on('bench-btn-clear',   'click', () => benchMod.clearReport());
 
   // Scheduler screen
-  on('btn-sched-refresh',  'click', () => schedulerMod.init());
-  on('btn-sched-add',      'click', toggleSchedulerForm);
-  on('btn-sched-create',   'click', createSchedulerTask);
-  on('btn-sched-cancel',   'click', toggleSchedulerForm);
-  on('btn-sched-settings', 'click', () => settings.open('scheduler'));
+  on('btn-sched-refresh',      'click', () => schedulerMod.init());
+  on('btn-sched-add',          'click', toggleSchedulerForm);
+  on('sched-side-newtask-btn', 'click', toggleSchedulerForm);
+  on('btn-sched-create',       'click', createSchedulerTask);
+  on('btn-sched-cancel',       'click', toggleSchedulerForm);
+  on('sched-nt-close',         'click', toggleSchedulerForm);
+  on('btn-sched-settings',     'click', () => settings.open('scheduler'));
+  document.getElementById('sched-nt-overlay')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) toggleSchedulerForm();
+  });
   document.querySelectorAll('input[name="sched-trigger-radio"]').forEach(r => {
     r.addEventListener('change', onSchedTriggerChange);
   });
@@ -250,6 +258,7 @@ function _bind() {
 
   // Expose for inline HTML oncall
   window.onBotTransportChange = () => settings.onBotTransportChange?.();
+  window.onChannelChange      = () => settings.onChannelChange?.();
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -283,9 +292,6 @@ async function boot() {
     if (p?.enabled && p.name) setAgentAvatar(p.name.charAt(0));
   }).catch(() => {});
   loadWorkstation();
-
-  // Init workspace timeline strip
-  schedulerMod.initWorkspaceStrip().catch(() => {});
 
   // Keep bot badge in sync: fast 5-s poll until the bot is "on", then slow 30-s poll.
   let _botPollFast = null;

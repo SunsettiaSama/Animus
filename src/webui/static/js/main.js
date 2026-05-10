@@ -377,12 +377,12 @@ async function loadWorkstation() {
 // ── Scheduler form ────────────────────────────────────────────────────────────
 
 function toggleSchedulerForm() {
-  const form   = document.getElementById('sched-form-wrap');
-  const toggle = document.getElementById('sched-newtask-toggle');
-  if (!form) return;
-  const opening = form.style.display === 'none';
-  form.style.display = opening ? '' : 'none';
-  toggle?.classList.toggle('open', opening);
+  const overlay = document.getElementById('sched-nt-overlay');
+  if (!overlay) return;
+  overlay.classList.toggle('hidden');
+  if (!overlay.classList.contains('hidden')) {
+    document.getElementById('sched-name')?.focus();
+  }
 }
 
 function onSchedTriggerChange() {
@@ -562,9 +562,14 @@ function _bind() {
   on('s-stt-provider',    'change', settings.onSTTProviderChange);
 
   // Scheduler form
-  on('btn-sched-add',    'click', toggleSchedulerForm);
-  on('btn-sched-create', 'click', createSchedulerTask);
-  on('btn-sched-cancel', 'click', toggleSchedulerForm);
+  on('btn-sched-add',          'click', toggleSchedulerForm);
+  on('sched-side-newtask-btn', 'click', toggleSchedulerForm);
+  on('btn-sched-create',       'click', createSchedulerTask);
+  on('btn-sched-cancel',       'click', toggleSchedulerForm);
+  on('sched-nt-close',         'click', toggleSchedulerForm);
+  document.getElementById('sched-nt-overlay')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) toggleSchedulerForm();
+  });
   document.querySelectorAll('input[name="sched-trigger-radio"]').forEach(r => {
     r.addEventListener('change', onSchedTriggerChange);
   });
@@ -648,9 +653,6 @@ async function boot() {
 
   _updateReactBadge();
   loadWorkstation();
-
-  // Init workspace timeline strip (always visible at bottom of main area)
-  schedulerMod.initWorkspaceStrip().catch(() => {});
 
   // Keep bot badge in sync: poll every 5 s until the bot is "on", then every 30 s.
   let _botPollFast = null;

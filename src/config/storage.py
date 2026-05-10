@@ -45,6 +45,10 @@ class StorageConfig:
         return os.path.join(self.root, "timeline")
 
     @property
+    def life_dir(self) -> str:
+        return os.path.join(self.root, "life")
+
+    @property
     def benchmark_dir(self) -> str:
         return os.path.join(self.root, "benchmark")
 

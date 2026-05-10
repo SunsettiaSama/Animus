@@ -10,19 +10,19 @@ ReAct（Reasoning + Acting）核心框架，实现两层循环结构、四层记
 src/agent/react/
 ├── loop.py              # ConvLoop — 外层多轮对话循环
 ├── tao.py               # TaoLoop  — 内层 TAO 推理循环 + 事件流
-├── parser.py            # ReActOutputParser / LLM 输出解析
-├── factory.py           # TaoLoop 工厂函数
+├── parser.py            # 薄转发层：re-export prompt/parser.py 公共符号
+├── factory.py           # build_conv_loop 工厂函数（返回 ConvLoop）
 │
 ├── memory/              # 四层记忆系统（L1 短期 / L2 中期 / 里程碑 / L3 长期）
 │   ├── memory.py        # Step + Memory 基础数据结构
 │   ├── processor.py     # MemoryProcessor：统一读写接口
 │   ├── short_term/      # L1 短期（Token 滑动窗口 + 蒸馏摘要）
 │   ├── medium_term/     # L2 中期（跨 session JSONL Q&A 历史 + 滚动整合）
-│   ├── long_term/       # L3 长期（BGE Embedding + FAISS + RAG）
+│   ├── long_term/       # L3 长期（BGE Embedding + Qdrant + RAG）
 │   │   ├── memory.py
-│   │   ├── store.py     # LongTermStore（向量 + 时间戳 + 持久化）
+│   │   ├── store.py     # LongTermStore（向量 + 时间戳 + Qdrant 持久化）
 │   │   ├── init/        # make_memory 工厂函数
-│   │   └── retrieve/    # Retriever + 四场景检索模式
+│   │   └── retrieve/    # Retriever + 五场景检索模式（含 TIMELINE）
 │   └── milestone/       # 里程碑记忆（重要事件，关键词检索）
 │       ├── entry.py     # MilestoneEntry 数据类
 │       ├── store.py     # MilestoneStore（JSON 持久化）
@@ -35,11 +35,11 @@ src/agent/react/
 │   ├── block.py         # PromptBlock 基类 + 内置块
 │   ├── manager.py       # PromptManager：Prompt 构建 + 静态缓存
 │   ├── builder.py       # PromptBuilder：纯文本组装（辅助路径）
-│   ├── parser.py        # ReActOutputParser + ParseQuality 枚举
+│   ├── parser.py        # ReActOutputParser + ParseQuality 枚举（实现在此）
 │   ├── repair.py        # Prompt 修复（输出格式错误时重试）
 │   └── template.py      # ReActTemplate 语言模板（CN / EN）
 │
-├── persona/             # 人格演化系统（知识-技能-反省三层 + 近期偏好）
+├── persona/             # 人格演化系统（画像-技能-自省 + 近期偏好 + 情绪状态）
 │   ├── engine.py        # EvolutionEngine：LLM 驱动演化
 │   ├── manager.py       # PersonaManager：统一接口
 │   ├── profile/         # 稳定层（画像 + 技能库 + 自省）
@@ -48,12 +48,23 @@ src/agent/react/
 │   │   ├── evolver.py   #   PersonaEvolver（LLM 增量更新）
 │   │   ├── block.py     #   ProfileBlock / SkillsBlock / ReflectionBlock
 │   │   └── store.py     #   ProfileStore（profile / skills / reflection）
-│   └── preference/      # 动态层（情绪 / 话题兴趣 / 风格偏移）
-│       ├── entry.py     #   PreferenceEntry 快照
-│       ├── store.py     #   PreferenceStore（preference.json）
-│       ├── updater.py   #   PreferenceUpdater（LLM 生成快照）
-│       ├── block.py     #   PreferenceBlock（Prompt 注入）
-│       └── recent.py    #   RecentPreference（k 天滑动窗口聚合）
+│   ├── preference/      # 动态层（话题兴趣 / 风格偏移）
+│   │   ├── entry.py     #   PreferenceEntry 快照
+│   │   ├── store.py     #   PreferenceStore（preference.json）
+│   │   ├── updater.py   #   PreferenceUpdater（LLM 生成快照）
+│   │   ├── block.py     #   PreferenceBlock（Prompt 注入）
+│   │   └── recent.py    #   RecentPreference（k 天滑动窗口聚合）
+│   └── emotional/       # 叙事情感层（情绪锚点 + 纹理文本）
+│       ├── state.py     #   EmotionalAnchor + EmotionalState + EmotionalStateStore
+│       ├── evolver.py   #   EmotionalStateEvolver（LLM 更新）
+│       └── block.py     #   EmotionalStateBlock（Prompt 注入）
+│
+├── life/                # 生活状态子系统（活动日志 + 画像 + 日度综合）
+│   ├── manager.py       # LifeManager：协调日志、画像、日度合成
+│   ├── log.py           # LifeLog + LifeLogEntry（JSONL 活动叙事）
+│   ├── profile.py       # LifeProfile + LifeProfileStore + LifeProfileGenerator
+│   ├── synthesis.py     # DailySynthesizer（日度综合报告，写入 LifeLog）
+│   └── block.py         # LifeProfileBlock（注入"近期生活状态"到 Prompt）
 │
 ├── action/              # 动作空间（Tool / MCP / Skill）
 │   └── ...              # 见 action/README.md
@@ -95,11 +106,12 @@ TaoLoop.stream(question)
 | 属性 | 类型 | 说明 |
 |---|---|---|
 | `_manager` | `PromptManager` | 负责 Prompt 构建与历史管理 |
-| `_long_term` | `LongTermMemory \| None` | L3 FAISS 向量存储与检索 |
+| `_long_term` | `LongTermMemory \| None` | L3 Qdrant 向量存储与检索 |
 | `_milestone` | `MilestoneMemory \| None` | 里程碑事件检索与评分 |
 | `_medium_term` | `RecentHistoryMemory \| None` | L2 中期跨 session JSONL 历史 |
 | `_trace_store` | `TraceStore \| None` | 写入推理链到 `.react/traces/` |
 | `_persona` | `PersonaManager \| None` | 人格注入 + 演化 + 检索偏置 |
+| `_life` | `LifeManager \| None` | 生活状态管理（心跳日志 + 日度综合）|
 | `_scheduler_engine` | `SchedulerEngine \| None` | 时钟触发任务引擎（`TaoConfig.scheduler` 非空时启用）|
 | `_delegate_skill` | `DelegateTaskSkill \| None` | 子 Agent 同步委派（`TaoConfig.agent` 非空时注入）|
 | `_plan_orchestrator` | `PlanOrchestrator \| None` | Plan 多智能体编排（`TaoConfig.plan` 非空时启用）|
@@ -127,6 +139,8 @@ TaoLoop.stream(question)
    [SkillsBlock]              → 技能列表（skills_enabled 时）
    [ReflectionBlock]          → 自省文本（reflection_enabled 且非空时）
    [PreferenceBlock]          → 近期偏好（preference_enabled 且非 neutral 时）
+   [EmotionalStateBlock]      → 情绪纹理（emotion_enabled 且非空时）
+   [LifeProfileBlock]         → 近期生活状态（life 启用时）
    [MemoryBlock: medium_term] → L2 跨 session 历史
    [MemoryBlock: milestone]   → 里程碑记忆
    [MemoryBlock: long_term]   → L3 向量结果
@@ -180,7 +194,7 @@ self._static_cache = manager.build_static(...)   ← 预热下轮
 | L1 蒸馏 | 短期蒸馏 | `ShortTermMemory._distillate`（内存）| 随 L1 溢出触发 | ❌ |
 | L2 | 中期 | `RecentHistoryMemory`（JSONL）| 仅首步，跨 session | ✅ `.react/memory/medium_term.jsonl` |
 | 里程碑 | 重要事件 | `MilestoneMemory`（JSON + 关键词索引）| 仅首步（可选）| ✅ `milestones.json` |
-| L3 | 长期 | `LongTermMemory`（FAISS + JSON）| 仅首步（可选）| ✅ FAISS + JSON |
+| L3 | 长期 | `LongTermMemory`（Qdrant + JSON）| 仅首步（可选）| ✅ `qdrant/` + `memories.json` |
 
 **L2 中期说明**：`RecentHistoryMemory` 以 JSONL 形式持久化跨 session 的近期 Q&A 对，按 `window_days` 时间窗口加载。超出 `max_entries` 时触发 LLM 滚动整合（条目合并为摘要条目）。
 
@@ -242,6 +256,11 @@ preference/  →  preference.json（动态层，持久化）:
   PreferenceUpdater.update(Q, A)
     → LLM 生成快照 → 更新 mood / topic_interests / style_shifts
        结果影响 L3 检索偏置方向 + PreferenceBlock 注入 Prompt
+
+emotional/  →  emotional_state.json（叙事情感层，持久化）:
+  EmotionalStateEvolver.update(Q, A)
+    → LLM 追加 EmotionalAnchor（锚点 ≥ _MAX_ANCHORS 时压缩为 texture）
+       结果注入 EmotionalStateBlock → 系统提示情绪质地
 ```
 
 ---
@@ -312,19 +331,27 @@ TaoConfig
 ├── memory/               # L2 中期 + L3 长期记忆
 │   ├── medium_term.jsonl # L2 中期 Q&A 历史（JSONL，跨 session）
 │   ├── memories.json     # L3 长期记忆条目
-│   └── memory_index.faiss
+│   └── qdrant/           # L3 Qdrant 本地集合
 ├── milestones/           # 里程碑记忆
 │   └── milestones.json
 ├── persona/              # 人格文件
 │   ├── profile.json
 │   ├── skills.json
 │   ├── reflection.txt
-│   └── preference.json
+│   ├── preference.json
+│   └── emotional_state.json
 ├── traces/               # 推理链存档
 │   └── {timestamp}_{slug}.json
-└── scheduler/            # 调度任务持久化
-    ├── tasks.json
-    └── results/
+├── scheduler/            # 调度任务持久化
+│   ├── tasks.json
+│   ├── heartbeat_log.jsonl
+│   └── results/
+├── timeline/             # 会话级时间线事件
+│   └── {YYYY-MM-DD}.jsonl
+├── life/                 # 生活状态
+│   ├── life_log.jsonl
+│   └── life_profile.json
+└── workspace/            # 沙箱工作区文件
 ```
 
 ---

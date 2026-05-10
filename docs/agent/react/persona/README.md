@@ -24,13 +24,19 @@ src/agent/react/persona/
 │   ├── block.py           ProfileBlock / SkillsBlock / ReflectionBlock
 │   └── store.py           ProfileStore — profile.json / skills.json / reflection.txt
 │
-└── preference/            ← 偏好子模块（用户兴趣动态层）
+├── preference/            ← 偏好子模块（用户兴趣动态层）
+│   ├── __init__.py
+│   ├── entry.py           PreferenceEntry — 单条兴趣记录
+│   ├── recent.py          RecentPreference — 近期偏好聚合
+│   ├── store.py           PreferenceStore — preference.json
+│   ├── block.py           PreferenceBlock
+│   └── updater.py         PreferenceUpdater — LLM 驱动更新
+│
+└── emotional/             ← 情绪状态子模块（叙事情感层）
     ├── __init__.py
-    ├── entry.py           PreferenceEntry — 单条兴趣记录
-    ├── recent.py          RecentPreference — 近期偏好聚合
-    ├── store.py           PreferenceStore — preference.json
-    ├── block.py           PreferenceBlock
-    └── updater.py         PreferenceUpdater — LLM 驱动更新
+    ├── state.py           EmotionalAnchor + EmotionalState + EmotionalStateStore
+    ├── evolver.py         EmotionalStateEvolver — LLM 更新情绪状态
+    └── block.py           EmotionalStateBlock — Prompt 注入情绪纹理
 ```
 
 ---
@@ -46,9 +52,14 @@ PersonaManager（外部唯一接口）
        │      reflection: str     ← reflect()（LLM）
        │      ProfileStore → profile.json / skills.json / reflection.txt
        │
-       └─── preference/（动态层）
-              RecentPreference（用户近期兴趣偏好）
-              PreferenceStore → preference.json
+       ├─── preference/（动态层）
+       │      RecentPreference（用户近期兴趣偏好）
+       │      PreferenceStore → preference.json
+       │
+       └─── emotional/（叙事情感层）
+              EmotionalState（锚点列表 + 情绪纹理文本）
+              EmotionalStateEvolver ← LLM 更新
+              EmotionalStateStore → emotional_state.json
 ```
 
 每轮对话结束后（`TaoLoop.post_process` 后台线程），演化引擎执行：
@@ -57,6 +68,7 @@ PersonaManager（外部唯一接口）
 ① profile + skills → LLM 分析交互 → 微更新   （每 evolve_interval 轮）
 ② reflect          → LLM 生成自省段落        （每 reflect_interval 轮）
 ③ preference       → LLM 生成快照 → 更新偏好  （每 preference_update_every_n 轮）
+④ emotional        → LLM 更新情绪锚点与纹理   （每轮，emotion_enabled=True 时）
 ```
 
 ---
@@ -99,6 +111,16 @@ class Skill:
 
 持久化：`PreferenceStore` → `.react/persona/preference.json`
 
+### 4. 情绪状态 `EmotionalState`
+
+叙事情感层，记录 Agent 的情绪历史与当前质地：
+
+- **锚点** `EmotionalAnchor`：每条包含 `ts`（时间戳）、`event`（触发事件描述）、`felt`（感受描述）
+- **纹理** `texture`：超过 `_MAX_ANCHORS`（默认 10）个锚点时，LLM 将其压缩为一段情绪质地文本
+- **Prompt 注入**（可选）：`EmotionalStateBlock` 将当前情绪纹理注入系统提示
+
+持久化：`EmotionalStateStore` → `.react/persona/emotional_state.json`
+
 ---
 
 ## 演化引擎详解
@@ -128,10 +150,11 @@ class Skill:
 `PersonaManager.all_blocks()` 按顺序返回所有启用的块：
 
 ```
-[ProfileBlock]         ← 人物画像（始终注入）
-[SkillsBlock]          ← 技能库（skills_enabled=True 时注入）
-[ReflectionBlock]      ← 自省（reflection_enabled=True 且有内容时注入）
-[PreferenceBlock]      ← 近期偏好（preference_enabled=True 且有内容时注入）
+[ProfileBlock]             ← 人物画像（始终注入）
+[SkillsBlock]              ← 技能库（skills_enabled=True 时注入）
+[ReflectionBlock]          ← 自省（reflection_enabled=True 且有内容时注入）
+[PreferenceBlock]          ← 近期偏好（preference_enabled=True 且有内容时注入）
+[EmotionalStateBlock]      ← 情绪纹理（emotion_enabled=True 且有内容时注入）
 ```
 
 ---
@@ -193,10 +216,11 @@ class PersonaConfig:
 
 ```
 .react/persona/
-├── profile.json       ← PersonaProfile（手动编辑 + LLM 增量更新）
-├── skills.json        ← SkillsLibrary（LLM 增删改维护）
-├── reflection.txt     ← 最新自省文本（每次 reflect 覆写）
-└── preference.json    ← 近期偏好（滚动更新）
+├── profile.json             ← PersonaProfile（手动编辑 + LLM 增量更新）
+├── skills.json              ← SkillsLibrary（LLM 增删改维护）
+├── reflection.txt           ← 最新自省文本（每次 reflect 覆写）
+├── preference.json          ← 近期偏好（滚动更新）
+└── emotional_state.json     ← 情绪锚点 + 纹理文本（每轮更新）
 ```
 
 ---

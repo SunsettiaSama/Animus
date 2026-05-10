@@ -22,20 +22,33 @@
 │   └── {uuid}.json
 ├── memory/                      # 记忆层持久化
 │   ├── medium_term.jsonl        # L2 中期跨 session Q&A 历史
-│   ├── memories.json            # L3 长期记忆条目
-│   └── memory_index.faiss       # L3 长期记忆 FAISS 索引
+│   ├── memories.json            # L3 长期记忆条目（插入顺序序列化）
+│   └── qdrant/                  # L3 长期记忆 Qdrant 本地集合目录
+│       └── collection/
+│           └── long_term_memory/
+│               └── storage.sqlite
 ├── milestones/                  # 里程碑记忆
 │   └── milestones.json
 ├── persona/                     # 人格数据
 │   ├── profile.json
 │   ├── skills.json
 │   ├── reflection.txt
-│   └── preference.json
+│   ├── preference.json
+│   └── emotional_state.json     # 情绪状态（EmotionalStateStore）
 ├── traces/                      # 推理链存档
 │   └── {YYYYMMDD_HHMMSS}_{slug}.json
-└── scheduler/                   # 调度任务持久化
-    ├── tasks.json               # 所有调度任务状态
-    └── results/                 # 各任务执行结果 JSON
+├── scheduler/                   # 调度任务持久化
+│   ├── tasks.json               # 所有调度任务状态
+│   ├── heartbeat_log.jsonl      # 心跳记录日志
+│   └── results/                 # 各任务执行结果 JSON
+├── timeline/                    # 会话级时间线事件
+│   └── {YYYY-MM-DD}.jsonl
+├── life/                        # 生活状态与日志
+│   ├── life_log.jsonl           # 活动叙事日志
+│   └── life_profile.json        # LLM 生成的当前生活状态画像
+├── workspace/                   # 沙箱工作区文件（SandboxManager 读写）
+└── logs/                        # 运行时观测日志
+    └── obs_{YYYY-MM-DD}.jsonl
 ```
 
 ---
@@ -49,7 +62,7 @@
 | 写入模块 | `src/webui/app.py` |
 | 触发时机 | 每轮对话结束，前端调用 `POST /api/history` |
 | 文件命名 | `{uuid}.json` |
-| 路径 | WebUI 硬编码于 `_HISTORY_DIR`，不经由 StorageConfig |
+| 路径 | `StorageConfig.history_dir`（默认 `.react/history`）|
 
 相关 API：`GET/POST/DELETE /api/history[/{id}]`
 
@@ -73,9 +86,9 @@
 |---|---|
 | 写入模块 | `src/agent/react/memory/long_term/store.py` |
 | 触发时机 | `processor.commit()` → `LongTermMemory.save()` |
-| 文件列表 | `memories.json`（条目元数据）、`memory_index.faiss`（FAISS 索引）|
-| 路径配置字段 | `LongTermMemoryConfig.memory_dir` |
-| 默认值 | `".react/memory"` |
+| 文件列表 | `memories.json`（条目元数据）、`qdrant/`（Qdrant 本地集合）|
+| 路径配置字段 | `LongTermMemoryConfig.memory_dir`（memories.json）、`LongTermMemoryConfig.qdrant_path`（集合目录）|
+| 默认值 | `".react/memory"`、`".react/memory/qdrant"` |
 
 **`memories.json` 结构：**
 
@@ -114,6 +127,7 @@
 | `skills.json` | `ProfileStore.save_skills()` | `skills_enabled=True` 时演化触发 |
 | `reflection.txt` | `ProfileStore.save_reflection()` | `reflection_enabled=True` 且达到 `reflect_interval` |
 | `preference.json` | `PreferenceStore.save()` | 每 `preference_update_every_n` 轮 |
+| `emotional_state.json` | `EmotionalStateStore.save()` | 每轮 `persona.evolve()` 更新情绪状态 |
 
 路径配置字段：`PersonaConfig.persona_dir`，默认 `".react/persona"`。
 
@@ -158,22 +172,67 @@
 |---|---|
 | 写入模块 | `src/agent/scheduler/store.py` / `src/agent/scheduler/engine.py` |
 | `tasks.json` | 所有调度任务的状态（TaskStore 持久化）|
+| `heartbeat_log.jsonl` | 心跳检查记录（HeartbeatTickLog）|
 | `results/` | 各任务执行结果，文件名为 `{task_id}.json` |
 | 路径配置字段 | `SchedulerConfig.scheduler_dir` |
 
 ---
 
+### 8. 时间线 `.react/timeline/`
+
+| 项目 | 说明 |
+|---|---|
+| 写入模块 | `src/agent/scheduler/timeline.py` |
+| 触发时机 | Scheduler 任务完成后追加时间线事件 |
+| 文件命名 | `{YYYY-MM-DD}.jsonl`（每日一个文件）|
+| 路径配置字段 | `StorageConfig.timeline_dir`（`".react/timeline"`）|
+
+---
+
+### 9. 生活状态 `.react/life/`
+
+| 文件 | 写入类 | 触发时机 |
+|---|---|---|
+| `life_log.jsonl` | `LifeLog.append()` | 心跳每 N 小时写入活动叙事 |
+| `life_profile.json` | `LifeProfileStore.save()` | `LifeProfileGenerator` LLM 刷新当前生活状态 |
+
+路径配置字段：`StorageConfig.life_dir`（`".react/life"`）。
+
+---
+
+### 10. 工作区 `.react/workspace/`
+
+沙箱工作区文件由 `SandboxManager` 管理，工具 `file_read` / `file_write` / `file_list` 的所有操作均限定在此目录内。
+
+路径配置字段：`StorageConfig.workspace_dir`（`".react/workspace"`）。
+
+---
+
+### 11. 观测日志 `.react/logs/`
+
+| 项目 | 说明 |
+|---|---|
+| 内容 | 运行时观测事件（LLM 调用、工具执行等）|
+| 文件命名 | `obs_{YYYY-MM-DD}.jsonl` |
+| 路径配置字段 | `StorageConfig.obs_dir`（`".react/logs"`）|
+
+---
+
 ## 路径配置字段一览
 
-| 文件/目录 | 配置字段 | 默认值 |
+| 文件/目录 | StorageConfig 属性 | 默认值 |
 |---|---|---|
-| `.react/history/` | WebUI 硬编码 | `<repo>/.react/history` |
-| `.react/memory/` | `LongTermMemoryConfig.memory_dir` / `MediumTermMemoryConfig.memory_dir` | `".react/memory"` |
-| `.react/milestones/` | `MilestoneConfig.milestone_dir` | `".react/milestones"` |
-| `.react/persona/` | `PersonaConfig.persona_dir` | `".react/persona"` |
-| `.react/traces/` | `TraceConfig.trace_dir` | `".react/traces"` |
-| `.react/scheduler/` | `SchedulerConfig.scheduler_dir` | `".react/scheduler"` |
-| `config/llm_core/config.yaml` | WebUI 硬编码 | `<repo>/config/llm_core/config.yaml` |
+| `.react/history/` | `history_dir` | `".react/history"` |
+| `.react/memory/` | `memory_dir` | `".react/memory"` |
+| `.react/milestones/` | `milestones_dir` | `".react/milestones"` |
+| `.react/persona/` | `persona_dir` | `".react/persona"` |
+| `.react/traces/` | `traces_dir` | `".react/traces"` |
+| `.react/scheduler/` | `scheduler_dir` | `".react/scheduler"` |
+| `.react/timeline/` | `timeline_dir` | `".react/timeline"` |
+| `.react/life/` | `life_dir` | `".react/life"` |
+| `.react/workspace/` | `workspace_dir` | `".react/workspace"` |
+| `.react/logs/` | `obs_dir` | `".react/logs"` |
+| `.react/benchmark/` | `benchmark_dir` | `".react/benchmark"` |
 
 路径均相对于进程 CWD，建议始终在仓库根目录下运行（`python src/run.py`）。
 
@@ -199,7 +258,17 @@
                     ├─ TraceStore.write()                 → .react/traces/ ✎
                     └─ PersonaManager.evolve()
                          ├─ ProfileStore.save_*()         → .react/persona/ ✎
-                         └─ PreferenceStore.save()        → .react/persona/preference.json ✎
+                         ├─ PreferenceStore.save()        → .react/persona/preference.json ✎
+                         └─ EmotionalStateStore.save()   → .react/persona/emotional_state.json ✎
+
+Scheduler（后台轮询）
+     └─ TaskRunner.run()                                  → .react/scheduler/results/ ✎
+          └─ TimelineStore.append()                       → .react/timeline/{date}.jsonl ✎
+
+HeartbeatModule（后台心跳）
+     ├─ LifeLog.append()                                  → .react/life/life_log.jsonl ✎
+     ├─ LifeProfileStore.save()                           → .react/life/life_profile.json ✎
+     └─ HeartbeatTickLog.append()                         → .react/scheduler/heartbeat_log.jsonl ✎
 ```
 
 ---
@@ -208,7 +277,7 @@
 
 ```bash
 # 清空对话历史（保留其他数据）
-curl -X DELETE http://localhost:8080/api/history
+curl -X DELETE http://localhost:8300/api/history
 # 或
 rm .react/history/*.json
 
