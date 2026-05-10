@@ -9,8 +9,8 @@ export {
   open, close, handleOverlayClick,
   setTab, saveCurrentTab,
   saveModelTab, saveMemoryTab, savePersonaTab,
-  saveVoiceTab, saveVLLMTab, saveSandboxTab, saveBotTab,
+  saveVoiceTab, saveSandboxTab, saveBotTab, saveSchedulerTab,
   onToggleTools, onTTSProviderChange, onSTTProviderChange,
-  onBotTransportChange,
+  onBotTransportChange, testBark, testNtfy,
   doConsolidate, doClearMemory, doClearPersona,
 } from './settings/modal.js';

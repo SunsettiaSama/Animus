@@ -62,34 +62,34 @@ def service_status(name: str):
 
 @router.post("/api/services/{name}/start")
 def service_start(name: str):
-    import sys
-    if name in ("vllm", "vllm-clone") and sys.platform == "win32":
-        return JSONResponse(status_code=503, content={
-            "error":          f"'{name}' is not available on Windows.",
-            "recommendation": "Run this project inside WSL2 (ubuntu-24.04+).",
-            "fallback":       "Use backend='transformers' in LLM config instead.",
-        })
-
     state = get_state()
-    mgr   = state.service_registry.get(name)
-    if mgr is None:
-        return JSONResponse(status_code=404, content={"error": f"Unknown service: {name!r}"})
-    if name in ("vllm", "vllm-clone"):
+
+    if name == "llm":
         if state.llm_cfg is None or not state.llm_cfg.model:
             return JSONResponse(
                 status_code=400,
-                content={"error": "LLM not initialized. Set a model via /api/init first."},
+                content={"error": "Configure a model in Settings → LLM Core first."},
             )
-        from config.llm_core.vllm_config import VLLMConfig
-        import os
-        vllm_cfg = (
-            VLLMConfig.from_yaml(state.vllm_config_yaml)
-            if os.path.exists(state.vllm_config_yaml)
-            else VLLMConfig()
-        )
-        mgr.start(state.llm_cfg.model, vllm_cfg)
-    else:
-        mgr.start()
+        try:
+            import os
+            from config.llm_core.vllm_config import VLLMConfig
+            vllm_cfg = (
+                VLLMConfig.from_yaml(state.vllm_config_yaml)
+                if os.path.exists(state.vllm_config_yaml)
+                else VLLMConfig()
+            )
+            state.llm_service.start(state.llm_cfg, vllm_cfg)
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+        return {"status": "starting", "service": "llm"}
+
+    mgr = state.service_registry.get(name)
+    if mgr is None:
+        return JSONResponse(status_code=404, content={"error": f"Unknown service: {name!r}"})
+
+    # Run the potentially slow Docker operation (image pull + container start)
+    # in the background so the HTTP response returns immediately.
+    state.task_runner.submit(f"start_{name}", mgr.start)
     return {"status": "starting", "service": name}
 
 
@@ -97,9 +97,18 @@ def service_start(name: str):
 def service_stop(name: str):
     state = get_state()
     mgr   = state.service_registry.get(name)
+    if name == "llm":
+        try:
+            state.llm_service.stop()
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+        return {"status": "stopped", "service": "llm"}
     if mgr is None:
         return JSONResponse(status_code=404, content={"error": f"Unknown service: {name!r}"})
-    mgr.stop()
+    try:
+        mgr.stop()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
     return {"status": "stopped", "service": name}
 
 

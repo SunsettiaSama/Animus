@@ -111,9 +111,16 @@ class LongTermStore:
         with self._lock:
             if self._collection_ready:
                 return
+            dim = infer_dim(self._cfg.model_name_or_path)
             existing = {c.name for c in client.get_collections().collections}
+            if self._cfg.collection_name in existing:
+                info = client.get_collection(self._cfg.collection_name)
+                stored_dim = info.config.params.vectors.size
+                if stored_dim != dim:
+                    # Dimension mismatch — model changed; drop stale collection.
+                    client.delete_collection(self._cfg.collection_name)
+                    existing.discard(self._cfg.collection_name)
             if self._cfg.collection_name not in existing:
-                dim = infer_dim(self._cfg.model_name_or_path)
                 client.create_collection(
                     collection_name=self._cfg.collection_name,
                     vectors_config=VectorParams(size=dim, distance=Distance.COSINE),

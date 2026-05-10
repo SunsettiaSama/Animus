@@ -49,13 +49,16 @@ export const services = {
 // ── Workstation services row ──────────────────────────────────────────────────
 
 const _SERVICE_META = {
-  vllm:    { icon: '🧠', label: 'vLLM' },
-  searxng: { icon: '🔍', label: 'SearXNG' },
+  llm:     { icon: '🧠', label: 'LLM Core' },
+  searxng: { icon: '🔍', label: 'Search' },
   sandbox: { icon: '🏖', label: 'Sandbox' },
-  bot:     { icon: '🤖', label: 'Bot' },
+  bot:     { icon: '💬', label: 'Channels' },
   tts:     { icon: '🔊', label: 'TTS' },
   stt:     { icon: '🎙', label: 'STT' },
 };
+
+// Services that show a Start/Stop button (only when not in 'unavailable' state)
+const _STARTABLE = new Set(['llm', 'searxng', 'bot']);
 
 export async function updateServicesRow() {
   const el = document.getElementById('ws-services');
@@ -69,8 +72,12 @@ export async function updateServicesRow() {
 
   el.innerHTML = '';
   Object.entries(data).forEach(([name, svc]) => {
-    const meta  = _SERVICE_META[name] ?? { icon: '⚙', label: name };
-    const state = typeof svc === 'string' ? svc : (svc.state ?? 'unknown');
+    const meta     = _SERVICE_META[name] ?? { icon: '⚙', label: name };
+    const state    = typeof svc === 'string' ? svc : (svc.state ?? 'unknown');
+    // LLM card shows model·backend when available; others show state string
+    const subtitle = (name === 'llm' && svc.model)
+      ? `${svc.model} · ${svc.backend ?? ''}`
+      : state;
     const card  = document.createElement('div');
     card.className = 'service-card';
     card.innerHTML = `
@@ -78,18 +85,41 @@ export async function updateServicesRow() {
       <span class="sc-icon">${meta.icon}</span>
       <div class="sc-info">
         <span class="sc-name">${meta.label}</span>
-        <span class="sc-state">${state}</span>
+        <span class="sc-state">${subtitle}</span>
       </div>`;
 
-    if (name === 'vllm' || name === 'searxng' || name === 'bot') {
+    if (_STARTABLE.has(name) && state !== 'unavailable') {
       const btn = document.createElement('button');
       btn.className = 'btn-secondary sc-btn';
       if (state === 'running') {
         btn.textContent = 'Stop';
-        btn.addEventListener('click', () => services.stop(name).then(() => updateServicesRow()));
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          btn.textContent = 'Stopping…';
+          _cb.onToast(`Stopping ${name}…`);
+          await services.stop(name).catch(err => _cb.onToast(`Stop failed: ${err.message}`));
+          await updateServicesRow();
+        });
       } else {
         btn.textContent = 'Start';
-        btn.addEventListener('click', () => services.start(name).then(() => updateServicesRow()));
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          btn.textContent = 'Starting…';
+          _cb.onToast(`Starting ${name}…`);
+          await services.start(name).catch(err => {
+            _cb.onToast(`Start failed: ${err.message}`);
+            updateServicesRow();
+            return;
+          });
+          // Poll status every 3 s for up to 30 s to catch when service becomes running.
+          let attempts = 0;
+          const _poll = setInterval(async () => {
+            attempts++;
+            await updateServicesRow().catch(() => {});
+            if (attempts >= 10) clearInterval(_poll);
+          }, 3000);
+          await updateServicesRow();
+        });
       }
       card.appendChild(btn);
     }

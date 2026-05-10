@@ -102,9 +102,17 @@ class CustomVLLMManager(BaseVLLMManager):
     # ── Extension point ───────────────────────────────────────────────────────
 
     def _build_cmd(self, model: str, cfg: VLLMConfig) -> list[str] | None:
-        """Return the command list that starts the custom server, or ``None``.
-
-        Returning ``None`` (the default) signals "not yet implemented" and
-        transitions the manager to the ``"error"`` state with a log message.
-        """
-        return None
+        """Launch the custom vLLM server as a subprocess."""
+        return [
+            sys.executable, "-m", "infra.llm.custom.server",
+            "--model",          model,
+            "--host",           cfg.host,
+            "--port",           str(cfg.port),
+            "--max-batch-size", str(getattr(cfg, "max_num_seqs",   8)),
+            "--max-new-tokens", str(getattr(cfg, "max_new_tokens", 512)),
+            "--page-size",      str(getattr(cfg, "block_size",     16)),
+            "--num-blocks",     str(getattr(cfg, "num_blocks",     1024)),
+        ] + (
+            ["--gpu-mem-util", str(cfg.gpu_memory_utilization)]
+            if getattr(cfg, "gpu_memory_utilization", None) else []
+        )

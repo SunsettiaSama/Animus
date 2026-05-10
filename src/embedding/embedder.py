@@ -12,6 +12,59 @@ BGE_DIMS: dict[str, int] = {
     "small": 512,
 }
 
+
+def infer_dim(model_name_or_path: str) -> int:
+    """Return the actual output embedding dimension for *model_name_or_path*.
+
+    Resolution order (stops at the first hit):
+    1. ``2_Dense/config.json`` → ``out_features``
+       A Dense layer genuinely changes output dimensionality; always authoritative.
+    2. ``config.json`` → ``hidden_size``
+       The transformer's hidden size IS the embedding dimension when no Dense
+       layer exists.  Reading the pooling config's ``word_embedding_dimension``
+       before this would give wrong results if the config file is stale/mixed.
+    3. ``1_Pooling/config.json`` → ``word_embedding_dimension``
+       Fallback for ST pipelines that lack a top-level config.json.
+    4. Name-keyword fallback: "large" → 1024, "base" → 768, "small" → 512
+    5. Hard default: 768
+    """
+    import json
+    import os
+
+    # ── 1. Dense layer output dimension (most authoritative) ─────────────────
+    dense_cfg = os.path.join(model_name_or_path, "2_Dense", "config.json")
+    if os.path.isfile(dense_cfg):
+        with open(dense_cfg, encoding="utf-8") as f:
+            dc = json.load(f)
+        if "out_features" in dc:
+            return int(dc["out_features"])
+
+    # ── 2. HuggingFace transformer config (actual hidden size) ───────────────
+    hf_cfg = os.path.join(model_name_or_path, "config.json")
+    if os.path.isfile(hf_cfg):
+        with open(hf_cfg, encoding="utf-8") as f:
+            mc = json.load(f)
+        if "hidden_size" in mc:
+            return int(mc["hidden_size"])
+
+    # ── 3. sentence-transformers pooling config (fallback) ───────────────────
+    pooling_cfg = os.path.join(model_name_or_path, "1_Pooling", "config.json")
+    if os.path.isfile(pooling_cfg):
+        with open(pooling_cfg, encoding="utf-8") as f:
+            pc = json.load(f)
+        if "word_embedding_dimension" in pc:
+            return int(pc["word_embedding_dimension"])
+
+    # ── 4. Name-keyword fallback ──────────────────────────────────────────────
+    name = model_name_or_path.lower()
+    for key, dim in BGE_DIMS.items():
+        if key in name:
+            return dim
+
+    # ── 5. Hard default ───────────────────────────────────────────────────────
+    return 768
+
+
 # ── Shared HuggingFaceEmbeddings registry ─────────────────────────────────────
 # Loading a SentenceTransformer model takes ~2 s and allocates significant GPU/
 # CPU memory.  All Embedder instances that share the same (model, device,
@@ -66,14 +119,6 @@ def _get_or_create_hf(key: _EmbedKey) -> HuggingFaceEmbeddings:
                 query_encode_kwargs=query_encode_kwargs,
             )
         return _HF_REGISTRY[key]
-
-
-def infer_dim(model_name: str) -> int:
-    name = model_name.lower()
-    for key, dim in BGE_DIMS.items():
-        if key in name:
-            return dim
-    return 512
 
 
 class Embedder:

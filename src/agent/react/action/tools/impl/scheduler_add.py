@@ -88,6 +88,14 @@ class SchedulerAddAction(BaseAction):
         if self.engine is None:
             return "调度器未初始化。"
 
+        # Deduplication: reject if a task with the same name is already pending/running
+        existing = [
+            t for t in self.engine.list_timeline()
+            if t.name == name and t.status.value in ("pending", "running")
+        ]
+        if existing:
+            return f"任务「{name}」已存在（id: {existing[0].id[:8]}），未重复添加。"
+
         common = dict(
             profile=profile,
             reply_target=self.reply_target,

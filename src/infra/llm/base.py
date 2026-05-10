@@ -6,6 +6,7 @@ import threading
 import time
 from abc import abstractmethod
 from collections import deque
+from pathlib import Path
 from typing import Literal
 
 from config.llm_core.vllm_config import VLLMConfig
@@ -13,9 +14,66 @@ from infra.llm.backend import BaseInferenceBackend
 
 VLLM_LINUX_ONLY = (
     "vLLM requires a Linux environment. "
-    "On Windows, run this project inside WSL2 (ubuntu-24.04+). "
+    "On Windows, install WSL2 (ubuntu-24.04+) to enable this backend. "
     "Falling back to backend='transformers'."
 )
+
+# ── WSL2 helpers (Windows-only) ───────────────────────────────────────────────
+
+def _wsl2_available() -> bool:
+    """Return True if WSL2 is installed and a distro responds on this machine."""
+    if sys.platform != "win32":
+        return False
+    import shutil
+    if shutil.which("wsl") is None:
+        return False
+    try:
+        r = subprocess.run(
+            ["wsl", "echo", "ok"],
+            capture_output=True,
+            timeout=8,
+        )
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _win_to_wsl_path(path: str) -> str:
+    """Convert a Windows absolute path to /mnt/<drive>/... (WSL UNC format)."""
+    p = path.replace("\\", "/")
+    if len(p) >= 2 and p[1] == ":":
+        drive = p[0].lower()
+        rest  = p[2:]          # already starts with '/'
+        return f"/mnt/{drive}{rest}"
+    return p
+
+
+def _build_wsl_cmd(cmd: list[str]) -> list[str]:
+    """Wrap a Windows Python subprocess command for execution inside WSL2.
+
+    - Replaces the Windows ``sys.executable`` with ``python3``.
+    - Converts any Windows absolute paths (``X:\\...``) in the argument list
+      to their ``/mnt/x/...`` WSL equivalents.
+    - Prepends ``wsl -- env PYTHONPATH=<src>`` so project modules are found.
+    """
+    # src/ directory: base.py lives at src/infra/llm/base.py → 3 parents up
+    src_dir  = str(Path(__file__).resolve().parent.parent.parent)
+    wsl_src  = _win_to_wsl_path(src_dir)
+
+    wsl_args: list[str] = []
+    for arg in cmd:
+        if arg == sys.executable:
+            wsl_args.append("python3")
+        elif (
+            len(arg) >= 2
+            and arg[1] == ":"
+            and (arg[0].isalpha())
+        ):
+            wsl_args.append(_win_to_wsl_path(arg))
+        else:
+            wsl_args.append(arg)
+
+    return ["wsl", "--", "env", f"PYTHONPATH={wsl_src}"] + wsl_args
 
 
 class BaseVLLMManager(BaseInferenceBackend):
@@ -87,10 +145,13 @@ class BaseVLLMManager(BaseInferenceBackend):
     def _launch_subprocess(self, cmd: list[str]) -> None:
         """Spawn *cmd* as a subprocess and start log-capture / health-watch threads.
 
-        Raises RuntimeError immediately on Windows — vLLM requires Linux.
+        On Windows, attempts to route the command through WSL2.  Raises
+        RuntimeError only if WSL2 is also unavailable.
         """
         if sys.platform == "win32":
-            raise RuntimeError(VLLM_LINUX_ONLY)
+            if not _wsl2_available():
+                raise RuntimeError(VLLM_LINUX_ONLY)
+            cmd = _build_wsl_cmd(cmd)
 
         process = subprocess.Popen(
             cmd,

@@ -70,6 +70,10 @@ notifyMod.setCallbacks({
     history.pushMessage({ role: 'assistant', content: answer });
     history.saveConversation();
   },
+  onAgentMessage: (title, message, taskName) => {
+    if (!message) return;
+    _showToast(`[${taskName || 'Agent'}] ${title || message.slice(0, 60)}`);
+  },
 });
 notifyMod.connect();
 
@@ -373,9 +377,12 @@ async function loadWorkstation() {
 // ── Scheduler form ────────────────────────────────────────────────────────────
 
 function toggleSchedulerForm() {
-  const el = document.getElementById('sched-form-wrap');
-  if (!el) return;
-  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  const form   = document.getElementById('sched-form-wrap');
+  const toggle = document.getElementById('sched-newtask-toggle');
+  if (!form) return;
+  const opening = form.style.display === 'none';
+  form.style.display = opening ? '' : 'none';
+  toggle?.classList.toggle('open', opening);
 }
 
 function onSchedTriggerChange() {
@@ -487,6 +494,14 @@ function _bind() {
   on('btn-modal-close',     'click', () => settings.close());
   on('btn-modal-close-x',   'click', () => settings.close());
 
+  // Sidebar horizontal collapse toggle
+  on('btn-sidebar-toggle', 'click', () => {
+    const sidebar = document.getElementById('sidebar');
+    const btn     = document.getElementById('btn-sidebar-toggle');
+    const collapsed = sidebar.classList.toggle('collapsed');
+    btn.textContent = collapsed ? '▶' : '◀';
+  });
+
   // Navigation
   on('btn-go-home',    'click', goHome);
   on('plan-btn-home',  'click', goHome);
@@ -513,6 +528,7 @@ function _bind() {
 
   // Scheduler screen
   on('sched-btn-home',    'click', goHome);
+  on('btn-sched-settings', 'click', () => settings.open('scheduler'));
   on('btn-sched-refresh', 'click', () => schedulerMod.init());
 
   // Workstation module cards — ⚙ button or double-click opens settings tab
@@ -529,8 +545,14 @@ function _bind() {
   document.getElementById('mc-scheduler')?.addEventListener('dblclick', goScheduler);
   document.getElementById('mc-benchmark')?.addEventListener('dblclick', goBenchmark);
 
+  // Scheduler card gear button → open scheduler settings
+  document.querySelector('#mc-scheduler .mc-settings-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    settings.open('scheduler');
+  });
+
   // Settings nav tab buttons
-  ['model','memory','persona','voice','sandbox','bot'].forEach(tab => {
+  ['model','memory','persona','voice','sandbox','bot','scheduler','notify'].forEach(tab => {
     document.getElementById(`snav-btn-${tab}`)?.addEventListener('click', () => settings.setTab(tab));
   });
 
@@ -564,6 +586,24 @@ function _bind() {
     if (msgEl) msgEl.textContent = 'Saving…';
     await settings.saveBotTab().catch(e => { if (msgEl) msgEl.textContent = e.message; return; });
     if (msgEl) { msgEl.textContent = 'Saved ✓'; setTimeout(() => { msgEl.textContent = ''; }, 2000); }
+  });
+  on('btn-sched-save', 'click', async () => {
+    const msgEl = document.getElementById('sched-cfg-msg');
+    if (msgEl) msgEl.textContent = 'Saving…';
+    await settings.saveSchedulerTab().catch(e => { if (msgEl) msgEl.textContent = e.message; return; });
+    if (msgEl) { msgEl.textContent = 'Saved ✓'; setTimeout(() => { msgEl.textContent = ''; }, 2000); }
+  });
+  on('btn-bark-save', 'click', () => {
+    import('./settings/tabs/notify.js').then(m => m.saveBarkWithFeedback());
+  });
+  on('btn-bark-test', 'click', () => {
+    import('./settings/tabs/notify.js').then(m => m.testBark());
+  });
+  on('btn-ntfy-save', 'click', () => {
+    import('./settings/tabs/notify.js').then(m => m.saveNtfyWithFeedback());
+  });
+  on('btn-ntfy-test', 'click', () => {
+    import('./settings/tabs/notify.js').then(m => m.testNtfy());
   });
   on('btn-bot-start',  'click', () => infraMod.bot.start().catch(e => _showToast(e.message)));
   on('btn-bot-stop',   'click', () => infraMod.bot.stop().catch(e => _showToast(e.message)));
@@ -608,6 +648,9 @@ async function boot() {
 
   _updateReactBadge();
   loadWorkstation();
+
+  // Init workspace timeline strip (always visible at bottom of main area)
+  schedulerMod.initWorkspaceStrip().catch(() => {});
 
   // Keep bot badge in sync: poll every 5 s until the bot is "on", then every 30 s.
   let _botPollFast = null;

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import dataclasses
 import json
 import logging
 import os
@@ -14,6 +16,8 @@ from agent.scheduler.task import DeliveryMode, ScheduledTask, TaskStatus
 
 if TYPE_CHECKING:
     from agent.scheduler.engine import SchedulerEngine
+    from agent.scheduler.journal import WorkJournal
+    from infra.channel_router import ChannelRouter, ReplyTarget
 
 logger = logging.getLogger(__name__)
 
@@ -46,32 +50,105 @@ class TaskRunner:
         timeline=None,
         notify_fn: Callable[[ScheduledTask, str], None] | None = None,
         engine: "SchedulerEngine | None" = None,
+        journal: "WorkJournal | None" = None,
+        channel_router: "ChannelRouter | None" = None,
     ):
         self._cfg = cfg
         self._long_term = long_term
         self._timeline = timeline
         self._notify_fn = notify_fn
-        self._engine = engine  # set post-init for task chain scheduling
+        self._engine = engine
+        self._journal = journal
+        self._channel_router = channel_router
         self._ltm_lock = threading.Lock()
 
     async def run(self, task: ScheduledTask, store: TaskStore) -> None:
         store.update(task.id, status=TaskStatus.running, last_run_at=_utcnow_iso())
 
         from agent.profile import SubAgentProfile
-        profile: SubAgentProfile = (
+        base_profile: SubAgentProfile = (
             self._cfg.profiles.get(task.config_profile)
             or self._cfg.profiles.get("minimal")
             or SubAgentProfile()
         )
 
+        # Prepend scheduler_system_note to the profile's system_note
+        combined_note = "\n\n".join(
+            filter(None, [self._cfg.scheduler_system_note, base_profile.system_note])
+        )
+        profile = dataclasses.replace(base_profile, system_note=combined_note)
+
         answer = ""
+
+        # Build mid-run notify function that writes to journal AND delivers via channel_router
+        journal = self._journal
+        channel_router = self._channel_router
+        main_loop = None
+        # Try to get the main event loop for thread-safe queue push
+        try:
+            import asyncio as _asyncio
+            main_loop = _asyncio.get_event_loop()
+        except RuntimeError:
+            pass
+
+        # We need notify_queue access for agent_message events
+        # Resolved at runtime from the notify_fn closure context
+        notify_fn_ref = self._notify_fn
+
+        def _mid_run_notify(title: str, message: str) -> None:
+            # 1. Write to WorkJournal (always)
+            if journal is not None:
+                journal.append_mid_run_message(task.id, task.name, title, message)
+            # 2. Push agent_message to notify queue if available
+            if notify_fn_ref is not None and main_loop is not None:
+                item = {
+                    "type": "agent_message",
+                    "title": title,
+                    "message": message,
+                    "task_name": task.name,
+                    "task_id": task.id,
+                }
+                # We push via a wrapper that knows the queue
+                _push_agent_message(item)
+
+        def _push_agent_message(item: dict) -> None:
+            # Reach into the global AppState to get the notify queue
+            # This avoids circular imports while allowing mid-run notifications
+            from state import get_state
+            st = get_state()
+            if st.notify_queue is not None and st.main_event_loop is not None:
+                st.main_event_loop.call_soon_threadsafe(st.notify_queue.put_nowait, item)
+            # Also deliver via ChannelRouter if reply_target is set
+            if channel_router is not None and task.reply_target is not None:
+                from infra.channel_router import ReplyTarget as RT
+                rt = RT.from_task_dict(task.reply_target)
+                if rt is not None:
+                    channel_router.deliver(rt, title, message)
 
         def _run_sync() -> None:
             nonlocal answer
             from agent.runner import SubAgentRunner
             runner = SubAgentRunner()
-            result = runner.run_sync(task.instruction, profile, self._cfg.llm_cfg_path)
+            result = runner.run_sync(
+                task.instruction,
+                profile,
+                self._cfg.llm_cfg_path,
+                notify_fn=_mid_run_notify,
+                reply_target=task.reply_target,
+            )
             answer = result["answer"]
+
+        if journal is not None:
+            journal.append_mid_run_message(task.id, task.name, "开始执行", task.instruction[:120])
+
+        if main_loop is not None:
+            _push_agent_message({
+                "type": "agent_message",
+                "title": f"[{task.name}] 开始执行",
+                "message": task.instruction[:120],
+                "task_name": task.name,
+                "task_id": task.id,
+            })
 
         try:
             await asyncio.to_thread(_run_sync)
@@ -79,11 +156,12 @@ class TaskRunner:
             self._handle_failure(task, store, exc)
             raise
 
-        # ── Finalize: file I/O + LTM + timeline — offloaded to thread pool ──────
+        # ── Finalize: file I/O + LTM + timeline + journal ────────────────────
         long_term   = self._long_term
         timeline    = self._timeline
         ltm_lock    = self._ltm_lock
         scheduler_dir = self._cfg.scheduler_dir
+        _journal    = self._journal
 
         def _finalize() -> str:
             path = _write_result(task, answer, scheduler_dir)
@@ -99,6 +177,8 @@ class TaskRunner:
                     "instruction": task.instruction[:200],
                     "answer": answer[:500],
                 })
+            if _journal is not None:
+                _journal.append_task_result(task.id, task.name, task.instruction, answer)
             return path
 
         result_path = await asyncio.to_thread(_finalize)
@@ -139,9 +219,9 @@ class TaskRunner:
             effective_delivery = DeliveryMode.silent
 
         if effective_delivery == DeliveryMode.push and self._notify_fn is not None:
-            notify_fn = self._notify_fn
+            _nfn = self._notify_fn
             try:
-                await asyncio.to_thread(notify_fn, task, answer)
+                await asyncio.to_thread(_nfn, task, answer)
             except Exception as exc:
                 logger.error("[TaskRunner] notify_fn error for task %s: %s", task.id[:8], exc)
         elif effective_delivery == DeliveryMode.store_only and self._long_term is not None:

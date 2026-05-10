@@ -16,12 +16,16 @@ if sys.platform != "win32":
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Triton kernel — Flash Attention forward (contiguous KV)
+# Triton kernel — Flash Attention forward (contiguous KV, GQA-aware)
 #
-# Grid: (ceil(Sq / BLOCK_M), H, B)
-# Each program owns one [BLOCK_M, D] output tile and streams over all KV tiles.
+# Grid: (ceil(Sq / BLOCK_M), H_q, B)
+# Each program owns one [BLOCK_M, D] output tile for one Q head.
 # Online softmax (Dao et al. 2022, §3.1) avoids materialising the full score
 # matrix, keeping memory usage O(BLOCK_M * D) instead of O(Sq * Sk).
+#
+# GQA support: K/V are indexed by kv_head_id = head_id // group_size.
+# This is the correctness path; the bandwidth-optimal GROUP_SIZE loop is
+# implemented in the CUDA C++ kernel (flash_attn2.cu).
 # ─────────────────────────────────────────────────────────────────────────────
 
 if _TRITON_AVAILABLE:
@@ -34,13 +38,15 @@ if _TRITON_AVAILABLE:
         stride_ob, stride_oh, stride_om, stride_od,
         seqlen_q, seqlen_k,
         scale,
+        group_size,
         HEAD_DIM: tl.constexpr,
         BLOCK_M:  tl.constexpr,
         BLOCK_N:  tl.constexpr,
     ):
-        batch_id = tl.program_id(2)
-        head_id  = tl.program_id(1)
-        q_tile   = tl.program_id(0)
+        batch_id  = tl.program_id(2)
+        head_id   = tl.program_id(1)   # Q head index (0 .. H_q-1)
+        q_tile    = tl.program_id(0)
+        kv_head   = head_id // group_size   # KV head index (0 .. H_kv-1)
 
         q_start = q_tile * BLOCK_M
         q_offs  = q_start + tl.arange(0, BLOCK_M)
@@ -56,8 +62,9 @@ if _TRITON_AVAILABLE:
         l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
         acc = tl.zeros([BLOCK_M, HEAD_DIM], dtype=tl.float32)
 
-        K_ptr = K + batch_id * stride_kb + head_id * stride_kh
-        V_ptr = V + batch_id * stride_vb + head_id * stride_vh
+        # K/V use kv_head (shared by all Q heads in the same group)
+        K_ptr = K + batch_id * stride_kb + kv_head * stride_kh
+        V_ptr = V + batch_id * stride_vb + kv_head * stride_vh
 
         for n_start in range(0, seqlen_k, BLOCK_N):
             n_offs = n_start + tl.arange(0, BLOCK_N)
@@ -93,23 +100,31 @@ if _TRITON_AVAILABLE:
 # Python wrapper
 # ─────────────────────────────────────────────────────────────────────────────
 
-def flash_attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-    """Flash attention over contiguous [B, H, S, D] tensors.  Linux/Triton only."""
+def flash_attn(
+    q:          torch.Tensor,   # [B, H_q,  Sq, D]
+    k:          torch.Tensor,   # [B, H_kv, Sk, D]
+    v:          torch.Tensor,
+    group_size: int = 1,
+) -> torch.Tensor:
+    """Flash attention (contiguous KV, GQA-aware).  Linux/Triton only."""
     assert _TRITON_AVAILABLE, "flash_attn requires Triton (Linux)"
-    B, H, Sq, D = q.shape
-    _, _, Sk, _ = k.shape
+    B, H_q, Sq, D = q.shape
+    _, H_kv, Sk, _ = k.shape
+    assert H_q == H_kv * group_size, \
+        f"H_q={H_q} must equal H_kv*group_size={H_kv}*{group_size}"
+
     BLOCK_M = 16
     BLOCK_N = 16
     scale   = 1.0 / math.sqrt(D)
     out     = torch.empty_like(q)
-    grid    = (triton.cdiv(Sq, BLOCK_M), H, B)
+    grid    = (triton.cdiv(Sq, BLOCK_M), H_q, B)
     _flash_attn_fwd[grid](
         q, k, v, out,
         q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v.stride(0), v.stride(1), v.stride(2), v.stride(3),
         out.stride(0), out.stride(1), out.stride(2), out.stride(3),
-        Sq, Sk, scale,
+        Sq, Sk, scale, group_size,
         HEAD_DIM=D, BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
     )
     return out

@@ -214,7 +214,7 @@ class TestTrigger(unittest.TestCase):
 class TestTaskStatus(unittest.TestCase):
 
     def test_values(self):
-        expected = {"pending", "running", "done", "failed", "cancelled"}
+        expected = {"pending", "paused", "running", "done", "failed", "cancelled"}
         actual = {s.value for s in TaskStatus}
         self.assertEqual(actual, expected)
 

@@ -107,7 +107,7 @@
         <div class="module-card" data-tab="bot">
           <div class="mc-header">
             <span class="mc-icon">💬</span>
-            <span class="mc-title">Bot</span>
+            <span class="mc-title">Channels</span>
             <span class="mc-badge off" id="mc-bot-badge">—</span>
             <button class="mc-settings-btn icon-btn" title="Settings">⚙</button>
           </div>
@@ -119,6 +119,8 @@
           <div class="mc-header">
             <span class="mc-icon">🗓</span>
             <span class="mc-title">Scheduler</span>
+            <span class="mc-badge off" id="mc-sched-engine-badge" style="display:none">—</span>
+            <button class="mc-settings-btn icon-btn" data-tab="scheduler" title="设置">⚙</button>
           </div>
           <div class="mc-body" id="mc-scheduler-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
@@ -186,6 +188,7 @@
   <div id="main-area">
     <div id="topbar">
       <div class="topbar-left">
+        <button id="btn-sidebar-toggle" class="icon-btn sidebar-toggle-btn" title="折叠/展开侧边栏">◀</button>
         <span id="tb-title">New Conversation</span>
         <span id="tb-persona-badge" class="persona-badge hidden">🎭 Persona</span>
         <span id="tb-mem-loading" class="mem-loading-badge hidden"><span class="spin">⟳</span>加载记忆中…</span>
@@ -228,6 +231,19 @@
         <textarea id="msg-input" rows="1" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
         <button id="btn-mic" title="语音输入（点击开始录音，再次点击停止）"><span class="sound-wave"><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span></button>
         <button id="btn-send">↑</button>
+      </div>
+    </div>
+
+    <!-- Workspace timeline strip — always visible at bottom of main area -->
+    <div id="ws-timeline-strip" class="ws-tl-strip collapsed">
+      <div class="ws-tl-header" id="ws-tl-toggle" title="展开/折叠时间轴">
+        <span class="ws-tl-label">🗓 Timeline</span>
+        <span id="ws-tl-badge" class="ws-tl-badge"></span>
+        <span class="ws-tl-chevron">▾</span>
+      </div>
+      <div class="ws-tl-body">
+        <canvas id="ws-tl-canvas" height="42"></canvas>
+        <span id="ws-tl-empty" class="ws-tl-empty hidden">No scheduled tasks</span>
       </div>
     </div>
 
@@ -323,145 +339,197 @@
           <span class="snav-icon">🛡</span> Sandbox
         </button>
         <button class="snav-item"        id="snav-btn-bot"    >
-          <span class="snav-icon">💬</span> Bot
+          <span class="snav-icon">💬</span> Channels
+        </button>
+        <button class="snav-item"        id="snav-btn-scheduler">
+          <span class="snav-icon">🗓</span> Scheduler
         </button>
       </nav>
 
       <div class="modal-body">
       <!-- Model tab -->
       <div id="tab-model">
+
+        <!-- Backend selector (always visible) -->
+        <div class="form-group">
+          <label>Backend <span style="font-weight:400;color:var(--text3)">切换后点击 Save &amp; Apply 生效</span></label>
+          <select id="s-backend" onchange="import('/static/js/settings/tabs/llm.js').then(m => m.onBackendChange())">
+            <option value="openai">OpenAI / Compatible API</option>
+            <option value="transformers">Transformers（本地 CPU/GPU）</option>
+            <option value="vllm">vLLM（官方 vllm serve）</option>
+            <option value="vllm-clone">vLLM Clone（自研实现）</option>
+          </select>
+        </div>
+
+        <!-- Model name (always visible) -->
         <div class="form-group">
           <label>Model Name</label>
           <input id="s-model" type="text" placeholder="gpt-4o · deepseek-chat · Qwen/Qwen2.5-7B-Instruct" />
         </div>
-        <div class="form-group">
-          <label>API Key</label>
-          <input id="s-apikey" type="password" placeholder="sk-…" />
-        </div>
-        <div class="form-group">
-          <label>Base URL <span style="font-weight:400;color:var(--text3)">(optional)</span></label>
-          <input id="s-baseurl" type="text" placeholder="https://api.openai.com/v1" />
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Max Tokens</label>
-            <input id="s-maxtokens" type="number" value="512" min="1" />
-          </div>
-          <div class="form-group">
-            <label>Temperature</label>
-            <input id="s-temp" type="number" value="1.0" step="0.1" min="0" max="2" />
-          </div>
-        </div>
-        <div class="form-group">
-          <label>System Prompt</label>
-          <textarea id="s-sysprompt" rows="3" placeholder="You are a helpful assistant."></textarea>
-        </div>
-        <div class="toggle-row" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
-          <div class="toggle-label">
-            <span class="toggle-title">Show Full Input</span>
-            <span class="toggle-desc">在每条用户消息下方显示实际发送给模型的完整提示（系统提示 + 对话历史 + 当前消息）。</span>
-          </div>
-          <label class="switch"><input type="checkbox" id="s-show-full-prompt"><span class="slider"></span></label>
-        </div>
 
-        <div class="section-divider">ReAct Agent</div>
-        <div class="toggle-row" style="margin-bottom:16px">
-          <div class="toggle-label">
-            <span class="toggle-title">启用工具层（Agent 模式）</span>
-            <span class="toggle-desc">开启后新建对话将使用 ReAct 模式，Agent 会通过推理步骤调用工具；关闭则使用纯对话 Chat 模式。</span>
+        <!-- API section: openai -->
+        <div id="llm-api-section">
+          <div class="form-group">
+            <label>API Key</label>
+            <input id="s-apikey" type="password" placeholder="sk-…" />
           </div>
-          <label class="switch"><input type="checkbox" id="s-tools-enabled"><span class="slider"></span></label>
-        </div>
-        <div id="react-cfg-fields">
+          <div class="form-group">
+            <label>Base URL <span style="font-weight:400;color:var(--text3)">(optional)</span></label>
+            <input id="s-baseurl" type="text" placeholder="https://api.openai.com/v1" />
+          </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Prompt Language</label>
-              <select id="s-lang">
-                <option value="cn">中文 (CN)</option>
-                <option value="en">English (EN)</option>
+              <label>Max Tokens</label>
+              <input id="s-maxtokens" type="number" value="512" min="1" />
+            </div>
+            <div class="form-group">
+              <label>Temperature</label>
+              <input id="s-temp" type="number" value="1.0" step="0.1" min="0" max="2" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Local section: transformers -->
+        <div id="llm-local-section" class="hidden">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Device</label>
+              <select id="s-device">
+                <option value="auto">auto</option>
+                <option value="cpu">CPU</option>
+                <option value="cuda">CUDA</option>
+                <option value="mps">MPS (Apple)</option>
               </select>
             </div>
             <div class="form-group">
-              <label>Max Steps</label>
-              <input id="s-maxsteps" type="number" value="10" min="1" max="50" />
+              <label>Max Tokens</label>
+              <input id="s-maxtokens-local" type="number" value="512" min="1" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Top-k <span style="font-weight:400;color:var(--text3)">0=disable</span></label>
+              <input id="s-top-k" type="number" value="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Repetition Penalty</label>
+              <input id="s-rep-penalty" type="number" value="1.0" step="0.05" min="1.0" />
+            </div>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-label">
+              <span class="toggle-title">Do Sample</span>
+              <span class="toggle-desc">使用随机采样而非贪婪解码，启用后 top_k 生效。</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-do-sample"><span class="slider"></span></label>
+          </div>
+        </div>
+
+        <!-- vLLM section: vllm / vllm-clone -->
+        <div id="llm-vllm-section" class="hidden">
+          <select id="s-vllm-provider" style="display:none"></select>
+          <div id="vllm-custom-notice" class="info-banner" style="display:none">
+            ⚠️ 自研 vLLM Clone 尚在开发中，启动后将进入 <code>error</code> 状态直至实现 <code>_build_cmd</code>。
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Host</label>
+              <input id="s-vllm-host" type="text" placeholder="127.0.0.1" />
+            </div>
+            <div class="form-group">
+              <label>Port</label>
+              <input id="s-vllm-port" type="number" value="8000" min="1" max="65535" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Tensor Parallel <span style="font-weight:400;color:var(--text3)">tensor_parallel_size</span></label>
+              <input id="s-vllm-tp" type="number" value="1" min="1" />
+            </div>
+            <div class="form-group">
+              <label>Pipeline Parallel <span style="font-weight:400;color:var(--text3)">pipeline_parallel_size</span></label>
+              <input id="s-vllm-pp" type="number" value="1" min="1" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>GPU Memory Util <span style="font-weight:400;color:var(--text3)">0.0–1.0</span></label>
+              <input id="s-vllm-gpu-util" type="number" value="0.90" step="0.05" min="0.1" max="1.0" />
+            </div>
+            <div class="form-group">
+              <label>Max Model Len <span style="font-weight:400;color:var(--text3)">留空=自动</span></label>
+              <input id="s-vllm-max-len" type="number" placeholder="自动" min="1" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Quantization</label>
+              <select id="s-vllm-quant">
+                <option value="">无（默认）</option>
+                <option value="awq">AWQ</option>
+                <option value="gptq">GPTQ</option>
+                <option value="squeezellm">SqueezeLLM</option>
+                <option value="fp8">FP8</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>dtype</label>
+              <select id="s-vllm-dtype">
+                <option value="auto">auto</option>
+                <option value="float16">float16</option>
+                <option value="bfloat16">bfloat16</option>
+                <option value="float32">float32</option>
+              </select>
+            </div>
+          </div>
+          <div class="toggle-row" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+            <div class="toggle-label">
+              <span class="toggle-title">Enforce Eager</span>
+              <span class="toggle-desc">禁用 CUDA Graph，对部分模型或显存受限环境有用。</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-vllm-enforce-eager"><span class="slider"></span></label>
+          </div>
+        </div>
+
+        <!-- Common section: always shown -->
+        <div id="llm-common-section">
+          <div class="form-group" style="margin-top:12px">
+            <label>System Prompt</label>
+            <textarea id="s-sysprompt" rows="3" placeholder="You are a helpful assistant."></textarea>
+          </div>
+          <div class="toggle-row" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+            <div class="toggle-label">
+              <span class="toggle-title">Show Full Input</span>
+              <span class="toggle-desc">在每条用户消息下方显示实际发送给模型的完整提示（系统提示 + 对话历史 + 当前消息）。</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-show-full-prompt"><span class="slider"></span></label>
+          </div>
+
+          <div class="section-divider">ReAct Agent</div>
+          <div class="toggle-row" style="margin-bottom:16px">
+            <div class="toggle-label">
+              <span class="toggle-title">启用工具层（Agent 模式）</span>
+              <span class="toggle-desc">开启后新建对话将使用 ReAct 模式，Agent 会通过推理步骤调用工具；关闭则使用纯对话 Chat 模式。</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-tools-enabled"><span class="slider"></span></label>
+          </div>
+          <div id="react-cfg-fields">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Prompt Language</label>
+                <select id="s-lang">
+                  <option value="cn">中文 (CN)</option>
+                  <option value="en">English (EN)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Max Steps</label>
+                <input id="s-maxsteps" type="number" value="10" min="1" max="50" />
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="section-divider">vLLM 加速</div>
-        <div class="form-group">
-          <label>vLLM Provider <span style="font-weight:400;color:var(--text3)">更换后需重启服务生效</span></label>
-          <select id="s-vllm-provider">
-            <option value="official">Official vLLM（官方 vllm serve）</option>
-            <option value="custom">Custom vLLM（自研复现实现）</option>
-          </select>
-        </div>
-        <div id="vllm-custom-notice" class="info-banner" style="display:none">
-          ⚠️ 自研 vLLM 尚在开发中，启动后将进入 <code>error</code> 状态直至实现 <code>_build_cmd</code>。
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Host</label>
-            <input id="s-vllm-host" type="text" placeholder="127.0.0.1" />
-          </div>
-          <div class="form-group">
-            <label>Port</label>
-            <input id="s-vllm-port" type="number" value="8000" min="1" max="65535" />
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Tensor Parallel <span style="font-weight:400;color:var(--text3)">tensor_parallel_size</span></label>
-            <input id="s-vllm-tp" type="number" value="1" min="1" />
-          </div>
-          <div class="form-group">
-            <label>Pipeline Parallel <span style="font-weight:400;color:var(--text3)">pipeline_parallel_size</span></label>
-            <input id="s-vllm-pp" type="number" value="1" min="1" />
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>GPU Memory Util <span style="font-weight:400;color:var(--text3)">0.0–1.0</span></label>
-            <input id="s-vllm-gpu-util" type="number" value="0.90" step="0.05" min="0.1" max="1.0" />
-          </div>
-          <div class="form-group">
-            <label>Max Model Len <span style="font-weight:400;color:var(--text3)">留空=自动</span></label>
-            <input id="s-vllm-max-len" type="number" placeholder="自动" min="1" />
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Quantization</label>
-            <select id="s-vllm-quant">
-              <option value="">无（默认）</option>
-              <option value="awq">AWQ</option>
-              <option value="gptq">GPTQ</option>
-              <option value="squeezellm">SqueezeLLM</option>
-              <option value="fp8">FP8</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>dtype</label>
-            <select id="s-vllm-dtype">
-              <option value="auto">auto</option>
-              <option value="float16">float16</option>
-              <option value="bfloat16">bfloat16</option>
-              <option value="float32">float32</option>
-            </select>
-          </div>
-        </div>
-        <div class="toggle-row" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
-          <div class="toggle-label">
-            <span class="toggle-title">Enforce Eager</span>
-            <span class="toggle-desc">禁用 CUDA Graph，对部分模型或显存受限环境有用。</span>
-          </div>
-          <label class="switch"><input type="checkbox" id="s-vllm-enforce-eager"><span class="slider"></span></label>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:12px">
-          <button id="btn-vllm-save" class="btn-primary" style="flex:1">保存 vLLM 配置</button>
-          <button id="btn-vllm-start" class="btn-secondary">Start</button>
-          <button id="btn-vllm-stop" class="btn-secondary">Stop</button>
-        </div>
         <div id="vllm-cfg-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
       </div>
 
@@ -555,11 +623,11 @@
           </div>
         </div>
         <div id="consolidate-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:-4px"></div>
-        <div class="section-divider">L3 长期记忆（FAISS 向量库，需 faiss-cpu）</div>
+        <div class="section-divider">L3 长期记忆（Qdrant 向量库）</div>
         <div class="toggle-row">
           <div class="toggle-label">
             <span class="toggle-title">启用长期记忆</span>
-            <span class="toggle-desc">跨 session 向量化存储全部历史 Q&amp;A，每轮根据问题语义检索相关记忆注入 prompt。需安装 faiss-cpu 和 sentence-transformers。</span>
+            <span class="toggle-desc">跨 session 向量化存储全部历史 Q&amp;A，每轮根据问题语义检索相关记忆注入 prompt。使用本地 Qdrant 向量库，需安装 qdrant-client 和 sentence-transformers。</span>
           </div>
           <label class="switch"><input type="checkbox" id="s-lt-enabled"><span class="slider"></span></label>
         </div>
@@ -937,170 +1005,462 @@
 
       </div><!-- /tab-sandbox -->
 
-      <!-- Bot tab -->
+      <!-- Channels tab -->
       <div id="tab-bot" class="hidden">
 
-        <!-- Enabled toggle -->
-        <div class="section-divider" style="margin-top:0">Bot 服务</div>
-        <div class="toggle-row" style="margin-bottom:12px">
-          <div class="toggle-label">
-            <span class="toggle-title">启用 Bot</span>
-            <span class="toggle-desc">保存并重启后生效</span>
-          </div>
-          <label class="switch"><input type="checkbox" id="s-bot-enabled"><span class="slider"></span></label>
-        </div>
-
-        <!-- Status bar -->
-        <div class="section-divider">状态</div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-          <span class="bot-status-badge off" id="s-bot-status-badge">未知</span>
-          <span style="font-size:12px;color:var(--text3)" id="s-bot-sessions-count"></span>
-          <div style="margin-left:auto;display:flex;gap:8px">
-            <button id="btn-bot-start"  class="btn-primary"   style="height:30px;font-size:12px">启动</button>
-            <button id="btn-bot-stop"   class="btn-secondary" style="height:30px;font-size:12px">停止</button>
-            <button id="btn-bot-refresh" class="btn-secondary" style="height:30px;font-size:12px">↻</button>
-          </div>
-        </div>
-
-        <!-- Connection -->
-        <div class="section-divider">连接设置</div>
+        <!-- Channel selector -->
         <div class="form-group">
-          <label>传输协议</label>
-          <select id="s-bot-transport" onchange="onBotTransportChange()">
-            <option value="forward_ws">OneBot 11 WebSocket (NapCat / go-cqhttp)</option>
-            <option value="qq_official">QQ 官方机器人 API (qq-botpy)</option>
+          <label>Channel <span style="font-weight:400;color:var(--text3)">切换后点击 Save &amp; Apply 生效</span></label>
+          <select id="s-channel-select" onchange="import('/static/js/settings/tabs/bot.js').then(m => m.onChannelChange())">
+            <option value="bot">🤖 Bot (QQ) · 即时通讯 OneBot 11 / QQ 开放平台</option>
+            <option value="bark">🍎 Bark · iOS 推送通知</option>
+            <option value="ntfy">📢 ntfy · Android / 自建推送服务</option>
           </select>
         </div>
 
-        <!-- forward_ws fields -->
-        <div id="bot-forward-ws-section">
+        <!-- ── Channel: Bot (QQ) ── -->
+        <div id="channel-bot-section">
+
+          <div class="toggle-row" style="padding-top:0;margin-bottom:14px">
+            <div class="toggle-label">
+              <span class="toggle-title">启用 Bot (QQ)</span>
+              <span class="toggle-desc">连接后，Bot 将接收 QQ 消息并通过 Agent 回复。</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-bot-enabled"><span class="slider"></span></label>
+          </div>
+
+          <!-- Status controls -->
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+            <button id="btn-bot-start"   class="btn-primary"   style="height:30px;font-size:12px">启动</button>
+            <button id="btn-bot-stop"    class="btn-secondary" style="height:30px;font-size:12px">停止</button>
+            <button id="btn-bot-refresh" class="btn-secondary" style="height:30px;font-size:12px">↻</button>
+            <span class="bot-status-badge off" id="s-bot-status-badge">未知</span>
+            <span style="font-size:12px;color:var(--text3)" id="s-bot-sessions-count"></span>
+          </div>
+
+          <div class="section-divider" style="margin-top:0">连接设置</div>
           <div class="form-group">
-            <label>WebSocket 地址 <span style="font-weight:400;color:var(--text3)">OneBot 11 正向 WS 地址（NapCat 默认：ws://127.0.0.1:3001）</span></label>
-            <input id="s-bot-ws-url" type="text" placeholder="ws://127.0.0.1:3001" />
+            <label>传输协议</label>
+            <select id="s-bot-transport" onchange="onBotTransportChange()">
+              <option value="forward_ws">OneBot 11 WebSocket (NapCat / go-cqhttp)</option>
+              <option value="qq_official">QQ 官方机器人 API (qq-botpy)</option>
+            </select>
+          </div>
+
+          <div id="bot-forward-ws-section">
+            <div class="form-group">
+              <label>WebSocket 地址 <span style="font-weight:400;color:var(--text3)">OneBot 11 正向 WS 地址（NapCat 默认：ws://127.0.0.1:3001）</span></label>
+              <input id="s-bot-ws-url" type="text" placeholder="ws://127.0.0.1:3001" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Access Token <span style="font-weight:400;color:var(--text3)">留空表示不验证</span></label>
+                <input id="s-bot-token" type="password" placeholder="（可选）" />
+              </div>
+              <div class="form-group">
+                <label>重连间隔（秒）</label>
+                <input id="s-bot-reconnect" type="number" value="5" min="1" max="60" />
+              </div>
+            </div>
+          </div>
+
+          <div id="bot-official-section" class="hidden">
+            <div class="form-group">
+              <label>AppID <span style="font-weight:400;color:var(--text3)">QQ 开放平台 AppID</span></label>
+              <input id="s-bot-appid" type="text" placeholder="QQ 开放平台 AppID" />
+            </div>
+            <div class="form-group">
+              <label>AppSecret <span style="font-weight:400;color:var(--text3)">应用密钥</span></label>
+              <input id="s-bot-secret" type="password" placeholder="AppSecret" />
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-label">
+                <span class="toggle-title">沙盒模式 <span style="font-weight:400;color:var(--text3)">is_sandbox</span></span>
+                <span class="toggle-desc">仅 QQ 开放平台沙盒白名单账号可触发消息</span>
+              </div>
+              <label class="switch"><input type="checkbox" id="s-bot-sandbox"><span class="slider"></span></label>
+            </div>
+            <div class="form-group" style="margin-top:10px">
+              <label>出站代理 <span style="font-weight:400;color:var(--text3)">本地开发时填 Clash/V2Ray 等代理地址，留空则直连</span></label>
+              <input id="s-bot-proxy" type="text" placeholder="http://127.0.0.1:7897 或 socks5://127.0.0.1:7897" />
+            </div>
+            <div class="form-group">
+              <label>服务器出口 IP <span style="font-weight:400;color:var(--text3)">需添加到 QQ 开放平台 IP 白名单</span></label>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+                <code id="s-bot-public-ip" style="flex:1;padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:13px;color:var(--text1);min-height:32px;display:flex;align-items:center">—</code>
+                <button type="button" class="btn-secondary" style="height:32px;font-size:12px;white-space:nowrap"
+                  onclick="navigator.clipboard.writeText(document.getElementById('s-bot-public-ip').textContent).then(()=>window._toast?.('已复制'))">复制</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-divider">访问控制</div>
+          <div class="form-group">
+            <label>私聊白名单 <span style="font-weight:400;color:var(--text3)">逗号分隔；<strong>留空 = 拒绝所有人</strong>。forward_ws 填 QQ 号；qq_official 填用户 openid</span></label>
+            <input id="s-bot-users" type="text" placeholder="forward_ws: 12345678 / qq_official: AB12CD34EF56..." />
+          </div>
+          <div class="form-group">
+            <label>群组白名单 <span style="font-weight:400;color:var(--text3)">逗号分隔；<strong>留空 = 拒绝所有群</strong>。forward_ws 填群号；qq_official 填群 openid</span></label>
+            <input id="s-bot-groups" type="text" placeholder="forward_ws: 100000001 / qq_official: CF78GH90IJ12..." />
+          </div>
+          <div class="form-group">
+            <label>指令前缀 <span style="font-weight:400;color:var(--text3)">留空响应所有消息；设置后仅处理以该前缀开头的消息</span></label>
+            <input id="s-bot-prefix" type="text" placeholder="（可选，如 /ai）" />
+          </div>
+
+          <div class="section-divider">会话管理</div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>最大并发会话数</label>
+              <input id="s-bot-max-sessions" type="number" value="100" min="1" max="1000" />
+            </div>
+            <div class="form-group">
+              <label>会话超时（小时）</label>
+              <input id="s-bot-ttl" type="number" value="24" min="1" max="720" />
+            </div>
+          </div>
+
+          <div class="section-divider">回复详细程度</div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label class="checkbox-label">
+                <input id="s-bot-show-step-progress" type="checkbox" />
+                显示步骤进度
+              </label>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">每步工具调用完成后向用户发送 ⚙️ 进度通知。</div>
+            </div>
+            <div class="form-group" style="flex:1">
+              <label>消息聚合窗口（秒）</label>
+              <input id="s-bot-debounce" type="number" value="2" min="0" max="10" step="0.5" />
+            </div>
+          </div>
+
+          <div class="section-divider">邀请码</div>
+          <div class="form-row">
+            <div class="form-group" style="flex:2">
+              <label>邀请码 <span style="font-weight:400;color:var(--text3)">留空表示禁用</span></label>
+              <input id="s-bot-invite-code" type="text" placeholder="留空表示禁用" />
+            </div>
+            <div class="form-group" style="flex:1">
+              <label>每日配额</label>
+              <input id="s-bot-invite-limit" type="number" value="4" min="1" max="100" />
+            </div>
+          </div>
+
+        </div><!-- /channel-bot-section -->
+
+        <!-- ── Channel: Bark ── -->
+        <div id="channel-bark-section" class="hidden">
+
+          <div class="toggle-row" style="padding-top:0;margin-bottom:14px">
+            <div class="toggle-label">
+              <span class="toggle-title">启用 Bark</span>
+              <span class="toggle-desc">开启后，Agent 完成任务时将向你的 iOS 设备推送通知。</span>
+            </div>
+            <label class="switch"><input type="checkbox" id="s-bark-enabled"><span class="slider"></span></label>
+          </div>
+
+          <div class="form-group">
+            <label>Server URL</label>
+            <input id="s-bark-server-url" type="text" placeholder="https://api.day.app" />
+          </div>
+          <div class="form-group">
+            <label>Device Key <span style="font-weight:400;color:var(--text3)">从 Bark App 获取</span></label>
+            <input id="s-bark-device-key" type="text" placeholder="从 Bark App 获取" />
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Access Token <span style="font-weight:400;color:var(--text3)">留空表示不验证</span></label>
-              <input id="s-bot-token" type="password" placeholder="（可选）" />
+              <label>Sound <span style="font-weight:400;color:var(--text3)">(可选)</span></label>
+              <input id="s-bark-sound" type="text" placeholder="minuet" />
             </div>
             <div class="form-group">
-              <label>重连间隔（秒）<span style="font-weight:400;color:var(--text3)">reconnect_interval_sec</span></label>
-              <input id="s-bot-reconnect" type="number" value="5" min="1" max="60" />
+              <label>Group <span style="font-weight:400;color:var(--text3)">(可选)</span></label>
+              <input id="s-bark-group" type="text" placeholder="ReAct" />
             </div>
           </div>
-        </div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <button id="btn-bark-test" class="btn-secondary" style="font-size:12px">测试发送</button>
+          </div>
+          <div id="bark-cfg-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:4px"></div>
 
-        <!-- qq_official fields -->
-        <div id="bot-official-section" class="hidden">
-          <div class="form-group">
-            <label>AppID <span style="font-weight:400;color:var(--text3)">QQ 开放平台 AppID</span></label>
-            <input id="s-bot-appid" type="text" placeholder="QQ 开放平台 AppID" />
-          </div>
-          <div class="form-group">
-            <label>AppSecret <span style="font-weight:400;color:var(--text3)">应用密钥</span></label>
-            <input id="s-bot-secret" type="password" placeholder="AppSecret" />
-          </div>
-          <div class="toggle-row">
+        </div><!-- /channel-bark-section -->
+
+        <!-- ── Channel: ntfy ── -->
+        <div id="channel-ntfy-section" class="hidden">
+
+          <div class="toggle-row" style="padding-top:0;margin-bottom:14px">
             <div class="toggle-label">
-              <span class="toggle-title">沙盒模式 <span style="font-weight:400;color:var(--text3)">is_sandbox</span></span>
-              <span class="toggle-desc">仅 QQ 开放平台沙盒白名单账号可触发消息</span>
+              <span class="toggle-title">启用 ntfy</span>
+              <span class="toggle-desc">开启后，Agent 完成任务时将通过 ntfy 向你的 Android 或自建推送服务发送通知。</span>
             </div>
-            <label class="switch"><input type="checkbox" id="s-bot-sandbox"><span class="slider"></span></label>
+            <label class="switch"><input type="checkbox" id="s-ntfy-enabled"><span class="slider"></span></label>
           </div>
-          <div class="form-group" style="margin-top:10px">
-            <label>出站代理 <span style="font-weight:400;color:var(--text3)">本地开发时填 Clash/V2Ray 等代理地址，留空则直连</span></label>
-            <input id="s-bot-proxy" type="text" placeholder="http://127.0.0.1:7897 或 socks5://127.0.0.1:7897" />
+
+          <div class="form-group">
+            <label>Server URL</label>
+            <input id="s-ntfy-server-url" type="text" placeholder="https://ntfy.sh" />
           </div>
           <div class="form-group">
-            <label>服务器出口 IP <span style="font-weight:400;color:var(--text3)">需添加到 QQ 开放平台 IP 白名单</span></label>
-            <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
-              <code id="s-bot-public-ip" style="flex:1;padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:13px;color:var(--text1);min-height:32px;display:flex;align-items:center">—</code>
-              <button type="button" class="btn-secondary" style="height:32px;font-size:12px;white-space:nowrap"
-                onclick="navigator.clipboard.writeText(document.getElementById('s-bot-public-ip').textContent).then(()=>window._toast?.('已复制'))">复制</button>
+            <label>Topic</label>
+            <input id="s-ntfy-topic" type="text" placeholder="react-agent-alerts" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Username <span style="font-weight:400;color:var(--text3)">(可选)</span></label>
+              <input id="s-ntfy-username" type="text" placeholder="" />
+            </div>
+            <div class="form-group">
+              <label>Password <span style="font-weight:400;color:var(--text3)">(可选)</span></label>
+              <input id="s-ntfy-password" type="password" placeholder="" />
             </div>
           </div>
-        </div>
-
-        <!-- Access control -->
-        <div class="section-divider">访问控制</div>
-        <div class="form-group">
-          <label>私聊白名单
-            <span style="font-weight:400;color:var(--text3)">
-              逗号分隔；<strong>留空 = 拒绝所有人</strong>。
-              forward_ws 填 QQ 号；qq_official 填用户 openid（发消息后在日志中查看 user_key）
-            </span>
-          </label>
-          <input id="s-bot-users" type="text" placeholder="forward_ws: 12345678 / qq_official: AB12CD34EF56..." />
-        </div>
-        <div class="form-group">
-          <label>群组白名单
-            <span style="font-weight:400;color:var(--text3)">
-              逗号分隔；<strong>留空 = 拒绝所有群</strong>。
-              forward_ws 填群号；qq_official 填群 openid（日志中查看 group_key）
-            </span>
-          </label>
-          <input id="s-bot-groups" type="text" placeholder="forward_ws: 100000001 / qq_official: CF78GH90IJ12..." />
-        </div>
-        <div class="form-group">
-          <label>指令前缀 <span style="font-weight:400;color:var(--text3)">留空响应所有消息；设置后仅处理以该前缀开头的消息</span></label>
-          <input id="s-bot-prefix" type="text" placeholder="（可选，如 /ai）" />
-        </div>
-
-        <!-- Session management -->
-        <div class="section-divider">会话管理</div>
-        <div class="form-row">
           <div class="form-group">
-            <label>最大并发会话数 <span style="font-weight:400;color:var(--text3)">max_sessions</span></label>
-            <input id="s-bot-max-sessions" type="number" value="100" min="1" max="1000" />
+            <label>Priority</label>
+            <select id="s-ntfy-priority">
+              <option value="1">1 — min</option>
+              <option value="2">2 — low</option>
+              <option value="3" selected>3 — default</option>
+              <option value="4">4 — high</option>
+              <option value="5">5 — urgent</option>
+            </select>
           </div>
-          <div class="form-group">
-            <label>会话超时（小时）<span style="font-weight:400;color:var(--text3)">session_ttl_hours</span></label>
-            <input id="s-bot-ttl" type="number" value="24" min="1" max="720" />
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <button id="btn-ntfy-test" class="btn-secondary" style="font-size:12px">测试发送</button>
           </div>
-        </div>
+          <div id="ntfy-cfg-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:4px"></div>
 
-        <!-- Bot reply verbosity -->
-        <div class="section-divider">回复详细程度</div>
-        <div style="font-size:12px;color:var(--text3);margin-bottom:10px">
-          默认情况下，Bot 只向用户发送最终答案。开启下方选项后，每个工具步骤完成时会额外发送一条进度通知（⚙️ 步骤名 + 思考摘要 + 观察结果摘要）。
-        </div>
-        <div class="form-row">
-          <div class="form-group" style="flex:1">
-            <label class="checkbox-label">
-              <input id="s-bot-show-step-progress" type="checkbox" />
-              显示步骤进度
-            </label>
-            <div style="font-size:11px;color:var(--text3);margin-top:2px">每步工具调用完成后向用户发送 ⚙️ 进度通知。</div>
-          </div>
-          <div class="form-group" style="flex:1">
-            <label>消息聚合窗口（秒）<span style="font-weight:400;color:var(--text3)">debounce</span></label>
-            <input id="s-bot-debounce" type="number" value="2" min="0" max="10" step="0.5" />
-            <div style="font-size:11px;color:var(--text3);margin-top:2px">窗口内多条短消息合并后再处理，设 0 禁用。</div>
-          </div>
-        </div>
-
-        <!-- Invite code -->
-        <div class="section-divider">邀请码</div>
-        <div style="font-size:12px;color:var(--text3);margin-bottom:10px">
-          新用户向 Bot 发送此邀请码后自动加入白名单。留空则禁用。每自然日最多允许指定数量的新用户加入。
-        </div>
-        <div class="form-row">
-          <div class="form-group" style="flex:2">
-            <label>邀请码 <span style="font-weight:400;color:var(--text3)">invite_code</span></label>
-            <input id="s-bot-invite-code" type="text" placeholder="留空表示禁用" />
-          </div>
-          <div class="form-group" style="flex:1">
-            <label>每日配额 <span style="font-weight:400;color:var(--text3)">invite_daily_limit</span></label>
-            <input id="s-bot-invite-limit" type="number" value="4" min="1" max="100" />
-          </div>
-        </div>
+        </div><!-- /channel-ntfy-section -->
 
         <div style="display:flex;gap:8px;margin-top:4px">
-          <button id="btn-bot-save" class="btn-primary" style="flex:1">保存 Bot 设置</button>
+          <button id="btn-bot-save" class="btn-primary" style="flex:1">保存 Channels 设置</button>
         </div>
         <div id="bot-cfg-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
 
       </div><!-- /tab-bot -->
+
+      <!-- Scheduler tab -->
+      <div id="tab-scheduler" class="hidden">
+
+        <!-- ── 引擎状态区 ── -->
+        <div class="sched-engine-status-card" id="sched-engine-status-card">
+          <div class="sched-engine-status-left">
+            <span class="sched-engine-dot" id="sched-engine-dot"></span>
+            <span class="sched-engine-label" id="sched-engine-label">检测中…</span>
+            <span style="font-size:11px;color:var(--text3)" id="sched-engine-tz"></span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button id="btn-sched-engine-pause"  class="btn-secondary" style="height:28px;font-size:12px">⏸ 暂停</button>
+            <button id="btn-sched-engine-resume" class="btn-secondary" style="height:28px;font-size:12px;display:none">▶ 恢复</button>
+          </div>
+        </div>
+
+        <!-- ── 唤醒机制 ── -->
+        <div class="section-divider" style="margin-top:12px">唤醒机制</div>
+        <div class="info-banner" style="margin-bottom:12px">
+          Scheduler 引擎在后台独立线程中持续运行，每隔「唤醒间隔」秒检查一次是否有到期任务，到期则调用 Agent 执行。暂停引擎不会取消任务，只是跳过触发检查。
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>唤醒间隔（秒，≥ 1）</label>
+            <input id="s-sched-poll-interval" type="number" min="1" step="0.5" value="1.0" style="width:100px" />
+          </div>
+          <div class="form-group" style="justify-content:flex-end;padding-bottom:2px">
+            <span style="font-size:11px;color:var(--text3)">间隔越短响应越精准，但 CPU 占用略高</span>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">主动推送通知</span>
+            <span class="toggle-desc">开启后，push 模式的任务执行完毕时将通过绑定渠道向用户推送结果。关闭则全局静默（优先级高于单任务设置）。</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-sched-proactive" checked><span class="slider"></span></label>
+        </div>
+
+        <!-- ── 任务默认值 ── -->
+        <div class="section-divider">任务默认值</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>默认 Profile</label>
+            <select id="s-sched-default-profile">
+              <option value="minimal">minimal（轻量，无记忆）</option>
+              <option value="with_memory">with_memory（含长期记忆）</option>
+              <option value="full">full（完整配置）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>最大并发任务数</label>
+            <input id="s-sched-max-concurrent" type="number" value="3" min="1" max="20" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>任务保留天数 <span style="font-weight:400;color:var(--text3)">done/cancelled 任务保留多少天后自动清理（0 = 永久保留）</span></label>
+          <input id="s-sched-retention" type="number" value="30" min="0" max="365" style="width:90px" />
+        </div>
+
+        <!-- ── Agent 指令前缀 ── -->
+        <div class="section-divider">Agent 指令前缀</div>
+        <div class="form-group">
+          <label>调度任务 System Prompt 前缀 <span style="font-weight:400;color:var(--text3)">每次调度任务执行时注入 Agent 的 system prompt 开头</span></label>
+          <textarea id="s-sched-system-note" rows="5"
+            style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px"
+            placeholder="告诉 agent 它正处于调度模式、可使用哪些工具、结果如何投递…"></textarea>
+        </div>
+
+        <!-- ── Profiles max_steps ── -->
+        <div class="section-divider">各档 Profile 最大步数</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>minimal</label>
+            <input id="s-sched-steps-minimal" type="number" value="10" min="1" max="100" />
+          </div>
+          <div class="form-group">
+            <label>with_memory</label>
+            <input id="s-sched-steps-with_memory" type="number" value="10" min="1" max="100" />
+          </div>
+          <div class="form-group">
+            <label>full</label>
+            <input id="s-sched-steps-full" type="number" value="10" min="1" max="100" />
+          </div>
+        </div>
+
+        <!-- ── 心跳循环 ── -->
+        <div class="section-divider" style="margin-top:16px">心跳循环（Heartbeat）</div>
+        <div class="info-banner" style="margin-bottom:12px">
+          心跳循环让 Agent 主动醒来检查任务清单。第一层使用廉价 LLM 预判，仅在需要处理时升级为完整 Agent 执行（ESCALATE）。
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>心跳间隔（秒，0 = 禁用）</label>
+            <input id="s-hb-interval" type="number" min="0" step="60" value="1800" style="width:100px" />
+          </div>
+          <div class="form-group">
+            <label>心跳 Profile</label>
+            <select id="s-hb-profile">
+              <option value="minimal">minimal</option>
+              <option value="with_memory">with_memory</option>
+              <option value="full">full</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>辅助模型名称 <span style="font-weight:400;color:var(--text3)">LLMService._aux 中的 key（空 = 使用主模型）</span></label>
+          <input id="s-hb-llm-aux-name" type="text" placeholder="heartbeat" style="width:180px" />
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">Light Context</span>
+            <span class="toggle-desc">第一层预检关闭记忆检索，大幅降低成本</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-hb-light-context" checked><span class="slider"></span></label>
+        </div>
+        <div class="form-row" style="margin-top:8px">
+          <div class="form-group">
+            <label>每日最大 ESCALATE 次数</label>
+            <input id="s-hb-max-escalations" type="number" min="0" max="100" value="10" style="width:90px" />
+          </div>
+        </div>
+
+        <!-- ── 活跃时段 ── -->
+        <div class="section-divider" style="margin-top:16px">活跃时段</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>开始时间</label>
+            <input id="s-hb-active-start" type="time" value="07:00" style="width:110px" />
+          </div>
+          <div class="form-group">
+            <label>结束时间</label>
+            <input id="s-hb-active-end" type="time" value="22:00" style="width:110px" />
+          </div>
+          <div class="form-group">
+            <label>时区</label>
+            <input id="s-hb-active-tz" type="text" placeholder="Asia/Shanghai" style="width:160px" />
+          </div>
+        </div>
+
+        <!-- ── 心跳文件 HEARTBEAT.md ── -->
+        <div class="section-divider" style="margin-top:16px">心跳文件（HEARTBEAT.md）</div>
+        <div class="form-group">
+          <label>文件路径</label>
+          <input id="s-hb-file-path" type="text" style="width:100%;box-sizing:border-box;font-size:12px" placeholder=".react/scheduler/HEARTBEAT.md" />
+        </div>
+        <div class="form-group" style="margin-top:6px">
+          <label style="display:flex;align-items:center;gap:8px">
+            HEARTBEAT.md 内容
+            <button id="btn-hb-file-reload" class="btn-secondary" style="padding:2px 10px;font-size:11px">↻ 加载</button>
+            <button id="btn-hb-file-save" class="btn-secondary" style="padding:2px 10px;font-size:11px">保存</button>
+          </label>
+          <textarea id="s-hb-file-content" rows="6"
+            style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;margin-top:4px"
+            placeholder="# Heartbeat Checklist&#10;&#10;- 检查有无即将到期的任务…"></textarea>
+        </div>
+
+        <!-- ── Webhook ── -->
+        <div class="section-divider" style="margin-top:16px">Webhook（外部触发心跳）</div>
+        <div class="form-group">
+          <label>Webhook Secret <span style="font-weight:400;color:var(--text3)">留空则无签名验证</span></label>
+          <input id="s-hb-webhook-secret" type="text" placeholder="留空禁用签名" style="width:100%;box-sizing:border-box" />
+        </div>
+        <div class="form-group" style="margin-top:4px">
+          <label>Webhook URL</label>
+          <code id="s-hb-webhook-url" style="font-size:11px;color:var(--text3);display:block;margin-top:4px">
+            POST /api/scheduler/webhook/heartbeat
+          </code>
+        </div>
+
+        <!-- ── Tick 历史 ── -->
+        <div class="section-divider" style="margin-top:16px">
+          心跳 Tick 历史
+          <button id="btn-hb-log-refresh" class="btn-secondary" style="padding:2px 10px;font-size:11px;margin-left:8px">↻ 刷新</button>
+        </div>
+        <div style="overflow-x:auto;margin-top:6px">
+          <table id="hb-log-table" style="width:100%;font-size:12px;border-collapse:collapse">
+            <thead>
+              <tr style="color:var(--text3);text-align:left">
+                <th style="padding:4px 8px;border-bottom:1px solid var(--border)">时间</th>
+                <th style="padding:4px 8px;border-bottom:1px solid var(--border)">结果</th>
+                <th style="padding:4px 8px;border-bottom:1px solid var(--border)">原因</th>
+                <th style="padding:4px 8px;border-bottom:1px solid var(--border)">耗时(ms)</th>
+              </tr>
+            </thead>
+            <tbody id="hb-log-tbody">
+              <tr><td colspan="4" style="padding:8px;color:var(--text3)">点击「刷新」加载…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ── 通信工具限流 ── -->
+        <div class="section-divider" style="margin-top:16px">通信工具限流</div>
+        <div class="info-banner" style="margin-bottom:8px">
+          限制 Agent 在 TaoLoop 中调用 send_notification / send_bot_message 工具的频率，防止意外刷屏。0 = 不限制。
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>推送通知 / 分钟</label>
+            <input id="s-comm-notify-rpm" type="number" min="0" value="5" style="width:80px" />
+          </div>
+          <div class="form-group">
+            <label>推送通知 / 小时</label>
+            <input id="s-comm-notify-rph" type="number" min="0" value="20" style="width:80px" />
+          </div>
+          <div class="form-group">
+            <label>Bot 消息 / 分钟</label>
+            <input id="s-comm-bot-rpm" type="number" min="0" value="3" style="width:80px" />
+          </div>
+          <div class="form-group">
+            <label>Bot 消息 / 小时</label>
+            <input id="s-comm-bot-rph" type="number" min="0" value="15" style="width:80px" />
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button id="btn-sched-save" class="btn-primary" style="flex:1">保存 Scheduler 设置</button>
+        </div>
+        <div id="sched-cfg-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
+      </div><!-- /tab-scheduler -->
+
+      <!-- Notify tab (Bark + ntfy) -->
 
     </div><!-- /modal-body -->
 
@@ -1390,13 +1750,19 @@
       <span class="plan-badge" id="sched-status-badge">—</span>
     </div>
     <div class="plan-topbar-actions">
-      <button id="btn-sched-add"     class="btn-primary">+ New Task</button>
-      <button id="btn-sched-refresh" class="btn-secondary">↺ Refresh</button>
+      <button id="btn-sched-add"      class="btn-primary">+ New Task</button>
+      <button id="btn-sched-refresh"  class="btn-secondary">↺ Refresh</button>
+      <button id="btn-sched-settings" class="icon-btn" title="Scheduler Settings">⚙</button>
     </div>
   </div>
 
   <!-- Stats bar -->
   <div class="sched-stats-bar" id="sched-stats-bar">
+    <div class="sched-stat sched-stat-engine" id="sstat-engine" title="点击打开 Scheduler 设置">
+      <span class="sched-engine-dot-sm" id="sstat-engine-dot"></span>
+      <span class="sched-stat-lbl" id="sstat-engine-lbl">ENGINE</span>
+    </div>
+    <div class="sched-stat-divider"></div>
     <div class="sched-stat">
       <span class="sched-stat-num" id="sstat-total">0</span>
       <span class="sched-stat-lbl">Total</span>
@@ -1418,119 +1784,239 @@
     </div>
   </div>
 
-  <div class="plan-body">
+  <!-- New layout: left main + right side -->
+  <div class="sched-body">
 
-    <!-- Left: task cards + create form -->
-    <div class="sched-left-col" id="sched-left">
+    <!-- ── Left main column ── -->
+    <div class="sched-main-col">
 
-      <!-- Task list -->
-      <div id="sched-task-list" class="sched-task-list">
-        <div class="sched-loading">Loading…</div>
+      <!-- ① 24h Timeline axis -->
+      <div class="sched-axis-panel">
+        <div class="sched-axis-header">
+          <span class="sched-axis-title">Timeline</span>
+          <span class="sched-tl-date" id="sched-tl-date"></span>
+          <label class="tl-proactive-label" title="Allow scheduler tasks to send proactive push notifications" style="margin-left:auto">
+            <input type="checkbox" id="tl-proactive-cb" checked />
+            <span>Proactive Push</span>
+          </label>
+        </div>
+        <div class="tl-axis-wrap">
+          <div class="tl-axis-canvas" id="tl-axis-canvas">
+            <div class="tl-axis-line" id="tl-axis-line"></div>
+          </div>
+          <div class="tl-detail-card" id="tl-detail-card" style="display:none"></div>
+        </div>
+        <!-- Vertical event list below the axis -->
+        <div id="sched-timeline-list" class="sched-timeline-list"></div>
       </div>
 
-      <!-- New task form (hidden drawer) -->
-      <div id="sched-form-wrap" class="sched-form-drawer" style="display:none">
-        <div class="sched-form-header">
-          <span class="sched-form-title">New Scheduled Task</span>
+      <!-- ② New Task inline collapsible panel -->
+      <div class="sched-newtask-panel" id="sched-newtask-panel">
+        <div class="sched-newtask-hdr" id="sched-newtask-toggle">
+          <span>＋ New Task</span>
+          <span class="sched-nt-chevron">▾</span>
         </div>
-        <div class="sched-form-body">
-          <div class="sched-form-grid">
-            <div>
-              <label>Task Name</label>
-              <input id="sched-name" type="text" placeholder="daily-summary" />
-            </div>
-            <div>
-              <label>Profile</label>
-              <select id="sched-profile">
-                <option value="minimal">minimal</option>
-                <option value="with_memory">with_memory</option>
-                <option value="full">full</option>
-              </select>
-            </div>
-            <div class="full">
-              <label>Instruction</label>
-              <textarea id="sched-instruction" placeholder="Describe what the agent should do…" rows="3"></textarea>
-            </div>
-            <div class="full">
-              <label>Trigger Type</label>
-              <div class="sched-trigger-tabs">
-                <label class="sched-trigger-tab">
-                  <input type="radio" name="sched-trigger-radio" id="sched-trigger" value="once" checked />
-                  <span>Once</span>
-                </label>
-                <label class="sched-trigger-tab">
-                  <input type="radio" name="sched-trigger-radio" value="interval" />
-                  <span>Interval</span>
-                </label>
-                <label class="sched-trigger-tab">
-                  <input type="radio" name="sched-trigger-radio" value="cron" />
-                  <span>Cron</span>
-                </label>
+        <div id="sched-form-wrap" class="sched-form-drawer" style="display:none">
+          <div class="sched-form-body">
+            <div class="sched-form-grid">
+              <div>
+                <label>Task Name</label>
+                <input id="sched-name" type="text" placeholder="daily-summary" />
+              </div>
+              <div>
+                <label>Profile</label>
+                <select id="sched-profile">
+                  <option value="minimal">minimal</option>
+                  <option value="with_memory">with_memory</option>
+                  <option value="full">full</option>
+                </select>
+              </div>
+              <div class="full">
+                <label>Instruction</label>
+                <textarea id="sched-instruction" placeholder="Describe what the agent should do…" rows="3"></textarea>
+              </div>
+              <div class="full">
+                <label>Trigger Type</label>
+                <div class="sched-trigger-tabs">
+                  <label class="sched-trigger-tab">
+                    <input type="radio" name="sched-trigger-radio" id="sched-trigger" value="once" checked />
+                    <span>Once</span>
+                  </label>
+                  <label class="sched-trigger-tab">
+                    <input type="radio" name="sched-trigger-radio" value="interval" />
+                    <span>Interval</span>
+                  </label>
+                  <label class="sched-trigger-tab">
+                    <input type="radio" name="sched-trigger-radio" value="cron" />
+                    <span>Cron</span>
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label>Delivery</label>
+                <select id="sched-delivery">
+                  <option value="push">push — notify on complete</option>
+                  <option value="silent">silent — store only</option>
+                  <option value="store_only">store_only — write to memory</option>
+                </select>
+              </div>
+              <div>
+                <label>Max Retries</label>
+                <input id="sched-max-retries" type="number" value="0" min="0" max="10" />
+              </div>
+              <div class="full">
+                <label>On Complete (chain instruction, use {result} placeholder)</label>
+                <input id="sched-on-complete" type="text" placeholder="Optional: next instruction after this task" />
               </div>
             </div>
-            <div>
-              <label>Delivery</label>
-              <select id="sched-delivery">
-                <option value="push">push — notify on complete</option>
-                <option value="silent">silent — store only</option>
-                <option value="store_only">store_only — write to memory</option>
-              </select>
+            <div class="sched-trigger-fields" id="sched-once-fields">
+              <label>Execute At</label>
+              <input id="sched-at" type="datetime-local" />
             </div>
-            <div>
-              <label>Max Retries</label>
-              <input id="sched-max-retries" type="number" value="0" min="0" max="10" />
+            <div class="sched-trigger-fields" id="sched-interval-fields" style="display:none">
+              <label>Repeat Every (seconds)</label>
+              <input id="sched-interval" type="number" value="3600" min="60" placeholder="3600" />
             </div>
-            <div class="full">
-              <label>On Complete (chain instruction, use {result} placeholder)</label>
-              <input id="sched-on-complete" type="text" placeholder="Optional: next instruction after this task" />
+            <div class="sched-trigger-fields" id="sched-cron-fields" style="display:none">
+              <label>Cron Expression (e.g. <code>0 8 * * *</code> = daily 8am)</label>
+              <input id="sched-cron-expr" type="text" placeholder="0 8 * * *" />
             </div>
+            <div class="sched-form-actions">
+              <button id="btn-sched-create" class="btn-primary">Create Task</button>
+              <button id="btn-sched-cancel" class="btn-secondary">Cancel</button>
+            </div>
+            <div class="sched-msg" id="sched-form-msg"></div>
           </div>
-          <div class="sched-trigger-fields" id="sched-once-fields">
-            <label>Execute At</label>
-            <input id="sched-at" type="datetime-local" />
-          </div>
-          <div class="sched-trigger-fields" id="sched-interval-fields" style="display:none">
-            <label>Repeat Every (seconds)</label>
-            <input id="sched-interval" type="number" value="3600" min="60" placeholder="3600" />
-          </div>
-          <div class="sched-trigger-fields" id="sched-cron-fields" style="display:none">
-            <label>Cron Expression (e.g. <code>0 8 * * *</code> = daily 8am)</label>
-            <input id="sched-cron-expr" type="text" placeholder="0 8 * * *" />
-          </div>
-          <div class="sched-form-actions">
-            <button id="btn-sched-create" class="btn-primary">Create Task</button>
-            <button id="btn-sched-cancel" class="btn-secondary">Cancel</button>
-          </div>
-          <div class="sched-msg" id="sched-form-msg"></div>
         </div>
       </div>
 
-    </div>
-
-    <!-- Right: 24h timeline axis -->
-    <div class="sched-right-col" id="sched-right">
-      <div class="sched-tl-header">
-        <span>Timeline</span>
-        <span class="sched-tl-date" id="sched-tl-date"></span>
-        <label class="tl-proactive-label" title="Allow scheduler tasks to send proactive push notifications">
-          <input type="checkbox" id="tl-proactive-cb" checked />
-          <span>Proactive Push</span>
-        </label>
-      </div>
-      <!-- Horizontal 24h axis -->
-      <div class="tl-axis-wrap">
-        <div class="tl-axis-canvas" id="tl-axis-canvas">
-          <div class="tl-axis-line" id="tl-axis-line"></div>
+      <!-- ③ Task list -->
+      <div class="sched-tasklist-panel">
+        <div id="sched-task-list" class="sched-task-list">
+          <div class="sched-loading">Loading…</div>
         </div>
-        <div class="tl-detail-card" id="tl-detail-card" style="display:none"></div>
       </div>
-      <!-- Vertical event list below the axis -->
-      <div id="sched-timeline-list" class="sched-timeline-list"></div>
-    </div>
 
-  </div>
+      <!-- ④ Work Journal Session Window -->
+      <div class="sched-session-panel" id="sched-session-panel">
+        <div class="sched-session-hdr" id="sched-session-hdr">
+          <span class="sched-session-title">📓 Work Journal</span>
+          <div class="sched-session-hdr-right">
+            <input type="date" id="sched-session-date"
+              style="font-size:12px;border:1px solid var(--border);border-radius:4px;padding:2px 6px;background:var(--bg2);color:var(--text1);width:130px">
+            <button id="sched-session-refresh" class="icon-btn" title="刷新日志" style="font-size:13px">↺</button>
+            <button id="sched-session-toggle" class="icon-btn" title="展开/折叠" style="font-size:12px">▾</button>
+          </div>
+        </div>
+        <div class="sched-session-body" id="sched-session-body">
+          <div class="sched-session-empty">暂无日志</div>
+        </div>
+      </div>
+
+    </div><!-- /sched-main-col -->
+
+    <!-- ── Right side column ── -->
+    <div class="sched-side-col">
+
+      <!-- ① Mini calendar -->
+      <div class="sched-mini-cal" id="sched-mini-cal">
+        <div class="sched-cal-hdr">
+          <button id="sched-cal-prev" class="icon-btn" style="font-size:14px">‹</button>
+          <span id="sched-cal-title" class="sched-cal-title"></span>
+          <button id="sched-cal-next" class="icon-btn" style="font-size:14px">›</button>
+        </div>
+        <div class="sched-cal-weekdays">
+          <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+        </div>
+        <div class="sched-cal-grid" id="sched-cal-grid"></div>
+      </div>
+
+      <!-- ② Heartbeat panel -->
+      <div class="sched-hb-panel" id="sched-hb-panel">
+        <div class="sched-hb-header">
+          <span>💓 Heartbeat</span>
+          <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+            <button id="btn-hb-trigger-now" class="btn-secondary" style="height:24px;font-size:11px;padding:0 8px" title="立即触发一次心跳检查">▶ Now</button>
+            <button id="btn-sched-hb-refresh" class="btn-secondary" style="height:24px;font-size:11px;padding:0 8px">↺</button>
+          </div>
+        </div>
+
+        <!-- Status line -->
+        <div class="sched-hb-status" id="sched-hb-status">
+          <span class="sched-hb-dot" id="sched-hb-dot"></span>
+          <span id="sched-hb-status-text" style="font-size:12px;color:var(--text2)">加载中…</span>
+        </div>
+
+        <!-- Active hours + interval -->
+        <div id="sched-hb-meta" style="font-size:11px;color:var(--text3);padding:0 10px 8px;line-height:1.6"></div>
+
+        <!-- Recent tick log -->
+        <div class="sched-hb-log-wrap">
+          <div id="sched-hb-log" class="sched-hb-log">
+            <div style="padding:6px 10px;font-size:12px;color:var(--text3)">暂无记录</div>
+          </div>
+        </div>
+
+        <!-- HEARTBEAT.md inline editor -->
+        <div class="sched-hb-file-wrap">
+          <div class="sched-hb-file-hdr">
+            <span style="font-size:12px;font-weight:600;color:var(--text2)">HEARTBEAT.md</span>
+            <div style="display:flex;gap:6px">
+              <button id="btn-sched-hb-load" class="btn-secondary" style="height:22px;font-size:11px;padding:0 8px">Load</button>
+              <button id="btn-sched-hb-save" class="btn-secondary" style="height:22px;font-size:11px;padding:0 8px">Save</button>
+            </div>
+          </div>
+          <textarea id="sched-hb-content" class="sched-hb-content"
+            placeholder="# Heartbeat Checklist&#10;&#10;- 检查时间线有无即将到期的任务…" rows="5"></textarea>
+          <div id="sched-hb-file-msg" style="font-size:11px;color:var(--text3);min-height:14px;padding:2px 10px"></div>
+        </div>
+      </div>
+
+      <!-- ③ Work Journal (removed — moved to session window in main column) -->
+
+    </div><!-- /sched-side-col -->
+
+  </div><!-- /sched-body -->
 </div><!-- /s-scheduler -->
 
+
+  <!-- ── Task Edit Drawer — body-level overlay ── -->
+  <div id="sched-edit-drawer" class="sched-edit-drawer hidden">
+    <div class="sched-edit-drawer-inner">
+      <div class="sched-edit-hdr">
+        <span class="sched-edit-title" id="sched-edit-title">Edit Task</span>
+        <button id="sched-edit-close" class="icon-btn" title="Close">✕</button>
+      </div>
+      <div class="sched-edit-body">
+        <div class="form-group">
+          <label>Task Name</label>
+          <input id="sched-edit-name" type="text">
+        </div>
+        <div class="form-group" id="sched-edit-at-group">
+          <label>Scheduled Time (Once triggers only)</label>
+          <input id="sched-edit-at" type="datetime-local">
+        </div>
+        <div class="form-group">
+          <label>Instruction</label>
+          <textarea id="sched-edit-instruction" rows="4"></textarea>
+        </div>
+        <div class="form-group" id="sched-edit-cmd-group">
+          <label>Command Type</label>
+          <select id="sched-edit-cmd-type">
+            <option value="run_task">run_task</option>
+            <option value="ask_user">ask_user</option>
+            <option value="notify_user">notify_user</option>
+            <option value="chain">chain</option>
+          </select>
+        </div>
+        <div class="sched-edit-actions">
+          <button id="sched-edit-save" class="btn-primary">保存更改</button>
+          <button id="sched-edit-cancel" class="btn-secondary">取消</button>
+          <span id="sched-edit-msg" style="font-size:12px;color:var(--text3)"></span>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- ── DAG Node Inspector — body-level overlay, shared across all screens ── -->
   <div id="plan-node-inspector" class="hidden">

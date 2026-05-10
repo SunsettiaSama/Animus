@@ -1,6 +1,35 @@
 from __future__ import annotations
 
+import copy
+import os
+
 from agent.profile import SubAgentProfile
+
+
+def _apply_embedding_override(memory_cfg):
+    """Apply config/embedding/model.yaml override to a MemoryConfig instance.
+
+    Mirrors the logic in AppConfig.from_disk() and factory.build_conv_loop(),
+    ensuring the local model path is used instead of the Hub ID default.
+    """
+    from config import paths
+    from config.agent.memory.embedding_config import EmbeddingConfig
+
+    if not paths.embedding_model_yaml.exists():
+        return memory_cfg
+    emb = EmbeddingConfig.from_yaml(str(paths.embedding_model_yaml))
+    lt  = memory_cfg.long_term
+    model_path = emb.model_name_or_path
+    if model_path and not os.path.isabs(model_path):
+        resolved = str(paths.root / model_path)
+        if os.path.isdir(resolved):
+            model_path = resolved
+    lt.model_name_or_path = model_path
+    lt.use_fp16           = emb.use_fp16
+    lt.device             = emb.device
+    lt.query_prefix       = emb.query_prefix
+    lt.passage_prefix     = emb.passage_prefix
+    return memory_cfg
 
 
 class SubAgentRunner:
@@ -10,6 +39,10 @@ class SubAgentRunner:
         profile: SubAgentProfile,
         llm_cfg_path: str,
         event_callback=None,
+        notify_fn=None,
+        reply_target=None,
+        scheduler_engine=None,
+        comm_rate_cfg=None,
     ) -> dict:
         from config.llm_core.config import LLMConfig
         from config.agent.tao_config import TaoConfig
@@ -27,7 +60,7 @@ class SubAgentRunner:
 
         tao_cfg = TaoConfig(
             max_steps=profile.max_steps,
-            memory=profile.memory,
+            memory=_apply_embedding_override(copy.deepcopy(profile.memory)),
             prompt=PromptConfig(),
             scheduler=None,
         )
@@ -38,6 +71,10 @@ class SubAgentRunner:
             tool_descriptions=tool_descriptions,
             cfg=tao_cfg,
             tool_category_summary=category_summary,
+            notify_fn=notify_fn,
+            reply_target=reply_target,
+            scheduler_engine=scheduler_engine,
+            comm_rate_cfg=comm_rate_cfg,
         )
 
         full_instruction = (

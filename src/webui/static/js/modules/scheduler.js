@@ -12,26 +12,44 @@ export function setCallbacks(cbs) { Object.assign(_cb, cbs); }
 let _axisRefreshTimer = null;
 let _needleTimer      = null;
 
+// Calendar state
+let _calYear  = new Date().getFullYear();
+let _calMonth = new Date().getMonth();   // 0-based
+let _calFilter = null;                   // 'yyyy-mm-dd' or null
+
 export async function init() {
   _setTlDate();
   _wireFormTriggerTabs();
   _wireProactiveToggle();
+  _wireNewTaskPanel();
+  _wireCalendarNav();
+  _wireEngineStatClick();
+  _wireHeartbeatPanel();
 
   await Promise.allSettled([
     renderTaskTable(),
     renderTimelineAxis(),
+    renderEngineStatus(),
+    renderHeartbeatPanel(),
   ]);
 
-  // Refresh axis data every 30 s; update needle position every second
+  // Refresh axis data every 30 s; update needle every second; engine status every 10 s
   if (_axisRefreshTimer) clearInterval(_axisRefreshTimer);
   if (_needleTimer)      clearInterval(_needleTimer);
-  _axisRefreshTimer = setInterval(renderTimelineAxis, 30_000);
-  _needleTimer      = setInterval(_updateNeedle, 1_000);
+  _axisRefreshTimer = setInterval(() => {
+    renderTimelineAxis();
+    renderEngineStatus();
+    renderHeartbeatPanel();
+    _renderSessionJournal();
+  }, 30_000);
+  _needleTimer = setInterval(_updateNeedle, 1_000);
+
+  _wireSessionJournal();
 }
 
 function _setTlDate() {
   const el = document.getElementById('sched-tl-date');
-  if (el) el.textContent = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (el) el.textContent = new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -60,10 +78,33 @@ export async function patchTask(id, action) {
 // ── Workstation card ───────────────────────────────────────────────────────────
 
 export async function updateWorkstationCard() {
-  const bodyEl = document.getElementById('mc-scheduler-body');
+  const bodyEl  = document.getElementById('mc-scheduler-body');
+  const badgeEl = document.getElementById('mc-sched-engine-badge');
   if (!bodyEl) return;
 
-  const { tasks, ready } = await listTasks().catch(() => ({ tasks: [], ready: false }));
+  const [tasksRes, statusRes] = await Promise.allSettled([
+    listTasks().catch(() => ({ tasks: [], ready: false })),
+    fetch('/api/scheduler/status').then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+
+  const { tasks, ready } = tasksRes.value ?? { tasks: [], ready: false };
+  const status = statusRes.value ?? null;
+
+  // Engine badge in card header
+  if (badgeEl) {
+    badgeEl.style.display = '';
+    if (status?.is_running && !status?.is_paused) {
+      badgeEl.textContent  = 'ON';
+      badgeEl.className    = 'mc-badge on';
+    } else if (status?.is_paused) {
+      badgeEl.textContent  = 'PAUSED';
+      badgeEl.className    = 'mc-badge paused';
+    } else {
+      badgeEl.textContent  = 'OFF';
+      badgeEl.className    = 'mc-badge off';
+    }
+  }
+
   if (!ready) {
     bodyEl.innerHTML = '<span style="color:var(--text3)">Not initialized</span>';
     return;
@@ -117,18 +158,39 @@ export async function renderTaskTable() {
     return;
   }
 
-  if (!tasks.length) {
+  // Apply date filter from mini calendar
+  let filtered = tasks;
+  if (_calFilter) {
+    filtered = tasks.filter(t => {
+      const ts = t.next_run_at || t.created_at;
+      return ts && ts.slice(0, 10) === _calFilter;
+    });
+  }
+
+  // Sort: active/upcoming first (pending, paused, running) → done → cancelled/failed
+  // Within each group: ascending by next_run_at
+  const _RANK = { running: 0, pending: 1, paused: 2, done: 3, failed: 4, cancelled: 5 };
+  filtered.sort((a, b) => {
+    const ra = _RANK[a.status] ?? 9;
+    const rb = _RANK[b.status] ?? 9;
+    if (ra !== rb) return ra - rb;
+    const ta = a.next_run_at ? new Date(a.next_run_at).getTime() : Infinity;
+    const tb = b.next_run_at ? new Date(b.next_run_at).getTime() : Infinity;
+    return ta - tb;
+  });
+
+  if (!filtered.length) {
     listEl.innerHTML = `
       <div class="sched-empty-state">
         <div class="sched-empty-icon">🗓</div>
-        <div class="sched-empty-text">No scheduled tasks</div>
-        <div class="sched-empty-hint">Click <strong>+ New Task</strong> to schedule your first agent run</div>
+        <div class="sched-empty-text">${_calFilter ? `${_calFilter} 无任务` : 'No scheduled tasks'}</div>
+        <div class="sched-empty-hint">${_calFilter ? '点击日历其他日期或再次点击取消筛选' : 'Click <strong>＋ New Task</strong> to schedule your first agent run'}</div>
       </div>`;
     return;
   }
 
   listEl.innerHTML = '';
-  tasks.forEach(t => {
+  filtered.forEach(t => {
     const card = document.createElement('div');
     card.className = 'sched-task-card';
 
@@ -210,6 +272,7 @@ export async function renderTimelineAxis() {
 
   _buildAxis(canvas, data.events ?? [], data.tasks ?? []);
   _renderTimelineList(data.events ?? []);
+  renderMiniCalendar();
 }
 
 function _buildAxis(canvas, events, tasks) {
@@ -377,10 +440,15 @@ function _renderTimelineList(events) {
   const el = document.getElementById('sched-timeline-list');
   if (!el) return;
 
-  const reversed = [...events].reverse();
+  // Apply calendar date filter
+  let filtered = _calFilter
+    ? events.filter(ev => ev.ts && ev.ts.slice(0, 10) === _calFilter)
+    : events;
+
+  const reversed = [...filtered].reverse();
 
   if (!reversed.length) {
-    el.innerHTML = '<div class="sched-tl-empty">No activity today.</div>';
+    el.innerHTML = `<div class="sched-tl-empty">${_calFilter ? `${_calFilter} 无活动记录` : 'No activity today.'}</div>`;
     return;
   }
 
@@ -428,6 +496,326 @@ function _wireProactiveToggle() {
   });
 }
 
+function _wireNewTaskPanel() {
+  const toggle = document.getElementById('sched-newtask-toggle');
+  const form   = document.getElementById('sched-form-wrap');
+  if (!toggle || !form) return;
+  toggle.addEventListener('click', () => {
+    const open = form.style.display === 'none';
+    form.style.display = open ? '' : 'none';
+    toggle.classList.toggle('open', open);
+  });
+}
+
+function _wireCalendarNav() {
+  document.getElementById('sched-cal-prev')?.addEventListener('click', () => {
+    _calMonth--;
+    if (_calMonth < 0) { _calMonth = 11; _calYear--; }
+    _calFilter = null;
+    renderMiniCalendar();
+  });
+  document.getElementById('sched-cal-next')?.addEventListener('click', () => {
+    _calMonth++;
+    if (_calMonth > 11) { _calMonth = 0; _calYear++; }
+    _calFilter = null;
+    renderMiniCalendar();
+  });
+}
+
+function _wireEngineStatClick() {
+  document.getElementById('sstat-engine')?.addEventListener('click', () => {
+    import('../settings/modal.js').then(m => m.open('scheduler')).catch(() => {});
+  });
+}
+
+// ── Engine status ──────────────────────────────────────────────────────────────
+
+export async function renderEngineStatus() {
+  const status = await fetch('/api/scheduler/status').then(r => r.json()).catch(() => null);
+  if (!status) return;
+
+  // Stats bar dot
+  const dot = document.getElementById('sstat-engine-dot');
+  const lbl = document.getElementById('sstat-engine-lbl');
+  if (dot && lbl) {
+    dot.className = 'sched-engine-dot-sm';
+    if (!status.engine_ready) {
+      dot.classList.add('stopped');
+      lbl.textContent = 'ENGINE ○';
+    } else if (status.is_paused) {
+      dot.classList.add('paused');
+      lbl.textContent = 'ENGINE ⏸';
+    } else if (status.is_running) {
+      dot.classList.add('running');
+      lbl.textContent = 'ENGINE ●';
+    } else {
+      dot.classList.add('stopped');
+      lbl.textContent = 'ENGINE ○';
+    }
+  }
+
+  // Settings panel status (only if modal is open)
+  const settingsDot   = document.getElementById('sched-engine-dot');
+  const settingsLabel = document.getElementById('sched-engine-label');
+  const settingsTz    = document.getElementById('sched-engine-tz');
+  const pauseBtn      = document.getElementById('btn-sched-engine-pause');
+  const resumeBtn     = document.getElementById('btn-sched-engine-resume');
+  if (settingsDot) {
+    settingsDot.className = 'sched-engine-dot';
+    if (!status.engine_ready) {
+      settingsDot.classList.add('stopped');
+      if (settingsLabel) settingsLabel.textContent = '未初始化';
+    } else if (status.is_paused) {
+      settingsDot.classList.add('paused');
+      if (settingsLabel) settingsLabel.textContent = '已暂停';
+    } else if (status.is_running) {
+      settingsDot.classList.add('running');
+      if (settingsLabel) settingsLabel.textContent = '运行中';
+    } else {
+      settingsDot.classList.add('stopped');
+      if (settingsLabel) settingsLabel.textContent = '已停止';
+    }
+    if (settingsTz) settingsTz.textContent = `时区: ${status.server_timezone ?? '—'}`;
+    if (pauseBtn && resumeBtn) {
+      pauseBtn.style.display  = (status.is_running && !status.is_paused) ? '' : 'none';
+      resumeBtn.style.display = status.is_paused ? '' : 'none';
+    }
+  }
+}
+
+// ── Mini Calendar ──────────────────────────────────────────────────────────────
+
+export async function renderMiniCalendar() {
+  const grid    = document.getElementById('sched-cal-grid');
+  const titleEl = document.getElementById('sched-cal-title');
+  if (!grid) return;
+
+  const today = new Date();
+  if (titleEl) {
+    titleEl.textContent = new Date(_calYear, _calMonth, 1)
+      .toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
+  }
+
+  // Fetch axis data to get task dates
+  const data = await http.get(PATHS.scheduler.axis).catch(() => ({ events: [], tasks: [] }));
+  const tasks  = data.tasks  ?? [];
+  const events = data.events ?? [];
+
+  // Build date → status map
+  const dateMap = {};
+  tasks.forEach(t => {
+    if (!t.next_run_at) return;
+    const d = t.next_run_at.slice(0, 10);
+    if (!dateMap[d]) dateMap[d] = new Set();
+    dateMap[d].add(t.status);
+  });
+  events.forEach(ev => {
+    if (!ev.ts) return;
+    const d = ev.ts.slice(0, 10);
+    if (!dateMap[d]) dateMap[d] = new Set();
+    dateMap[d].add('event');
+  });
+
+  // Build calendar grid
+  const firstDay  = new Date(_calYear, _calMonth, 1).getDay();   // 0=Sun
+  const daysInMonth = new Date(_calYear, _calMonth + 1, 0).getDate();
+  const todayStr  = today.toISOString().slice(0, 10);
+
+  grid.innerHTML = '';
+
+  // Leading empty cells
+  for (let i = 0; i < firstDay; i++) {
+    const empty = document.createElement('div');
+    grid.appendChild(empty);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${_calYear}-${String(_calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const cell = document.createElement('div');
+    cell.className = 'sched-cal-day';
+    if (dateStr === todayStr)   cell.classList.add('today');
+    if (dateStr === _calFilter) cell.classList.add('selected');
+    if (_calYear !== today.getFullYear() || _calMonth !== today.getMonth()) {
+      // nothing (all same month)
+    }
+
+    const numEl = document.createElement('span');
+    numEl.textContent = day;
+    cell.appendChild(numEl);
+
+    // Dots for events
+    const statuses = dateMap[dateStr];
+    if (statuses) {
+      const dotsEl = document.createElement('div');
+      dotsEl.className = 'sched-cal-day-dots';
+      const dotClasses = _calDotClasses(statuses);
+      dotClasses.forEach(cls => {
+        const d = document.createElement('span');
+        d.className = `sched-cal-dot ${cls}`;
+        dotsEl.appendChild(d);
+      });
+      cell.appendChild(dotsEl);
+    }
+
+    cell.addEventListener('click', () => {
+      if (_calFilter === dateStr) {
+        _calFilter = null;
+      } else {
+        _calFilter = dateStr;
+      }
+      renderMiniCalendar();
+      renderTaskTable();
+      _renderTimelineList(_axisData.events ?? []);
+    });
+
+    grid.appendChild(cell);
+  }
+}
+
+function _calDotClasses(statuses) {
+  const s = statuses;
+  const dots = [];
+  if (s.has('running'))  dots.push('running');
+  else if (s.has('pending') || s.has('paused')) dots.push('pending');
+  if (s.has('done'))     dots.push('done');
+  if (s.has('event'))    dots.push('done');
+  return dots.slice(0, 2);
+}
+
+// ── Heartbeat Panel ───────────────────────────────────────────────────────────
+
+function _wireHeartbeatPanel() {
+  document.getElementById('btn-sched-hb-refresh')?.addEventListener('click', () => renderHeartbeatPanel());
+
+  document.getElementById('btn-sched-hb-load')?.addEventListener('click', () => _loadHbFile());
+
+  document.getElementById('btn-sched-hb-save')?.addEventListener('click', () => _saveHbFile());
+
+  document.getElementById('btn-hb-trigger-now')?.addEventListener('click', async () => {
+    const btn = document.getElementById('btn-hb-trigger-now');
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    await fetch(PATHS.scheduler.webhookTrigger, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }).catch(() => {});
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Now'; }
+    setTimeout(() => renderHeartbeatPanel(), 1500);
+  });
+
+  _loadHbFile();
+}
+
+async function _loadHbFile() {
+  const ta  = document.getElementById('sched-hb-content');
+  const msg = document.getElementById('sched-hb-file-msg');
+  if (!ta) return;
+  const res = await fetch(PATHS.scheduler.heartbeatFile)
+    .then(r => r.ok ? r.json() : null).catch(() => null);
+  if (res?.content !== undefined) {
+    ta.value = res.content;
+    if (msg) msg.textContent = '';
+  } else {
+    if (msg) msg.textContent = '未能加载文件（引擎尚未就绪？）';
+  }
+}
+
+async function _saveHbFile() {
+  const ta  = document.getElementById('sched-hb-content');
+  const msg = document.getElementById('sched-hb-file-msg');
+  if (!ta) return;
+  const res = await fetch(PATHS.scheduler.heartbeatFile, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: ta.value }),
+  }).then(r => r.json()).catch(() => null);
+  if (msg) {
+    msg.textContent = res?.ok ? '已保存 ✓' : '保存失败';
+    if (res?.ok) setTimeout(() => { msg.textContent = ''; }, 2000);
+  }
+}
+
+export async function renderHeartbeatPanel() {
+  const [cfgRes, logRes] = await Promise.allSettled([
+    fetch(PATHS.scheduler.config).then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch(PATHS.scheduler.heartbeatLog(8)).then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+
+  const cfg = cfgRes.status === 'fulfilled' ? cfgRes.value : null;
+  const log = logRes.status === 'fulfilled' ? logRes.value : null;
+  const hb  = cfg?.heartbeat ?? {};
+
+  // Status dot + text from most recent tick
+  // Backend returns { entries: [...], ready: bool }
+  const ticks  = log?.entries ?? [];
+  const latest = ticks[0] ?? null;
+  const dot        = document.getElementById('sched-hb-dot');
+  const statusText = document.getElementById('sched-hb-status-text');
+
+  if (dot && statusText) {
+    if (!cfg) {
+      dot.className = 'sched-hb-dot idle';
+      statusText.textContent = '调度器未就绪';
+    } else {
+      const outcome = latest?.outcome ?? 'idle';
+      dot.className = `sched-hb-dot ${_esc(outcome)}`;
+      if (latest) {
+        const ago   = _relTime(latest.ts);
+        const durMs = latest.duration_ms ?? 0;
+        statusText.textContent = `上次: ${outcome}  ·  ${ago}${durMs ? `  ·  ${durMs}ms` : ''}`;
+      } else {
+        dot.className = 'sched-hb-dot idle';
+        statusText.textContent = '尚无心跳记录';
+      }
+    }
+  }
+
+  // Meta line: interval + active hours
+  const metaEl = document.getElementById('sched-hb-meta');
+  if (metaEl && Object.keys(hb).length) {
+    const mins  = Math.floor((hb.interval ?? 1800) / 60);
+    const start = hb.active_hours_start ?? '07:00';
+    const end   = hb.active_hours_end   ?? '22:00';
+    const tz    = hb.active_timezone    ?? '';
+    metaEl.innerHTML =
+      `间隔 <b>${mins}m</b> &nbsp;·&nbsp; 活跃时段 <b>${_esc(start)}–${_esc(end)}</b>` +
+      (tz ? ` <span style="color:var(--text3)">${_esc(tz)}</span>` : '');
+  }
+
+  // Tick log
+  const logEl = document.getElementById('sched-hb-log');
+  if (logEl) {
+    if (!ticks.length) {
+      logEl.innerHTML = '<div style="padding:4px 2px;font-size:12px;color:var(--text3)">暂无记录</div>';
+    } else {
+      logEl.innerHTML = ticks.map(t => {
+        const outcome = t.outcome ?? '?';
+        const reason  = (t.reason ?? '').slice(0, 40);
+        const ts      = _relTime(t.ts);
+        return `
+          <div class="sched-hb-tick">
+            <span class="sched-hb-tick-badge ${_esc(outcome)}">${_esc(outcome)}</span>
+            <span class="sched-hb-tick-reason" title="${_esc(t.reason ?? '')}">${_esc(reason)}</span>
+            <span class="sched-hb-tick-time">${_esc(ts)}</span>
+          </div>`;
+      }).join('');
+    }
+  }
+}
+
+function _relTime(isoStr) {
+  if (!isoStr) return '—';
+  const diff = Date.now() - new Date(isoStr).getTime();
+  if (isNaN(diff)) return isoStr;
+  const s = Math.floor(diff / 1000);
+  if (s < 60)  return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60)  return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24)  return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function _esc(s) {
@@ -436,3 +824,345 @@ function _esc(s) {
 
 // Re-export renderTimeline alias for backward compatibility
 export const renderTimeline = renderTimelineAxis;
+
+// ── Workspace Timeline Strip ───────────────────────────────────────────────────
+
+let _wsRefreshTimer = null;
+
+export async function initWorkspaceStrip() {
+  const strip = document.getElementById('ws-timeline-strip');
+  if (!strip) return;
+
+  // Toggle collapse
+  document.getElementById('ws-tl-toggle')?.addEventListener('click', () => {
+    strip.classList.toggle('collapsed');
+    _renderWsStrip();
+  });
+
+  await _renderWsStrip();
+
+  if (_wsRefreshTimer) clearInterval(_wsRefreshTimer);
+  _wsRefreshTimer = setInterval(_renderWsStrip, 30_000);
+}
+
+async function _renderWsStrip() {
+  const canvas = document.getElementById('ws-tl-canvas');
+  const badge  = document.getElementById('ws-tl-badge');
+  const emptyEl = document.getElementById('ws-tl-empty');
+  if (!canvas) return;
+
+  const strip = document.getElementById('ws-timeline-strip');
+  if (strip?.classList.contains('collapsed')) return;
+
+  const data = await http.get(PATHS.scheduler.axis).catch(() => ({ events: [], tasks: [] }));
+  const tasks = (data.tasks ?? []).filter(t => t.next_run_at && !['done','cancelled','failed'].includes(t.status));
+
+  if (badge) badge.textContent = tasks.length ? String(tasks.length) : '';
+
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth || 600;
+  const H = 42;
+  canvas.width  = W;
+  canvas.height = H;
+  ctx.clearRect(0, 0, W, H);
+
+  const today = new Date();
+  const midnightMs = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+
+  // Axis line
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#444';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, H / 2);
+  ctx.lineTo(W, H / 2);
+  ctx.stroke();
+
+  // Hour ticks
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#888';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'center';
+  [0, 6, 12, 18, 24].forEach(h => {
+    const x = Math.round((h / 24) * W);
+    ctx.fillRect(x, H / 2 - 4, 1, 8);
+    if (h < 24) ctx.fillText(`${String(h).padStart(2, '0')}`, x, H - 3);
+  });
+
+  // Task dots — draggable
+  // Remove old dot elements
+  canvas.parentElement?.querySelectorAll('.ws-tl-dot').forEach(el => el.remove());
+
+  if (emptyEl) emptyEl.classList.toggle('hidden', tasks.length > 0);
+
+  tasks.forEach(t => {
+    const ms   = new Date(t.next_run_at).getTime();
+    const frac = (ms - midnightMs) / 86_400_000;
+    if (frac < 0 || frac > 1) return;
+    const x = frac * W;
+
+    // Draw dot on canvas
+    ctx.beginPath();
+    ctx.arc(x, H / 2, 5, 0, 2 * Math.PI);
+    ctx.fillStyle = t.status === 'running' ? '#3b82f6' : '#f59e0b';
+    ctx.fill();
+
+    // Overlay HTML dot for interaction
+    const dot = document.createElement('div');
+    dot.className = 'ws-tl-dot';
+    dot.style.left = `${x}px`;
+    dot.title = `${t.name}\n${_fmtTime(t.next_run_at)}`;
+    dot.dataset.taskId = t.id;
+    dot.dataset.taskJson = JSON.stringify(t);
+    canvas.parentElement.appendChild(dot);
+
+    dot.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _openEditDrawer(t);
+    });
+
+    if ((t.trigger_type ?? t.trigger?.type) === 'once') {
+      _enableDragOnDot(dot, t, canvas, midnightMs);
+    }
+  });
+
+  // Current time needle
+  const nowFrac = (Date.now() - midnightMs) / 86_400_000;
+  if (nowFrac >= 0 && nowFrac <= 1) {
+    const nx = Math.round(nowFrac * W);
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(nx, 0);
+    ctx.lineTo(nx, H);
+    ctx.stroke();
+  }
+}
+
+// ── 15-minute snapping drag ───────────────────────────────────────────────────
+
+function _enableDragOnDot(dot, task, canvas, midnightMs) {
+  let dragging = false;
+  let previewEl = null;
+
+  dot.style.cursor = 'grab';
+
+  dot.addEventListener('mousedown', (startEvt) => {
+    startEvt.preventDefault();
+    dragging = true;
+    dot.style.cursor = 'grabbing';
+
+    // Create preview bubble
+    previewEl = document.createElement('div');
+    previewEl.className = 'ws-tl-drag-preview';
+    document.body.appendChild(previewEl);
+
+    const onMove = (e) => {
+      if (!dragging) return;
+      const rect = canvas.getBoundingClientRect();
+      const rawFrac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+
+      // 15-min snapping: 96 slots per day
+      const snappedFrac = Math.round(rawFrac * 96) / 96;
+      const snappedMs = midnightMs + snappedFrac * 86_400_000;
+      const snappedDate = new Date(snappedMs);
+
+      dot.style.left = `${snappedFrac * rect.width}px`;
+      previewEl.style.left  = `${e.clientX}px`;
+      previewEl.style.top   = `${e.clientY - 36}px`;
+      previewEl.textContent = snappedDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      previewEl.dataset.snappedIso = snappedDate.toISOString();
+    };
+
+    const onUp = async (e) => {
+      if (!dragging) return;
+      dragging = false;
+      dot.style.cursor = 'grab';
+      previewEl?.remove();
+      previewEl = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+
+      const rect = canvas.getBoundingClientRect();
+      const rawFrac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const snappedFrac = Math.round(rawFrac * 96) / 96;
+      const snappedMs = midnightMs + snappedFrac * 86_400_000;
+      const snappedIso = new Date(snappedMs).toISOString();
+
+      await fetch(`/api/scheduler/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'edit', at: snappedIso }),
+      }).catch(() => {});
+
+      await _renderWsStrip();
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',  onUp);
+  });
+}
+
+// ── Edit Drawer ───────────────────────────────────────────────────────────────
+
+function _openEditDrawer(task) {
+  const drawer = document.getElementById('sched-edit-drawer');
+  if (!drawer) return;
+
+  const titleEl = document.getElementById('sched-edit-title');
+  const nameEl  = document.getElementById('sched-edit-name');
+  const atEl    = document.getElementById('sched-edit-at');
+  const atGroup = document.getElementById('sched-edit-at-group');
+  const instrEl = document.getElementById('sched-edit-instruction');
+  const cmdTypeEl = document.getElementById('sched-edit-cmd-type');
+  const cmdGroup  = document.getElementById('sched-edit-cmd-group');
+  const msgEl   = document.getElementById('sched-edit-msg');
+
+  if (titleEl) titleEl.textContent = `Edit: ${task.name}`;
+  if (nameEl)  nameEl.value = task.name ?? '';
+  if (instrEl) instrEl.value = task.instruction ?? '';
+
+  const trigType = task.trigger_type ?? task.trigger?.type ?? 'once';
+  if (atGroup) atGroup.style.display = trigType === 'once' ? '' : 'none';
+  if (atEl && task.next_run_at) {
+    // datetime-local wants 'YYYY-MM-DDTHH:MM'
+    const d = new Date(task.next_run_at);
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+      .toISOString().slice(0, 16);
+    atEl.value = local;
+  }
+
+  const cmd = task.command;
+  if (cmdGroup) cmdGroup.style.display = cmd ? '' : 'none';
+  if (cmdTypeEl && cmd) cmdTypeEl.value = cmd.command_type ?? 'run_task';
+
+  if (msgEl) msgEl.textContent = '';
+  drawer.classList.remove('hidden');
+
+  // Cleanup previous listeners
+  const saveBtn   = document.getElementById('sched-edit-save');
+  const cancelBtn = document.getElementById('sched-edit-cancel');
+  const closeBtn  = document.getElementById('sched-edit-close');
+
+  const newSave   = saveBtn.cloneNode(true);
+  const newCancel = cancelBtn.cloneNode(true);
+  const newClose  = closeBtn.cloneNode(true);
+  saveBtn.replaceWith(newSave);
+  cancelBtn.replaceWith(newCancel);
+  closeBtn.replaceWith(newClose);
+
+  const closeDrawer = () => drawer.classList.add('hidden');
+
+  newCancel.addEventListener('click', closeDrawer);
+  newClose.addEventListener('click',  closeDrawer);
+
+  newSave.addEventListener('click', async () => {
+    if (msgEl) msgEl.textContent = 'Saving…';
+    const body = { action: 'edit' };
+    if (nameEl.value.trim()) body.name = nameEl.value.trim();
+    if (instrEl.value.trim()) body.instruction = instrEl.value.trim();
+    if (atEl.value && trigType === 'once') {
+      body.at = new Date(atEl.value).toISOString();
+    }
+    if (cmd && cmdTypeEl) {
+      body.command = { ...cmd, command_type: cmdTypeEl.value };
+    }
+
+    const res = await fetch(`/api/scheduler/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (msgEl) msgEl.textContent = err.error ?? 'Save failed';
+      return;
+    }
+    if (msgEl) { msgEl.textContent = 'Saved ✓'; }
+    setTimeout(closeDrawer, 800);
+    await Promise.allSettled([renderTaskTable(), renderTimelineAxis(), _renderWsStrip()]);
+  });
+}
+
+// ── Journal Session Window ────────────────────────────────────────────────────
+
+let _sessionJournalWired = false;
+
+function _wireSessionJournal() {
+  if (_sessionJournalWired) {
+    // Already wired — just refresh on re-entry
+    _renderSessionJournal();
+    return;
+  }
+  _sessionJournalWired = true;
+
+  const dateInput  = document.getElementById('sched-session-date');
+  const refreshBtn = document.getElementById('sched-session-refresh');
+  const toggleBtn  = document.getElementById('sched-session-toggle');
+  const bodyEl     = document.getElementById('sched-session-body');
+
+  if (dateInput && !dateInput.value)
+    dateInput.value = new Date().toISOString().slice(0, 10);
+
+  refreshBtn?.addEventListener('click', () => _renderSessionJournal());
+  dateInput?.addEventListener('change', () => _renderSessionJournal());
+
+  if (toggleBtn && bodyEl) {
+    toggleBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const collapsed = bodyEl.classList.toggle('collapsed');
+      toggleBtn.textContent = collapsed ? '▸' : '▾';
+    });
+  }
+
+  _renderSessionJournal();
+}
+
+async function _renderSessionJournal() {
+  const bodyEl    = document.getElementById('sched-session-body');
+  const dateInput = document.getElementById('sched-session-date');
+  if (!bodyEl) return;
+
+  const date = dateInput?.value || undefined;
+  const url  = date ? `/api/scheduler/journal?date=${date}` : '/api/scheduler/journal';
+
+  const data = await fetch(url).then(r => r.json()).catch(() => null);
+
+  if (!data || !data.ready) {
+    bodyEl.innerHTML = '<div class="sched-session-empty">暂无日志（Scheduler 未初始化）</div>';
+    return;
+  }
+
+  const msgs = data.messages ?? [];
+  if (!msgs.length) {
+    bodyEl.innerHTML = '<div class="sched-session-empty">今日暂无日志</div>';
+    return;
+  }
+
+  // Preserve scroll position if already at bottom
+  const atBottom = bodyEl.scrollHeight - bodyEl.scrollTop <= bodyEl.clientHeight + 4;
+
+  bodyEl.innerHTML = '';
+  [...msgs].reverse().forEach(msg => {
+    const meta    = msg.meta ?? {};
+    const ts      = msg.ts
+      ? new Date(msg.ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+      : '';
+    const isMid   = meta.entry_type === 'mid_run_message';
+    const tagCls  = isMid ? 'mid-run' : 'result';
+    const tagText = isMid ? 'mid-run' : 'result';
+    const content = msg.content ?? '';
+
+    const el = document.createElement('div');
+    el.className = 'sched-session-msg';
+    el.innerHTML = `
+      <div class="sched-session-msg-hdr">
+        <span class="sched-session-task-name">${_esc(meta.task_name ?? '—')}</span>
+        <span class="sched-session-tag ${tagCls}">${tagText}</span>
+        <span class="sched-session-ts">${ts}</span>
+      </div>
+      <div class="sched-session-content">${_esc(content.slice(0, 500))}${content.length > 500 ? '…' : ''}</div>`;
+    bodyEl.appendChild(el);
+  });
+
+  if (atBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+}

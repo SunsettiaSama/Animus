@@ -163,8 +163,10 @@ class TaoLoop:
         tool_category_summary: str = "",
         sandbox: SandboxManager | None = None,
         risk_gate: RiskGate | None = None,
-        scheduler_engine=None,   # SchedulerEngine | None — 优先使用全局实例
-        reply_target: dict | None = None,  # 持久化投递目标，注入到 SchedulerAddAction
+        scheduler_engine=None,
+        reply_target: dict | None = None,
+        notify_fn=None,
+        comm_rate_cfg=None,
     ):
         self._llm = llm   # canonical handle from LLMService — shared by all sub-components
         self._executor = executor
@@ -318,6 +320,33 @@ class TaoLoop:
             ):
                 self._executor.register_instance(action)
                 effective_descriptions[action.name] = action.description
+
+        # Inject notify_user tool when a mid-run notification callback is provided.
+        # This path is independent of scheduler_engine injection.
+        if notify_fn is not None:
+            from .action.tools.impl.notify_user import NotifyUserAction
+            _notify_action = NotifyUserAction(notify_fn=notify_fn)
+            self._executor.register_instance(_notify_action)
+            effective_descriptions[_notify_action.name] = _notify_action.description
+
+        # Inject communication atomic tools when rate config is provided.
+        if comm_rate_cfg is not None:
+            from webui.state import get_state as _get_state
+            _st = _get_state()
+            if _st.bark_notifier is not None or _st.ntfy_notifier is not None:
+                from .action.tools.impl.send_notification import SendNotificationAction
+                _sn = SendNotificationAction(rate_cfg=comm_rate_cfg)
+                self._executor.register_instance(_sn)
+                effective_descriptions[_sn.name] = _sn.description
+            if _st.bot_service is not None:
+                from .action.tools.impl.send_bot_message import SendBotMessageAction
+                _sb = SendBotMessageAction(
+                    bot_service=_st.bot_service,
+                    main_event_loop=_st.main_event_loop,
+                    rate_cfg=comm_rate_cfg,
+                )
+                self._executor.register_instance(_sb)
+                effective_descriptions[_sb.name] = _sb.description
 
         # Inject delegate_task skill when an agent config is provided.
         self._delegate_skill = None
@@ -1011,7 +1040,6 @@ class TaoLoop:
 
         targets = [
             os.path.join(memory_dir,    "memories.json"),
-            os.path.join(memory_dir,    "memory_index.faiss"),
             os.path.join(medium_dir,    "medium_term.jsonl"),
             os.path.join(milestone_dir, "milestones.json"),
         ]
@@ -1021,8 +1049,15 @@ class TaoLoop:
 
         # Reset in-memory state of live objects
         if self._long_term is not None:
-            self._long_term.store._entries.clear()
-            self._long_term.store._vectorstore = None
+            store = self._long_term.store
+            store._entries.clear()
+            # Drop the Qdrant collection so it is recreated clean on next access.
+            client = store._get_client()
+            existing = {c.name for c in client.get_collections().collections}
+            if store._cfg.collection_name in existing:
+                client.delete_collection(store._cfg.collection_name)
+            with store._lock:
+                store._collection_ready = False
         if self._milestone is not None:
             self._milestone._store._entries.clear()
         if self._medium_term is not None:

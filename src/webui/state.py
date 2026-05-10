@@ -61,6 +61,17 @@ class AppState:
     # ── Background task notifications ─────────────────────────────────────────
     notify_queue: Any = None          # asyncio.Queue[dict | None] | None
 
+    # ── Channel routing ───────────────────────────────────────────────────────
+    channel_router: Any = None        # ChannelRouter | None
+
+    # ── Push notifiers (Bark / ntfy) ──────────────────────────────────────────
+    bark_notifier: Any = None         # BarkNotifier | None
+    ntfy_notifier: Any = None         # NtfyNotifier | None
+
+    # ── Scheduler config path (set after YAML load) ───────────────────────────
+    scheduler_config_yaml: str = ""
+    scheduler_journal: Any = None      # WorkJournal | None
+
     # ── Knowledge base ────────────────────────────────────────────────────────
     kb: Any = None
     kb_cfg: Any = None
@@ -180,9 +191,9 @@ class AppState:
 
         self.sandbox_manager  = SandboxManager()
         self.service_registry = ServiceRegistry()
-        self.service_registry.register("vllm", _vllm_manager)
-        self.service_registry.register("searxng",      self.searxng_manager)
-        self.service_registry.register("sandbox",      self.sandbox_manager)
+        self.service_registry.register("llm",     self.llm_service)
+        self.service_registry.register("searxng", self.searxng_manager)
+        self.service_registry.register("sandbox", self.sandbox_manager)
 
         # Sandbox config
         if os.path.exists(self.sandbox_config_yaml):

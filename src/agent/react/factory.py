@@ -35,9 +35,14 @@ def build_conv_loop(
     from agent.react.action.risk.gate import RiskGate
 
     def _load_memory_config() -> MemoryConfig:
-        if os.path.exists(state.memory_config_yaml):
-            return MemoryConfig.from_yaml(state.memory_config_yaml)
-        return MemoryConfig()
+        from agent.runner import _apply_embedding_override
+
+        memory = (
+            MemoryConfig.from_yaml(state.memory_config_yaml)
+            if os.path.exists(state.memory_config_yaml)
+            else MemoryConfig()
+        )
+        return _apply_embedding_override(memory)
 
     def _load_persona_config() -> PersonaConfig:
         import json

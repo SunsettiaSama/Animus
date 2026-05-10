@@ -17,6 +17,7 @@ const _cb = {
   onShow: (_message, _isDone) => {},
   onHide: () => {},
   onScheduledReply: (_taskName, _answer) => {},
+  onAgentMessage: (_title, _message, _taskName) => {},
 };
 
 export function setCallbacks(cbs) { Object.assign(_cb, cbs); }
@@ -52,6 +53,11 @@ function _handleMessage(evt) {
 
   if (msg.type === 'scheduled_reply') {
     _cb.onScheduledReply(msg.task_name ?? '', msg.answer ?? '');
+    return;
+  }
+
+  if (msg.type === 'agent_message') {
+    _cb.onAgentMessage(msg.title ?? '', msg.message ?? '', msg.task_name ?? '');
     return;
   }
 

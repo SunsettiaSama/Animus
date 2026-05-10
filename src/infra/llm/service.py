@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from infra.base_service import BaseServiceManager
 from infra.llm.backend import BaseInferenceBackend
-from infra.llm.base import VLLM_LINUX_ONLY
+from infra.llm.base import VLLM_LINUX_ONLY, _wsl2_available
 from infra.llm.handle import LLMHandle
 
 if TYPE_CHECKING:
@@ -21,16 +21,18 @@ class LLMService(BaseServiceManager):
     selects the appropriate one based on platform and the requested
     ``cfg.backend`` value:
 
-    +-----------------+------------------+-----------------------------+
-    | backend value   | platform         | selected backend            |
-    +=================+==================+=============================+
-    | "transformers"  | any              | TransformersBackend         |
-    | "vllm"          | Linux            | OfficialVLLMManager         |
-    | "vllm"          | Windows          | TransformersBackend (degrade)|
-    | "vllm-clone"    | Linux            | CustomVLLMManager           |
-    | "vllm-clone"    | Windows          | TransformersBackend (degrade)|
-    | "openai"        | any              | no subprocess; OpenAILLM    |
-    +-----------------+------------------+-----------------------------+
+    +-----------------+---------------------+-----------------------------+
+    | backend value   | platform            | selected backend            |
+    +=================+=====================+=============================+
+    | "transformers"  | any                 | TransformersBackend         |
+    | "vllm"          | Linux               | OfficialVLLMManager         |
+    | "vllm"          | Windows + WSL2      | OfficialVLLMManager (WSL2)  |
+    | "vllm"          | Windows (no WSL2)   | TransformersBackend (degrade)|
+    | "vllm-clone"    | Linux               | CustomVLLMManager           |
+    | "vllm-clone"    | Windows + WSL2      | CustomVLLMManager (WSL2)    |
+    | "vllm-clone"    | Windows (no WSL2)   | TransformersBackend (degrade)|
+    | "openai"        | any                 | no subprocess; OpenAILLM    |
+    +-----------------+---------------------+-----------------------------+
 
     External callers (TaoLoop, PersonaManager, etc.) receive the single
     canonical ``LLMHandle`` at init time.  Calling ``start()`` or
@@ -56,6 +58,7 @@ class LLMService(BaseServiceManager):
         self._cfg: LLMConfig | None = None
         self._state: str = "stopped"
         self._degraded_reason: str | None = None
+        self._aux: dict[str, LLMHandle] = {}
 
     # ── BaseServiceManager interface ──────────────────────────────────────────
 
@@ -63,8 +66,13 @@ class LLMService(BaseServiceManager):
         self._degraded_reason = None
 
         if cfg.backend in ("vllm", "vllm-clone") and sys.platform == "win32":
-            self._degraded_reason = VLLM_LINUX_ONLY
-            cfg = dataclasses.replace(cfg, backend="transformers")
+            if _wsl2_available():
+                # WSL2 detected — _launch_subprocess will transparently wrap
+                # the server command through WSL2; no degradation needed.
+                pass
+            else:
+                self._degraded_reason = VLLM_LINUX_ONLY
+                cfg = dataclasses.replace(cfg, backend="transformers")
 
         if cfg.backend in self._backends:
             from config.llm_core.vllm_config import VLLMConfig as _VLLMConfig
@@ -108,3 +116,35 @@ class LLMService(BaseServiceManager):
     @property
     def cfg(self) -> LLMConfig | None:
         return self._cfg
+
+    # ── Auxiliary named models ────────────────────────────────────────────────
+
+    def register_aux(self, name: str, cfg: "LLMConfig") -> None:
+        """Register a named auxiliary model (API-only, no subprocess management)."""
+        from infra.llm.llm import LLM
+        llm = LLM(cfg)
+        if name in self._aux:
+            self._aux[name].update(llm)
+        else:
+            self._aux[name] = LLMHandle(llm)
+
+    def get_aux_llm(self, name: str):
+        """Return the BaseLLM for a named aux model, falling back to the primary."""
+        handle = self._aux.get(name)
+        if handle is not None:
+            return handle._llm
+        return self._handle._llm if self._handle is not None else None
+
+    def unregister_aux(self, name: str) -> None:
+        self._aux.pop(name, None)
+
+    def aux_status(self) -> dict:
+        result = {}
+        for k, h in self._aux.items():
+            model_name = getattr(h._llm, "_cfg", None)
+            if model_name is not None:
+                model_name = getattr(model_name, "model", "?")
+            else:
+                model_name = "?"
+            result[k] = {"model": model_name}
+        return result

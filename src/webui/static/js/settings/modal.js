@@ -11,16 +11,18 @@ import * as tabPersona from './tabs/persona.js';
 import * as tabVoice   from './tabs/voice.js';
 import * as tabSandbox from './tabs/sandbox.js';
 import * as tabBot     from './tabs/bot.js';
+import * as tabScheduler from './tabs/scheduler.js';
 
 const $ = id => document.getElementById(id);
 
 const _TABS = {
-  model:   tabLlm,
-  memory:  tabMemory,
-  persona: tabPersona,
-  voice:   tabVoice,
-  sandbox: tabSandbox,
-  bot:     tabBot,
+  model:     tabLlm,
+  memory:    tabMemory,
+  persona:   tabPersona,
+  voice:     tabVoice,
+  sandbox:   tabSandbox,
+  bot:       tabBot,
+  scheduler: tabScheduler,
 };
 
 let _activeTab = 'model';
@@ -73,9 +75,9 @@ export const saveModelTab   = ()  => tabLlm.save();
 export const saveMemoryTab  = ()  => tabMemory.save();
 export const savePersonaTab = ()  => tabPersona.save();
 export const saveVoiceTab   = ()  => tabVoice.save();
-export const saveVLLMTab    = ()  => Promise.resolve(); // vLLM tab merged into Core tab; btn-vllm-save handles this directly
 export const saveSandboxTab = ()  => tabSandbox.save();
-export const saveBotTab     = ()  => tabBot.save();
+export const saveBotTab       = () => tabBot.save();
+export const saveSchedulerTab = () => tabScheduler.save();
 
 // ── Action helpers forwarded from tabs ───────────────────────────────────────
 
@@ -83,6 +85,8 @@ export const onToggleTools       = ()  => tabLlm.onToggleTools();
 export const onTTSProviderChange = ()  => tabVoice.onTTSProviderChange();
 export const onSTTProviderChange = ()  => tabVoice.onSTTProviderChange();
 export const onBotTransportChange = () => tabBot.onBotTransportChange();
+export const testBark             = () => tabBot.testBark();
+export const testNtfy             = () => tabBot.testNtfy();
 export const doConsolidate       = ()  => tabMemory.doConsolidate();
 export const doClearMemory       = ()  => tabMemory.doClearMemory();
 export const doClearPersona      = ()  => tabPersona.doClearPersona();

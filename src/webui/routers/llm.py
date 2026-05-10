@@ -76,8 +76,11 @@ class SaveConfigRequest(BaseModel):
     max_tokens: int = 512
     temperature: float = 1.0
     do_sample: bool = False
+    top_k: int = 0
+    repetition_penalty: float = 1.0
     device: str = "auto"
     system_prompt: str = ""
+    backend: str = "openai"
     # WebUI preference fields (stored separately in config/webui/settings.json)
     tools_enabled: bool = False
     show_full_prompt: bool = False
@@ -114,14 +117,17 @@ def save_config(req: SaveConfigRequest):
     state = get_state()
     os.makedirs(os.path.dirname(state.llm_config_yaml), exist_ok=True)
     data = {
-        "model":         req.model,
-        "api_key":       req.api_key,
-        "base_url":      req.base_url or "",
-        "max_tokens":    req.max_tokens,
-        "temperature":   req.temperature,
-        "do_sample":     req.do_sample,
-        "device":        req.device,
-        "system_prompt": req.system_prompt or "",
+        "model":              req.model,
+        "api_key":            req.api_key,
+        "base_url":           req.base_url or "",
+        "max_tokens":         req.max_tokens,
+        "temperature":        req.temperature,
+        "do_sample":          req.do_sample,
+        "top_k":              req.top_k,
+        "repetition_penalty": req.repetition_penalty,
+        "device":             req.device,
+        "system_prompt":      req.system_prompt or "",
+        "backend":            req.backend,
     }
     with open(state.llm_config_yaml, "w", encoding="utf-8") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
@@ -139,7 +145,9 @@ def save_config(req: SaveConfigRequest):
 @router.post("/api/init")
 @router.post("/api/llm/init")
 def init_llm(req: InitRequest):
+    import os
     from config.llm_core.config import LLMConfig
+    from config.llm_core.vllm_config import VLLMConfig
     state = get_state()
     cfg = LLMConfig(
         model=req.model,
@@ -155,7 +163,14 @@ def init_llm(req: InitRequest):
         system_prompt=req.system_prompt,
         backend=req.backend,
     )
-    state.llm_service.start(cfg)
+    vllm_cfg = None
+    if req.backend in ("vllm", "vllm-clone"):
+        vllm_cfg = (
+            VLLMConfig.from_yaml(state.vllm_config_yaml)
+            if os.path.exists(state.vllm_config_yaml)
+            else VLLMConfig()
+        )
+    state.llm_service.start(cfg, vllm_cfg)
     return {"status": "ok", "backend": req.backend}
 
 

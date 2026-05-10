@@ -62,18 +62,53 @@ def _startup():
     state.main_event_loop = asyncio.get_event_loop()
     state.notify_queue = asyncio.Queue()
 
+    # ── ChannelRouter setup ───────────────────────────────────────────────────
+    from infra.channel_router import ChannelRouter, ReplyTarget
+
+    channel_router = ChannelRouter()
+    state.channel_router = channel_router
+
+    def _webui_deliver(target: ReplyTarget, title: str, message: str) -> None:
+        if state.notify_queue is not None and state.main_event_loop is not None:
+            item = {"type": "scheduled_reply", "task_name": title, "answer": message}
+            state.main_event_loop.call_soon_threadsafe(state.notify_queue.put_nowait, item)
+
+    def _bot_deliver(target: ReplyTarget, title: str, message: str) -> None:
+        if state.bot_service is not None:
+            rt_dict = target.to_task_dict()
+            state.bot_service.send_scheduled_reply(rt_dict, title, message)
+
+    channel_router.register("webui", _webui_deliver)
+    channel_router.register("bot",   _bot_deliver)
+
+    # ── Bark / ntfy notifiers ─────────────────────────────────────────────────
+    from config.infra.bark_config import BarkConfig
+    from config.infra.ntfy_config import NtfyConfig
+    from infra.network.notify.bark import BarkNotifier
+    from infra.network.notify.ntfy import NtfyNotifier
+
+    bark_notifier = BarkNotifier(BarkConfig.load())
+    ntfy_notifier = NtfyNotifier(NtfyConfig.load())
+    state.bark_notifier = bark_notifier
+    state.ntfy_notifier = ntfy_notifier
+
+    def _bark_deliver(target: ReplyTarget, title: str, message: str) -> None:
+        bark_notifier.send(title, message, device_key=target.params.get("device_key"))
+
+    def _ntfy_deliver(target: ReplyTarget, title: str, message: str) -> None:
+        ntfy_notifier.send(title, message, topic=target.params.get("topic"))
+
+    channel_router.register("bark", _bark_deliver)
+    channel_router.register("ntfy", _ntfy_deliver)
+
     def _make_scheduler_notify_fn(st):
         def _notify(task, answer: str) -> None:
             rt = task.reply_target
             if rt is None:
                 return
-            if rt.get("type") == "webui":
-                if st.notify_queue is not None and st.main_event_loop is not None:
-                    item = {"type": "scheduled_reply", "task_name": task.name, "answer": answer}
-                    st.main_event_loop.call_soon_threadsafe(st.notify_queue.put_nowait, item)
-            elif rt.get("type") == "bot":
-                if st.bot_service is not None:
-                    st.bot_service.send_scheduled_reply(rt, task.name, answer)
+            target = ReplyTarget.from_task_dict(rt)
+            if target is not None:
+                st.channel_router.deliver(target, task.name, answer)
         return _notify
 
     def _bg() -> None:
@@ -89,14 +124,36 @@ def _startup():
         # Create and start the global scheduler engine.
         # TemporalClock runs on its own daemon thread — no run_coroutine_threadsafe needed.
         from agent.scheduler import SchedulerEngine, SchedulerConfig, TimelineStore
-        sch_cfg = SchedulerConfig(
-            scheduler_dir=state.cache.scheduler_dir,
-            llm_cfg_path=state.llm_config_yaml,
-        )
+        from config import paths as _paths
+        import yaml as _yaml
+
+        _sched_yaml = _paths.scheduler_config_yaml
+        if _sched_yaml.exists():
+            with open(_sched_yaml, encoding="utf-8") as _f:
+                _sched_dict = _yaml.safe_load(_f) or {}
+            sch_cfg = SchedulerConfig.from_dict({
+                "scheduler_dir": state.cache.scheduler_dir,
+                "llm_cfg_path": state.llm_config_yaml,
+                **_sched_dict,
+            })
+        else:
+            sch_cfg = SchedulerConfig(
+                scheduler_dir=state.cache.scheduler_dir,
+                llm_cfg_path=state.llm_config_yaml,
+            )
+        state.scheduler_config_yaml = str(_sched_yaml)
+
+        # Create WorkJournal
+        from agent.scheduler.journal import WorkJournal
+        _journal = WorkJournal(state.cache.history_dir)
+        state.scheduler_journal = _journal
         state.scheduler_engine = SchedulerEngine(
             sch_cfg,
             timeline=TimelineStore(state.cache.timeline_dir),
             notify_fn=_make_scheduler_notify_fn(state),
+            journal=_journal,
+            channel_router=state.channel_router,
+            llm_service=state.llm_service,
         )
         state.scheduler_engine.start()
         print("[webui] Global scheduler engine started (TemporalClock thread)")

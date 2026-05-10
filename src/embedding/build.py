@@ -7,11 +7,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import torch
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 
 from config.embedding.config import BuildConfig
 from embedding.corpus import Chunk, build_chunks, load_csv
+from embedding.index import build_index
 
 
 def _resolve_device(device: str) -> str:
@@ -63,10 +63,8 @@ def build(cfg: BuildConfig) -> None:
         query_encode_kwargs=query_encode_kwargs,
     )
 
-    print("[4/4] building FAISS index and saving")
+    print(f"[4/4] building Qdrant index  collection={cfg.collection_name}")
     docs = _chunks_to_documents(chunks)
-    vectorstore = FAISS.from_documents(docs, embeddings)
-    os.makedirs(cfg.output_dir, exist_ok=True)
-    vectorstore.save_local(cfg.output_dir, cfg.index_filename.replace(".faiss", ""))
+    build_index(docs, embeddings, cfg.output_dir, cfg.collection_name)
     print(f"      index  →  {cfg.output_dir}/")
     print("done.")

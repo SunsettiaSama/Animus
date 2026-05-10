@@ -97,10 +97,10 @@ _lc_core_docs = _mod_stub("langchain_core.documents")
 _lc_core_docs.Document = MagicMock(name="Document")
 _lc_core.documents = _lc_core_docs
 
-# embedding package — stub to prevent real FAISS/torch loading
+# embedding package — stub to prevent real torch loading
 _emb_pkg = _pkg_stub("embedding")
 _emb_build = _mod_stub("embedding.build")
-_emb_build.build_faiss_index = MagicMock(name="build_faiss_index")
+_emb_build.build_index = MagicMock(name="build_index")
 _emb_pkg.build = _emb_build
 _emb_corpus = _mod_stub("embedding.corpus")
 _emb_corpus.Chunk = MagicMock(name="Chunk")

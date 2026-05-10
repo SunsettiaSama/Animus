@@ -7,6 +7,7 @@ from typing import Callable
 
 from agent.scheduler.clock import TemporalClock
 from agent.scheduler.config import SchedulerConfig
+from agent.scheduler.heartbeat import HeartbeatModule
 from agent.scheduler.runner import TaskRunner
 from agent.scheduler.store import TaskStore
 from agent.scheduler.task import DeliveryMode, ScheduledTask, TaskStatus, Trigger
@@ -31,6 +32,9 @@ class SchedulerEngine:
         long_term=None,
         timeline=None,
         notify_fn: Callable[[ScheduledTask, str], None] | None = None,
+        journal=None,
+        channel_router=None,
+        llm_service=None,
     ):
         self._cfg = cfg
         self._store = TaskStore(cfg.scheduler_dir)
@@ -40,11 +44,32 @@ class SchedulerEngine:
             timeline=timeline,
             notify_fn=notify_fn,
             engine=self,
+            journal=journal,
+            channel_router=channel_router,
         )
-        self._clock = TemporalClock(cfg, self._store, self._runner)
+        self._heartbeat = HeartbeatModule(
+            cfg=cfg.heartbeat,
+            scheduler_dir=cfg.scheduler_dir,
+            llm_service=llm_service,
+            llm_cfg_path=cfg.llm_cfg_path,
+            scheduler_engine=self,
+            scheduler_cfg=cfg,
+            journal=journal,
+            channel_router=channel_router,
+        )
+        self._clock = TemporalClock(cfg, self._store, self._runner,
+                                    heartbeat_module=self._heartbeat)
 
     def set_notify_fn(self, fn: Callable[[ScheduledTask, str], None]) -> None:
         self._runner._notify_fn = fn
+
+    @property
+    def heartbeat(self) -> HeartbeatModule:
+        return self._heartbeat
+
+    def trigger_proactive_now(self) -> None:
+        """Immediately signal the clock to run a heartbeat tick on the next iteration."""
+        self._heartbeat.force_tick()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -54,6 +79,22 @@ class SchedulerEngine:
 
     def stop(self) -> None:
         self._clock.stop()
+
+    def pause_clock(self) -> None:
+        """Pause the clock tick loop without stopping the thread."""
+        self._clock.pause()
+
+    def resume_clock(self) -> None:
+        """Resume the clock tick loop after a pause."""
+        self._clock.resume()
+
+    @property
+    def is_clock_running(self) -> bool:
+        return self._clock.is_running
+
+    @property
+    def is_clock_paused(self) -> bool:
+        return self._clock.is_paused
 
     # ── Scheduling API ────────────────────────────────────────────────────────
 

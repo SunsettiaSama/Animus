@@ -146,6 +146,14 @@ function _bind() {
   on('btn-mic',    'click', handleMicClick);
   on('btn-open-kb','click', openKBPanel);
 
+  // Sidebar horizontal collapse toggle
+  on('btn-sidebar-toggle', 'click', () => {
+    const sidebar   = document.getElementById('sidebar');
+    const btn       = document.getElementById('btn-sidebar-toggle');
+    const collapsed = sidebar.classList.toggle('collapsed');
+    if (btn) btn.textContent = collapsed ? '▶' : '◀';
+  });
+
   // Navigation
   on('btn-go-home',     'click', () => { goHome(); loadWorkstation(); });
   on('plan-btn-home',   'click', () => { goHome(); loadWorkstation(); });
@@ -166,10 +174,11 @@ function _bind() {
   on('bench-btn-clear',   'click', () => benchMod.clearReport());
 
   // Scheduler screen
-  on('btn-sched-refresh', 'click', () => schedulerMod.init());
-  on('btn-sched-add',     'click', toggleSchedulerForm);
-  on('btn-sched-create',  'click', createSchedulerTask);
-  on('btn-sched-cancel',  'click', toggleSchedulerForm);
+  on('btn-sched-refresh',  'click', () => schedulerMod.init());
+  on('btn-sched-add',      'click', toggleSchedulerForm);
+  on('btn-sched-create',   'click', createSchedulerTask);
+  on('btn-sched-cancel',   'click', toggleSchedulerForm);
+  on('btn-sched-settings', 'click', () => settings.open('scheduler'));
   document.querySelectorAll('input[name="sched-trigger-radio"]').forEach(r => {
     r.addEventListener('change', onSchedTriggerChange);
   });
@@ -182,7 +191,7 @@ function _bind() {
   on('btn-modal-save',        'click', () => settings.saveCurrentTab());
   on('btn-modal-close',       'click', () => settings.close());
   on('btn-modal-close-x',     'click', () => settings.close());
-  ['model','memory','persona','voice','vllm','sandbox','bot'].forEach(tab => {
+  ['model','memory','persona','voice','sandbox','bot','scheduler'].forEach(tab => {
     on(`snav-btn-${tab}`, 'click', () => settings.setTab(tab));
   });
   on('s-tools-enabled', 'change', settings.onToggleTools);
@@ -192,10 +201,7 @@ function _bind() {
   on('btn-clear-memory',  'click', settings.doClearMemory);
   on('btn-clear-persona', 'click', settings.doClearPersona);
 
-  // vLLM / Sandbox / Bot
-  on('btn-vllm-start',   'click', () => infraMod.vllm.start().catch(e => bus.emit('toast', e.message)));
-  on('btn-vllm-stop',    'click', () => infraMod.vllm.stop());
-  on('btn-vllm-save',    'click', () => settings.saveVLLMTab());
+  // Sandbox / Bot
   on('btn-sandbox-save', 'click', () => settings.saveSandboxTab());
   on('btn-bot-save',     'click', async () => {
     const msgEl = document.getElementById('bot-cfg-msg');
@@ -203,6 +209,14 @@ function _bind() {
     await settings.saveBotTab().catch(e => { if (msgEl) msgEl.textContent = e.message; return; });
     if (msgEl) { msgEl.textContent = 'Saved ✓'; setTimeout(() => { msgEl.textContent = ''; }, 2000); }
   });
+  on('btn-sched-save',   'click', async () => {
+    const msgEl = document.getElementById('sched-cfg-msg');
+    if (msgEl) msgEl.textContent = 'Saving…';
+    await settings.saveSchedulerTab().catch(e => { if (msgEl) msgEl.textContent = e.message; return; });
+    if (msgEl) { msgEl.textContent = 'Saved ✓'; setTimeout(() => { msgEl.textContent = ''; }, 2000); }
+  });
+  on('btn-bark-test', 'click', () => settings.testBark());
+  on('btn-ntfy-test', 'click', () => settings.testNtfy());
   on('btn-bot-start',   'click', () => infraMod.bot.start().catch(e => bus.emit('toast', e.message)));
   on('btn-bot-stop',    'click', () => infraMod.bot.stop().catch(e => bus.emit('toast', e.message)));
   on('btn-bot-refresh', 'click', () => settings.setTab('bot'));
@@ -269,6 +283,9 @@ async function boot() {
     if (p?.enabled && p.name) setAgentAvatar(p.name.charAt(0));
   }).catch(() => {});
   loadWorkstation();
+
+  // Init workspace timeline strip
+  schedulerMod.initWorkspaceStrip().catch(() => {});
 
   // Keep bot badge in sync: fast 5-s poll until the bot is "on", then slow 30-s poll.
   let _botPollFast = null;

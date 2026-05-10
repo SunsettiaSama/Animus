@@ -73,6 +73,18 @@ class AppPaths:
         return self.root / "config" / "infra" / "bot_config.yaml"
 
     @property
+    def bark_config_yaml(self) -> Path:
+        return self.root / "config" / "infra" / "bark_config.yaml"
+
+    @property
+    def ntfy_config_yaml(self) -> Path:
+        return self.root / "config" / "infra" / "ntfy_config.yaml"
+
+    @property
+    def scheduler_config_yaml(self) -> Path:
+        return self.root / "config" / "agent" / "scheduler.yaml"
+
+    @property
     def webui_settings_json(self) -> Path:
         return self.root / "config" / "webui" / "settings.json"
 

@@ -16,18 +16,16 @@ if sys.platform != "win32":
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Triton kernel — Paged Attention forward (non-contiguous KV via block_table)
+# Triton kernel — Paged Attention forward (non-contiguous KV, GQA-aware)
 #
-# KV cache layout : [num_phys_blocks, H, PAGE_SIZE, HEAD_DIM]
+# KV cache layout : [num_phys_blocks, H_kv, PAGE_SIZE, HEAD_DIM]
 # block_table     : [B, max_pages]   int32
 #   block_table[b, i] = physical block id for logical page i of sequence b
 # context_lens    : [B]  int32  — actual filled tokens per sequence
 #
+# Grid: (ceil(Sq / BLOCK_M), H_q, B)
+# GQA: kv_head = head_id // group_size  (correctness path).
 # Structurally identical to flash_attn._flash_attn_fwd.
-# The ONLY difference: K/V are fetched via block_table indirection instead of
-# a contiguous stride, enabling arbitrary physical page layout.
-#
-# Grid: (ceil(Sq / BLOCK_M), H, B)
 # ─────────────────────────────────────────────────────────────────────────────
 
 if _TRITON_AVAILABLE:
@@ -45,14 +43,19 @@ if _TRITON_AVAILABLE:
         stride_btb, stride_btn,
         seqlen_q,
         scale,
+        group_size,
+        q_start_pos,   # >=0: causal mask — Q row i can only attend kv_pos <= q_start_pos+i
+                       # -1 : no causal mask (full bidirectional prefill)
         HEAD_DIM:  tl.constexpr,
         BLOCK_M:   tl.constexpr,
         PAGE_SIZE: tl.constexpr,
         MAX_PAGES: tl.constexpr,
     ):
         batch_id  = tl.program_id(2)
-        head_id   = tl.program_id(1)
+        head_id   = tl.program_id(1)   # Q head index
         q_tile    = tl.program_id(0)
+        kv_head   = head_id // group_size   # KV head index
+
         q_start   = q_tile * BLOCK_M
         q_offs    = q_start + tl.arange(0, BLOCK_M)
         d_offs    = tl.arange(0, HEAD_DIM)
@@ -79,21 +82,31 @@ if _TRITON_AVAILABLE:
             )
             kv_offs = kv_start + page_offs
 
-            K_page = K_cache + phys_block * stride_kb + head_id * stride_kh
+            # K/V access uses kv_head (shared by all Q heads in the group)
+            K_page = K_cache + phys_block * stride_kb + kv_head * stride_kh
             k = tl.load(
                 K_page + d_offs[:, None] * stride_kd + page_offs[None, :] * stride_kp,
                 mask=(kv_offs[None, :] < ctx_len) & valid_page, other=0.0,
             ).to(tl.float32)
 
-            V_page = V_cache + phys_block * stride_vb + head_id * stride_vh
+            V_page = V_cache + phys_block * stride_vb + kv_head * stride_vh
             v = tl.load(
                 V_page + page_offs[:, None] * stride_vp + d_offs[None, :] * stride_vd,
                 mask=(kv_offs[:, None] < ctx_len) & valid_page, other=0.0,
             ).to(tl.float32)
 
-            scores     = tl.dot(q, k) * scale
-            scores     = tl.where((kv_offs[None, :] < ctx_len) & valid_page,
-                                  scores, float("-inf"))
+            scores = tl.dot(q, k) * scale
+
+            # Validity mask: out-of-context KV slots → -inf
+            valid_kv = (kv_offs[None, :] < ctx_len) & valid_page
+
+            # Causal mask: q_start_pos >= 0 → q row i can only attend kv_pos <= q_start_pos+i
+            if q_start_pos >= 0:
+                abs_q_pos  = q_start_pos + q_offs   # [BLOCK_M]
+                causal_ok  = kv_offs[None, :] <= abs_q_pos[:, None]
+                valid_kv   = valid_kv & causal_ok
+
+            scores     = tl.where(valid_kv, scores, float("-inf"))
             m_new      = tl.maximum(m_i, tl.max(scores, axis=1))
             exp_scores = tl.exp(scores - m_new[:, None])
             rescale    = tl.exp(m_i - m_new)
@@ -114,21 +127,26 @@ if _TRITON_AVAILABLE:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def paged_attn_pytorch(
-    q:            torch.Tensor,   # [B, H, Sq, D]
-    k_layer:      torch.Tensor,   # [num_blocks, H, page_size, D]
+    q:            torch.Tensor,   # [B, H_q,  Sq, D]
+    k_layer:      torch.Tensor,   # [num_blocks, H_kv, page_size, D]
     v_layer:      torch.Tensor,
     block_table:  torch.Tensor,   # [B, max_pages]  int32
     context_lens: torch.Tensor,   # [B]             int32
     scale:        float,
+    group_size:   int = 1,
+    q_start_pos:  int = -1,
 ) -> torch.Tensor:
-    B, H, Sq, D = q.shape
-    page_size    = k_layer.shape[2]
-    out          = torch.zeros_like(q)
+    B, H_q, Sq, D = q.shape
+    H_kv      = k_layer.shape[1]
+    page_size = k_layer.shape[2]
+    out       = torch.zeros_like(q)
+
     for b in range(B):
         ctx   = context_lens[b].item()
         pages = block_table[b].tolist()
-        k_seq = torch.zeros(H, ctx, D, dtype=q.dtype, device=q.device)
-        v_seq = torch.zeros(H, ctx, D, dtype=q.dtype, device=q.device)
+
+        k_seq = torch.zeros(H_kv, ctx, D, dtype=q.dtype, device=q.device)
+        v_seq = torch.zeros(H_kv, ctx, D, dtype=q.dtype, device=q.device)
         for page_idx, phys in enumerate(pages):
             t0     = page_idx * page_size
             t1     = min(t0 + page_size, ctx)
@@ -137,9 +155,26 @@ def paged_attn_pytorch(
                 break
             k_seq[:, t0:t1, :] = k_layer[phys, :, :actual, :]
             v_seq[:, t0:t1, :] = v_layer[phys, :, :actual, :]
-        scores = torch.einsum("hqd,hkd->hqk", q[b].float(), k_seq.float()) * scale
-        attn   = torch.softmax(scores, dim=-1)
-        out[b] = torch.einsum("hqk,hkd->hqd", attn, v_seq.float()).to(q.dtype)
+
+        for h_q in range(H_q):
+            h_kv   = h_q // group_size
+            scores = torch.einsum(
+                "qd,kd->qk", q[b, h_q].float(), k_seq[h_kv].float()
+            ) * scale  # [Sq, ctx]
+
+            if q_start_pos >= 0:
+                # Causal mask for batched verify: Q row i attends kv 0..q_start_pos+i
+                q_positions = torch.arange(q_start_pos, q_start_pos + Sq,
+                                           device=q.device)  # [Sq]
+                kv_positions = torch.arange(ctx, device=q.device)  # [ctx]
+                causal_mask = kv_positions[None, :] > q_positions[:, None]  # [Sq, ctx]
+                scores = scores.masked_fill(causal_mask, float("-inf"))
+
+            attn        = torch.softmax(scores, dim=-1)
+            out[b, h_q] = torch.einsum(
+                "qk,kd->qd", attn, v_seq[h_kv].float()
+            ).to(q.dtype)
+
     return out
 
 
@@ -154,14 +189,22 @@ def paged_attn(
     block_table:  torch.Tensor,
     context_lens: torch.Tensor,
     scale:        float,
+    group_size:   int = 1,
+    q_start_pos:  int = -1,
 ) -> torch.Tensor:
-    """Paged attention — dispatches to Triton kernel on Linux, PyTorch fallback elsewhere."""
+    """Paged attention (GQA-aware, causal-batch-prefill) — Triton on Linux, PyTorch elsewhere.
+
+    q_start_pos:
+        -1   → no causal mask (full bidirectional, used for initial prefill)
+        >=0  → absolute position of q[:,.,0,.]; enables per-row causal mask
+               for decode (Sq=1, q_start_pos=ctx-1) or batched verify (Sq=k+1)
+    """
     if _TRITON_AVAILABLE:
-        B, H, Sq, D = q.shape
-        max_pages    = block_table.shape[1]
-        BLOCK_M      = min(16, Sq)
-        out          = torch.empty_like(q)
-        grid         = (triton.cdiv(Sq, BLOCK_M), H, B)
+        B, H_q, Sq, D = q.shape
+        max_pages = block_table.shape[1]
+        BLOCK_M   = min(16, Sq)
+        out       = torch.empty_like(q)
+        grid      = (triton.cdiv(Sq, BLOCK_M), H_q, B)
         _paged_attn_fwd[grid](
             q, k_layer, v_layer, block_table, context_lens, out,
             q.stride(0),        q.stride(1),        q.stride(2),        q.stride(3),
@@ -169,8 +212,11 @@ def paged_attn(
             v_layer.stride(0),  v_layer.stride(1),  v_layer.stride(2),  v_layer.stride(3),
             out.stride(0),      out.stride(1),      out.stride(2),      out.stride(3),
             block_table.stride(0), block_table.stride(1),
-            Sq, scale,
-            HEAD_DIM=D, BLOCK_M=BLOCK_M, PAGE_SIZE=k_layer.shape[2], MAX_PAGES=max_pages,
+            Sq, scale, group_size, q_start_pos,
+            HEAD_DIM=D, BLOCK_M=BLOCK_M,
+            PAGE_SIZE=k_layer.shape[2], MAX_PAGES=max_pages,
         )
         return out
-    return paged_attn_pytorch(q, k_layer, v_layer, block_table, context_lens, scale)
+    return paged_attn_pytorch(
+        q, k_layer, v_layer, block_table, context_lens, scale, group_size, q_start_pos
+    )

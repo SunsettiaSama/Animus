@@ -38,27 +38,29 @@ static __device__ __forceinline__ int cdiv_dev(int a, int b) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Flash Attention 2 — contiguous KV  [B, H, S, D]
 //
-// Grid:  (ceil(Sq/BLOCK_M),  H,  B)
+// Grid:  (ceil(Sq/BLOCK_M),  H_kv,  B)
 // Block: (BLOCK_M * WARP_SIZE,)      ← one warp per Q-row
 //
-// Each warp w processes Q-row (q_tile*BLOCK_M + w):
-//   • q_frag[VEC] lives in registers throughout — no re-load
-//   • K/V tiles are cooperatively staged into SMEM by all block threads
-//   • FA2 causal skip: if kv_start > q_row, break (entire tile = −∞)
-//   • warp_reduce_sum collapses the VEC partial products into one score scalar
+// GROUP_SIZE = H_q / H_kv.
+//   MHA  → GROUP_SIZE=1, blockIdx.y iterates H_q (= H_kv) heads.
+//   GQA  → GROUP_SIZE>1, blockIdx.y iterates H_kv heads; each block
+//           processes GROUP_SIZE Q heads sharing one KV head.
+//   MQA  → GROUP_SIZE=H_q, one KV head serves all Q heads.
+//
+// K/V tile is loaded into SMEM once and reused by all GROUP_SIZE Q heads,
+// reducing K/V HBM reads by exactly GROUP_SIZE× compared to per-head dispatch.
 // ─────────────────────────────────────────────────────────────────────────────
-template <int HEAD_DIM, int BLOCK_M, int BLOCK_N>
+template <int HEAD_DIM, int BLOCK_M, int BLOCK_N, int GROUP_SIZE>
 __global__ void fa2_fwd_kernel(
-    const __half* __restrict__ Q,      // [B, H, Sq, D]
-    const __half* __restrict__ K,      // [B, H, Sk, D]
-    const __half* __restrict__ V,      // [B, H, Sk, D]
-    __half*       __restrict__ O,      // [B, H, Sq, D]
+    const __half* __restrict__ Q,      // [B, H_q,  Sq, D]
+    const __half* __restrict__ K,      // [B, H_kv, Sk, D]
+    const __half* __restrict__ V,      // [B, H_kv, Sk, D]
+    __half*       __restrict__ O,      // [B, H_q,  Sq, D]
     int Sq, int Sk,
-    // strides (in elements, not bytes)
-    int sqB, int sqH, int sqS,         // Q  batch / head / seq
-    int skB, int skH, int skS,         // K
-    int svB, int svH, int svS,         // V
-    int soB, int soH, int soS,         // O
+    int sqB, int sqH, int sqS,         // Q  strides: batch / head / seq
+    int skB, int skH, int skS,         // K  strides  (H_kv dimension)
+    int svB, int svH, int svS,         // V  strides
+    int soB, int soH, int soS,         // O  strides  (H_q  dimension)
     float scale,
     bool  causal
 );
@@ -67,29 +69,34 @@ __global__ void fa2_fwd_kernel(
 // ─────────────────────────────────────────────────────────────────────────────
 // Paged Attention 2 — paged KV cache
 //
-// K_cache / V_cache layout: [num_phys_blocks, H, PAGE_SIZE, D]
+// K_cache / V_cache layout: [num_phys_blocks, H_kv, PAGE_SIZE, D]
 // block_table:               [B, max_pages]   int32
 // context_lens:              [B]              int32
 //
-// Structurally identical to fa2_fwd_kernel.
-// The only change: K/V SMEM load reads through block_table indirection
-// instead of contiguous stride — the online-softmax body is untouched.
+// Grid:  (ceil(Sq/BLOCK_M),  H_kv,  B)
+// Same GROUP_SIZE semantics as fa2_fwd_kernel.
+// K/V SMEM load uses block_table indirection instead of contiguous stride;
+// the online-softmax body (and GROUP_SIZE loop) is untouched.
 // ─────────────────────────────────────────────────────────────────────────────
-template <int HEAD_DIM, int BLOCK_M, int PAGE_SIZE>
+template <int HEAD_DIM, int BLOCK_M, int PAGE_SIZE, int GROUP_SIZE>
 __global__ void paged_attn2_fwd_kernel(
-    const __half* __restrict__ Q,
-    const __half* __restrict__ K_cache,
+    const __half* __restrict__ Q,          // [B, H_q,  Sq, D]
+    const __half* __restrict__ K_cache,    // [num_blocks, H_kv, PAGE_SIZE, D]
     const __half* __restrict__ V_cache,
-    __half*       __restrict__ O,
-    const int*    __restrict__ block_table,    // [B, max_pages]
-    const int*    __restrict__ context_lens,   // [B]
+    __half*       __restrict__ O,          // [B, H_q,  Sq, D]
+    const int*    __restrict__ block_table,  // [B, max_pages]
+    const int*    __restrict__ context_lens, // [B]
     int Sq, int max_pages,
     int sqB, int sqH, int sqS,
     int skB, int skH, int skP,   // K_cache: block / head / page-slot strides
     int svB, int svH, int svP,
     int soB, int soH, int soS,
     int stBB, int stBN,          // block_table: batch / page strides
-    float scale
+    float scale,
+    int   q_start_pos            // absolute position of Q[0] in the sequence
+                                 // decode: q_start_pos = context_len - 1
+                                 // prefill/verify: q_start_pos = offset before Q
+                                 // -1 disables causal masking (full attention)
 );
 
 } // namespace attn

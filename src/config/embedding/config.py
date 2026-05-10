@@ -17,7 +17,7 @@ class BuildConfig:
     passage_prefix: str = ""
     query_prefix: str = "query: "
     output_dir: str = ""
-    index_filename: str = "index.faiss"
+    collection_name: str = "corpus"
     meta_filename: str = "meta.jsonl"
 
     @classmethod
@@ -39,6 +39,6 @@ class BuildConfig:
             passage_prefix=data.get("passage_prefix", ""),
             query_prefix=data.get("query_prefix", "query: "),
             output_dir=data.get("output_dir", ""),
-            index_filename=data.get("index_filename", "index.faiss"),
+            collection_name=data.get("collection_name", "corpus"),
             meta_filename=data.get("meta_filename", "meta.jsonl"),
         )

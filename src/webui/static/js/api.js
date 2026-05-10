@@ -37,10 +37,17 @@ export const PATHS = {
   },
   persona:   { get: '/api/persona', save: '/api/persona/save' },
   scheduler: {
-    tasks:     '/api/scheduler/tasks',
-    task:      id => `/api/scheduler/tasks/${id}`,
-    axis:      '/api/scheduler/axis',
-    proactive: '/api/scheduler/proactive',
+    tasks:          '/api/scheduler/tasks',
+    task:           id => `/api/scheduler/tasks/${id}`,
+    axis:           '/api/scheduler/axis',
+    proactive:      '/api/scheduler/proactive',
+    config:         '/api/scheduler/config',
+    status:         '/api/scheduler/status',
+    control:        '/api/scheduler/control',
+    journal:        '/api/scheduler/journal',
+    heartbeatFile:  '/api/scheduler/heartbeat-file',
+    heartbeatLog:   (n = 50) => `/api/scheduler/heartbeat-log?n=${n}`,
+    webhookTrigger: '/api/scheduler/webhook/heartbeat',
   },
   knowledge: {
     docs:    '/api/kb/documents',
@@ -127,8 +134,12 @@ export const PATHS = {
 
 // ── HTTP utilities ────────────────────────────────────────────────────────────
 
-function _checkJson(r) {
-  if (!r.ok) throw new Error(`HTTP ${r.status} ${r.url}`);
+async function _checkJson(r) {
+  if (!r.ok) {
+    let msg = `HTTP ${r.status}`;
+    try { const d = await r.json(); msg = d.error || d.detail || msg; } catch {}
+    throw new Error(msg);
+  }
   return r.json();
 }
 

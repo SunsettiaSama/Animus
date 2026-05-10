@@ -2,6 +2,8 @@ import * as infraMod from '../../modules/infra.js';
 import * as botMod    from '../../modules/bot.js';
 import { $, _v, _c, _si, _sc } from './_helpers.js';
 
+// ── Transport section toggle ──────────────────────────────────────────────────
+
 export function onBotTransportChange() {
   const t = _v('s-bot-transport');
   $('bot-forward-ws-section')?.classList.toggle('hidden', t !== 'forward_ws');
@@ -17,28 +19,51 @@ async function _loadPublicIp() {
   el.textContent = d?.ip ?? '查询失败';
 }
 
+// ── Channel selector ─────────────────────────────────────────────────────────
+
+export function onChannelChange() {
+  const ch = _v('s-channel-select');
+  $('channel-bot-section')?.classList.toggle('hidden',  ch !== 'bot');
+  $('channel-bark-section')?.classList.toggle('hidden', ch !== 'bark');
+  $('channel-ntfy-section')?.classList.toggle('hidden', ch !== 'ntfy');
+}
+
+// ── Notify section helpers ────────────────────────────────────────────────────
+
+function _setNotifyMsg(elId, text, isErr = false) {
+  const el = $(elId);
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = isErr ? 'var(--danger, #e05)' : 'var(--text3)';
+  if (text && !isErr) setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 2500);
+}
+
+// ── Load ──────────────────────────────────────────────────────────────────────
+
 export async function load() {
+  // ── Bot config ──────────────────────────────────────────────────────────────
   const d = await infraMod.bot.loadConfig().catch(() => null);
-  if (!d) return;
-  _sc('s-bot-enabled',      d.enabled ?? false);
-  _si('s-bot-transport',    d.transport ?? 'forward_ws');
-  _si('s-bot-ws-url',       d.ws_url ?? '');
-  _si('s-bot-token',        d.access_token ?? '');
-  _si('s-bot-reconnect',    d.reconnect_interval_sec ?? 5);
-  _si('s-bot-appid',        d.appid ?? '');
-  _si('s-bot-secret',       d.secret ?? '');
-  _sc('s-bot-sandbox',      d.is_sandbox ?? false);
-  _si('s-bot-proxy',        d.proxy ?? '');
-  _si('s-bot-users',        (d.allowed_private_users ?? []).join(', '));
-  _si('s-bot-groups',       (d.allowed_groups ?? []).join(', '));
-  _si('s-bot-prefix',       d.command_prefix ?? '');
-  _si('s-bot-max-sessions', d.max_sessions ?? 100);
-  _si('s-bot-ttl',          d.session_ttl_hours ?? 24);
-  _si('s-bot-invite-code',  d.invite_code ?? '');
-  _si('s-bot-invite-limit', d.invite_daily_limit ?? 4);
-  _sc('s-bot-show-step-progress', d.show_step_progress    ?? false);
-  _si('s-bot-debounce',          d.message_debounce_secs ?? 2);
-  onBotTransportChange();
+  if (d) {
+    _sc('s-bot-enabled',      d.enabled ?? false);
+    _si('s-bot-transport',    d.transport ?? 'forward_ws');
+    _si('s-bot-ws-url',       d.ws_url ?? '');
+    _si('s-bot-token',        d.access_token ?? '');
+    _si('s-bot-reconnect',    d.reconnect_interval_sec ?? 5);
+    _si('s-bot-appid',        d.appid ?? '');
+    _si('s-bot-secret',       d.secret ?? '');
+    _sc('s-bot-sandbox',      d.is_sandbox ?? false);
+    _si('s-bot-proxy',        d.proxy ?? '');
+    _si('s-bot-users',        (d.allowed_private_users ?? []).join(', '));
+    _si('s-bot-groups',       (d.allowed_groups ?? []).join(', '));
+    _si('s-bot-prefix',       d.command_prefix ?? '');
+    _si('s-bot-max-sessions', d.max_sessions ?? 100);
+    _si('s-bot-ttl',          d.session_ttl_hours ?? 24);
+    _si('s-bot-invite-code',  d.invite_code ?? '');
+    _si('s-bot-invite-limit', d.invite_daily_limit ?? 4);
+    _sc('s-bot-show-step-progress', d.show_step_progress    ?? false);
+    _si('s-bot-debounce',          d.message_debounce_secs ?? 2);
+    onBotTransportChange();
+  }
 
   const st    = await infraMod.bot.status().catch(() => null);
   const badge = $('s-bot-status-badge');
@@ -52,10 +77,39 @@ export async function load() {
     const sessEl = $('s-bot-sessions-count');
     if (sessEl) sessEl.textContent = `${st.active_sessions ?? 0} 个活跃会话`;
   }
+
+  // ── Notify config ───────────────────────────────────────────────────────────
+  const [bark, ntfy] = await Promise.all([
+    fetch('/api/notify/bark/config').then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch('/api/notify/ntfy/config').then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+
+  if (bark) {
+    _sc('s-bark-enabled',    bark.enabled    ?? false);
+    _si('s-bark-server-url', bark.server_url ?? 'https://api.day.app');
+    _si('s-bark-device-key', bark.device_key ?? '');
+    _si('s-bark-sound',      bark.sound      ?? '');
+    _si('s-bark-group',      bark.group      ?? 'ReAct');
+  }
+
+  if (ntfy) {
+    _sc('s-ntfy-enabled',    ntfy.enabled    ?? false);
+    _si('s-ntfy-server-url', ntfy.server_url ?? 'https://ntfy.sh');
+    _si('s-ntfy-topic',      ntfy.topic      ?? '');
+    _si('s-ntfy-username',   ntfy.username   ?? '');
+    _si('s-ntfy-password',   ntfy.password   ?? '');
+    const pri = $('s-ntfy-priority');
+    if (pri) pri.value = String(ntfy.priority ?? 3);
+  }
+
+  onChannelChange();
 }
+
+// ── Save ──────────────────────────────────────────────────────────────────────
 
 export async function save() {
   const _ids = id => _v(id).split(',').map(s => s.trim()).filter(s => s.length > 0);
+
   await botMod.saveConfig({
     enabled:                _c('s-bot-enabled'),
     transport:              _v('s-bot-transport'),
@@ -76,4 +130,63 @@ export async function save() {
     show_step_progress:    _c('s-bot-show-step-progress'),
     message_debounce_secs: parseFloat(_v('s-bot-debounce')) || 0,
   });
+
+  await Promise.all([_saveBark(), _saveNtfy()]);
+}
+
+// ── Bark save / test ──────────────────────────────────────────────────────────
+
+async function _saveBark() {
+  const res = await fetch('/api/notify/bark/config', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled:    _c('s-bark-enabled'),
+      server_url: _v('s-bark-server-url').trim(),
+      device_key: _v('s-bark-device-key').trim(),
+      sound:      _v('s-bark-sound').trim(),
+      group:      _v('s-bark-group').trim(),
+    }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.error ?? 'Failed to save Bark config');
+  }
+}
+
+async function _saveNtfy() {
+  const res = await fetch('/api/notify/ntfy/config', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled:    _c('s-ntfy-enabled'),
+      server_url: _v('s-ntfy-server-url').trim(),
+      topic:      _v('s-ntfy-topic').trim(),
+      username:   _v('s-ntfy-username').trim(),
+      password:   _v('s-ntfy-password'),
+      priority:   parseInt(_v('s-ntfy-priority')) || 3,
+    }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.error ?? 'Failed to save ntfy config');
+  }
+}
+
+export async function testBark() {
+  _setNotifyMsg('bark-cfg-msg', '发送中…');
+  const res = await fetch('/api/notify/bark/test', { method: 'POST' });
+  const d = await res.json().catch(() => ({}));
+  res.ok
+    ? _setNotifyMsg('bark-cfg-msg', '✓ 发送成功')
+    : _setNotifyMsg('bark-cfg-msg', `✗ ${d.error ?? '发送失败'}`, true);
+}
+
+export async function testNtfy() {
+  _setNotifyMsg('ntfy-cfg-msg', '发送中…');
+  const res = await fetch('/api/notify/ntfy/test', { method: 'POST' });
+  const d = await res.json().catch(() => ({}));
+  res.ok
+    ? _setNotifyMsg('ntfy-cfg-msg', '✓ 发送成功')
+    : _setNotifyMsg('ntfy-cfg-msg', `✗ ${d.error ?? '发送失败'}`, true);
 }

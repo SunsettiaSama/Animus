@@ -1,4 +1,5 @@
 from agent.scheduler.clock import TemporalClock
+from agent.scheduler.command import EventCommand
 from agent.scheduler.config import SchedulerConfig
 from agent.scheduler.engine import SchedulerEngine
 from agent.scheduler.event_bus import EventBus
@@ -8,6 +9,7 @@ from agent.scheduler.timeline import TimelineStore
 __all__ = [
     "DeliveryMode",
     "EventBus",
+    "EventCommand",
     "SchedulerConfig",
     "SchedulerEngine",
     "ScheduledTask",

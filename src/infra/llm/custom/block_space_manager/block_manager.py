@@ -175,6 +175,24 @@ class BlockSpaceManager:
         if state is not None:
             self._free.extend(state.physical_blocks)
 
+    def rollback(self, seq_id: int, keep_tokens: int) -> None:
+        """Shrink a running sequence back to keep_tokens, releasing excess blocks.
+
+        Used by speculative decoding to discard rejected draft tokens from the
+        KV cache.  Blocks that are no longer needed are returned to the free
+        list so they can be reused immediately.
+
+        keep_tokens must be <= state.num_tokens; calling with keep_tokens equal
+        to the current length is a no-op.
+        """
+        state = self._seqs.get(seq_id)
+        if state is None:
+            return
+        needed = self.blocks_needed(keep_tokens)
+        while len(state.physical_blocks) > needed:
+            self._free.append(state.physical_blocks.pop())
+        state.num_tokens = keep_tokens
+
     def build_block_table(
         self,
         seq_ids: list[int],

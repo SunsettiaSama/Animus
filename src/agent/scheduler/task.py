@@ -73,6 +73,11 @@ class ScheduledTask:
     on_complete: str | None      = None
     context: dict | None         = None  # static variables injected into on_complete template
 
+    # ── EventCommand (optional structured command) ────────────────────────────
+    # Stores the original EventCommand template so the frontend can re-edit it.
+    # instruction is always the rendered execution string; command is UI metadata.
+    command: dict | None         = None
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -92,6 +97,7 @@ class ScheduledTask:
             "retry_delay_seconds": self.retry_delay_seconds,
             "on_complete": self.on_complete,
             "context": self.context,
+            "command": self.command,
         }
 
     @classmethod
@@ -114,4 +120,5 @@ class ScheduledTask:
             retry_delay_seconds=d.get("retry_delay_seconds", 60),
             on_complete=d.get("on_complete"),
             context=d.get("context"),
+            command=d.get("command"),
         )

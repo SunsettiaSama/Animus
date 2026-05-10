@@ -4,7 +4,7 @@ namespace vllm_clone {
 namespace attn {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Flash Attention 2 forward — contiguous KV
+// Flash Attention 2 forward — contiguous KV, GQA-aware
 //
 // Thread layout (one warp = one Q-row):
 //
@@ -12,23 +12,22 @@ namespace attn {
 //   ─────────     lane    = threadIdx.x % 32
 //
 //   Each lane owns VEC = HEAD_DIM/32 consecutive D-elements of its Q-row.
-//   The dot product  q[row] · k[j]  is computed as:
 //
-//     partial = Σ_{v=0}^{VEC-1}  q_frag[v] * k_smem[j][lane*VEC + v]
-//     score   = warp_reduce_sum(partial) * scale      ← __shfl_xor_sync tree
+// GROUP_SIZE optimisation:
+//   blockIdx.y = kv_head_id  (0 .. H_kv-1)
+//   For group g in [0, GROUP_SIZE):
+//     q_head = kv_head_id * GROUP_SIZE + g
+//   K/V SMEM tile is loaded ONCE and reused by all GROUP_SIZE Q heads,
+//   cutting K/V HBM reads by GROUP_SIZE× vs. separate per-head dispatch.
 //
-//   After warp_reduce_sum all 32 lanes carry the same scalar `score`,
-//   so m_i / l_i / rescale are broadcast-consistent across the warp.
-//   Only acc[v] differs per lane (it tracks its VEC output elements).
+//   GROUP_SIZE=1 → identical behaviour to the original MHA kernel.
 //
 // FA2 causal skip:
-//   if (causal && kv_start > q_row) break;
-//   This exits the KV-tile loop early — no score computation, no SMEM load.
-//   Proof of safety: all scores would be −∞ → exp(−∞)=0 → zero contribution
-//   to l_i and acc → online-softmax state unchanged → safe to skip.
+//   if (causal && kv_start > q_row) break
+//   All scores would be −∞, contributing nothing to online-softmax state.
 // ─────────────────────────────────────────────────────────────────────────────
 
-template <int HEAD_DIM, int BLOCK_M, int BLOCK_N>
+template <int HEAD_DIM, int BLOCK_M, int BLOCK_N, int GROUP_SIZE>
 __global__ void fa2_fwd_kernel(
     const __half* __restrict__ Q,
     const __half* __restrict__ K,
@@ -41,50 +40,53 @@ __global__ void fa2_fwd_kernel(
     int soB, int soH, int soS,
     float scale, bool causal
 ) {
-    constexpr int VEC = HEAD_DIM / WARP_SIZE;   // D-elements owned by each lane
+    constexpr int VEC = HEAD_DIM / WARP_SIZE;
 
     const int q_tile   = blockIdx.x;
-    const int head_id  = blockIdx.y;
+    const int kv_head  = blockIdx.y;   // KV head index (0 .. H_kv-1)
     const int batch_id = blockIdx.z;
-    const int warp_id  = threadIdx.x / WARP_SIZE;   // = Q-row within tile
+    const int warp_id  = threadIdx.x / WARP_SIZE;
     const int lane     = threadIdx.x % WARP_SIZE;
 
     const int q_row = q_tile * BLOCK_M + warp_id;
     if (q_row >= Sq) return;
 
-    // ── Load Q row into registers (held for entire KV loop) ──────────────────
-    float q_frag[VEC];
-    const __half* q_ptr = Q + batch_id * sqB + head_id * sqH + q_row * sqS;
+    // ── Load GROUP_SIZE Q rows into registers (one per Q head in this group) ──
+    float q_frag[GROUP_SIZE][VEC];
     #pragma unroll
-    for (int v = 0; v < VEC; ++v)
-        q_frag[v] = __half2float(q_ptr[lane * VEC + v]);
+    for (int g = 0; g < GROUP_SIZE; ++g) {
+        const int q_head = kv_head * GROUP_SIZE + g;
+        const __half* q_ptr = Q + batch_id * sqB + q_head * sqH + q_row * sqS;
+        #pragma unroll
+        for (int v = 0; v < VEC; ++v)
+            q_frag[g][v] = __half2float(q_ptr[lane * VEC + v]);
+    }
 
-    // ── Online-softmax running state ──────────────────────────────────────────
-    float m_i = -1e20f;   // running row-max
-    float l_i =  0.0f;    // running exp-sum
-    float acc[VEC];        // running weighted-V accumulator
+    // ── GROUP_SIZE independent online-softmax states ──────────────────────────
+    float m_i[GROUP_SIZE], l_i[GROUP_SIZE];
+    float acc[GROUP_SIZE][VEC];
     #pragma unroll
-    for (int v = 0; v < VEC; ++v) acc[v] = 0.f;
+    for (int g = 0; g < GROUP_SIZE; ++g) {
+        m_i[g] = -1e20f;
+        l_i[g] =  0.0f;
+        #pragma unroll
+        for (int v = 0; v < VEC; ++v) acc[g][v] = 0.f;
+    }
 
-    // ── Shared memory — holds one K/V tile at a time ──────────────────────────
-    // Size: 2 × BLOCK_N × HEAD_DIM × 4 bytes = 2 × 16 × 64 × 4 = 8 KB  (fine)
+    // ── Shared memory — one K/V tile, amortised over GROUP_SIZE Q heads ───────
     __shared__ float k_smem[BLOCK_N][HEAD_DIM];
     __shared__ float v_smem[BLOCK_N][HEAD_DIM];
 
     // ── KV-tile loop ──────────────────────────────────────────────────────────
     for (int kv_start = 0; kv_start < Sk; kv_start += BLOCK_N) {
 
-        // FA2 causal skip — entire tile is beyond q_row's horizon
         if (causal && kv_start > q_row) break;
 
         const int tile_len = min(BLOCK_N, Sk - kv_start);
 
-        // ── Cooperative SMEM load ────────────────────────────────────────────
-        // All BLOCK_M*32 threads stride through the BLOCK_N*HEAD_DIM elements.
-        // With 128 threads and 1024 elements (BLOCK_N=16, HEAD_DIM=64)
-        // each thread loads exactly 8 elements — no tail handling needed.
-        const __half* k_base = K + batch_id * skB + head_id * skH;
-        const __half* v_base = V + batch_id * svB + head_id * svH;
+        // Cooperative SMEM load — uses kv_head (shared across all Q heads)
+        const __half* k_base = K + batch_id * skB + kv_head * skH;
+        const __half* v_base = V + batch_id * svB + kv_head * svH;
 
         for (int idx = threadIdx.x; idx < tile_len * HEAD_DIM; idx += blockDim.x) {
             const int r = idx / HEAD_DIM;
@@ -94,60 +96,55 @@ __global__ void fa2_fwd_kernel(
         }
         __syncthreads();
 
-        // ── Per-token inner loop ─────────────────────────────────────────────
+        // ── Per-token inner loop — GROUP_SIZE Q heads against same k/v_smem ───
         for (int j = 0; j < tile_len; ++j) {
-            // Causal mask at token granularity (boundary tile only)
             if (causal && (kv_start + j) > q_row) break;
 
-            // Step 1: partial dot product — each lane computes VEC multiplies
-            float partial = 0.f;
             #pragma unroll
-            for (int v = 0; v < VEC; ++v)
-                partial += q_frag[v] * k_smem[j][lane * VEC + v];
+            for (int g = 0; g < GROUP_SIZE; ++g) {
+                float partial = 0.f;
+                #pragma unroll
+                for (int v = 0; v < VEC; ++v)
+                    partial += q_frag[g][v] * k_smem[j][lane * VEC + v];
 
-            // Step 2: warp reduction via __shfl_xor_sync tree
-            //   After this call every lane holds the full dot product.
-            float score = warp_reduce_sum(partial) * scale;
+                float score   = warp_reduce_sum(partial) * scale;
+                float m_new   = fmaxf(m_i[g], score);
+                float exp_s   = expf(score  - m_new);
+                float rescale = expf(m_i[g] - m_new);
+                l_i[g]        = l_i[g] * rescale + exp_s;
+                m_i[g]        = m_new;
 
-            // Step 3: online-softmax update (Dao 2022 §3.1)
-            //   m_i, l_i, rescale are identical across all lanes (same score).
-            float m_new   = fmaxf(m_i, score);
-            float exp_s   = expf(score - m_new);
-            float rescale = expf(m_i   - m_new);
-            l_i = l_i * rescale + exp_s;
-            m_i = m_new;
-
-            // Step 4: weighted-V accumulation — lane-local, no communication
-            #pragma unroll
-            for (int v = 0; v < VEC; ++v)
-                acc[v] = acc[v] * rescale + exp_s * v_smem[j][lane * VEC + v];
+                #pragma unroll
+                for (int v = 0; v < VEC; ++v)
+                    acc[g][v] = acc[g][v] * rescale + exp_s * v_smem[j][lane * VEC + v];
+            }
         }
 
-        __syncthreads();   // guard before next tile overwrites k/v_smem
+        __syncthreads();
     }
 
-    // ── Write output ──────────────────────────────────────────────────────────
-    __half* o_ptr = O + batch_id * soB + head_id * soH + q_row * soS;
+    // ── Write GROUP_SIZE outputs to their respective Q-head slots ─────────────
     #pragma unroll
-    for (int v = 0; v < VEC; ++v)
-        o_ptr[lane * VEC + v] = __float2half(acc[v] / l_i);
+    for (int g = 0; g < GROUP_SIZE; ++g) {
+        const int q_head = kv_head * GROUP_SIZE + g;
+        __half* o_ptr = O + batch_id * soB + q_head * soH + q_row * soS;
+        #pragma unroll
+        for (int v = 0; v < VEC; ++v)
+            o_ptr[lane * VEC + v] = __float2half(acc[g][v] / l_i[g]);
+    }
 }
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Paged Attention 2 forward — paged KV cache
+// Paged Attention 2 forward — paged KV cache, GQA-aware
 //
-// Identical to fa2_fwd_kernel in all respects EXCEPT the SMEM load:
-//
-//   Contiguous:   k_base[(kv_start + r) * stride + c]
-//   Paged:        K_cache[block_table[b, page_idx], head, slot, c]
-//
-// The online-softmax body (steps 1-4) is byte-for-byte the same.
-// This is the central claim of the paged-attention paper: paging only
-// changes the addressing mode, not the computation.
+// Identical to fa2_fwd_kernel in structure.
+// The only change vs. fa2_fwd: K/V SMEM load reads through block_table
+// indirection instead of contiguous stride.  The GROUP_SIZE loop and
+// online-softmax body are byte-for-byte the same.
 // ─────────────────────────────────────────────────────────────────────────────
 
-template <int HEAD_DIM, int BLOCK_M, int PAGE_SIZE>
+template <int HEAD_DIM, int BLOCK_M, int PAGE_SIZE, int GROUP_SIZE>
 __global__ void paged_attn2_fwd_kernel(
     const __half* __restrict__ Q,
     const __half* __restrict__ K_cache,
@@ -161,12 +158,13 @@ __global__ void paged_attn2_fwd_kernel(
     int svB, int svH, int svP,
     int soB, int soH, int soS,
     int stBB, int stBN,
-    float scale
+    float scale,
+    int   q_start_pos
 ) {
     constexpr int VEC = HEAD_DIM / WARP_SIZE;
 
     const int q_tile   = blockIdx.x;
-    const int head_id  = blockIdx.y;
+    const int kv_head  = blockIdx.y;
     const int batch_id = blockIdx.z;
     const int warp_id  = threadIdx.x / WARP_SIZE;
     const int lane     = threadIdx.x % WARP_SIZE;
@@ -174,35 +172,43 @@ __global__ void paged_attn2_fwd_kernel(
     const int q_row = q_tile * BLOCK_M + warp_id;
     if (q_row >= Sq) return;
 
-    // ── Load Q ────────────────────────────────────────────────────────────────
-    float q_frag[VEC];
-    const __half* q_ptr = Q + batch_id * sqB + head_id * sqH + q_row * sqS;
+    // ── Load GROUP_SIZE Q rows ────────────────────────────────────────────────
+    float q_frag[GROUP_SIZE][VEC];
     #pragma unroll
-    for (int v = 0; v < VEC; ++v)
-        q_frag[v] = __half2float(q_ptr[lane * VEC + v]);
+    for (int g = 0; g < GROUP_SIZE; ++g) {
+        const int q_head = kv_head * GROUP_SIZE + g;
+        const __half* q_ptr = Q + batch_id * sqB + q_head * sqH + q_row * sqS;
+        #pragma unroll
+        for (int v = 0; v < VEC; ++v)
+            q_frag[g][v] = __half2float(q_ptr[lane * VEC + v]);
+    }
 
     const int ctx_len = context_lens[batch_id];
 
-    float m_i = -1e20f, l_i = 0.f;
-    float acc[VEC];
+    float m_i[GROUP_SIZE], l_i[GROUP_SIZE];
+    float acc[GROUP_SIZE][VEC];
     #pragma unroll
-    for (int v = 0; v < VEC; ++v) acc[v] = 0.f;
+    for (int g = 0; g < GROUP_SIZE; ++g) {
+        m_i[g] = -1e20f;
+        l_i[g] =  0.0f;
+        #pragma unroll
+        for (int v = 0; v < VEC; ++v) acc[g][v] = 0.f;
+    }
 
     __shared__ float k_smem[PAGE_SIZE][HEAD_DIM];
     __shared__ float v_smem[PAGE_SIZE][HEAD_DIM];
 
-    // ── Page loop ─────────────────────────────────────────────────────────────
+    // ── Page loop — load K/V once per page, apply to all GROUP_SIZE Q heads ───
     for (int page_idx = 0; page_idx < max_pages; ++page_idx) {
         const int kv_start = page_idx * PAGE_SIZE;
         if (kv_start >= ctx_len) break;
 
-        // block_table lookup: logical page → physical block id
         const int phys     = block_table[batch_id * stBB + page_idx * stBN];
         const int tile_len = min(PAGE_SIZE, ctx_len - kv_start);
 
-        // ── Cooperative SMEM load from physical block ────────────────────────
-        const __half* k_page = K_cache + phys * skB + head_id * skH;
-        const __half* v_page = V_cache + phys * svB + head_id * svH;
+        // Load from physical block using kv_head (shared by all Q heads)
+        const __half* k_page = K_cache + phys * skB + kv_head * skH;
+        const __half* v_page = V_cache + phys * svB + kv_head * svH;
 
         for (int idx = threadIdx.x; idx < tile_len * HEAD_DIM; idx += blockDim.x) {
             const int slot = idx / HEAD_DIM;
@@ -214,61 +220,78 @@ __global__ void paged_attn2_fwd_kernel(
 
         // ── Per-token inner loop — byte-for-byte identical to fa2_fwd ─────────
         for (int j = 0; j < tile_len; ++j) {
-            float partial = 0.f;
-            #pragma unroll
-            for (int v = 0; v < VEC; ++v)
-                partial += q_frag[v] * k_smem[j][lane * VEC + v];
-
-            float score   = warp_reduce_sum(partial) * scale;
-            float m_new   = fmaxf(m_i, score);
-            float exp_s   = expf(score - m_new);
-            float rescale = expf(m_i   - m_new);
-            l_i = l_i * rescale + exp_s;
-            m_i = m_new;
+            const int abs_kv_pos = kv_start + j;
 
             #pragma unroll
-            for (int v = 0; v < VEC; ++v)
-                acc[v] = acc[v] * rescale + exp_s * v_smem[j][lane * VEC + v];
+            for (int g = 0; g < GROUP_SIZE; ++g) {
+                // Causal mask: KV position must not exceed this Q-row's position.
+                // q_start_pos == -1 disables causal masking (full bidirectional).
+                const int abs_q_pos = q_start_pos + q_row;
+                if (q_start_pos >= 0 && abs_kv_pos > abs_q_pos) break;
+
+                float partial = 0.f;
+                #pragma unroll
+                for (int v = 0; v < VEC; ++v)
+                    partial += q_frag[g][v] * k_smem[j][lane * VEC + v];
+
+                float score   = warp_reduce_sum(partial) * scale;
+                float m_new   = fmaxf(m_i[g], score);
+                float exp_s   = expf(score  - m_new);
+                float rescale = expf(m_i[g] - m_new);
+                l_i[g]        = l_i[g] * rescale + exp_s;
+                m_i[g]        = m_new;
+
+                #pragma unroll
+                for (int v = 0; v < VEC; ++v)
+                    acc[g][v] = acc[g][v] * rescale + exp_s * v_smem[j][lane * VEC + v];
+            }
         }
         __syncthreads();
     }
 
-    // ── Write output ──────────────────────────────────────────────────────────
-    __half* o_ptr = O + batch_id * soB + head_id * soH + q_row * soS;
+    // ── Write GROUP_SIZE outputs ──────────────────────────────────────────────
     #pragma unroll
-    for (int v = 0; v < VEC; ++v)
-        o_ptr[lane * VEC + v] = __float2half(acc[v] / l_i);
+    for (int g = 0; g < GROUP_SIZE; ++g) {
+        const int q_head = kv_head * GROUP_SIZE + g;
+        __half* o_ptr = O + batch_id * soB + q_head * soH + q_row * soS;
+        #pragma unroll
+        for (int v = 0; v < VEC; ++v)
+            o_ptr[lane * VEC + v] = __float2half(acc[g][v] / l_i[g]);
+    }
 }
 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Explicit instantiations
 //
-// BLOCK_M=4   → 4 warps per block = 128 threads (good occupancy on A100/H100)
-// BLOCK_N=16  → one PAGE_SIZE worth of KV per tile
-// HEAD_DIM    → 64 (Qwen-0.5B) or 128 (LLaMA-7B / most production models)
+// BLOCK_M=4     → 4 warps per block = 128 threads
+// BLOCK_N=16/32 → KV tile size
+// HEAD_DIM=64   → Qwen-0.5B / small models
+// HEAD_DIM=128  → LLaMA / most production models
+// GROUP_SIZE    → 1=MHA, 2/4/8=GQA, H_q=MQA
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define FA2_INST(HD, BM, BN) \
-    template __global__ void fa2_fwd_kernel<HD, BM, BN>( \
+#define FA2_INST(HD, BM, BN, GS) \
+    template __global__ void fa2_fwd_kernel<HD, BM, BN, GS>( \
         const __half*, const __half*, const __half*, __half*, \
         int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, \
         float, bool)
 
-#define PA2_INST(HD, BM, PS) \
-    template __global__ void paged_attn2_fwd_kernel<HD, BM, PS>( \
+#define PA2_INST(HD, BM, PS, GS) \
+    template __global__ void paged_attn2_fwd_kernel<HD, BM, PS, GS>( \
         const __half*, const __half*, const __half*, __half*, \
         const int*, const int*, \
         int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, \
         float)
 
-FA2_INST(64,  4, 16);
-FA2_INST(64,  4, 32);
-FA2_INST(128, 4, 16);
-FA2_INST(128, 4, 32);
+// MHA (GROUP_SIZE=1) + common GQA configs (2, 4, 8)
+FA2_INST(64,  4, 16, 1);  FA2_INST(64,  4, 16, 2);  FA2_INST(64,  4, 16, 4);  FA2_INST(64,  4, 16, 8);
+FA2_INST(64,  4, 32, 1);  FA2_INST(64,  4, 32, 2);  FA2_INST(64,  4, 32, 4);  FA2_INST(64,  4, 32, 8);
+FA2_INST(128, 4, 16, 1);  FA2_INST(128, 4, 16, 2);  FA2_INST(128, 4, 16, 4);  FA2_INST(128, 4, 16, 8);
+FA2_INST(128, 4, 32, 1);  FA2_INST(128, 4, 32, 2);  FA2_INST(128, 4, 32, 4);  FA2_INST(128, 4, 32, 8);
 
-PA2_INST(64,  4, 16);
-PA2_INST(128, 4, 16);
+PA2_INST(64,  4, 16, 1);  PA2_INST(64,  4, 16, 2);  PA2_INST(64,  4, 16, 4);  PA2_INST(64,  4, 16, 8);
+PA2_INST(128, 4, 16, 1);  PA2_INST(128, 4, 16, 2);  PA2_INST(128, 4, 16, 4);  PA2_INST(128, 4, 16, 8);
 
 } // namespace attn
 } // namespace vllm_clone

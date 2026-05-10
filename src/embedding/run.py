@@ -31,7 +31,7 @@ def _parse_args() -> BuildConfig:
     p.add_argument("--query-prefix", default="query: ", help="prefix prepended to queries at search time (must match build-time setting)")
     p.add_argument("--batch-size", type=int, default=64, help="embedding batch size")
     p.add_argument("--output-dir", default="knowledge_base", help="directory to write the index")
-    p.add_argument("--index-filename", default="index.faiss")
+    p.add_argument("--collection-name", default="corpus", help="Qdrant collection name")
     p.add_argument("--meta-filename", default="meta.jsonl")
 
     args = p.parse_args()
@@ -48,7 +48,7 @@ def _parse_args() -> BuildConfig:
         query_prefix=args.query_prefix,
         batch_size=args.batch_size,
         output_dir=args.output_dir,
-        index_filename=args.index_filename,
+        collection_name=args.collection_name,
         meta_filename=args.meta_filename,
     )
 

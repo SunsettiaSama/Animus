@@ -84,8 +84,6 @@ export async function clearAllHistory() {
 
 // ── Sidebar rendering ─────────────────────────────────────────────────────────
 
-let _histCollapsed = false;
-
 export async function renderSidebar() {
   const listEl = document.getElementById('sidebar-list');
   if (!listEl) return;
@@ -94,26 +92,8 @@ export async function renderSidebar() {
 
   listEl.innerHTML = '';
 
-  // Collapse toggle header
-  const toggleRow = document.createElement('div');
-  toggleRow.className = `sh-toggle${_histCollapsed ? ' collapsed' : ''}`;
-  toggleRow.innerHTML =
-    `<span class="sh-label">对话历史 <span class="sh-count">${conversations.length}</span></span>` +
-    `<span class="sh-chevron">▾</span>`;
-
-  const bodyEl = document.createElement('div');
-  bodyEl.className = `sh-body${_histCollapsed ? ' hidden' : ''}`;
-
-  toggleRow.addEventListener('click', () => {
-    _histCollapsed = !_histCollapsed;
-    toggleRow.classList.toggle('collapsed', _histCollapsed);
-    bodyEl.classList.toggle('hidden', _histCollapsed);
-  });
-
-  listEl.append(toggleRow, bodyEl);
-
   if (!conversations.length) {
-    bodyEl.innerHTML = '<div class="sidebar-empty">No history yet</div>';
+    listEl.innerHTML = '<div class="sidebar-empty">No history yet</div>';
     return;
   }
 
@@ -139,7 +119,7 @@ export async function renderSidebar() {
       await deleteConversation(c.id);
       _cb.onToast('Conversation deleted');
     });
-    bodyEl.appendChild(item);
+    listEl.appendChild(item);
   });
 }
 
