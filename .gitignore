@@ -3,7 +3,9 @@
 models/
 config/**/*.yaml
 config/**/*.yml
+config/
 
+.cache/
 .vscode/
 .env/
 .pytest_cache/
@@ -23,6 +25,7 @@ yarn-error.log
 __pycache__/
 .github/
 .cursor/
+
 
 idea/
 corpus/

@@ -64,71 +64,147 @@ export async function updateServicesRow() {
   const el = document.getElementById('ws-services');
   if (!el) return;
 
-  const data = await services.statusAll().catch(() => null);
+  const [data, barkCfg, ntfyCfg] = await Promise.all([
+    services.statusAll().catch(() => null),
+    fetch('/api/notify/bark/config').then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch('/api/notify/ntfy/config').then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+
   if (!data) {
     el.innerHTML = '<span style="font-size:13px;color:var(--text3)">Could not load services</span>';
     return;
   }
 
+  const activeChannel = localStorage.getItem('react-active-channel') || 'bot';
+
   el.innerHTML = '';
   Object.entries(data).forEach(([name, svc]) => {
-    const meta     = _SERVICE_META[name] ?? { icon: '⚙', label: name };
-    const state    = typeof svc === 'string' ? svc : (svc.state ?? 'unknown');
-    // LLM card shows model·backend when available; others show state string
-    const subtitle = (name === 'llm' && svc.model)
-      ? `${svc.model} · ${svc.backend ?? ''}`
-      : state;
+    const meta  = _SERVICE_META[name] ?? { icon: '⚙', label: name };
+    const state = typeof svc === 'string' ? svc : (svc.state ?? 'unknown');
     const card  = document.createElement('div');
     card.className = 'service-card';
-    card.innerHTML = `
-      <span class="status-dot ${_dotClass(state)}"></span>
-      <span class="sc-icon">${meta.icon}</span>
-      <div class="sc-info">
-        <span class="sc-name">${meta.label}</span>
-        <span class="sc-state">${subtitle}</span>
-      </div>`;
 
-    if (_STARTABLE.has(name) && state !== 'unavailable') {
-      const btn = document.createElement('button');
-      btn.className = 'btn-secondary sc-btn';
-      if (state === 'running') {
-        btn.textContent = 'Stop';
-        btn.addEventListener('click', async () => {
-          btn.disabled = true;
-          btn.textContent = 'Stopping…';
-          _cb.onToast(`Stopping ${name}…`);
-          await services.stop(name).catch(err => _cb.onToast(`Stop failed: ${err.message}`));
-          await updateServicesRow();
-        });
-      } else {
-        btn.textContent = 'Start';
-        btn.addEventListener('click', async () => {
-          btn.disabled = true;
-          btn.textContent = 'Starting…';
-          _cb.onToast(`Starting ${name}…`);
-          await services.start(name).catch(err => {
-            _cb.onToast(`Start failed: ${err.message}`);
-            updateServicesRow();
-            return;
+    if (name === 'bot') {
+      _renderChannelsCard(card, svc, barkCfg, ntfyCfg, activeChannel);
+    } else {
+      // LLM card shows model·backend when available; others show state string
+      const subtitle = (name === 'llm' && svc.model)
+        ? `${svc.model} · ${svc.backend ?? ''}`
+        : state;
+      card.innerHTML = `
+        <span class="status-dot ${_dotClass(state)}"></span>
+        <span class="sc-icon">${meta.icon}</span>
+        <div class="sc-info">
+          <span class="sc-name">${meta.label}</span>
+          <span class="sc-state">${subtitle}</span>
+        </div>`;
+
+      if (_STARTABLE.has(name) && state !== 'unavailable') {
+        const isStarted = state === 'running' || state === 'connecting';
+        const btn = document.createElement('button');
+        btn.className = 'btn-secondary sc-btn';
+        if (isStarted) {
+          btn.textContent = 'Stop';
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            btn.textContent = 'Stopping…';
+            _cb.onToast(`Stopping ${name}…`);
+            await services.stop(name).catch(err => _cb.onToast(`Stop failed: ${err.message}`));
+            await updateServicesRow();
           });
-          // Poll status every 3 s for up to 30 s to catch when service becomes running.
-          let attempts = 0;
-          const _poll = setInterval(async () => {
-            attempts++;
-            await updateServicesRow().catch(() => {});
-            if (attempts >= 10) clearInterval(_poll);
-          }, 3000);
-          await updateServicesRow();
-        });
+        } else {
+          btn.textContent = 'Start';
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            btn.textContent = 'Starting…';
+            _cb.onToast(`Starting ${name}…`);
+            await services.start(name).catch(err => {
+              _cb.onToast(`Start failed: ${err.message}`);
+              updateServicesRow();
+              return;
+            });
+            let attempts = 0;
+            const _poll = setInterval(async () => {
+              attempts++;
+              await updateServicesRow().catch(() => {});
+              if (attempts >= 10) clearInterval(_poll);
+            }, 3000);
+            await updateServicesRow();
+          });
+        }
+        card.appendChild(btn);
       }
-      card.appendChild(btn);
     }
+
     el.appendChild(card);
   });
 }
 
+function _renderChannelsCard(card, botSvc, barkCfg, ntfyCfg, activeChannel) {
+  const botState   = typeof botSvc === 'string' ? botSvc : (botSvc?.state ?? 'unknown');
+  const barkReady  = !!(barkCfg?.enabled && barkCfg?.device_key);
+  const ntfyReady  = !!(ntfyCfg?.enabled && ntfyCfg?.topic);
+
+  let dotCls, subtitle;
+  if (activeChannel === 'bark') {
+    dotCls   = barkReady ? 'running' : 'stopped';
+    subtitle = barkReady ? '🍎 Bark · 已启用' : '🍎 Bark · 未配置';
+  } else if (activeChannel === 'ntfy') {
+    dotCls   = ntfyReady ? 'running' : 'stopped';
+    subtitle = ntfyReady ? '📢 ntfy · 已启用' : '📢 ntfy · 未配置';
+  } else {
+    dotCls   = _dotClass(botState);
+    subtitle = botState;
+  }
+
+  card.innerHTML = `
+    <span class="status-dot ${dotCls}"></span>
+    <span class="sc-icon">💬</span>
+    <div class="sc-info">
+      <span class="sc-name">Channels</span>
+      <span class="sc-state">${subtitle}</span>
+    </div>`;
+
+  // Start/Stop only makes sense for the bot (QQ) channel
+  if (activeChannel === 'bot' && botState !== 'unavailable') {
+    const isStarted = botState === 'running' || botState === 'connecting';
+    const btn = document.createElement('button');
+    btn.className = 'btn-secondary sc-btn';
+    if (isStarted) {
+      btn.textContent = 'Stop';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = 'Stopping…';
+        _cb.onToast('Stopping Bot…');
+        await services.stop('bot').catch(err => _cb.onToast(`Stop failed: ${err.message}`));
+        await updateServicesRow();
+      });
+    } else {
+      btn.textContent = 'Start';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = 'Starting…';
+        _cb.onToast('Starting Bot…');
+        await services.start('bot').catch(err => {
+          _cb.onToast(`Start failed: ${err.message}`);
+          updateServicesRow();
+          return;
+        });
+        let attempts = 0;
+        const _poll = setInterval(async () => {
+          attempts++;
+          await updateServicesRow().catch(() => {});
+          if (attempts >= 10) clearInterval(_poll);
+        }, 3000);
+        await updateServicesRow();
+      });
+    }
+    card.appendChild(btn);
+  }
+}
+
 function _dotClass(state) {
   if (state === 'running')  return 'running';
-  if (state === 'loading' || state === 'starting') return 'loading';
+  if (state === 'loading' || state === 'starting' || state === 'connecting') return 'loading';
   return 'stopped';
 }

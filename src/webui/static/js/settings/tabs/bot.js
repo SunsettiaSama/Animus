@@ -23,6 +23,7 @@ async function _loadPublicIp() {
 
 export function onChannelChange() {
   const ch = _v('s-channel-select');
+  localStorage.setItem('react-active-channel', ch);
   $('channel-bot-section')?.classList.toggle('hidden',  ch !== 'bot');
   $('channel-bark-section')?.classList.toggle('hidden', ch !== 'bark');
   $('channel-ntfy-section')?.classList.toggle('hidden', ch !== 'ntfy');
@@ -102,18 +103,24 @@ export async function load() {
     if (pri) pri.value = String(ntfy.priority ?? 3);
   }
 
-  // Auto-focus the first enabled channel so users aren't stuck looking at Bot
+  // Restore the channel selection the user last saved, falling back to
+  // inferring from which channels are enabled.
   const sel = $('s-channel-select');
   if (sel) {
-    const botEnabled  = d?.enabled  ?? false;
-    const barkEnabled = bark?.enabled && bark?.device_key;
-    const ntfyEnabled = ntfy?.enabled && ntfy?.topic;
-    if (!botEnabled && barkEnabled) {
-      sel.value = 'bark';
-    } else if (!botEnabled && ntfyEnabled) {
-      sel.value = 'ntfy';
+    const saved = localStorage.getItem('react-active-channel');
+    const validChannels = ['bot', 'bark', 'ntfy'];
+    if (saved && validChannels.includes(saved)) {
+      sel.value = saved;
+    } else {
+      const botEnabled  = d?.enabled  ?? false;
+      const barkEnabled = !!(bark?.enabled && bark?.device_key);
+      const ntfyEnabled = !!(ntfy?.enabled && ntfy?.topic);
+      if (!botEnabled && barkEnabled) {
+        sel.value = 'bark';
+      } else if (!botEnabled && ntfyEnabled) {
+        sel.value = 'ntfy';
+      }
     }
-    // If bot is enabled (even connecting), keep 'bot' selected by default
   }
 
   onChannelChange();
