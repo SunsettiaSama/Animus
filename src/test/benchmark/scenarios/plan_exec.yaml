@@ -1,23 +1,23 @@
 name: plan_exec
-description: "Agent receives a multi-step task and routes it to the plan tool"
+description: "Agent receives a multi-step task and routes it to the flow tool"
 prompt: "请帮我制定一个三步骤的项目启动计划，包括：需求分析、技术选型、排期规划。"
 
 llm_script:
   - |
-    Thought: 用户需要一个结构化的项目计划，这是一个多步骤任务，适合使用计划工具来组织。
-    Action: run_plan
-    Action Input: {"instruction": "制定项目启动计划：1.需求分析 2.技术选型 3.排期规划"}
+    Thought: 用户需要一个结构化的项目计划，这是一个多步骤任务，适合使用 Flow 编排工具来组织。
+    Action: run_flow
+    Action Input: {"question": "制定项目启动计划：1.需求分析 2.技术选型 3.排期规划"}
   - |
     Thought: 计划已经执行完毕，可以向用户汇报结果了。
     Final Answer: 已为您完成项目启动计划的制定：\n1. 需求分析：收集并整理业务需求文档\n2. 技术选型：评估备选技术方案并给出推荐\n3. 排期规划：制定里程碑和时间节点
 
 tool_script:
-  run_plan:
+  run_flow:
     - "计划执行完成：需求分析（3天）→ 技术选型（2天）→ 排期规划（1天）。总计 6 个工作日。"
 
 expected:
   final_output_contains: ["计划", "需求"]
-  tool_calls_required: ["run_plan"]
+  tool_calls_required: ["run_flow"]
   max_steps: 3
   max_wall_ms: 5000
 

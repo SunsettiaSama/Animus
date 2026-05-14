@@ -2,5 +2,5 @@
 import FeatureSkeleton from '../_shared/FeatureSkeleton.vue';
 </script>
 <template>
-  <FeatureSkeleton title="Plan" hint="Port from static/js/modules/plan.js and related screens." />
+  <FeatureSkeleton title="Flow" hint="Port from static/js/modules/plan.js; API: /api/flow/*." />
 </template>

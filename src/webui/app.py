@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from routers import llm, react, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe
+from routers import llm, react, memory, persona, scheduler, knowledge, voice, history, flow, benchmark, probe
 from routers.infra import router as infra_router
 from state import get_state
 
@@ -59,7 +59,7 @@ for _r in [
     infra_router,
     voice.router,
     history.router,
-    plan.router,
+    flow.router,
     benchmark.router,
     probe.router,
 ]:
@@ -205,9 +205,9 @@ def _startup():
 @app.on_event("shutdown")
 def _shutdown():
     state = get_state()
-    # Unblock any open SSE /api/plan/stream connections so they exit before
+    # Unblock any open SSE /api/flow/stream connections so they exit before
     # uvicorn forcefully cancels them (avoids CancelledError in the logs).
-    state.plan_broadcast({"type": "done", "status": "shutdown", "answer": ""})
+    state.flow_broadcast({"type": "done", "status": "shutdown", "answer": ""})
     if state.notify_queue is not None:
         state.notify_queue.put_nowait(None)
     if state.scheduler_engine is not None:

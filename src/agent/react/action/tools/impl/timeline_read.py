@@ -81,8 +81,8 @@ class TimelineReadAction(BaseAction):
             elif ev_type == "tool_call":
                 action = payload.get("action", "")
                 lines.append(f"[{time_label}] 工具调用  {action}")
-            elif ev_type == "plan_event":
-                lines.append(f"[{time_label}] 计划事件  {str(payload)[:80]}")
+            elif ev_type in ("plan_event", "flow_event"):
+                lines.append(f"[{time_label}] Flow/计划事件  {str(payload)[:80]}")
             else:
                 lines.append(f"[{time_label}] {ev_type}  {str(payload)[:80]}")
 

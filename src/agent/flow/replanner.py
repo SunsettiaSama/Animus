@@ -1,0 +1,254 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from typing import Any
+
+from agent.base import AgentBase, AgentResult
+from agent.flow.base.orchestration import ReplanDecision as _BaseReplanDecision
+from agent.flow.config import ReplannerConfig
+from agent.flow.document import PlanDocument, PlanTask, TaskStatus
+from agent.flow.patch import HumanPatch, PatchOp
+
+
+# ── ReplanDecision ────────────────────────────────────────────────────────────
+
+@dataclass
+class ReplanDecision(_BaseReplanDecision):
+    """Plan 集群的重规划决策，扩展了 trigger / confidence / patches 三个域字段。
+
+    继承 base.orchestration.ReplanDecision（decision / conclusion / reason），
+    Orchestrator 核心通过基类字段读取决策结果；
+    plan 集群 Orchestrator 通过 patches 字段获取具体的补丁指令。
+    """
+    trigger: str = ""
+    confidence: float = 1.0
+    patches: list[HumanPatch] = field(default_factory=list)
+
+
+# ── ReplannerInputBuilder ─────────────────────────────────────────────────────
+
+class ReplannerInputBuilder:
+    def __init__(self, cfg: ReplannerConfig) -> None:
+        self._cfg = cfg
+
+    def build(self, doc: PlanDocument, trigger: str, cycle: int) -> str:
+        parts: list[str] = []
+
+        # Objective
+        parts.append("=== Objective ===")
+        parts.append(doc.objective)
+
+        # Completed tasks
+        done_tasks = [t for t in doc.all_tasks() if t.status == TaskStatus.done]
+        if done_tasks:
+            parts.append("\n=== Completed Tasks (Summaries) ===")
+            for t in done_tasks:
+                ctx = t.execution_ctx
+                steps = f"({ctx.step_count} steps)" if ctx else ""
+                summary = ""
+                if t.result:
+                    summary = t.result[:self._cfg.result_summary_max_chars]
+                elif ctx and ctx.result_summary:
+                    summary = ctx.result_summary[:self._cfg.result_summary_max_chars]
+                parts.append(f"✓ {t.task_id} {steps}: {summary}")
+
+        # Failed tasks with detailed context
+        failed_tasks = [t for t in doc.all_tasks() if t.status == TaskStatus.failed]
+        if failed_tasks:
+            parts.append("\n=== Failed Tasks (Detailed Context) ===")
+            for t in failed_tasks:
+                ctx = t.execution_ctx
+                retries = f" after {ctx.retry_count} retries" if ctx else ""
+                error = t.error or (ctx.error if ctx else "unknown error")
+                parts.append(f"✗ {t.task_id}: {error}{retries}")
+                if ctx and ctx.last_steps:
+                    n = self._cfg.failed_last_steps
+                    for step in ctx.last_steps[-n:]:
+                        parts.append(f"    {step}")
+
+        # Remaining plan
+        pending_tasks = [
+            t for t in doc.all_tasks()
+            if t.status in (TaskStatus.pending, TaskStatus.paused)
+        ]
+        if pending_tasks:
+            parts.append("\n=== Remaining Plan ===")
+            for mod in doc.modules:
+                mod_pending = [t for t in mod.tasks if t in pending_tasks]
+                if mod_pending:
+                    parts.append(f"### Module: {mod.name}")
+                    for t in mod_pending:
+                        deps = f" depends_on:{','.join(t.depends_on)}" if t.depends_on else ""
+                        parts.append(f"- [ ] **{t.task_id}** profile:{t.profile}{deps}")
+                        parts.append(f"  {t.description}")
+
+        # Trigger info
+        parts.append(f"\n=== Trigger ===")
+        parts.append(f"{trigger} | cycle: {cycle}")
+
+        return "\n".join(parts)
+
+
+# ── System prompt ─────────────────────────────────────────────────────────────
+
+_REPLANNER_SYSTEM = """\
+You are a replanning agent. Analyse the current plan execution state and decide what to do next.
+
+Your response MUST be valid JSON matching this schema:
+{
+  "decision": "done | continue | modify | abort",
+  "trigger": "<trigger that called you>",
+  "confidence": 0.0-1.0,
+  "reason": "<brief explanation>",
+  "patches": [
+    {"op": "skip", "task_id": "..."},
+    {"op": "set_params", "task_id": "...", "profile": "analyst"},
+    {"op": "add_task", "task_id": "new_task", "module": "...", "profile": "minimal",
+     "description": "...", "depends_on": ["existing_id"]}
+  ],
+  "conclusion": "<final answer if decision=done>"
+}
+
+Decisions:
+- done: All objectives are met. Provide conclusion.
+- continue: Plan is on track, no changes needed.
+- modify: Apply patches to fix/adjust pending tasks.
+- abort: Irrecoverable failure. Provide best current answer in conclusion.
+
+Respond with ONLY the JSON object, no other text.
+"""
+
+
+# ── ReplannerAgent ────────────────────────────────────────────────────────────
+
+class ReplannerAgent(AgentBase):
+    role = "replanner"
+
+    def __init__(
+        self,
+        cfg: ReplannerConfig,
+        llm_cfg_path: str,
+        executor_pool: ThreadPoolExecutor | None = None,
+        event_sink=None,
+    ) -> None:
+        self._cfg = cfg
+        self._llm_cfg_path = llm_cfg_path
+        self._builder = ReplannerInputBuilder(cfg)
+        self._owned_pool = executor_pool is None
+        self._executor = executor_pool or ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="replanner"
+        )
+        self._event_sink = event_sink  # callable(dict) or None
+
+    def set_event_sink(self, sink) -> None:
+        self._event_sink = sink
+
+    def _emit(self, event_dict: dict) -> None:
+        if self._event_sink is not None:
+            self._event_sink(event_dict)
+
+    async def run(self, instruction: str, **ctx: Any) -> AgentResult:
+        doc: PlanDocument = ctx["doc"]
+        trigger: str = ctx.get("trigger", "manual")
+        cycle: int = ctx.get("cycle", 0)
+        plan_id: str = ctx.get("plan_id", "")
+
+        agent_id = str(uuid.uuid4())
+        self._emit({"type": "replanner_thinking", "plan_id": plan_id, "stage": "building_prompt", "cycle": cycle})
+        decision = await asyncio.get_running_loop().run_in_executor(
+            self._executor,
+            self._replan_sync,
+            doc,
+            trigger,
+            cycle,
+            plan_id,
+        )
+        return AgentResult(agent_id=agent_id, role=self.role, status="done", output=decision)
+
+    async def replan(
+        self,
+        spec: Any,
+        graph: Any,
+        *,
+        trigger: str,
+        cycle: int = 0,
+    ) -> ReplanDecision:
+        """BaseReplanner 协议实现。
+
+        plan 集群中 spec 即为 PlanDocument（同时承载说明书与历史状态），
+        graph 参数保留以符合协议签名，内部暂由 PlanDocument 自身提供状态信息。
+        """
+        plan_id: str = spec.plan_id
+        self._emit({"type": "replanner_thinking", "plan_id": plan_id, "stage": "building_prompt", "cycle": cycle})
+        return await asyncio.get_running_loop().run_in_executor(
+            self._executor,
+            self._replan_sync,
+            spec,
+            trigger,
+            cycle,
+            plan_id,
+        )
+
+    def _replan_sync(self, doc: PlanDocument, trigger: str, cycle: int, plan_id: str = "") -> ReplanDecision:
+        from langchain_core.messages import HumanMessage, SystemMessage
+        from config.llm_core.config import LLMConfig
+        from infra.llm import LLM
+
+        self._emit({"type": "replanner_thinking", "plan_id": plan_id, "stage": "calling_llm", "cycle": cycle})
+        llm = LLM(LLMConfig.from_yaml(self._llm_cfg_path))
+        context = self._builder.build(doc, trigger, cycle)
+
+        messages = [
+            SystemMessage(content=_REPLANNER_SYSTEM),
+            HumanMessage(content=context),
+        ]
+        response = llm.generate_messages(messages)
+
+        self._emit({"type": "replanner_thinking", "plan_id": plan_id, "stage": "parsing", "cycle": cycle})
+        return self._parse_decision(response, trigger)
+
+    def _parse_decision(self, text: str, trigger: str) -> ReplanDecision:
+        # Strip markdown code fences if present
+        text = text.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            text = "\n".join(
+                l for l in lines if not l.startswith("```")
+            ).strip()
+
+        raw: dict = {}
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            # Fallback: return continue if parsing fails
+            return ReplanDecision(
+                decision="continue",
+                trigger=trigger,
+                reason=f"Could not parse replanner response: {text[:200]}",
+            )
+
+        patches: list[HumanPatch] = []
+        for p in raw.get("patches", []):
+            op_str = p.get("op", "")
+            task_id = p.get("task_id")
+            payload = {k: v for k, v in p.items() if k not in ("op", "task_id")}
+            try:
+                patches.append(HumanPatch(op=PatchOp(op_str), task_id=task_id, payload=payload))
+            except ValueError:
+                pass  # Unknown op — skip
+
+        return ReplanDecision(
+            decision=raw.get("decision", "continue"),
+            trigger=raw.get("trigger", trigger),
+            confidence=float(raw.get("confidence", 1.0)),
+            reason=raw.get("reason", ""),
+            patches=patches,
+            conclusion=raw.get("conclusion", ""),
+        )
+
+    def should_trigger(self, trigger: str) -> bool:
+        return trigger in self._cfg.triggers

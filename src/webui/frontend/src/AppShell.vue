@@ -20,7 +20,7 @@ appBus.on(EVENTS.toast, onToast);
       <nav>
         <router-link to="/">Landing</router-link>
         <router-link to="/workspace">Workspace</router-link>
-        <router-link to="/plan">Plan</router-link>
+        <router-link to="/flow">Flow</router-link>
         <router-link to="/benchmark">Benchmark</router-link>
         <router-link to="/scheduler">Scheduler</router-link>
         <router-link to="/settings">Settings</router-link>

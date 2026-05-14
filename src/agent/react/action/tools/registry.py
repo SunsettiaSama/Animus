@@ -18,6 +18,23 @@ class ToolMeta:
     tags: list[str] = field(default_factory=list)
 
 
+@dataclass
+class ToolPackage:
+    """命名工具包：一组有语义边界的工具名称集合。
+
+    用途
+    ----
+    · 主 agent（Planner）与子 agent（Executor / SubAgent）使用不同的包，
+      实现工具套组的显式隔离。
+    · SubAgentProfile.tool_package 引用包名即可，无需枚举工具名列表。
+    · 包可以互相组合：ToolRegistry.resolve_tools() 支持递归展开。
+    """
+
+    name: str
+    tools: list[str]
+    description: str = ""
+
+
 class ToolRegistry:
     """
     普通工具注册表。
@@ -28,6 +45,7 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolMeta] = {}
+        self._packages: dict[str, ToolPackage] = {}
 
     def add(
         self,
@@ -86,6 +104,34 @@ class ToolRegistry:
         else:
             metas = [self._tools[n] for n in names if n in self._tools]
         return [meta.action_cls() for meta in metas]
+
+    # ── 工具包管理 ────────────────────────────────────────────────────────────
+
+    def register_package(self, pkg: ToolPackage) -> None:
+        """注册一个命名工具包（同名覆盖）。"""
+        self._packages[pkg.name] = pkg
+
+    def get_package(self, name: str) -> ToolPackage | None:
+        return self._packages.get(name)
+
+    def package_names(self) -> list[str]:
+        return list(self._packages.keys())
+
+    def resolve_tools(self, name_or_package: str) -> list[str]:
+        """将包名解析为工具名列表。
+
+        · 若参数是已注册的包名 → 返回包内工具列表
+        · 若参数是已注册的工具名 → 返回 [name_or_package]
+        · 否则返回空列表（调用方可按需报错）
+        """
+        pkg = self._packages.get(name_or_package)
+        if pkg is not None:
+            return list(pkg.tools)
+        if name_or_package in self._tools:
+            return [name_or_package]
+        return []
+
+    # ── 基础 ─────────────────────────────────────────────────────────────────
 
     def __len__(self) -> int:
         return len(self._tools)

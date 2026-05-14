@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from config.llm_core.config import LLMConfig
     from agent.scheduler.config import SchedulerConfig
     from agent.profile import SubAgentConfig
-    from plan.config import PlanConfig
+    from agent.flow.config import FlowConfig
 
 
 @dataclass
@@ -29,7 +29,7 @@ class TaoConfig:
     repair_llm: LLMConfig | None = field(default=None)
     scheduler: SchedulerConfig | None = field(default=None)
     agent: SubAgentConfig | None = field(default=None)
-    plan: PlanConfig | None = field(default=None)
+    flow: FlowConfig | None = field(default=None)
 
     def __post_init__(self) -> None:
         self._propagate_dirs()

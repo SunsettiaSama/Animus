@@ -145,17 +145,17 @@ def _do_react_init(req: ReactInitRequest, state) -> None:
     state.conv_loop  = conv_loop
     state.react_init_event.set()
 
-    # Wire plan event_sink: when the agent triggers run_plan via chat, plan events
-    # are broadcast to all active SSE subscribers via state.plan_broadcast().
-    def _make_plan_sink(st):
+    # Wire flow event_sink: when the agent triggers run_flow via chat, events
+    # are broadcast to all active SSE subscribers via state.flow_broadcast().
+    def _make_flow_sink(st):
         def _sink(event_dict: dict) -> None:
             loop = st.main_event_loop
             if loop is None:
                 return
-            loop.call_soon_threadsafe(st.plan_broadcast, event_dict)
+            loop.call_soon_threadsafe(st.flow_broadcast, event_dict)
         return _sink
 
-    tao.set_plan_event_sink(_make_plan_sink(state))
+    tao.set_flow_event_sink(_make_flow_sink(state))
 
     def _preload_with_notify():
         _push_notify(state, "preload", "正在加载嵌入模型与长期记忆…", done=False)

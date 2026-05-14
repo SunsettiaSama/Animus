@@ -39,8 +39,8 @@
 | `src/webui/static/js/modules/scheduler.js` | 调度器任务 / 工作站卡片 |
 | `src/webui/static/js/modules/infra.js` | vLLM / 沙盒 / 服务状态 |
 | `src/webui/static/js/modules/knowledge.js` | 知识库面板 |
-| `src/webui/routers/plan.py` | Plan 模式编排控制（运行 / 状态 / SSE 流 / 快照 / 回滚 / 日志 / 暂停 / 跳步）|
-| `src/webui/static/js/modules/plan.js` | Plan 模式前端（BFS DAG 布局、SVG 渲染、SSE 实时更新、影子编辑器、快照列表、日志尾流）|
+| `src/webui/routers/flow.py` | Flow 模式编排控制（运行 / 状态 / SSE 流 / 快照 / 回滚 / 日志 / 暂停 / 跳步），`/api/flow/*` |
+| `src/webui/static/js/modules/plan.js` | 历史 Plan 前端模块（新 API 为 `/api/flow/*`，路由 `/flow`）|
 | `src/webui/routers/benchmark.py` | Benchmark Suite 后端（场景列表 / 运行 SSE / 报告读写 / 历史 / 清除）|
 | `src/webui/static/js/modules/benchmark.js` | Benchmark Suite 前端（场景选择、SSE 进度、结果表格、漂移对比）|
 

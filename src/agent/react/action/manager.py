@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from langchain_core.tools import BaseTool
 
 from ..action.executor import ActionExecutor
+from ..action.tools.registry import ToolPackage
 from ..action.tools import (
     Base64Action,
     CalculatorAction,
@@ -56,6 +57,54 @@ DEFAULT_PRIMARY: list[str] = [
     "word_count",
 ]
 
+# ── 内置工具包定义 ─────────────────────────────────────────────────────────────
+# 分离主 agent（Planner）与子 agent（Executor / SubAgent）的工具套组边界。
+# 包名即可被 SubAgentProfile.tool_package / PlannerConfig.tool_package 直接引用。
+
+BUILTIN_PACKAGES: list[ToolPackage] = [
+    ToolPackage(
+        name="planner",
+        tools=["note_write", "note_read", "note_delete", "web_search", "knowledge_hybrid_search"],
+        description="主 agent（Planner）工具包：草稿本 + 搜索，供规划推理使用",
+    ),
+    ToolPackage(
+        name="executor",
+        tools=["calculator", "get_datetime", "web_search", "unit_converter", "word_count"],
+        description="通用执行子 agent 工具包（= DEFAULT_PRIMARY）",
+    ),
+    ToolPackage(
+        name="researcher",
+        tools=["web_search", "web_fetch", "knowledge_hybrid_search", "knowledge_save", "knowledge_list"],
+        description="研究型子 agent 工具包：网络搜索 + 知识库读写",
+    ),
+    ToolPackage(
+        name="analyst",
+        tools=["calculator", "unit_converter", "get_datetime", "word_count", "python_run",
+               "json_query", "regex_extract"],
+        description="分析型子 agent 工具包：计算 + 数据处理 + 代码执行",
+    ),
+    ToolPackage(
+        name="code",
+        tools=["python_run", "file_read", "file_write", "file_list", "file_exists"],
+        description="代码执行子 agent 工具包：Python 运行 + 文件系统",
+    ),
+    ToolPackage(
+        name="filesystem",
+        tools=["file_read", "file_write", "file_list", "file_exists"],
+        description="文件系统子 agent 工具包",
+    ),
+    ToolPackage(
+        name="knowledge",
+        tools=["knowledge_hybrid_search", "knowledge_save", "knowledge_list"],
+        description="知识库子 agent 工具包",
+    ),
+    ToolPackage(
+        name="network",
+        tools=["web_search", "web_fetch", "http_request"],
+        description="网络请求子 agent 工具包",
+    ),
+]
+
 
 def _build_default_registry() -> ToolRegistry:
     """构建包含所有内置工具的默认注册表。"""
@@ -92,6 +141,10 @@ def _build_default_registry() -> ToolRegistry:
     reg.add(NoteWriteAction,       category="workspace",  tags=["笔记", "草稿本", "记录", "note", "write"])
     reg.add(NoteReadAction,        category="workspace",  tags=["笔记", "草稿本", "读取", "note", "read"])
     reg.add(NoteDeleteAction,      category="workspace",  tags=["笔记", "草稿本", "删除", "note", "delete"])
+
+    for pkg in BUILTIN_PACKAGES:
+        reg.register_package(pkg)
+
     return reg
 
 
@@ -190,6 +243,30 @@ class ToolManager:
         executor.register_instance(ToolSearchAction(manager=self))
         return executor
 
+    # --- 工具包解析 ---
+
+    def resolve_tools(self, package_or_tools: str | list[str] | None) -> list[str] | None:
+        """将包名或工具列表统一解析为工具名列表。
+
+        · None              → None（调用方使用 DEFAULT_PRIMARY）
+        · str               → 查包注册表展开；未找到则当普通工具名处理
+        · list[str]         → 原样返回（可含包名，逐项展开）
+        """
+        if package_or_tools is None:
+            return None
+        if isinstance(package_or_tools, str):
+            resolved = self._registry.resolve_tools(package_or_tools)
+            return resolved if resolved else [package_or_tools]
+        # list: 逐项尝试展开包名
+        result: list[str] = []
+        for item in package_or_tools:
+            expanded = self._registry.resolve_tools(item)
+            if expanded:
+                result.extend(expanded)
+            else:
+                result.append(item)
+        return result
+
     # --- prompt 描述 ---
 
     def primary_descriptions(self, names: list[str] | None = None) -> dict[str, str]:
@@ -197,8 +274,10 @@ class ToolManager:
         返回用于构建 prompt 的工具描述字典。
 
         始终包含 tool_search；若 names 为 None，使用默认主要工具列表。
+        names 可以包含包名，会自动通过 resolve_tools 展开。
         """
-        selected = names if names is not None else self._primary_names
+        resolved = self.resolve_tools(names)
+        selected = resolved if resolved is not None else self._primary_names
         result: dict[str, str] = {}
         for name in selected:
             meta = self._registry.get(name)

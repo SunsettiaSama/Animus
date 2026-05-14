@@ -218,7 +218,7 @@ class RequestNodeExpansionAction(BaseAction):
         main_loop = getattr(self.orchestrator, "_main_loop", None)
         if main_loop is None or not main_loop.is_running():
             return "[request_node_expansion] 编排器主循环不可用。"
-        from plan.event import NodeExpansionRequestEvent
+        from agent.flow.event import NodeExpansionRequestEvent
         ev = NodeExpansionRequestEvent(
             plan_id=self.orchestrator.current_plan_id or "",
             task_id=task_id,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .registry import ToolMeta, ToolRegistry
+    from .registry import ToolMeta, ToolPackage, ToolRegistry
     from .tool_search import ToolSearchAction
     from .impl import (
         Base64Action,
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ToolRegistry",
     "ToolMeta",
+    "ToolPackage",
     "Base64Action",
     "CalculatorAction",
     "FileExistsAction",
@@ -66,7 +67,7 @@ __all__ = [
     "WordCountAction",
 ]
 
-_lazy_from_registry = {"ToolMeta", "ToolRegistry"}
+_lazy_from_registry = {"ToolMeta", "ToolPackage", "ToolRegistry"}
 _lazy_from_tool_search = {"ToolSearchAction"}
 _lazy_from_impl = {
     "Base64Action", "CalculatorAction", "FileExistsAction", "FileListAction",

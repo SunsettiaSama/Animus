@@ -33,6 +33,7 @@ def build_conv_loop(
     from agent.react.tao import TaoLoop
     from config.agent.risk_config import RiskConfig
     from agent.react.action.risk.gate import RiskGate
+    from agent.flow.config import FlowConfig
 
     def _load_memory_config() -> MemoryConfig:
         from agent.runner import _apply_embedding_override
@@ -80,6 +81,7 @@ def build_conv_loop(
             llm_cfg_path=state.llm_config_yaml,
         ),
         agent=SubAgentConfig(llm_cfg_path=state.llm_config_yaml),
+        flow=FlowConfig(),
     )
 
     # Prefer the caller-supplied global engine; fall back to per-loop creation via cfg.scheduler.

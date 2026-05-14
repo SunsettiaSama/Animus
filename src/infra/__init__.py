@@ -1,4 +1,5 @@
 from infra.base_service import BaseServiceManager
+from infra.node_runtime import NodeRuntimeManager
 from infra.sandbox import SandboxManager
 from infra.task_runner import BackgroundTaskRunner
 from infra.searxng_manager import SearXNGManager
@@ -16,6 +17,7 @@ VLLMServerManager = OfficialVLLMManager    # backward-compat alias
 __all__ = [
     "BaseServiceManager",
     "BackgroundTaskRunner",
+    "NodeRuntimeManager",
     "SandboxManager",
     "SearXNGManager",
     "ServiceRegistry",

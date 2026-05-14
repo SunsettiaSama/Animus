@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from plan.document import TaskExecutionContext
+    from agent.flow.document import TaskExecutionContext
 
 
 @dataclass

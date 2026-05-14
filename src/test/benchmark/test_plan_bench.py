@@ -2,7 +2,7 @@
 Plan orchestrator benchmark tests (mock LLM, no network).
 
 Scenario:
-  - plan_exec : agent issues a run_plan tool call, plan mock returns completion,
+  - plan_exec : agent issues a run_flow tool call, plan mock returns completion,
                 agent then delivers a Final Answer.
 
 Verifies that plan-related scenarios produce correct metrics (tool call recorded,
@@ -40,9 +40,9 @@ def test_plan_exec_tool_recorded(benchmark_encoding: str) -> None:
     result, _ = runner.run()
 
     tool_names = [tc.tool_name for tc in result.tool_calls]
-    assert "run_plan" in tool_names, "run_plan tool must be recorded"
+    assert "run_flow" in tool_names, "run_flow tool must be recorded"
 
-    plan_call = next(tc for tc in result.tool_calls if tc.tool_name == "run_plan")
+    plan_call = next(tc for tc in result.tool_calls if tc.tool_name == "run_flow")
     assert plan_call.success
     assert plan_call.output_size > 0
 

@@ -373,45 +373,41 @@ class TaoLoop:
             self._executor.register_instance(delegate_skill)
             effective_descriptions[delegate_skill.name] = delegate_skill.description
 
-        # Inject plan skills when a plan config is provided.
-        self._plan_orchestrator = None
-        self._plan_skill_set = None
-        if cfg.plan is not None:
-            from plan.orchestrator import PlanOrchestrator
-            from .action.skill.plan_skill import (
-                PlanSkillSet,
-                RunPlanSkill,
-                PlanStatusSkill,
-                PlanWaitSkill,
-                PlanSkipSkill,
+        # Inject flow skills when a flow config is provided.
+        self._flow_orchestrator = None
+        self._flow_skill_set = None
+        if cfg.flow is not None:
+            from agent.flow.orchestrator import FlowOrchestrator
+            from .action.skill.flow_skill import (
+                FlowSkillSet,
+                RunFlowSkill,
+                FlowStatusSkill,
+                FlowWaitSkill,
+                FlowSkipSkill,
             )
-            self._plan_orchestrator = PlanOrchestrator(
-                cfg=cfg.plan.orchestrator,
-                llm_cfg_path=cfg.plan.llm_cfg_path,
-                agent_cfg=getattr(cfg.plan, "agent", None),
+            self._flow_orchestrator = FlowOrchestrator(
+                cfg=cfg.flow.orchestrator,
+                llm_cfg_path=cfg.flow.llm_cfg_path,
+                agent_cfg=getattr(cfg.flow, "agent", None),
             )
-            # Wire PlanEvent -> TimelineStore so plan events appear on the session timeline.
             import dataclasses as _dc
-            def _plan_event_to_timeline(event: object) -> None:
-                self._timeline.append("plan_event", {
+            def _flow_event_to_timeline(event: object) -> None:
+                self._timeline.append("flow_event", {
                     "type": type(event).__name__,
                     **_dc.asdict(event),  # type: ignore[arg-type]
                 })
-            self._plan_orchestrator.subscribe(_plan_event_to_timeline)
+            self._flow_orchestrator.subscribe(_flow_event_to_timeline)
 
-            self._plan_skill_set = PlanSkillSet(
-                orchestrator=self._plan_orchestrator,
-                event_sink=None,  # injected later via set_plan_event_sink()
+            self._flow_skill_set = FlowSkillSet(
+                orchestrator=self._flow_orchestrator,
+                event_sink=None,  # injected later via set_flow_event_sink()
             )
             for skill in (
-                RunPlanSkill(skill_set=self._plan_skill_set),
-                PlanStatusSkill(skill_set=self._plan_skill_set),
-                PlanWaitSkill(skill_set=self._plan_skill_set),
-                PlanSkipSkill(skill_set=self._plan_skill_set),
+                RunFlowSkill(skill_set=self._flow_skill_set),
+                FlowStatusSkill(skill_set=self._flow_skill_set),
+                FlowWaitSkill(skill_set=self._flow_skill_set),
+                FlowSkipSkill(skill_set=self._flow_skill_set),
             ):
-                # Register instance for execution; intentionally NOT added to
-                # effective_descriptions so plan tools are only discovered via
-                # tool_search, not shown in the primary tool list.
                 self._executor.register_instance(skill)
 
         # Wire LifeManager into the scheduler heartbeat so the heartbeat tick
@@ -486,10 +482,14 @@ class TaoLoop:
         if self._delegate_skill is not None:
             self._delegate_skill.sub_event_sink = sink
 
+    def set_flow_event_sink(self, sink) -> None:
+        """Inject an event_sink into the FlowSkillSet (called by WebUI after init)."""
+        if self._flow_skill_set is not None:
+            self._flow_skill_set.set_event_sink(sink)
+
     def set_plan_event_sink(self, sink) -> None:
-        """Inject an event_sink into the PlanSkillSet (called by WebUI after init)."""
-        if self._plan_skill_set is not None:
-            self._plan_skill_set.set_event_sink(sink)
+        """Backward-compatible alias for set_flow_event_sink."""
+        self.set_flow_event_sink(sink)
 
     # ── Approval gate ─────────────────────────────────────────────────────────
 
@@ -625,22 +625,20 @@ class TaoLoop:
                     extra_system_blocks=persona_blocks,
                 )
 
-            # ── Active plan status injection ─────────────────────────────────
-            # If a plan is running, append a compact status block to the system
-            # message so the agent is aware of ongoing background progress.
+            # ── Active flow status injection ─────────────────────────────────
             if (
-                self._plan_orchestrator is not None
-                and self._plan_orchestrator.lifecycle_state.value
+                self._flow_orchestrator is not None
+                and self._flow_orchestrator.lifecycle_state.value
                     not in ("idle", "done", "failed", "aborted")
             ):
-                from .action.skill.plan_skill import _format_plan_status
-                plan_status_block = (
-                    "\n\n【活跃多智能体计划】\n"
-                    + _format_plan_status(self._plan_orchestrator)
+                from .action.skill.flow_skill import _format_flow_status
+                flow_status_block = (
+                    "\n\n【活跃 Flow 编排】\n"
+                    + _format_flow_status(self._flow_orchestrator)
                 )
                 if messages and isinstance(messages[0], SystemMessage):
                     messages[0] = SystemMessage(
-                        content=messages[0].content + plan_status_block
+                        content=messages[0].content + flow_status_block
                     )
 
             # ── Prompt preview (step 0 only) ─────────────────────────────────

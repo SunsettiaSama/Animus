@@ -55,7 +55,16 @@ class SubAgentRunner:
 
         tool_manager = ToolManager()
         executor = tool_manager.build_executor()
-        tool_descriptions = tool_manager.primary_descriptions(profile.tools)
+
+        # 优先使用 tool_package，其次 tools 列表，均为 None 时走 DEFAULT_PRIMARY
+        raw_tools: str | list[str] | None = profile.tool_package or profile.tools
+        resolved_tools = tool_manager.resolve_tools(raw_tools)
+        # researcher_with_memory 等 profile 可同时设置 tool_package + tools（追加项）
+        if profile.tool_package and profile.tools:
+            pkg_tools = tool_manager.resolve_tools(profile.tool_package) or []
+            resolved_tools = pkg_tools + [t for t in profile.tools if t not in pkg_tools]
+
+        tool_descriptions = tool_manager.primary_descriptions(resolved_tools)
         category_summary = tool_manager.category_summary()
 
         tao_cfg = TaoConfig(

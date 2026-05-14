@@ -19,13 +19,13 @@ def _default_profiles() -> dict[str, SubAgentProfile]:
         "minimal": SubAgentProfile(
             max_steps=10,
             memory=_sub_memory(),
-            tools=None,
+            tool_package="executor",
             system_note="",
         ),
         "executor": SubAgentProfile(
             max_steps=15,
             memory=_sub_memory(),
-            tools=None,
+            tool_package="executor",
             system_note=(
                 "你是任务执行智能体。接收具体任务后直接执行并给出结果，"
                 "不要委派给其他智能体。"
@@ -34,10 +34,7 @@ def _default_profiles() -> dict[str, SubAgentProfile]:
         "researcher": SubAgentProfile(
             max_steps=15,
             memory=_sub_memory(long_term=False),
-            tools=[
-                "web_search", "web_fetch",
-                "knowledge_hybrid_search", "knowledge_save", "knowledge_list",
-            ],
+            tool_package="researcher",
             system_note=(
                 "你是一个专注于信息研究与知识整理的助手，"
                 "善于通过网络搜索和知识库检索获取准确信息。"
@@ -46,11 +43,8 @@ def _default_profiles() -> dict[str, SubAgentProfile]:
         "researcher_with_memory": SubAgentProfile(
             max_steps=15,
             memory=_sub_memory(long_term=True),
-            tools=[
-                "web_search", "web_fetch",
-                "knowledge_hybrid_search", "knowledge_save", "knowledge_list",
-                "memory_recall",
-            ],
+            tool_package="researcher",
+            tools=["memory_recall"],
             system_note=(
                 "你是一个专注于信息研究与知识整理的助手，"
                 "善于通过网络搜索、知识库检索和长期记忆获取准确信息。"
@@ -60,10 +54,19 @@ def _default_profiles() -> dict[str, SubAgentProfile]:
         "analyst": SubAgentProfile(
             max_steps=12,
             memory=_sub_memory(),
-            tools=["calculator", "unit_converter", "web_search", "get_datetime", "word_count"],
+            tool_package="analyst",
             system_note=(
                 "你是一个专注于数据分析与计算推理的助手，"
                 "善于精确计算、单位换算和定量分析。"
+            ),
+        ),
+        "coder": SubAgentProfile(
+            max_steps=15,
+            memory=_sub_memory(),
+            tool_package="code",
+            system_note=(
+                "你是一个专注于代码编写与执行的助手，"
+                "善于编写 Python 脚本解决问题并操作文件系统。"
             ),
         ),
     }
@@ -73,6 +76,7 @@ def _default_profiles() -> dict[str, SubAgentProfile]:
 class SubAgentProfile:
     max_steps: int = 10
     memory: Any = field(default_factory=_sub_memory)
+    tool_package: str | None = None
     tools: list[str] | None = None
     system_note: str = ""
 

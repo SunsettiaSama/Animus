@@ -381,12 +381,12 @@ class LogConfig:
 ## 快速开始
 
 ```python
-from plan import PlanOrchestrator, OrchestratorConfig
-from plan.planner import PlannerAgent
-from plan.replanner import ReplannerAgent
-from plan.executor import ExecutorAgent
+from agent.flow import FlowOrchestrator, OrchestratorConfig
+from agent.flow.planner import PlannerAgent
+from agent.flow.replanner import ReplannerAgent
+from agent.flow.executor import ExecutorAgent
 
-orchestrator = PlanOrchestrator(
+orchestrator = FlowOrchestrator(
     planner=PlannerAgent(llm=llm),
     replanner=ReplannerAgent(llm=llm),
     executor=ExecutorAgent(crew_cfg=crew_cfg),

@@ -1,4 +1,19 @@
-# ReAct 项目总览
+# ReAct 工作站 · 项目总览
+
+本仓库定位为 **ReAct Workstation（工作站）**：在单一工程内提供可驻留的智能体运行时、Web 操作台、编排与外围能力（搜索、记忆、知识库、语音、计划 DAG、子 Agent 等），便于本地迭代与 Docker 化部署使用同一套代码与配置心智模型。
+
+**工作站目标（概括）**
+
+- **一条启动路径**：`python src/run.py` 拉起 WebUI（默认），可选 CLI、仅检查、或跳过 SearXNG 等模式（见 `src/run.py` 文档字符串）。
+- **可操作台**：WebUI 覆盖 ReAct / Chat、Flow（DAG、快照、日志，`/api/flow`）等模式，作为日常交互与观测的主界面（详见 [webui/README.md](./webui/README.md)）。
+- **可编排、可自动化**：Plan-and-Execute、调度器、子 Agent 委派等与核心推理环在同一架构内联动（见下表「已完成模块」）。
+- **可部署栈**：生产/预发可通过 `docker/` 下 Compose 与管理容器落地，并可对接 Prometheus / Loki / Grafana 等（见仓库根目录 [`docker/README.md`](../docker/README.md)）。
+
+下文仍为**技术向总览**：目录结构、数据流、记忆分层与指向各子模块的文档索引。
+
+---
+
+## 技术基础
 
 基于 ReAct（Reasoning + Acting）范式的智能体框架，支持本地 Transformer 推理与 OpenAI 兼容 API，集成四层记忆系统、人格演化引擎与可扩展动作空间。
 
@@ -28,7 +43,8 @@ src/
 │   ├── network/             # 网络层（搜索引擎 / Bot 协议）
 │   │   ├── search/          #   WebSearch（DuckDuckGo / Tavily 等）
 │   │   └── bot/             #   Bot 框架（OneBot 协议）
-│   ├── sandbox.py           # SandboxManager（文件系统 + HTTP 沙箱）
+│   ├── sandbox.py           # SandboxManager（文件系统路径验证 + exec_python 受限执行 + HTTP 域名策略）
+│   ├── node_runtime.py      # NodeRuntimeManager（节点执行全局线程池单例：executor/verifier/doc 三池）
 │   └── searxng_manager.py   # SearXNG 容器管理
 │
 ├── agent/                   # Agent 核心层
@@ -47,6 +63,17 @@ src/
 │   │   ├── persona/         #   人格演化（稳定层 + 动态层 + 情绪层）
 │   │   ├── life/            #   生活状态子系统（活动日志 + 日度综合）
 │   │   └── trace/           #   推理链存档
+│   ├── flow/                # Flow 编排（agent.flow.base 泛化 DAG + 实现层）
+│   │   ├── base/            #   DAG 抽象（就绪集、拓扑宽度等）
+│   │   │   └── components/  #   节点核心组件（新三接口体系）
+│   │   │       ├── node_spec.py     #     NodeManifest（节点静态合同，frozen dataclass）
+│   │   │       ├── runtime.py       #     RunnableNode / NodeResult / NodeExecutionContext / LogEntry
+│   │   │       ├── protocols.py     #     ManifestExecutor / NodeVerifier / NodeDocumentWriter / NodeObserver / NodeMutator
+│   │   │       ├── observation.py   #     NodeObservation / TaoStep / ObservationMode（full / distilled）
+│   │   │       └── verification.py  #     VerificationResult / VerificationCheck（abstract + concrete 两类校验）
+│   │   ├── document.py      #   PlanDocument IR（PlanTask/PlanModule）
+│   │   ├── orchestrator.py  #   FlowOrchestrator
+│   │   └── ...
 │   └── scheduler/           # 时钟触发 Agent 自动化任务
 │       ├── config.py
 │       ├── task.py
@@ -54,15 +81,6 @@ src/
 │       ├── engine.py
 │       ├── runner.py
 │       └── timeline.py
-│
-├── plan/                    # Plan-and-Execute 多智能体编排层
-│   ├── config.py
-│   ├── document.py          # PlanDocument IR（PlanTask/PlanModule）
-│   ├── event.py
-│   ├── planner.py           # PlannerAgent（自动规划）
-│   ├── replanner.py         # ReplannerAgent（增量重规划）
-│   ├── orchestrator.py      # PlanOrchestrator（异步 DAG 调度）
-│   └── ...
 │
 ├── knowledge/               # 知识库（MySQL + Redis + Qdrant）
 │   ├── store.py             # MySQL CRUD
@@ -106,9 +124,11 @@ src/
 | `agent/scheduler` | ✅ | 时钟触发的 Agent 自动化任务（一次性 / 周期性），JSON 持久化，async 轮询引擎 |
 | `knowledge` | ✅ | MySQL 文档存储 + Qdrant 向量索引 + Redis 缓存，keyword / semantic / hybrid 三种检索 |
 | `tts` | ✅ | TTS（Edge / OpenAI / Kokoro）+ STT（OpenAI / faster-whisper）语音模块 |
-| `plan` | ✅ | Plan-and-Execute 多智能体编排：Markdown 计划语言、DAG 调度、Replanner、资源锁、快照、日志 |
-| `webui` | ✅ | 工作站仪表板 + ReAct / Chat 双模式对话 + Plan 模式（DAG 可视化、快照管理、日志流）|
-| `test` | ✅ | 记忆模块 + 工具 + plan/ + delegate/ 测试用例 |
+| `agent/flow` | ✅ | Flow 编排：`agent.flow.base` 泛化 DAG + Plan-and-Execute 实现、DAG 调度、Replanner、快照、日志 |
+| `agent/flow/base/components` | ✅ | 节点新三接口体系：`NodeManifest`（静态合同）/ `RunnableNode`（`run` / `review` / `modify`）/ `ManifestExecutor` + `NodeVerifier`（TAO 纠错循环）/ `NodeDocumentWriter`（异步落盘）|
+| `infra/node_runtime` | ✅ | `NodeRuntimeManager` 全局线程池单例：executor_pool（8）/ verifier_pool（4）/ doc_pool（1，FIFO fire-and-forget）|
+| `webui` | ✅ | 工作站仪表板 + ReAct / Chat 双模式对话 + Flow 模式（`/api/flow/*`）|
+| `test` | ✅ | 记忆模块 + 工具 + agent/flow/ + delegate/ 测试用例 |
 
 ---
 
@@ -149,8 +169,8 @@ TaoLoop.stream(question)
     │               ├─ 子 Agent（delegate_task）
     │               │       └─ → SubAgentRunner → 嵌套 TaoLoop
     │               │
-    │               └─ Plan 工具（run_plan / ...）
-    │                       └─ → PlanOrchestrator（DAG 编排）
+    │               └─ Flow 工具（run_flow / flow_wait / ...）
+    │                       └─ → FlowOrchestrator（DAG 编排）
     │
     └─ post_process()（后台线程）
             ├─ commit()  → L2 JSONL / L3 Qdrant / 里程碑
@@ -220,10 +240,10 @@ python src/run.py --port 8080
 | [agent/react/memory/README.md](./agent/react/memory/README.md) | 四层记忆系统 |
 | [agent/react/prompt/README.md](./agent/react/prompt/README.md) | 块驱动 Prompt 组装 |
 | [agent/react/persona/README.md](./agent/react/persona/README.md) | 人格演化引擎详解（稳定层 + 动态层 + 情绪层）|
-| [plan/README.md](./plan/README.md) | Plan-and-Execute 多智能体编排：Markdown 计划语言、DAG 调度、Replanner |
+| [plan/README.md](./plan/README.md) | Flow（`agent.flow`）编排说明：Markdown 计划语言、DAG、Replanner（文档路径沿用 plan）|
 | [knowledge/README.md](./knowledge/README.md) | 知识库：MySQL + Redis + Qdrant，三种检索模式 |
 | [tts/README.md](./tts/README.md) | TTS / STT 引擎与 Provider 配置 |
-| [webui/README.md](./webui/README.md) | Web 界面与 API（含 Plan 模式）|
+| [webui/README.md](./webui/README.md) | Web 界面与 API（含 Flow `/api/flow`）|
 | [storage/README.md](./storage/README.md) | 运行时本地文件布局与路径配置 |
 | [config/README.md](./config/README.md) | 配置 dataclass 结构 |
 | [test/README.md](./test/README.md) | 测试覆盖说明 |

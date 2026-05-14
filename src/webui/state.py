@@ -54,9 +54,9 @@ class AppState:
     tool_manager: Any = None
     bot_service: Any = None           # BotService | None
 
-    # ── Plan orchestration ────────────────────────────────────────────────────
-    active_orchestrator: Any = None   # PlanOrchestrator | None
-    plan_subscribers: list = field(default_factory=list)  # list[asyncio.Queue]
+    # ── Flow orchestration (agent.flow) ────────────────────────────────────
+    active_orchestrator: Any = None   # FlowOrchestrator | None
+    flow_subscribers: list = field(default_factory=list)  # list[asyncio.Queue]
 
     # ── Background task notifications ─────────────────────────────────────────
     notify_queue: Any = None          # asyncio.Queue[dict | None] | None
@@ -125,20 +125,29 @@ class AppState:
             self.current_gen_id = gen_id
             return True
 
-    # ── Plan pub-sub broadcast ────────────────────────────────────────────────
+    # ── Flow pub-sub broadcast ────────────────────────────────────────────────
 
-    def plan_subscribe(self) -> asyncio.Queue:
+    def flow_subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue()
-        self.plan_subscribers.append(q)
+        self.flow_subscribers.append(q)
         return q
 
+    def flow_unsubscribe(self, q: asyncio.Queue) -> None:
+        if q in self.flow_subscribers:
+            self.flow_subscribers.remove(q)
+
+    def flow_broadcast(self, event: dict) -> None:
+        for q in list(self.flow_subscribers):
+            q.put_nowait(event)
+
+    def plan_subscribe(self) -> asyncio.Queue:
+        return self.flow_subscribe()
+
     def plan_unsubscribe(self, q: asyncio.Queue) -> None:
-        if q in self.plan_subscribers:
-            self.plan_subscribers.remove(q)
+        self.flow_unsubscribe(q)
 
     def plan_broadcast(self, event: dict) -> None:
-        for q in list(self.plan_subscribers):
-            q.put_nowait(event)
+        self.flow_broadcast(event)
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
