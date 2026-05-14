@@ -221,6 +221,12 @@ def run_webui(host: str, port: int, llm_config: Path, no_searxng: bool) -> None:
     check_search()
     check_llm(llm_config)
     print(f"\n{_bold('启动 WebUI')}  →  http://{host}:{port}\n")
+    _dist = SRC / "webui" / "static" / "dist" / "index.html"
+    if not _dist.is_file():
+        _warn(
+            "前端未构建",
+            f"未找到 {_dist.relative_to(ROOT)} — 请先执行: cd src/webui/frontend && npm ci && npm run build",
+        )
 
     uvicorn.run("webui.app:app", host=host, port=port, reload=False, timeout_graceful_shutdown=30)
 

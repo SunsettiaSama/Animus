@@ -1,0 +1,289 @@
+# =============================================================================
+# docker-compose.prod.yml — ReAct Agent 生产级部署
+#
+# 包含：完整监控栈、日志收集、追踪、负载均衡、自动备份
+#
+# 使用方式：
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml logs -f
+#   docker compose -f docker-compose.prod.yml down
+# =============================================================================
+
+services:
+
+  # ── Traefik (反向代理 & 服务发现) ──────────────────────────────────────
+  traefik:
+    image: traefik:v2.11
+    container_name: react-traefik
+    restart: unless-stopped
+    command:
+      - --api.insecure=true
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --log.level=INFO
+      - --accesslog=true
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Traefik Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/letsencrypt:/letsencrypt
+    networks:
+      - react-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # ── MySQL 8.0 (主数据库) ──────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: react-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-knowledge}
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_unicode_ci
+    volumes:
+      - react-mysql-data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+      --slow-query-log=1
+      --slow-query-log-file=/var/log/mysql/slow.log
+      --long-query-time=2
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-password}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+    networks:
+      - react-net
+
+  # ── Redis 7 (缓存 & 会话) ───────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: react-redis
+    restart: unless-stopped
+    volumes:
+      - react-redis-data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+    networks:
+      - react-net
+
+  # ── SearXNG (元搜索引擎) ──────────────────────────────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    container_name: react-searxng
+    restart: unless-stopped
+    volumes:
+      - ../config/network/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          wget -q --spider
+          "http://localhost:8080/search?q=test&format=json"
+          || exit 1
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    networks:
+      - react-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.searxng.rule=Host(`searxng.localhost`)"
+      - "traefik.http.services.searxng.loadbalancer.server.port=8080"
+
+  # ── ReAct Agent 主应用 (多实例) ──────────────────────────────────────────
+  react:
+    image: ${REACT_IMAGE:-react-agent:latest}
+    container_name: react-agent
+    restart: unless-stopped
+    depends_on:
+      searxng:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../config/llm_core:/app/config/llm_core:ro
+      - ../.react:/app/.react
+    environment:
+      SEARXNG_URL: http://searxng:8080
+      MYSQL_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-knowledge}
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    networks:
+      - react-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.react.rule=Host(`app.localhost`)"
+      - "traefik.http.services.react.loadbalancer.server.port=8080"
+      - "traefik.http.routers.react.middlewares=react-compress"
+      - "traefik.http.middlewares.react-compress.compress=true"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ── Prometheus (指标监控) ──────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    container_name: react-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - react-prometheus-data:/prometheus
+    networks:
+      - react-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.localhost`)"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+
+  # ── Grafana (可视化监控) ─────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.3.0
+    container_name: react-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    volumes:
+      - react-grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - react-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.localhost`)"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+
+  # ── Loki (日志聚合) ───────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: react-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki/config.yml:/etc/loki/local-config.yaml:ro
+      - react-loki-data:/loki
+    networks:
+      - react-net
+
+  # ── Promtail (日志采集) ─────────────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: react-promtail
+    restart: unless-stopped
+    volumes:
+      - ./promtail/config.yml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - react-net
+
+  # ── Jaeger (分布式追踪) ─────────────────────────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: react-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: true
+    ports:
+      - "127.0.0.1:16686:16686"  # UI
+      - "127.0.0.1:4317:4317"    # OTLP
+      - "127.0.0.1:4318:4318"    # OTLP HTTP
+    volumes:
+      - react-jaeger-data:/tmp
+    networks:
+      - react-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jaeger.rule=Host(`jaeger.localhost`)"
+      - "traefik.http.services.jaeger.loadbalancer.server.port=16686"
+
+  # ── Docker Volume 自动备份 ──────────────────────────────────────────────
+  volume-backup:
+    image: offen/docker-volume-backup:v2
+    container_name: react-volume-backup
+    restart: unless-stopped
+    environment:
+      BACKUP_FILENAME: backup-%Y-%m-%dT%H-%M-%S.tar.gz
+      BACKUP_RETENTION_DAYS: 30
+      BACKUP_CRON_EXPRESSION: "0 2 * * *"
+    volumes:
+      - react-mysql-data:/backup/mysql:ro
+      - react-redis-data:/backup/redis:ro
+      - ../.react:/backup/react-data:ro
+      - ./backups:/archive
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - docker-volume-backup.stop-during-backup=react-agent
+    networks:
+      - react-net
+
+volumes:
+  react-mysql-data:
+  react-redis-data:
+  react-prometheus-data:
+  react-grafana-data:
+  react-loki-data:
+  react-jaeger-data:
+
+networks:
+  react-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

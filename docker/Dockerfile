@@ -12,6 +12,16 @@
 #     -t react-agent .
 # =============================================================================
 
+# ── 前端（Vite → src/webui/static/dist）──────────────────────────────────────
+FROM node:20-alpine AS frontend-build
+WORKDIR /build
+COPY src/webui/frontend/package.json src/webui/frontend/package-lock.json ./src/webui/frontend/
+WORKDIR /build/src/webui/frontend
+RUN npm ci
+COPY src/webui/frontend/ ./
+COPY src/webui/static/js/ /build/src/webui/static/js/
+RUN npm run build
+
 # ── 基础镜像 ──────────────────────────────────────────────────────────────────
 FROM python:3.11-slim AS base
 
@@ -34,8 +44,10 @@ COPY ${REQUIREMENTS} ./requirements-active.txt
 RUN pip install --no-cache-dir ${TORCH_EXTRA} -r requirements-active.txt
 
 # ── 应用代码（路径均相对于构建上下文，即项目根目录）─────────────────────────
-COPY src/    ./src/
+COPY src/ ./src/
 COPY config/ ./config/
+
+COPY --from=frontend-build /build/src/webui/static/dist ./src/webui/static/dist
 
 # ── 运行时数据目录（由 volume 覆盖，此处仅创建空占位） ─────────────────────
 RUN mkdir -p /app/.react/traces /app/.react/persona

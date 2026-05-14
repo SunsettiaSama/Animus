@@ -11,7 +11,7 @@ sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(_HERE, ".."))
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from routers import llm, react, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe
@@ -20,13 +20,23 @@ from state import get_state
 
 _HERE = os.path.dirname(__file__)
 
+_VUE_INDEX = os.path.join(_HERE, "static", "dist", "index.html")
+
+_MISSING_UI_MARKUP = """<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"/><title>ReAct — build UI</title></head><body>
+<p>Web UI bundle not found. From repo root run:</p>
+<pre>cd src/webui/frontend &amp;&amp; npm ci &amp;&amp; npm run build</pre>
+<p>Or use a Docker image built with the project <code>docker/Dockerfile</code> (multi-stage includes the UI).</p>
+</body></html>"""
+
 app = FastAPI(title="ReAct Agent")
 
 
 @app.middleware("http")
 async def _no_cache_js(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith("/static/js/") or request.url.path.startswith("/static/css/"):
+    p = request.url.path
+    if p.startswith("/static/js/") or p.startswith("/static/css/") or p.startswith("/static/dist/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -209,8 +219,18 @@ def _shutdown():
         state.active_tao = None
 
 
+def _vue_index_response() -> HTMLResponse:
+    with open(_VUE_INDEX, encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
-    html_path = os.path.join(_HERE, "index.html")
-    with open(html_path, encoding="utf-8") as f:
-        return f.read()
+    if os.path.isfile(_VUE_INDEX):
+        return _vue_index_response()
+    return HTMLResponse(content=_MISSING_UI_MARKUP, status_code=200)
+
+
+@app.get("/v2")
+def vue_greenfield_redirect():
+    return RedirectResponse(url="/", status_code=307)

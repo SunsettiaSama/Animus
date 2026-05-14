@@ -2,10 +2,19 @@
  * api.js — Centralised HTTP / WebSocket gateway.
  *
  * All modules must import PATHS from here and NEVER hard-code endpoint strings.
+ *
+ * Module map (Vanilla → future Vue features):
+ *   screens + modules: landing, workspace, plan, benchmark, scheduler
+ *   settings/tabs: model(llm), memory, persona, voice, sandbox, bot, notify, scheduler
  */
 
 const _JSON_H  = { 'Content-Type': 'application/json' };
-const _WS_BASE = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+
+function _wsBase() {
+  const loc = typeof globalThis.location !== 'undefined' ? globalThis.location : null;
+  if (!loc) return 'ws://localhost';
+  return `${loc.protocol === 'https:' ? 'wss' : 'ws'}://${loc.host}`;
+}
 
 // ── Endpoint registry ─────────────────────────────────────────────────────────
 
@@ -82,6 +91,10 @@ export const PATHS = {
       stop:    n => `/api/services/${n}/stop`,
       logs:    n => `/api/services/${n}/logs`,
     },
+    notify: {
+      bark: { config: '/api/notify/bark/config', test: '/api/notify/bark/test' },
+      ntfy: { config: '/api/notify/ntfy/config', test: '/api/notify/ntfy/test' },
+    },
   },
   voice: {
     tts: {
@@ -151,12 +164,18 @@ export const http = {
 
   /** POST with FormData (file upload) — no Content-Type header. */
   upload: (path, formData) => fetch(path, { method: 'POST', body: formData }).then(_checkJson),
+
+  /** GET: JSON if 2xx else null; network failure → null. */
+  getOptional: path =>
+    fetch(path)
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null),
 };
 
 // ── WebSocket factory ─────────────────────────────────────────────────────────
 
 export function wsFactory(path) {
-  return new WebSocket(`${_WS_BASE}${path}`);
+  return new WebSocket(`${_wsBase()}${path}`);
 }
 
 // ── Poll helper ───────────────────────────────────────────────────────────────

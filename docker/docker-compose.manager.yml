@@ -1,0 +1,34 @@
+# =============================================================================
+# ReAct Agent Manager - 管理容器配置
+# 这个文件定义了管理容器，用于控制整个 ReAct Agent 环境
+#
+# 用法：
+#   docker compose -f docker-compose.manager.yml run --rm manager help
+#   docker compose -f docker-compose.manager.yml run --rm manager staging
+# =============================================================================
+
+services:
+  manager:
+    build:
+      context: .
+      dockerfile: manager/Dockerfile
+    image: react-agent-manager:latest
+    container_name: react-agent-manager
+    restart: "no"
+    volumes:
+      # 挂载 docker socket，让容器能操作宿主机的 docker
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 挂载项目根目录（只读）用于读取配置
+      - ../:/app/workspace:ro
+      # 挂载本地数据目录（读写）
+      - react-mysql-data:/var/lib/mysql:cached
+      - react-redis-data:/data:cached
+      - ../.react:/app/.react:rw
+    working_dir: /app/workspace/docker
+    environment:
+      - COMPOSE_PROJECT_NAME=react-agent
+      - DOCKER_HOST=unix:///var/run/docker.sock
+
+volumes:
+  react-mysql-data:
+  react-redis-data:

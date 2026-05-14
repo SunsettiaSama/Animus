@@ -25,6 +25,7 @@ yarn-error.log
 __pycache__/
 .github/
 .cursor/
+.cache/
 
 
 idea/
