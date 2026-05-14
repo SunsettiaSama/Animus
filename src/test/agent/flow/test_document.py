@@ -1,4 +1,4 @@
-"""Tests for plan.document: PlanTask, PlanDocument, PlanParser, PlanValidator, CycleDetector."""
+"""Tests for plan.document: PlanTask, PlanDocument, PlanParser, PlanValidator."""
 from __future__ import annotations
 
 import sys
@@ -10,7 +10,6 @@ if str(SRC) not in sys.path:
 
 import pytest
 from agent.flow.document import (
-    CycleDetector,
     PlanDocument,
     PlanModule,
     PlanParser,
@@ -179,15 +178,17 @@ class TestPlanValidator:
         assert any("itself" in e for e in errors)
 
 
-class TestCycleDetector:
+class TestCycleDetection:
+    """Cycle detection is now handled inside PlanValidator.validate()."""
+
     def test_no_cycle(self):
         doc = PlanParser.parse(_PLAN_MD)
-        cycles = CycleDetector().detect(doc)
-        assert cycles == []
+        errors = PlanValidator().validate(doc)
+        assert not any("cycle" in e.lower() for e in errors)
 
-    def test_cycle_detected(self):
+    def test_cycle_detected_via_validator(self):
         doc = PlanParser.parse(_PLAN_MD)
-        # Create a cycle: run_tests → add_deps → init_repo → run_tests
+        # Introduce a cycle: run_tests → add_deps → init_repo → run_tests
         doc.get_task("init_repo").depends_on = ["run_tests"]
-        cycles = CycleDetector().detect(doc)
-        assert len(cycles) > 0
+        errors = PlanValidator().validate(doc)
+        assert any("cycle" in e.lower() for e in errors)

@@ -42,6 +42,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol, runtime_checkable
 
+from .budget import DecompositionBudget, TopologyKind, is_atomic
 from .graph import DagNodeSpec, ready_node_ids
 from .types import NodeStatus
 
@@ -492,5 +493,35 @@ class BaseOrchestrator(Protocol):
     def progress(self) -> tuple[int, int]:
         """返回 (已完成节点数, 总节点数)，run() 运行期间可轮询。
         run() 未开始或已结束时返回 (0, 0)。
+        """
+        ...
+
+
+# ── 递归调度辅助（原子规划层协议） ───────────────────────────────────────────
+
+@runtime_checkable
+class AtomicDispatcher(Protocol):
+    """支持原子规划层的 Orchestrator 扩展接口。
+
+    实现此协议的 Orchestrator 在调度每个节点前先经过原子规划层：
+    · atomic  → 直接调用 BaseNodeExecutor.execute()
+    · flat    → 将 sub_manifests 作为新节点 add 进当前 graph，替换原节点
+    · nested  → 以 sub_manifests 构造子 Orchestrator，递归 run()，
+                子图完成后将出口节点输出作为本节点输出写回 graph
+
+    dispatch_node() 封装上述三条路径，供编排主循环调用。
+    """
+
+    async def dispatch_node(
+        self,
+        node_id: str,
+        spec: "BasePlanSpec",
+        graph: "BaseGraphManager",
+        budget: DecompositionBudget,
+    ) -> Any:
+        """调度单个节点（含原子规划层判断）。
+
+        返回节点的最终输出（atomic 时为 executor 输出；
+        nested 时为子图出口节点的输出）。
         """
         ...

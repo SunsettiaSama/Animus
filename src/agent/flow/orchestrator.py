@@ -5,9 +5,12 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from agent.flow.base.components.atomic_planner import AtomicPlanner
+from agent.flow.base.budget import DecompositionBudget, TopologyKind
+from agent.flow.base.components.node_spec import NodeManifest
 from agent.flow.channel import HumanEditChannel
 from agent.flow.config import OrchestratorConfig
-from agent.flow.document import PlanDocument, TaskStatus
+from agent.flow.document import PlanDocument, PlanModule, PlanTask, TaskExecutionContext, TaskStatus
 from agent.flow.execution_context import PlanExecutionContext
 from agent.flow.event import (
     HumanPatchEvent,
@@ -52,6 +55,7 @@ class FlowOrchestrator:
         self._planner: PlannerAgent | None = None
         self._replanner: ReplannerAgent | None = None
         self._executor_agent: ExecutorAgent | None = None
+        self._atomic_planner: AtomicPlanner | None = None
         self._external_ctx = execution_context  # caller-supplied context (or None → build lazily)
         self._ctx: PlanExecutionContext | None = None
         self._events: list[PlanEvent] = []
@@ -81,11 +85,91 @@ class FlowOrchestrator:
         self._executor_agent = ExecutorAgent(
             self._llm_cfg_path, agent_cfg=self._agent_cfg, executor_pool=ctx.worker_pool
         )
+        if self._cfg.decomposition.max_depth > 0:
+            self._atomic_planner = AtomicPlanner(
+                self._cfg.planner, self._llm_cfg_path, executor_pool=ctx.planner_pool
+            )
 
     def _emit_raw_dict(self, d: dict) -> None:
         """Forward a raw dict emitted by sub-agents (e.g. replanner_thinking) to subscribers."""
         for cb in self._event_callbacks:
             cb(d)  # type: ignore[arg-type]
+
+    # ── Atomic planning layer helpers ─────────────────────────────────────────
+
+    def _task_to_manifest(self, task: PlanTask) -> NodeManifest:
+        """Convert a PlanTask to a NodeManifest for AtomicPlanner assessment."""
+        from agent.flow.base.components.observation import ObservationMode
+        return NodeManifest(
+            task_id=task.task_id,
+            description=task.description,
+            depends_on=tuple(task.depends_on),
+            tool_package=task.params.get("tool_package") or (
+                task.profile if task.profile not in ("minimal", "") else None
+            ),
+            max_steps=task.max_steps or task.params.get("max_steps"),
+            system_note=task.params.get("system_note", ""),
+            observation_mode=ObservationMode.distilled,
+        )
+
+    def _manifests_to_tasks(
+        self,
+        manifests: tuple[NodeManifest, ...],
+        module_name: str,
+        inherited_deps: list[str],
+    ) -> list[PlanTask]:
+        """Convert sub-manifests to PlanTask objects.
+
+        Entry nodes (depends_on is empty in manifest) inherit the parent
+        task's external dependencies so the sub-DAG starts only after its
+        predecessors are complete.
+        """
+        tasks = []
+        manifest_ids = {m.task_id for m in manifests}
+        for m in manifests:
+            is_entry = not m.depends_on or not any(d in manifest_ids for d in m.depends_on)
+            external = inherited_deps if is_entry else []
+            internal = [d for d in m.depends_on if d in manifest_ids]
+            tasks.append(PlanTask(
+                task_id=m.task_id,
+                description=m.description,
+                module=module_name,
+                profile=m.tool_package or "minimal",
+                max_steps=m.max_steps,
+                depends_on=external + internal,
+            ))
+        return tasks
+
+    async def _run_nested(
+        self,
+        parent_task: PlanTask,
+        decision: Any,
+        snapshots: SnapshotStore,
+        channel: HumanEditChannel,
+        logger: PlanLogger,
+        plan_id: str,
+        plan_file_lock: asyncio.Lock,
+        child_budget: DecompositionBudget,
+    ) -> str:
+        """Run a nested sub-graph for a composite task, return exit node result."""
+        sub_module = f"{parent_task.module}.{parent_task.task_id}"
+        sub_tasks = self._manifests_to_tasks(decision.sub_manifests, sub_module, [])
+        sub_plan_id = f"{plan_id}.{parent_task.task_id}"
+        sub_doc = PlanDocument(
+            plan_id=sub_plan_id,
+            title=f"sub:{parent_task.task_id}",
+            objective=parent_task.description,
+            modules=[PlanModule(name=sub_module, tasks=sub_tasks)],
+        )
+        await self._dispatch_all(
+            sub_doc, snapshots, channel, logger, sub_plan_id, plan_file_lock,
+            budget=child_budget,
+        )
+        exit_id = decision.output_node_id or (sub_tasks[-1].task_id if sub_tasks else "")
+        if exit_id:
+            exit_task = sub_doc.get_task(exit_id)
+            return exit_task.result or ""
+        return ""
 
     # ── Lifecycle state properties ────────────────────────────────────────────
 
@@ -249,11 +333,13 @@ class FlowOrchestrator:
         logger: PlanLogger,
         plan_id: str,
         plan_file_lock: asyncio.Lock,
+        budget: DecompositionBudget | None = None,
     ) -> None:
         assert self._ctx is not None
         semaphore = self._ctx.semaphore
         resource_cond: asyncio.Condition = asyncio.Condition()
         in_use_writes: set[str] = set()
+        effective_budget = budget if budget is not None else self._cfg.decomposition
 
         # Build done events for all tasks
         done_events: dict[str, asyncio.Event] = {
@@ -311,6 +397,63 @@ class FlowOrchestrator:
                         await self._call_replanner(
                             doc, snapshots, logger, plan_id, trigger="on_human_request"
                         )
+
+            # ── Atomic planning layer ─────────────────────────────────────────
+            if self._atomic_planner is not None and not effective_budget.exhausted:
+                manifest = self._task_to_manifest(task)
+                decision = await self._atomic_planner.assess(manifest, effective_budget)
+
+                if decision.kind == TopologyKind.flat and decision.sub_manifests:
+                    await logger.info("task_flat_expand", task_id=task_id,
+                                      sub_count=len(decision.sub_manifests),
+                                      reason=decision.reason[:120])
+                    sub_tasks = self._manifests_to_tasks(
+                        decision.sub_manifests, task.module, list(task.depends_on)
+                    )
+                    async with doc._lock:
+                        mod = doc.get_module(task.module)
+                        if mod:
+                            mod.tasks.extend(sub_tasks)
+                    for st in sub_tasks:
+                        done_events[st.task_id] = asyncio.Event()
+                    await asyncio.gather(*[run_when_ready(st.task_id) for st in sub_tasks])
+                    exit_id = decision.output_node_id or sub_tasks[-1].task_id
+                    exit_result = ""
+                    if exit_id:
+                        exit_task = doc.get_task(exit_id)
+                        exit_result = exit_task.result or ""
+                    exec_ctx = TaskExecutionContext(
+                        task_id=task_id, status="done",
+                        result_summary=exit_result[:300],
+                    )
+                    await doc.update_task(task_id, status=TaskStatus.done,
+                                          result=exit_result, execution_ctx=exec_ctx)
+                    done_events[task_id].set()
+                    self._emit(TaskCompleteEvent(plan_id=plan_id, task_id=task_id,
+                                                 result_preview=exit_result[:200]))
+                    await logger.info("task_complete", task_id=task_id, kind="flat_expanded")
+                    return
+
+                if decision.kind == TopologyKind.nested and decision.sub_manifests:
+                    await logger.info("task_nested_run", task_id=task_id,
+                                      sub_count=len(decision.sub_manifests),
+                                      reason=decision.reason[:120])
+                    exit_result = await self._run_nested(
+                        task, decision, snapshots, channel, logger,
+                        plan_id, plan_file_lock, effective_budget.descend(),
+                    )
+                    exec_ctx = TaskExecutionContext(
+                        task_id=task_id, status="done",
+                        result_summary=exit_result[:300],
+                    )
+                    await doc.update_task(task_id, status=TaskStatus.done,
+                                          result=exit_result, execution_ctx=exec_ctx)
+                    done_events[task_id].set()
+                    self._emit(TaskCompleteEvent(plan_id=plan_id, task_id=task_id,
+                                                 result_preview=exit_result[:200]))
+                    await logger.info("task_complete", task_id=task_id, kind="nested")
+                    return
+                # decision.kind == atomic: fall through to normal execution
 
             # Resource guard: wait until none of task.writes are in-flight
             if task.writes:

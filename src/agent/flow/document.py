@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-from agent.flow.base import NodeStatus, max_parallel_width, ready_node_ids
+from agent.flow.base import NodeStatus, has_cycle, max_parallel_width, ready_node_ids
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
 
@@ -495,34 +495,6 @@ class PlanParser:
         )
 
 
-# ── CycleDetector ─────────────────────────────────────────────────────────────
-
-class CycleDetector:
-    def detect(self, doc: PlanDocument) -> list[list[str]]:
-        adj = {t.task_id: list(t.depends_on) for t in doc.all_tasks()}
-        color: dict[str, str] = {tid: "white" for tid in adj}
-        path: list[str] = []
-        cycles: list[list[str]] = []
-
-        def dfs(node: str) -> None:
-            color[node] = "gray"
-            path.append(node)
-            for nb in adj.get(node, []):
-                if nb not in color:
-                    continue
-                if color[nb] == "gray":
-                    cycles.append(path[path.index(nb):] + [nb])
-                elif color[nb] == "white":
-                    dfs(nb)
-            path.pop()
-            color[node] = "black"
-
-        for n in list(adj):
-            if color[n] == "white":
-                dfs(n)
-        return cycles
-
-
 # ── PlanValidator ─────────────────────────────────────────────────────────────
 
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -557,11 +529,14 @@ class PlanValidator:
                         f"Task '{task.task_id}' depends_on unknown task_id '{dep}'"
                     )
 
-        # Cycle detection
-        detector = CycleDetector()
-        cycles = detector.detect(doc)
-        for cycle in cycles:
-            errors.append(f"Dependency cycle detected: {' → '.join(cycle)}")
+        # Cycle detection (filter unknown deps to avoid validate_known_dependencies raising)
+        all_ids_set = {t.task_id for t in tasks}
+        deps_map = {
+            t.task_id: frozenset(d for d in t.depends_on if d in all_ids_set)
+            for t in tasks
+        }
+        if has_cycle(all_ids_set, deps_map):
+            errors.append("Dependency cycle detected")
 
         # Objective non-empty
         if not doc.objective.strip():

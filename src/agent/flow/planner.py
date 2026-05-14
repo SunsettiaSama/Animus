@@ -47,6 +47,44 @@ Use scratchpad to:
 """
 
 
+def _build_tao_loop(cfg: PlannerConfig, llm_cfg_path: str, system_extra: str, *, short_term_memory: bool = True) -> Any:
+    from config.llm_core.config import LLMConfig
+    from config.agent.tao_config import TaoConfig
+    from config.agent.prompt_config import PromptConfig
+    from config.agent.memory.memory_config import MemoryConfig
+    from infra.llm import LLM
+    from agent.react.action.manager import ToolManager
+    from agent.react.tao import TaoLoop
+
+    llm = LLM(LLMConfig.from_yaml(llm_cfg_path))
+    tool_manager = ToolManager()
+
+    allowed_tools = list(cfg.tools or ["scratchpad"])
+    if cfg.allow_search:
+        allowed_tools += ["web_search", "knowledge_hybrid_search"]
+
+    executor = tool_manager.build_executor()
+    tool_descriptions = tool_manager.primary_descriptions(allowed_tools)
+
+    memory = MemoryConfig()
+    if not cfg.memory_long_term:
+        memory.long_term.enabled = False
+    if not short_term_memory:
+        memory.short_term_enabled = False
+
+    tao_cfg = TaoConfig(
+        max_steps=cfg.max_steps,
+        memory=memory,
+        prompt=PromptConfig(system_note=system_extra),
+    )
+    return TaoLoop(
+        llm=llm,
+        executor=executor,
+        tool_descriptions=tool_descriptions,
+        cfg=tao_cfg,
+    )
+
+
 class PlannerAgent(AgentBase):
     role = "planner"
 
@@ -82,44 +120,15 @@ class PlannerAgent(AgentBase):
         return AgentResult(agent_id=agent_id, role=self.role, status="done", output=doc)
 
     def _run_auto_sync(self, instruction: str, step_callback: Callable | None = None) -> PlanDocument:
-        from config.llm_core.config import LLMConfig
-        from config.agent.tao_config import TaoConfig
-        from config.agent.prompt_config import PromptConfig
-        from config.agent.memory.memory_config import MemoryConfig
-        from infra.llm import LLM
-        from agent.react.action.manager import ToolManager
-        from agent.react.tao import FinishEvent, TaoLoop
-
-        llm = LLM(LLMConfig.from_yaml(self._llm_cfg_path))
-        tool_manager = ToolManager()
-
-        allowed_tools = list(self._cfg.tools or ["scratchpad"])
-        if self._cfg.allow_search:
-            allowed_tools += ["web_search", "knowledge_hybrid_search"]
-
-        executor = tool_manager.build_executor()
-        tool_descriptions = tool_manager.primary_descriptions(allowed_tools)
-
-        memory = MemoryConfig()
-        if not self._cfg.memory_long_term:
-            memory.long_term.enabled = False
-        if not self._cfg.memory_short_term:
-            memory.short_term_enabled = False
+        from agent.react.tao import FinishEvent
 
         system_extra = _PLANNER_SYSTEM
         if self._cfg.system_prompt_extra:
             system_extra += f"\n\n{self._cfg.system_prompt_extra}"
 
-        tao_cfg = TaoConfig(
-            max_steps=self._cfg.max_steps,
-            memory=memory,
-            prompt=PromptConfig(system_note=system_extra),
-        )
-        tao = TaoLoop(
-            llm=llm,
-            executor=executor,
-            tool_descriptions=tool_descriptions,
-            cfg=tao_cfg,
+        tao = _build_tao_loop(
+            self._cfg, self._llm_cfg_path, system_extra,
+            short_term_memory=self._cfg.memory_short_term,
         )
 
         full_prompt = f"{_DRAFT_PROMPT}\n\n## Goal\n{instruction}"
@@ -195,28 +204,7 @@ class ConvPlanner:
         )
 
     def _build_loop(self) -> Any:
-        from config.llm_core.config import LLMConfig
-        from config.agent.tao_config import TaoConfig
-        from config.agent.prompt_config import PromptConfig
-        from config.agent.memory.memory_config import MemoryConfig
-        from infra.llm import LLM
-        from agent.react.action.manager import ToolManager
-        from agent.react.tao import TaoLoop
         from agent.react.loop import ConvLoop
-
-        llm = LLM(LLMConfig.from_yaml(self._llm_cfg_path))
-        tool_manager = ToolManager()
-
-        allowed_tools = list(self._cfg.tools or ["scratchpad"])
-        if self._cfg.allow_search:
-            allowed_tools += ["web_search", "knowledge_hybrid_search"]
-
-        executor = tool_manager.build_executor()
-        tool_descriptions = tool_manager.primary_descriptions(allowed_tools)
-
-        memory = MemoryConfig()
-        if not self._cfg.memory_long_term:
-            memory.long_term.enabled = False
 
         system_extra = (
             _PLANNER_SYSTEM
@@ -227,17 +215,7 @@ class ConvPlanner:
         if self._cfg.system_prompt_extra:
             system_extra += f"\n\n{self._cfg.system_prompt_extra}"
 
-        tao_cfg = TaoConfig(
-            max_steps=self._cfg.max_steps,
-            memory=memory,
-            prompt=PromptConfig(system_note=system_extra),
-        )
-        tao = TaoLoop(
-            llm=llm,
-            executor=executor,
-            tool_descriptions=tool_descriptions,
-            cfg=tao_cfg,
-        )
+        tao = _build_tao_loop(self._cfg, self._llm_cfg_path, system_extra)
         return ConvLoop(tao)
 
     @property

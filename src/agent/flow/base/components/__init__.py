@@ -39,8 +39,10 @@ from .node_spec import (
     validate_node_graph_ids,
 )
 
-# ── 协议（旧九层 + 新三接口） ─────────────────────────────────────────────────
+# ── 协议（旧九层 + 新三接口 + 原子规划层） ───────────────────────────────────
 from .protocols import (
+    BaseAtomicPlanner,
+    BaseAtomicReviewer,
     ManifestExecutor,
     NodeDataIngress,
     NodeDocumentWriter,
@@ -51,6 +53,10 @@ from .protocols import (
     NodeValidator,
     NodeVerifier,
 )
+
+# ── 原子规划层实现 ─────────────────────────────────────────────────────────────
+from .atomic_planner import AtomicPlanner, LlmCallFn, _parse_decision
+from .atomic_reviewer import AtomicReviewer, _parse_outcome
 
 # ── 运行时（旧九层 + 新三接口） ───────────────────────────────────────────────
 from .runtime import (
@@ -110,6 +116,15 @@ __all__ = [
     "NodeMutator",
     "NodeObserver",
     "NodeVerifier",
+    # protocols — atomic planning layer
+    "BaseAtomicPlanner",
+    "BaseAtomicReviewer",
+    # atomic planning layer — implementations
+    "AtomicPlanner",
+    "AtomicReviewer",
+    "LlmCallFn",
+    "_parse_decision",
+    "_parse_outcome",
     # runtime — legacy
     "RunnableExecutionNode",
     "RunnableExecutionNodeWithHooks",

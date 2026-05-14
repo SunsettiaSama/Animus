@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Any, Sequence
 
 from agent.flow.base.components.observation import ObservationMode
+from agent.flow.base.budget import TopologyKind
 
 
 # ── Shared primitives ─────────────────────────────────────────────────────────
@@ -299,6 +300,15 @@ class NodeManifest:
     ── 可观测性（Planner 观察节点时使用） ──────────────────────────────────
     observation_mode  向 Planner 暴露的推理链粒度：distilled（默认）或 full。
 
+    ── 原子规划层（AtomicPlanner 填写，Orchestrator 读取） ──────────────────
+    topology         本节点的拓扑类型（atomic / flat / nested）。
+                     · atomic  — 直接交给 ManifestExecutor 执行。
+                     · flat    — sub_manifests 展开合并到当前 DAG 同层。
+                     · nested  — sub_manifests 作为独立子图由子 Orchestrator 执行。
+    topology_reason  AtomicPlanner 的决策理由，用于审计和调试。
+    sub_manifests    当 topology 为 flat/nested 时，AtomicPlanner 生成的子节点列表。
+    output_node_id   nested 模式下，子图中作为本节点对外输出的 exit 节点 task_id。
+
     ── 扩展元数据 ───────────────────────────────────────────────────────────
     tags  任意 key-value 标注，供 Planner / WebUI / 监控等消费；
           不影响执行逻辑。
@@ -313,7 +323,68 @@ class NodeManifest:
     max_steps: int | None = None
     system_note: str = ""
     observation_mode: ObservationMode = ObservationMode.distilled
+    # ── 原子规划层 ────────────────────────────────────────────────────────────
+    topology: TopologyKind = TopologyKind.atomic
+    topology_reason: str = ""
+    sub_manifests: tuple[NodeManifest, ...] = ()
+    output_node_id: str = ""
     tags: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TopologyDecision:
+    """AtomicPlanner.assess() 的返回值。
+
+    Attributes
+    ----------
+    kind:
+        选定的拓扑类型。
+    reason:
+        LLM 的决策理由，用于 topology_reason 字段写入和审计。
+    sub_manifests:
+        flat/nested 时生成的子节点列表；atomic 时为空元组。
+    output_node_id:
+        nested 模式下子图的出口节点 task_id；flat/atomic 时为空字符串。
+    """
+
+    kind: TopologyKind
+    reason: str
+    sub_manifests: tuple[NodeManifest, ...] = ()
+    output_node_id: str = ""
+
+    def apply_to(self, manifest: NodeManifest) -> NodeManifest:
+        """将决策写回 manifest，返回更新后的不可变新实例。"""
+        import dataclasses
+        return dataclasses.replace(
+            manifest,
+            topology=self.kind,
+            topology_reason=self.reason,
+            sub_manifests=self.sub_manifests,
+            output_node_id=self.output_node_id,
+        )
+
+
+@dataclass(frozen=True)
+class ReviewOutcome:
+    """AtomicReviewer 对一次 TopologyDecision 的审查结果。
+
+    approved == True  → 直接使用 original decision。
+    approved == False → 若 revised 非 None，用 revised 替换；
+                        否则降级为 atomic（保守兜底）。
+
+    Attributes
+    ----------
+    approved:
+        True 表示审查通过，无需修改。
+    critique:
+        未通过时的具体原因（I/O 链断裂、潜在循环依赖等）；通过时可为空。
+    revised:
+        未通过时给出的修订版 TopologyDecision；若无法给出则为 None。
+    """
+
+    approved: bool
+    critique: str = ""
+    revised: "TopologyDecision | None" = None
 
 
 def node_specs_to_dag_edges(

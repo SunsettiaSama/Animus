@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent.flow.base.budget import DecompositionBudget
+
 
 def _default_agent_config() -> Any:
     from agent.profile import SubAgentConfig
@@ -57,6 +59,7 @@ class OrchestratorConfig:
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     replanner: ReplannerConfig = field(default_factory=ReplannerConfig)
     log: LogConfig = field(default_factory=LogConfig)
+    decomposition: DecompositionBudget = field(default_factory=DecompositionBudget)
 
 
 @dataclass

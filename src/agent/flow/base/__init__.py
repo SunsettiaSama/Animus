@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+# ── 预算与拓扑 ────────────────────────────────────────────────────────────────
+from .budget import DecompositionBudget, TopologyKind, is_atomic
+
+# ── 注册表 ────────────────────────────────────────────────────────────────────
+from .registry import (
+    NodeRegistry, ExecutorFactory, VerifierFactory,
+    AtomicPlannerFactory, AtomicReviewerFactory, get_registry,
+)
+from .defaults import SubAgentManifestExecutor, register_defaults, _build_llm_call
+from .components.atomic_planner import AtomicPlanner, LlmCallFn
+from .components.atomic_reviewer import AtomicReviewer
+
 # ── DAG 图算法 ────────────────────────────────────────────────────────────────
 from .graph import (
     DagNodeSpec,
@@ -51,6 +63,24 @@ from .orchestration import (
 )
 
 __all__ = [
+    # 预算与拓扑
+    "DecompositionBudget",
+    "TopologyKind",
+    "is_atomic",
+    # 注册表
+    "NodeRegistry",
+    "ExecutorFactory",
+    "VerifierFactory",
+    "AtomicPlannerFactory",
+    "AtomicReviewerFactory",
+    "get_registry",
+    "SubAgentManifestExecutor",
+    "register_defaults",
+    "_build_llm_call",
+    # 原子规划层
+    "AtomicPlanner",
+    "AtomicReviewer",
+    "LlmCallFn",
     # DAG 图算法
     "DagNodeSpec",
     "edges_from_specs",
