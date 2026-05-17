@@ -8,8 +8,8 @@ SRC = Path(__file__).resolve().parent.parent.parent
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from agent.flow.document import PlanParser, TaskStatus
-from agent.flow.patch import HumanPatch, PatchOp, PlanDiff
+from agent.flow.cluster.document import PlanParser, TaskStatus
+from agent.flow.cluster.patch import HumanPatch, PatchOp, PlanDiff
 
 
 _MD = """

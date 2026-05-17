@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 
 from langchain_core.prompts import PromptTemplate
 
-from ..memory.memory import Step
+from ..context.memory import Step
 
 
 class PromptBlock(ABC):

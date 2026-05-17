@@ -55,7 +55,7 @@ from .protocols import (
 )
 
 # ── 原子规划层实现 ─────────────────────────────────────────────────────────────
-from .atomic_planner import AtomicPlanner, LlmCallFn, _parse_decision
+from .atomic_planner import AtomicPlanner, LlmCallFn, _parse_decision, _parse_vote
 from .atomic_reviewer import AtomicReviewer, _parse_outcome
 
 # ── 运行时（旧九层 + 新三接口） ───────────────────────────────────────────────
@@ -124,6 +124,7 @@ __all__ = [
     "AtomicReviewer",
     "LlmCallFn",
     "_parse_decision",
+    "_parse_vote",
     "_parse_outcome",
     # runtime — legacy
     "RunnableExecutionNode",

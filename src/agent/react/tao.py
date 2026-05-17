@@ -25,21 +25,21 @@ from .action.tools.impl.scratchpad import NoteDeleteAction, NoteReadAction, Note
 from .action.skill.domain_learning import DomainLearningSkill
 from .action.tools.impl.web_fetch import WebFetchAction
 from .action.tools.impl.web_search import WebSearchAction
-from .memory.long_term.init import make_memory
-from .memory.long_term.memory import LongTermMemory
-from .memory.medium_term.memory import RecentHistoryMemory
-from .memory.memory import Step
-from .memory.milestone.init import make_milestone
-from .memory.milestone.memory import MilestoneMemory
-from .memory.processor import MemoryProcessor, MemoryResult
+from agent.soul.memory.long_term.init import make_memory
+from agent.soul.memory.long_term.memory import LongTermMemory
+from .context.medium_term.memory import RecentHistoryMemory
+from .context.memory import Step
+from agent.soul.memory.milestone.init import make_milestone
+from agent.soul.memory.milestone.memory import MilestoneMemory
+from .context.processor import MemoryProcessor, MemoryResult
 from .prompt.block import MemoryBlock, PromptBlock
 from .prompt.parser import ParseQuality, ParseResult, diagnose, parse_llm_output
 from .prompt.repair import repair
-from .life import LifeManager, LifeProfileBlock
-from .persona import PersonaManager
+from agent.soul.life import LifeManager, LifeProfileBlock
+from agent.soul.persona import PersonaManager
 from .prompt.manager import PromptManager, StaticPromptParts
 from .trace import TraceStore
-from agent.scheduler.timeline import TimelineStore
+from runtime.scheduler.timeline_service import TimelineService
 
 
 # ── Events ───────────────────────────────────────────────────────────────────
@@ -192,8 +192,8 @@ class TaoLoop:
             else None
         )
 
-        # Timeline store — always created; writes are no-ops until directory exists.
-        self._timeline = TimelineStore(cfg.storage.timeline_dir)
+        # 时间轴仅经 TimelineService 读写，与调度/心跳隔离。
+        self._timeline = TimelineService(cfg.storage.timeline_dir)
 
         # Abort signal — set by abort(), cleared by reset() / rollback_turn()
         self._stop_event = threading.Event()
@@ -276,7 +276,7 @@ class TaoLoop:
                 effective_descriptions[action.name] = action.description
 
             web_search_inst = WebSearchAction()
-            web_fetch_inst  = WebFetchAction()
+            web_fetch_inst  = WebFetchAction(sandbox=self._sandbox)
             skill = DomainLearningSkill(
                 llm=self._llm,
                 kb=self._kb,
@@ -297,6 +297,28 @@ class TaoLoop:
             self._executor.register_instance(research_skill)
             effective_descriptions[research_skill.name] = research_skill.description
 
+            from .action.skill.github_trending_report import GitHubTrendingReportSkill
+            from .action.skill.arxiv_frontier_report import ArxivFrontierReportSkill
+            from .action.skill.frontier_report import FrontierReportSkill
+            gh_skill = GitHubTrendingReportSkill(
+                llm=self._llm,
+                web_fetch=web_fetch_inst,
+            )
+            self._executor.register_instance(gh_skill)
+            effective_descriptions[gh_skill.name] = gh_skill.description
+            arxiv_skill = ArxivFrontierReportSkill(
+                llm=self._llm,
+                web_fetch=web_fetch_inst,
+            )
+            self._executor.register_instance(arxiv_skill)
+            effective_descriptions[arxiv_skill.name] = arxiv_skill.description
+            frontier_skill = FrontierReportSkill(
+                llm=self._llm,
+                web_fetch=web_fetch_inst,
+            )
+            self._executor.register_instance(frontier_skill)
+            effective_descriptions[frontier_skill.name] = frontier_skill.description
+
             if self._sandbox is not None:
                 from .action.tools.impl.file_system import FileReadAction as _FR
                 doc_summary_skill = DocumentSummarySkill(
@@ -312,12 +334,18 @@ class TaoLoop:
         self._scheduler_engine = None
         _engine_to_use = scheduler_engine
         if _engine_to_use is None and cfg.scheduler is not None:
-            from agent.scheduler.engine import SchedulerEngine
-            _engine_to_use = SchedulerEngine(
-                cfg.scheduler,
+            from runtime.scheduler.engine import SchedulerEngine
+            from agent.soul.heartbeat.task_runner import TaskRunner
+            _runner = TaskRunner(
+                cfg=cfg.scheduler,
                 long_term=self._long_term,
                 timeline=self._timeline,
             )
+            _engine_to_use = SchedulerEngine(
+                cfg.scheduler,
+                executor=_runner,
+            )
+            _runner._engine = _engine_to_use
         if _engine_to_use is not None:
             from .action.tools.impl.scheduler_add import SchedulerAddAction
             from .action.tools.impl.scheduler_list import SchedulerListAction
@@ -377,7 +405,7 @@ class TaoLoop:
         self._flow_orchestrator = None
         self._flow_skill_set = None
         if cfg.flow is not None:
-            from agent.flow.orchestrator import FlowOrchestrator
+            from agent.flow.cluster.orchestrator import FlowOrchestrator
             from .action.skill.flow_skill import (
                 FlowSkillSet,
                 RunFlowSkill,
@@ -409,21 +437,6 @@ class TaoLoop:
                 FlowSkipSkill(skill_set=self._flow_skill_set),
             ):
                 self._executor.register_instance(skill)
-
-        # Wire LifeManager into the scheduler heartbeat so the heartbeat tick
-        # can drive activity logging and daily review.
-        if self._life is not None and self._scheduler_engine is not None:
-            hb = getattr(self._scheduler_engine, "heartbeat", None)
-            if hb is not None:
-                self._life._static_profile = (
-                    self._persona.profile if self._persona is not None else None
-                )
-                self._life._emotional_state_ref = (
-                    lambda: self._persona._emotional_state
-                    if self._persona is not None
-                    else None
-                )
-                hb.set_life_manager(self._life)
 
         # Hook the tool-layer event sink after all tools are registered.
         self._executor.set_event_sink(self._timeline.make_tool_sink())
@@ -469,7 +482,7 @@ class TaoLoop:
         return self._scheduler_engine
 
     @property
-    def timeline(self) -> TimelineStore:
+    def timeline(self) -> TimelineService:
         return self._timeline
 
     @property
@@ -586,13 +599,10 @@ class TaoLoop:
                     _cached_milestone = result.milestone
                     _cached_medium    = result.medium_term
             else:
-                # Steps > 0: only short-term memory grows (new tool observations
-                # are appended via processor.add()).  Reuse cached values for the
-                # other tiers to skip repeated vector searches and file reads.
-                _short = processor.recall_short_term()
+                # Steps > 0: reuse cached LT / milestone / medium-term values;
+                # only the current-question trace grows (via processor.add()).
                 result = MemoryResult(
-                    short_term=_short.short_term,
-                    short_term_distillate=_short.short_term_distillate,
+                    short_term=processor.trace,
                     medium_term=_cached_medium,
                     long_term=_cached_lt,
                     milestone=_cached_milestone,
@@ -609,7 +619,6 @@ class TaoLoop:
                     medium_term=result.medium_term,
                     milestone=_cached_milestone,
                     short_term=result.short_term,
-                    short_term_distillate=result.short_term_distillate,
                 )
             else:
                 # First turn or cache invalidated — full build path.
@@ -617,7 +626,6 @@ class TaoLoop:
                     question,
                     MemoryResult(
                         short_term=result.short_term,
-                        short_term_distillate=result.short_term_distillate,
                         medium_term=result.medium_term,
                         long_term=_cached_lt,
                         milestone=_cached_milestone,

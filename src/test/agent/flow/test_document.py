@@ -9,7 +9,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import pytest
-from agent.flow.document import (
+from agent.flow.cluster.document import (
     PlanDocument,
     PlanModule,
     PlanParser,

@@ -258,10 +258,21 @@ class RunnableNode:
             LogEntry.make(entry, source="verifier")
             for entry in verification.log_entries
         ]
+
+        # abstract 检查失败（结构/类型不符）→ 节点视为 failed，错误携带完整报告
+        from .verification import VerificationStatus
+        node_status = (
+            NodeStatus.failed
+            if verification.status == VerificationStatus.failed
+            else NodeStatus.done
+        )
+        node_error = verification.report if node_status == NodeStatus.failed else None
+
         result = NodeResult(
             task_id=self._manifest.task_id,
-            status=NodeStatus.done,
+            status=node_status,
             output=output,
+            error=node_error,
             elapsed_seconds=time.monotonic() - t0,
             observation=obs,
             verification=verification,

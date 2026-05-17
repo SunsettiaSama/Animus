@@ -91,6 +91,12 @@ def _build_suite(scenarios_dir: Path) -> "BenchmarkSuite":
     except (ImportError, OSError):
         pass
 
+    try:
+        from test.benchmark.dag_runner import DagOrchestratorRunner
+        suite.register(DagOrchestratorRunner())
+    except (ImportError, OSError):
+        pass
+
     return suite
 
 

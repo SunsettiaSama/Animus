@@ -10,9 +10,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import pytest
-from agent.flow.channel import HumanEditChannel
-from agent.flow.document import PlanParser, TaskStatus
-from agent.flow.patch import PatchOp
+from agent.flow.cluster.channel import HumanEditChannel
+from agent.flow.cluster.document import PlanParser, TaskStatus
+from agent.flow.cluster.patch import PatchOp
 
 
 _MD = """
@@ -107,7 +107,7 @@ class TestHumanEditChannel:
 
     def test_drain(self, channel_and_doc):
         ch, doc = channel_and_doc
-        from agent.flow.patch import HumanPatch, PatchOp
+        from agent.flow.cluster.patch import HumanPatch, PatchOp
         ch.patch_queue.put_nowait(HumanPatch(op=PatchOp.skip, task_id="task_a"))
         ch.patch_queue.put_nowait(HumanPatch(op=PatchOp.modify_desc, task_id="task_b", payload={"description": "new"}))
 

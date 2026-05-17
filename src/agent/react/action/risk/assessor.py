@@ -42,6 +42,9 @@ DEFAULT_RULES: dict[str, RiskLevel] = {
     "domain_learning":         RiskLevel.MEDIUM,
     "web_research":            RiskLevel.LOW,
     "document_summary":        RiskLevel.LOW,
+    "github_trending_report":  RiskLevel.LOW,
+    "arxiv_frontier_report":   RiskLevel.LOW,
+    "frontier_report":         RiskLevel.LOW,
 }
 
 _DEFAULT_LEVEL = RiskLevel.MEDIUM

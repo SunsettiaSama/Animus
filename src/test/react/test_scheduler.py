@@ -117,10 +117,15 @@ _sa_mod  = _load_tool_file("react.action.tools.impl.scheduler_add",    _TOOLS_DI
 _sl_mod  = _load_tool_file("react.action.tools.impl.scheduler_list",   _TOOLS_DIR / "scheduler_list.py")
 _sc_mod  = _load_tool_file("react.action.tools.impl.scheduler_cancel", _TOOLS_DIR / "scheduler_cancel.py")
 
-from agent.scheduler.config import SchedulerConfig
-from agent.scheduler.task import ScheduledTask, TaskStatus, Trigger
-from agent.scheduler.store import TaskStore
-from agent.scheduler.engine import SchedulerEngine
+from runtime.scheduler.config import SchedulerConfig
+from runtime.scheduler.task import ScheduledTask, TaskStatus, Trigger
+from runtime.scheduler.store import TaskStore
+from runtime.scheduler.engine import SchedulerEngine
+
+
+class _NoopTaskExecutor:
+    async def run(self, task, store):
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -414,7 +419,7 @@ class TestSchedulerEngine(unittest.TestCase):
         self._tmp = tempfile.mkdtemp()
         # 注入空 profiles 避免触发 _default_profiles() 的懒加载导入
         self.cfg = SchedulerConfig(scheduler_dir=self._tmp, profiles={})
-        self.engine = SchedulerEngine(self.cfg)
+        self.engine = SchedulerEngine(self.cfg, executor=_NoopTaskExecutor())
 
     def test_schedule_once_returns_task(self):
         at = _future(3600)
@@ -486,7 +491,7 @@ SchedulerCancelAction = _sc_mod.SchedulerCancelAction
 
 def _make_engine(tmp: str) -> SchedulerEngine:
     cfg = SchedulerConfig(scheduler_dir=tmp, profiles={})
-    return SchedulerEngine(cfg)
+    return SchedulerEngine(cfg, executor=_NoopTaskExecutor())
 
 
 class TestSchedulerAddAction(unittest.TestCase):

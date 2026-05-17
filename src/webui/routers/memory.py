@@ -152,7 +152,7 @@ def consolidate_medium_term():
             status_code=400,
             content={"status": "error", "detail": "No active session."},
         )
-    medium = getattr(state.conv_loop._tao, "_medium_term", None)
+    medium = state.conv_loop.medium_term
     if medium is None:
         return JSONResponse(
             status_code=400,

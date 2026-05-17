@@ -10,8 +10,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import pytest
-from agent.flow.document import PlanParser, TaskStatus
-from agent.flow.snapshot import SnapshotStore
+from agent.flow.cluster.document import PlanParser, TaskStatus
+from agent.flow.cluster.snapshot import SnapshotStore
 
 
 _MD = """

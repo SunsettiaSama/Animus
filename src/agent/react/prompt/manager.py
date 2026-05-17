@@ -7,12 +7,12 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from config.agent.prompt_config import PromptConfig
-from ..memory.processor import MemoryResult
+from ..context.processor import MemoryResult
 from ..prompt.block import MemoryBlock, PromptBlock, QuestionBlock, StepsBlock, SuffixBlock, SystemBlock
 from ..prompt.template import get_template
 
 if TYPE_CHECKING:
-    from ..memory.memory import Step
+    from ..context.memory import Step
 
 
 @dataclass
@@ -80,7 +80,6 @@ class PromptManager:
         ]
         human_blocks: list[PromptBlock] = [
             QuestionBlock(tpl.question_prefix, question),
-            MemoryBlock(tpl.short_term_distillate.title, tpl.short_term_distillate.desc, tpl.separator, result.short_term_distillate),
             StepsBlock(tpl.step_format, result.short_term),
             SuffixBlock(tpl.suffix),
         ]
@@ -123,7 +122,6 @@ class PromptManager:
         medium_term: str = "",
         milestone: str = "",
         short_term: list[Step] | None = None,
-        short_term_distillate: str = "",
     ) -> list[BaseMessage]:
         """Complete prompt assembly using a pre-built :class:`StaticPromptParts`.
 
@@ -144,7 +142,6 @@ class PromptManager:
 
         human_blocks: list[PromptBlock] = [
             QuestionBlock(tpl.question_prefix, question),
-            MemoryBlock(tpl.short_term_distillate.title, tpl.short_term_distillate.desc, tpl.separator, short_term_distillate),
             StepsBlock(tpl.step_format, short_term or []),
             SuffixBlock(tpl.suffix),
         ]

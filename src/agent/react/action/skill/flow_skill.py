@@ -199,7 +199,7 @@ class FlowSkipSkill(BaseSkill):
 
 
 def _format_flow_status(orchestrator: Any) -> str:
-    from agent.flow.document import TaskStatus
+    from agent.flow.cluster.document import TaskStatus
 
     doc = getattr(orchestrator, "_current_doc", None)
     if doc is None:
@@ -242,7 +242,7 @@ def _format_flow_status(orchestrator: Any) -> str:
 def _serialize_flow_event(event: Any) -> dict:
     if isinstance(event, dict):
         return _dict_with_flow_aliases(event)
-    from agent.flow.event import (
+    from agent.flow.cluster.event import (
         HumanPatchEvent,
         LifecycleStateEvent,
         LogLineEvent,

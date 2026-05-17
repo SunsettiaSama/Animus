@@ -39,7 +39,7 @@ def _load_persona_cfg_dict() -> dict:
 
 @router.get("/api/persona")
 def get_persona():
-    from agent.react.persona.profile.store import ProfileStore
+    from agent.soul.persona.profile.store import ProfileStore
     state = get_state()
     store   = ProfileStore(state.persona_dir)
     profile = store.load_profile()
@@ -61,8 +61,8 @@ def get_persona():
 
 @router.post("/api/persona/save")
 def save_persona(req: PersonaSaveRequest):
-    from agent.react.persona.profile.profile import PersonaProfile
-    from agent.react.persona.profile.store import ProfileStore
+    from agent.soul.persona.profile.profile import PersonaProfile
+    from agent.soul.persona.profile.store import ProfileStore
     state = get_state()
     os.makedirs(state.persona_dir, exist_ok=True)
     store = ProfileStore(state.persona_dir)

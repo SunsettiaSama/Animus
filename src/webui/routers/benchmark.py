@@ -219,6 +219,12 @@ def benchmark_run_suite(body: dict):
         except (ImportError, OSError):
             pass
 
+        try:
+            from test.benchmark.dag_runner import DagOrchestratorRunner
+            suite.register(DagOrchestratorRunner())
+        except (ImportError, OSError):
+            pass
+
         gate = None if gate_param == "all" else gate_param
         try:
             report = suite.run(gate=gate)

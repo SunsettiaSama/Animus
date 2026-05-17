@@ -26,6 +26,7 @@ numpy
 httpx
 html2text
 croniter
+python-docx
 
 # Knowledge base
 pymysql

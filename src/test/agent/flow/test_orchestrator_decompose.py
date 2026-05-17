@@ -19,13 +19,13 @@ import pytest
 from agent.base import AgentResult
 from agent.flow.base.budget import DecompositionBudget, TopologyKind
 from agent.flow.base.components.node_spec import NodeManifest, TopologyDecision
-from agent.flow.channel import HumanEditChannel
-from agent.flow.config import LogConfig, OrchestratorConfig, PlannerConfig, ReplannerConfig
-from agent.flow.document import PlanDocument, PlanParser, TaskStatus
-from agent.flow.execution_context import PlanExecutionContext
-from agent.flow.log import PlanLogger
-from agent.flow.orchestrator import FlowOrchestrator
-from agent.flow.snapshot import SnapshotStore
+from agent.flow.cluster.channel import HumanEditChannel
+from agent.flow.cluster.config import LogConfig, OrchestratorConfig, PlannerConfig, ReplannerConfig
+from agent.flow.cluster.document import PlanDocument, PlanParser, TaskStatus
+from agent.flow.cluster.execution_context import PlanExecutionContext
+from agent.flow.cluster.log import PlanLogger
+from agent.flow.cluster.orchestrator import FlowOrchestrator
+from agent.flow.cluster.snapshot import SnapshotStore
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ def _make_executor_mock():
         task = ctx.get("task")
         doc  = ctx.get("doc")
         if task and doc:
-            from agent.flow.document import TaskExecutionContext
+            from agent.flow.cluster.document import TaskExecutionContext
             result = f"result_of_{task.task_id}"
             ec = TaskExecutionContext(task_id=task.task_id, status="done",
                                       result_summary=result, step_count=1)
@@ -208,7 +208,7 @@ class TestFlatExpansion:
         async def _exec_run(instruction, **ctx):
             task = ctx.get("task"); d = ctx.get("doc")
             if task and d:
-                from agent.flow.document import TaskExecutionContext
+                from agent.flow.cluster.document import TaskExecutionContext
                 executed.append(task.task_id)
                 result = f"result_of_{task.task_id}"
                 ec = TaskExecutionContext(task_id=task.task_id, status="done",
@@ -245,7 +245,7 @@ class TestFlatExpansion:
         async def _exec_run(instruction, **ctx):
             task = ctx.get("task"); d = ctx.get("doc")
             if task and d:
-                from agent.flow.document import TaskExecutionContext
+                from agent.flow.cluster.document import TaskExecutionContext
                 order.append(task.task_id)
                 result = f"r_{task.task_id}"
                 ec = TaskExecutionContext(task_id=task.task_id, status="done",
@@ -301,7 +301,7 @@ class TestNestedExecution:
         async def _exec_run(instruction, **ctx):
             task = ctx.get("task"); d = ctx.get("doc")
             if task and d:
-                from agent.flow.document import TaskExecutionContext
+                from agent.flow.cluster.document import TaskExecutionContext
                 order.append(task.task_id)
                 result = f"result_of_{task.task_id}"
                 ec = TaskExecutionContext(task_id=task.task_id, status="done",

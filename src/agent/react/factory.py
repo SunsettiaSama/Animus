@@ -15,7 +15,7 @@ def build_conv_loop(
 ) -> Any:
     """Create a fresh ConvLoop (wrapping a new TaoLoop) from AppState.
 
-    Extracted from ``routers.react._do_react_init`` so that both the WebUI
+    Extracted from ``agent.adapters.react_bridge.do_react_init`` so that both the WebUI
     router and the BotService can create independent per-session ConvLoops
     without duplicating configuration logic.
 
@@ -27,13 +27,13 @@ def build_conv_loop(
     from config.agent.prompt_config import PromptConfig
     from config.agent.memory.memory_config import MemoryConfig
     from config.agent.persona_config import PersonaConfig
-    from agent.scheduler import SchedulerConfig
+    from runtime.scheduler import SchedulerConfig
     from agent.profile import SubAgentConfig
     from agent.react.loop import ConvLoop
     from agent.react.tao import TaoLoop
     from config.agent.risk_config import RiskConfig
     from agent.react.action.risk.gate import RiskGate
-    from agent.flow.config import FlowConfig
+    from agent.flow.cluster.config import FlowConfig
 
     def _load_memory_config() -> MemoryConfig:
         from agent.runner import _apply_embedding_override

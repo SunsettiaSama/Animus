@@ -40,7 +40,7 @@ class TimelineReadAction(BaseAction):
     )
     args_model: ClassVar[type[BaseModel]] = TimelineReadArgs
 
-    timeline: Any = None  # TimelineStore，构造时注入
+    timeline: Any = None  # TimelineService（或兼容 append/read/make_tool_sink 的对象）
 
     def execute(
         self,

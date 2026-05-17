@@ -10,8 +10,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import pytest
-from agent.flow.config import LogConfig
-from agent.flow.log import LogLevel, PlanLogger
+from agent.flow.cluster.config import LogConfig
+from agent.flow.cluster.log import LogLevel, PlanLogger
 
 
 @pytest.fixture

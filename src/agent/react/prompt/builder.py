@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from config.agent.prompt_config import PromptConfig
-from ..memory.processor import MemoryResult
+from ..context.processor import MemoryResult
 from ..prompt.block import MemoryBlock, QuestionBlock, StepsBlock, SuffixBlock, SystemBlock
 from ..prompt.template import get_template
 
@@ -24,7 +24,6 @@ class PromptBuilder:
             MemoryBlock(tpl.milestone.title,           tpl.milestone.desc,           tpl.separator, result.milestone),
             MemoryBlock(tpl.long_term.title,           tpl.long_term.desc,           tpl.separator, result.long_term),
             QuestionBlock(tpl.question_prefix, question),
-            MemoryBlock(tpl.short_term_distillate.title, tpl.short_term_distillate.desc, tpl.separator, result.short_term_distillate),
             StepsBlock(tpl.step_format, result.short_term),
             SuffixBlock(tpl.suffix),
         ]

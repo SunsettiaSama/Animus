@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config.agent.trace_config import TraceConfig
-from ..memory.memory import Step
+from ..context.memory import Step
 
 
 def _trunc(text: str, limit: int) -> str:
@@ -22,7 +22,9 @@ class TraceStore:
         self._dir.mkdir(parents=True, exist_ok=True)
 
         now = datetime.now(timezone.utc)
-        slug = question[:40].replace(" ", "_").replace("/", "-")
+        # sanitize: strip whitespace, replace filesystem-unsafe chars with '_'
+        _UNSAFE = str.maketrans('\\/\n\r\t:*?"<>|', '_' * 12)
+        slug = question[:40].strip().translate(_UNSAFE)
         filename = f"{now.strftime('%Y%m%d_%H%M%S')}_{slug}.json"
 
         record = {

@@ -11,23 +11,16 @@ sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(_HERE, ".."))
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from routers import llm, react, memory, persona, scheduler, knowledge, voice, history, flow, benchmark, probe
+from agent.adapters.fastapi_react import create_react_router
+from agent.adapters.fastapi_chat import create_chat_router
+from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe
 from routers.infra import router as infra_router
 from state import get_state
 
 _HERE = os.path.dirname(__file__)
-
-_VUE_INDEX = os.path.join(_HERE, "static", "dist", "index.html")
-
-_MISSING_UI_MARKUP = """<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="UTF-8"/><title>ReAct — build UI</title></head><body>
-<p>Web UI bundle not found. From repo root run:</p>
-<pre>cd src/webui/frontend &amp;&amp; npm ci &amp;&amp; npm run build</pre>
-<p>Or use a Docker image built with the project <code>docker/Dockerfile</code> (multi-stage includes the UI).</p>
-</body></html>"""
 
 app = FastAPI(title="ReAct Agent")
 
@@ -35,8 +28,7 @@ app = FastAPI(title="ReAct Agent")
 @app.middleware("http")
 async def _no_cache_js(request: Request, call_next):
     response = await call_next(request)
-    p = request.url.path
-    if p.startswith("/static/js/") or p.startswith("/static/css/") or p.startswith("/static/dist/"):
+    if request.url.path.startswith("/static/js/") or request.url.path.startswith("/static/css/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -51,7 +43,8 @@ app.mount(
 
 for _r in [
     llm.router,
-    react.router,
+    create_react_router(get_state),
+    create_chat_router(get_state),
     memory.router,
     persona.router,
     scheduler.router,
@@ -59,7 +52,7 @@ for _r in [
     infra_router,
     voice.router,
     history.router,
-    flow.router,
+    plan.router,
     benchmark.router,
     probe.router,
 ]:
@@ -138,9 +131,9 @@ def _startup():
         state.llm_service.start(cfg)
         print(f"[webui] LLM auto-loaded  model={cfg.model!r}")
 
-        # Create and start the global scheduler engine.
-        # TemporalClock runs on its own daemon thread — no run_coroutine_threadsafe needed.
-        from agent.scheduler import SchedulerEngine, SchedulerConfig, TimelineStore
+        # Create and start the global scheduler engine via AgentService.
+        from agent.service import AgentService
+        from runtime.scheduler import SchedulerConfig, TimelineService, WorkJournal
         from config import paths as _paths
         import yaml as _yaml
 
@@ -160,26 +153,29 @@ def _startup():
             )
         state.scheduler_config_yaml = str(_sched_yaml)
 
-        # Create WorkJournal
-        from agent.scheduler.journal import WorkJournal
         _journal = WorkJournal(state.cache.history_dir)
         state.scheduler_journal = _journal
-        state.scheduler_engine = SchedulerEngine(
-            sch_cfg,
-            timeline=TimelineStore(state.cache.timeline_dir),
+
+        _agent_service = AgentService(
+            llm_cfg_path=state.llm_config_yaml,
+            scheduler_cfg=sch_cfg,
+            llm_service=state.llm_service,
             notify_fn=_make_scheduler_notify_fn(state),
+            timeline=TimelineService(state.cache.timeline_dir),
             journal=_journal,
             channel_router=state.channel_router,
-            llm_service=state.llm_service,
         )
-        state.scheduler_engine.start()
-        print("[webui] Global scheduler engine started (TemporalClock thread)")
+        _agent_service.start()
+        state.scheduler_engine = _agent_service.engine
+        print("[webui] Global scheduler engine started via AgentService (TemporalClock thread)")
 
-        from routers.react import ReactInitRequest, _do_react_init
+        from agent.adapters.react_bridge import do_react_init
+        from agent.adapters.react_schemas import ReactInitRequest
+
         state.react_init_event.clear()
         state.react_init_error = ""
         state.conv_loop = None
-        _do_react_init(ReactInitRequest(), state)
+        do_react_init(ReactInitRequest(), state)
 
         # Start bot service only when explicitly enabled by the user.
         # Runs independently of the browser — closing the WebUI frontend
@@ -205,13 +201,16 @@ def _startup():
 @app.on_event("shutdown")
 def _shutdown():
     state = get_state()
-    # Unblock any open SSE /api/flow/stream connections so they exit before
+    # Unblock any open SSE /api/plan/stream connections so they exit before
     # uvicorn forcefully cancels them (avoids CancelledError in the logs).
-    state.flow_broadcast({"type": "done", "status": "shutdown", "answer": ""})
+    state.plan_broadcast({"type": "done", "status": "shutdown", "answer": ""})
     if state.notify_queue is not None:
         state.notify_queue.put_nowait(None)
     if state.scheduler_engine is not None:
         state.scheduler_engine.stop()
+    if state.session_manager is not None:
+        state.session_manager.stop_all()
+        state.session_manager = None
     state.task_runner.shutdown(wait=True, timeout=15)
     state.service_registry.stop_all()
     if state.active_tao is not None:
@@ -219,18 +218,8 @@ def _shutdown():
         state.active_tao = None
 
 
-def _vue_index_response() -> HTMLResponse:
-    with open(_VUE_INDEX, encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
-
-
 @app.get("/", response_class=HTMLResponse)
 def index():
-    if os.path.isfile(_VUE_INDEX):
-        return _vue_index_response()
-    return HTMLResponse(content=_MISSING_UI_MARKUP, status_code=200)
-
-
-@app.get("/v2")
-def vue_greenfield_redirect():
-    return RedirectResponse(url="/", status_code=307)
+    html_path = os.path.join(_HERE, "index.html")
+    with open(html_path, encoding="utf-8") as f:
+        return f.read()

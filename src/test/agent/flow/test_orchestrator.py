@@ -26,11 +26,11 @@ import pytest
 
 from agent.base import AgentResult
 
-from agent.flow.config import LogConfig, OrchestratorConfig, PlannerConfig, ReplannerConfig
+from agent.flow.cluster.config import LogConfig, OrchestratorConfig, PlannerConfig, ReplannerConfig
 
-from agent.flow.document import PlanDocument, PlanParser, TaskStatus
+from agent.flow.cluster.document import PlanDocument, PlanParser, TaskStatus
 
-from agent.flow.orchestrator import FlowOrchestrator
+from agent.flow.cluster.orchestrator import FlowOrchestrator
 
 
 
@@ -144,7 +144,7 @@ def _make_executor_mock(result_fn=None):
 
         if task and doc:
 
-            from agent.flow.document import TaskExecutionContext
+            from agent.flow.cluster.document import TaskExecutionContext
 
             ctx_obj = TaskExecutionContext(
 
@@ -194,7 +194,7 @@ def _make_orch(tmp_path):
 
 
 def _bind_dispatch_ctx(orch, doc):
-    from agent.flow.execution_context import PlanExecutionContext
+    from agent.flow.cluster.execution_context import PlanExecutionContext
 
     orch._ctx = PlanExecutionContext.from_config(doc.plan_id, orch._cfg.parallel_limit, doc)
 
@@ -218,11 +218,11 @@ class TestFlowOrchestratorDispatch:
 
 
 
-        from agent.flow.log import PlanLogger
+        from agent.flow.cluster.log import PlanLogger
 
-        from agent.flow.snapshot import SnapshotStore
+        from agent.flow.cluster.snapshot import SnapshotStore
 
-        from agent.flow.channel import HumanEditChannel
+        from agent.flow.cluster.channel import HumanEditChannel
 
         logger = PlanLogger(str(tmp_path), doc.plan_id, LogConfig(enabled=False))
 
@@ -270,7 +270,7 @@ class TestFlowOrchestratorDispatch:
 
                 execution_order.append(task.task_id)
 
-                from agent.flow.document import TaskExecutionContext
+                from agent.flow.cluster.document import TaskExecutionContext
 
                 ec = TaskExecutionContext(task_id=task.task_id, status="done", result_summary="ok", step_count=1)
 
@@ -284,11 +284,11 @@ class TestFlowOrchestratorDispatch:
 
 
 
-        from agent.flow.log import PlanLogger
+        from agent.flow.cluster.log import PlanLogger
 
-        from agent.flow.snapshot import SnapshotStore
+        from agent.flow.cluster.snapshot import SnapshotStore
 
-        from agent.flow.channel import HumanEditChannel
+        from agent.flow.cluster.channel import HumanEditChannel
 
         logger = PlanLogger(str(tmp_path), doc.plan_id, LogConfig(enabled=False))
 
@@ -350,7 +350,7 @@ class TestFlowOrchestratorDispatch:
 
                 await asyncio.sleep(0.05)  # Simulate work
 
-                from agent.flow.document import TaskExecutionContext
+                from agent.flow.cluster.document import TaskExecutionContext
 
                 ec = TaskExecutionContext(task_id=task.task_id, status="done", result_summary="ok", step_count=1)
 
@@ -364,11 +364,11 @@ class TestFlowOrchestratorDispatch:
 
 
 
-        from agent.flow.log import PlanLogger
+        from agent.flow.cluster.log import PlanLogger
 
-        from agent.flow.snapshot import SnapshotStore
+        from agent.flow.cluster.snapshot import SnapshotStore
 
-        from agent.flow.channel import HumanEditChannel
+        from agent.flow.cluster.channel import HumanEditChannel
 
         logger = PlanLogger(str(tmp_path), doc.plan_id, LogConfig(enabled=False))
 
@@ -424,11 +424,11 @@ class TestFlowOrchestratorDispatch:
 
 
 
-        from agent.flow.log import PlanLogger
+        from agent.flow.cluster.log import PlanLogger
 
-        from agent.flow.snapshot import SnapshotStore
+        from agent.flow.cluster.snapshot import SnapshotStore
 
-        from agent.flow.channel import HumanEditChannel
+        from agent.flow.cluster.channel import HumanEditChannel
 
         logger = PlanLogger(str(tmp_path), doc.plan_id, LogConfig(enabled=False))
 

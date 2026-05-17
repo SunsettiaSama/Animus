@@ -114,13 +114,18 @@ _nu_mod = _load_tool_file(
 NotifyUserAction = _nu_mod.NotifyUserAction
 
 # 真实导入调度器核心（无重型依赖）
-from agent.scheduler.command import EventCommand
-from agent.scheduler.config import SchedulerConfig
-from agent.scheduler.task import ScheduledTask, TaskStatus, Trigger
-from agent.scheduler.store import TaskStore
-from agent.scheduler.engine import SchedulerEngine
-from agent.scheduler.journal import WorkJournal
+from runtime.scheduler.command import EventCommand
+from runtime.scheduler.config import SchedulerConfig
+from runtime.scheduler.task import ScheduledTask, TaskStatus, Trigger
+from runtime.scheduler.store import TaskStore
+from runtime.scheduler.engine import SchedulerEngine
+from runtime.scheduler.journal import WorkJournal
 from infra.channel_router import ChannelRouter, ReplyTarget
+
+
+class _NoopTaskExecutor:
+    async def run(self, task, store):
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -592,7 +597,7 @@ class TestSchedulerEngineEdit(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.mkdtemp()
         self.cfg = SchedulerConfig(scheduler_dir=self._tmp, profiles={})
-        self.engine = SchedulerEngine(self.cfg)
+        self.engine = SchedulerEngine(self.cfg, executor=_NoopTaskExecutor())
 
     def test_edit_task_instruction(self):
         task = self.engine.schedule_once("edit_me", "旧指令", _future(3600))

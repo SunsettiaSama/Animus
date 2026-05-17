@@ -1,3 +1,4 @@
+from infra.db import MySQLClient, RedisClient
 from infra.base_service import BaseServiceManager
 from infra.node_runtime import NodeRuntimeManager
 from infra.sandbox import SandboxManager
@@ -15,6 +16,8 @@ from infra.llm import BaseLLM, LLM, LLMHandle, LLMService
 VLLMServerManager = OfficialVLLMManager    # backward-compat alias
 
 __all__ = [
+    "MySQLClient",
+    "RedisClient",
     "BaseServiceManager",
     "BackgroundTaskRunner",
     "NodeRuntimeManager",

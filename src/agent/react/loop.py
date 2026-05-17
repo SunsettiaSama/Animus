@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Generator
+from typing import Any, Callable, Generator
 
 from .tao import TaoEvent, TaoLoop
 
@@ -18,6 +18,51 @@ class ConvLoop:
 
     def __init__(self, tao: TaoLoop) -> None:
         self._tao = tao
+
+    @property
+    def tao_loop(self) -> TaoLoop:
+        """Inner TAO engine (lifecycle, benchmark, shutdown close)."""
+
+        return self._tao
+
+    @property
+    def medium_term(self) -> Any:
+        return self._tao._medium_term
+
+    def abort(self) -> None:
+        self._tao.abort()
+
+    def resolve_approval(self, request_id: str, approved: bool) -> bool:
+        return self._tao.resolve_approval(request_id, approved)
+
+    def rollback_unfinished_turn(self) -> None:
+        self._tao.rollback_turn()
+
+    @property
+    def abort_signaled(self) -> bool:
+        return self._tao._stop_event.is_set()
+
+    def clear_persistent_memory(self) -> None:
+        self._tao.clear_memory()
+
+    @property
+    def persona_enabled(self) -> bool:
+        return self._tao._persona is not None
+
+    def clear_persona(self) -> None:
+        self._tao.clear_persona()
+
+    def read_timeline(self, date: str | None = None) -> list:
+        return self._tao.timeline.read(date=date)
+
+    def set_sub_event_sink(self, sink: Callable[..., Any] | None) -> None:
+        self._tao.sub_event_sink = sink
+
+    def set_plan_event_sink(self, sink: Any) -> None:
+        self._tao.set_plan_event_sink(sink)
+
+    def preload(self) -> None:
+        self._tao.preload()
 
     # ── history restoration ─────────────────────────────────────────────────
 

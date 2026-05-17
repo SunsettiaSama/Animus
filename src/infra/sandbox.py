@@ -89,34 +89,68 @@ class SandboxManager(BaseServiceManager):
         Safety measures:
         - Blocked module names are rejected at static scan level.
         - A restricted builtins dict removes dangerous callables.
+        - __import__ is replaced with a whitelist-aware version: only modules
+          in python_allowed_modules (top-level package name) are importable;
+          anything in python_blocked_modules is always refused.
         - Execution is time-bounded by python_timeout_secs using a daemon thread.
         - stdout/stderr are captured; exceptions are returned as text.
         """
-        self._check_blocked_modules(code)
+        blocked_err = self._check_blocked_modules(code)
+        if blocked_err:
+            return blocked_err
 
-        safe_builtins = {
-            name: __builtins__[name]  # type: ignore[index]
-            for name in (
-                "abs", "all", "any", "bin", "bool", "bytes", "callable",
-                "chr", "complex", "dict", "dir", "divmod", "enumerate",
-                "filter", "float", "format", "frozenset", "getattr",
-                "globals", "hasattr", "hash", "hex", "id", "input",
-                "int", "isinstance", "issubclass", "iter", "len", "list",
-                "locals", "map", "max", "min", "next", "object", "oct",
-                "ord", "pow", "print", "property", "range", "repr",
-                "reversed", "round", "set", "setattr", "slice", "sorted",
-                "str", "sum", "super", "tuple", "type", "vars", "zip",
-            )
-            if isinstance(__builtins__, dict) and name in __builtins__  # type: ignore[operator]
-            or not isinstance(__builtins__, dict) and hasattr(__builtins__, name)
-        }
-        # If __builtins__ is a module, extract attributes directly
-        if not isinstance(__builtins__, dict):
-            safe_builtins = {
-                name: getattr(__builtins__, name)
-                for name in safe_builtins
-                if hasattr(__builtins__, name)
-            }
+        _allowed: frozenset[str] = frozenset(self._cfg.python_allowed_modules)
+        _blocked: frozenset[str] = frozenset(self._cfg.python_blocked_modules)
+
+        def _safe_import(
+            name: str,
+            globals=None,  # noqa: A002
+            locals=None,   # noqa: A002
+            fromlist=(),
+            level: int = 0,
+        ):
+            top = name.split(".")[0]
+            if top in _blocked:
+                raise ImportError(
+                    f"沙箱拒绝：模块 '{name}' 在黑名单中，禁止导入"
+                )
+            if _allowed and top not in _allowed:
+                raise ImportError(
+                    f"沙箱拒绝：模块 '{name}' 不在允许列表中，"
+                    f"如需使用请联系管理员将其加入 python_allowed_modules"
+                )
+            return __import__(name, globals, locals, fromlist, level)
+
+        _builtins_src = __builtins__
+        _is_dict = isinstance(_builtins_src, dict)
+
+        def _get(name: str):
+            if _is_dict:
+                return _builtins_src.get(name)  # type: ignore[union-attr]
+            return getattr(_builtins_src, name, None)
+
+        _safe_names = (
+            "abs", "all", "any", "bin", "bool", "bytes", "callable",
+            "chr", "complex", "dict", "dir", "divmod", "enumerate",
+            "filter", "float", "format", "frozenset", "getattr",
+            "globals", "hasattr", "hash", "hex", "id",
+            "int", "isinstance", "issubclass", "iter", "len", "list",
+            "locals", "map", "max", "min", "next", "object", "oct",
+            "ord", "pow", "print", "property", "range", "repr",
+            "reversed", "round", "set", "setattr", "slice", "sorted",
+            "str", "sum", "super", "tuple", "type", "vars", "zip",
+            "NotImplemented", "Ellipsis", "None", "True", "False",
+            "ArithmeticError", "AssertionError", "AttributeError",
+            "EOFError", "Exception", "FloatingPointError", "GeneratorExit",
+            "ImportError", "IndexError", "KeyError", "KeyboardInterrupt",
+            "MemoryError", "NameError", "NotImplementedError", "OSError",
+            "OverflowError", "RecursionError", "RuntimeError", "StopIteration",
+            "StopAsyncIteration", "SyntaxError", "TypeError", "UnicodeError",
+            "UnicodeDecodeError", "UnicodeEncodeError", "ValueError",
+            "ZeroDivisionError",
+        )
+        safe_builtins = {n: v for n in _safe_names if (v := _get(n)) is not None}
+        safe_builtins["__import__"] = _safe_import
 
         namespace: dict = {"__builtins__": safe_builtins}
         stdout_capture = io.StringIO()
@@ -148,10 +182,15 @@ class SandboxManager(BaseServiceManager):
             combined = combined[:self._cfg.python_max_output_chars] + "\n[输出已截断]"
         return combined or "(无输出)"
 
-    def _check_blocked_modules(self, code: str) -> None:
-        """Raise ValueError if code references any blocked module name."""
+    def _check_blocked_modules(self, code: str) -> str | None:
+        """Static pre-scan: return an error string if code explicitly references a blocked module.
+
+        This is a best-effort early check; the runtime _safe_import is the
+        authoritative gate. Only blocked modules are rejected here — allowed
+        modules pass through to runtime validation.
+        Returns None if the code passes the static check.
+        """
         for module in self._cfg.python_blocked_modules:
-            # Match 'import os', 'import os.path', 'from os import ...', '__import__("os")'
             patterns = [
                 f"import {module}",
                 f"from {module}",
@@ -160,9 +199,11 @@ class SandboxManager(BaseServiceManager):
             ]
             for pat in patterns:
                 if pat in code:
-                    raise ValueError(
-                        f"Python 沙箱拒绝：检测到受限模块 {module!r}（匹配：{pat!r}）"
+                    return (
+                        f"[执行错误] ImportError: "
+                        f"沙箱拒绝：模块 {module!r} 在黑名单中，禁止导入"
                     )
+        return None
 
     # ── HTTP domain policy ────────────────────────────────────────────────────
 

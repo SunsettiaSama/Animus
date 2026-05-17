@@ -24,22 +24,8 @@ from .graph import (
     validate_known_dependencies,
 )
 
-# ── ExecutionNodeSpec → graph 桥接 ────────────────────────────────────────────
-from .link import (
-    assert_acyclic,
-    dep_map_from_nodes,
-    index_nodes,
-    layers,
-    parallel_width,
-    ready_ids,
-    to_dag_specs,
-)
-
 # ── 基础类型 ──────────────────────────────────────────────────────────────────
 from .types import NodeStatus
-
-# ── 节点规格（声明式）；详见 components 子包 ──────────────────────────────────
-from .components import ExecutionNodeSpec, MetadataLayer
 
 # ── 编排协议层 ────────────────────────────────────────────────────────────────
 from .orchestration import (
@@ -48,6 +34,7 @@ from .orchestration import (
     DagGraphManager,
     # 计划说明书
     BasePlanSpec,
+    ManifestAwarePlanSpec,
     # 规划器
     BasePlanner,
     # 重规划器
@@ -61,6 +48,26 @@ from .orchestration import (
     # 编排器
     BaseOrchestrator,
 )
+
+# ── DEPRECATED: 九层 ExecutionNodeSpec → graph 桥接 ──────────────────────────
+# 以下导出仅供旧测试过渡期使用；新代码请直接使用 ManifestPlanSpec + DagOrchestrator。
+# 待 src/test/agent/flow/test_link.py 等测试迁移完成后将移除。
+from .link import (
+    assert_acyclic,
+    dep_map_from_nodes,
+    index_nodes,
+    layers,
+    parallel_width,
+    ready_ids,
+    to_dag_specs,
+)
+from .components import ExecutionNodeSpec, MetadataLayer
+
+# ── 具体计划说明书 ─────────────────────────────────────────────────────────────
+from .plan_spec import ManifestPatch, ManifestPlanSpec
+
+# ── 具体编排器 ────────────────────────────────────────────────────────────────
+from .dag_orchestrator import DagOrchestrator
 
 __all__ = [
     # 预算与拓扑
@@ -90,24 +97,14 @@ __all__ = [
     "ready_node_ids",
     "topological_layers",
     "validate_known_dependencies",
-    # graph 桥接
-    "assert_acyclic",
-    "dep_map_from_nodes",
-    "index_nodes",
-    "layers",
-    "parallel_width",
-    "ready_ids",
-    "to_dag_specs",
     # 基础类型
     "NodeStatus",
-    # 节点规格
-    "ExecutionNodeSpec",
-    "MetadataLayer",
     # 编排协议层 — 图与节点管理器
     "BaseGraphManager",
     "DagGraphManager",
     # 编排协议层 — 计划说明书
     "BasePlanSpec",
+    "ManifestAwarePlanSpec",
     # 编排协议层 — 规划器
     "BasePlanner",
     # 编排协议层 — 重规划器
@@ -120,4 +117,19 @@ __all__ = [
     "OrchestratorResult",
     # 编排协议层 — 编排器
     "BaseOrchestrator",
+    # 具体计划说明书
+    "ManifestPatch",
+    "ManifestPlanSpec",
+    # 具体编排器
+    "DagOrchestrator",
+    # DEPRECATED — 九层 ExecutionNodeSpec 桥接（待移除）
+    "assert_acyclic",
+    "dep_map_from_nodes",
+    "index_nodes",
+    "layers",
+    "parallel_width",
+    "ready_ids",
+    "to_dag_specs",
+    "ExecutionNodeSpec",
+    "MetadataLayer",
 ]

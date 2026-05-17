@@ -88,6 +88,8 @@ def _make_response(
 ) -> MagicMock:
     resp = MagicMock()
     resp.text = text
+    resp.content = text.encode("utf-8")
+    resp.apparent_encoding = "utf-8"
     resp.status_code = status_code
     resp.headers = {"content-type": content_type}
     resp.raise_for_status = MagicMock()
@@ -146,6 +148,63 @@ class TestWebFetch:
         )
         result = self.action.execute(url=self.url, max_chars=100)
         assert "截断" in result
+        assert "10000" in result
+
+    def test_non_text_content_skipped(self, monkeypatch):
+        resp = _make_response(text="binary", content_type="application/pdf")
+        resp.content = b"%PDF-1.4 fake"
+        monkeypatch.setattr(
+            _wf_mod, "httpx",
+            _make_httpx_mock(get=lambda *a, **kw: resp),
+        )
+        result = self.action.execute(url=self.url)
+        assert "非文本" in result
+        assert "PDF" in result or "pdf" in result.lower()
+
+    def test_disallowed_scheme(self):
+        with pytest.raises(ValueError, match="仅允许"):
+            self.action.execute(url="file:///etc/passwd")
+
+    def test_timeout_passed_to_httpx(self, monkeypatch):
+        captured: dict = {}
+
+        def fake_get(*a, **kw):
+            captured["timeout"] = kw.get("timeout")
+            return _make_response(text="x")
+
+        monkeypatch.setattr(_wf_mod, "httpx", _make_httpx_mock(get=fake_get))
+        self.action.execute(url=self.url, timeout=42)
+        assert captured.get("timeout") == 42
+
+    def test_response_too_large_aborts(self, monkeypatch):
+        huge = b"x" * 5000
+        resp = _make_response(text="")
+        resp.content = huge
+        resp.text = huge.decode("utf-8")
+        monkeypatch.setattr(
+            _wf_mod, "httpx",
+            _make_httpx_mock(get=lambda *a, **kw: resp),
+        )
+        result = self.action.execute(url=self.url, max_response_bytes=3000)
+        assert "过大" in result
+        assert "5000" in result
+
+    def test_sandbox_url_check_called(self, monkeypatch):
+        class _SandboxStub:
+            def __init__(self):
+                self.checked_urls: list = []
+
+            def assert_url_allowed(self, url: str) -> None:
+                self.checked_urls.append(url)
+
+        sb = _SandboxStub()
+        action = WebFetchAction(sandbox=sb)
+        monkeypatch.setattr(
+            _wf_mod, "httpx",
+            _make_httpx_mock(get=lambda *a, **kw: _make_response(text="ok")),
+        )
+        action.execute(url=self.url)
+        assert self.url in sb.checked_urls
 
     def test_empty_page(self, monkeypatch):
         monkeypatch.setattr(

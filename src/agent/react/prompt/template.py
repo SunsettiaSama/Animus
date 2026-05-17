@@ -36,7 +36,6 @@ class ReActTemplate:
     long_term: MemoryTierLabel
     milestone: MemoryTierLabel
     medium_term: MemoryTierLabel
-    short_term_distillate: MemoryTierLabel
     question_prefix: str
     suffix: str
     step_format: PromptTemplate       # kept for legacy single-call steps (calls=None)
@@ -109,12 +108,8 @@ EN = ReActTemplate(
         desc="Important events and key breakthroughs identified in past interactions.",
     ),
     medium_term=MemoryTierLabel(
-        title="## [L2 Mid-Term Memory]",
+        title="## [Working Memory]",
         desc="Recent conversation history — Q&A pairs from the past few days, in chronological order.",
-    ),
-    short_term_distillate=MemoryTierLabel(
-        title="## [L1 Short-Term Memory · Distillate]",
-        desc="Compressed summary of reasoning steps evicted from this session's scratchpad.",
     ),
     question_prefix="Question:",
     suffix="",
@@ -189,12 +184,8 @@ CN = ReActTemplate(
         desc="过往交互中被标记为重要的关键事件与突破性进展。",
     ),
     medium_term=MemoryTierLabel(
-        title="## 【L2 中期记忆】",
+        title="## 【工作记忆】",
         desc="近期对话历史（过去若干天的 Q&A 记录，按时间先后排列）。",
-    ),
-    short_term_distillate=MemoryTierLabel(
-        title="## 【L1 短期记忆 · 蒸馏】",
-        desc="本 session 因窗口溢出被驱逐的早期推理步骤压缩摘要。",
     ),
     question_prefix="问题：",
     suffix="",

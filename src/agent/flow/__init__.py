@@ -1,32 +1,50 @@
-from agent.flow.config import (
+from __future__ import annotations
+
+from agent.flow.cluster import (
+    ConvPlanner,
     FlowConfig,
+    HumanPatch,
+    LifecycleStateEvent,
     LogConfig,
     OrchestratorConfig,
+    PatchOp,
     PlanConfig,
-    PlannerConfig,
-    ReplannerConfig,
-)
-from agent.flow.document import (
+    PlanDiff,
     PlanDocument,
+    PlanEvent,
+    PlanLifecycleState,
     PlanModule,
-    PlanParser,
+    PlanOrchestrator,
     PlanParseError,
+    PlanParser,
+    PlanResult,
+    PlanSnapshot,
+    PlannerAgent,
+    PlannerConfig,
     PlanTask,
     PlanValidator,
+    ReplannerAgent,
+    ReplannerConfig,
+    ReplanDecision,
+    SnapshotStore,
     TaskExecutionContext,
     TaskStatus,
+    FlowOrchestrator,
 )
-from agent.flow.event import LifecycleStateEvent, PlanEvent, PlanLifecycleState
-from agent.flow.orchestrator import FlowOrchestrator, PlanOrchestrator
-from agent.flow.patch import HumanPatch, PatchOp, PlanDiff
+
 from agent.flow.base.components.atomic_planner import AtomicPlanner, LlmCallFn
 from agent.flow.base.components.atomic_reviewer import AtomicReviewer
 from agent.flow.base.budget import DecompositionBudget, TopologyKind, is_atomic
 from agent.flow.base.components.node_spec import ReviewOutcome, TopologyDecision
-from agent.flow.planner import ConvPlanner, PlannerAgent
-from agent.flow.replanner import ReplanDecision, ReplannerAgent
-from agent.flow.result import PlanResult
-from agent.flow.snapshot import PlanSnapshot, SnapshotStore
+
+from agent.flow.manager import (
+    FlowFrontendBridge,
+    FlowFrontendBridgeConfig,
+    mirror_plan_flow_id,
+    serialize_plan_event,
+    sse_keepalive_ping_payload,
+)
+from agent.flow.streaming import make_executor_tao_stream_callback
 
 __all__ = [
     "AtomicPlanner",
@@ -66,4 +84,12 @@ __all__ = [
     "PlanResult",
     "PlanSnapshot",
     "SnapshotStore",
+    # frontend bridge (SSE / WebUI)
+    "FlowFrontendBridge",
+    "FlowFrontendBridgeConfig",
+    "mirror_plan_flow_id",
+    "serialize_plan_event",
+    "sse_keepalive_ping_payload",
+    # node streaming (executor Tao → plan events)
+    "make_executor_tao_stream_callback",
 ]

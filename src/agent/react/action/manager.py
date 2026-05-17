@@ -64,34 +64,86 @@ DEFAULT_PRIMARY: list[str] = [
 BUILTIN_PACKAGES: list[ToolPackage] = [
     ToolPackage(
         name="planner",
-        tools=["note_write", "note_read", "note_delete", "web_search", "knowledge_hybrid_search"],
-        description="主 agent（Planner）工具包：草稿本 + 搜索，供规划推理使用",
+        tools=[
+            # 草稿本（规划推理必备）
+            "note_write", "note_read", "note_delete",
+            # 搜索与知识
+            "web_search", "web_fetch", "knowledge_hybrid_search",
+        ],
+        description="主 agent（Planner）工具包：草稿本 + 搜索 + 知识检索，供规划推理使用",
     ),
     ToolPackage(
         name="executor",
-        tools=["calculator", "get_datetime", "web_search", "unit_converter", "word_count"],
-        description="通用执行子 agent 工具包（= DEFAULT_PRIMARY）",
+        tools=[
+            # 基础计算与时间
+            "calculator", "get_datetime", "get_weekday", "unit_converter",
+            # 搜索
+            "web_search",
+            # 文本处理
+            "word_count", "string_transform", "regex_extract", "text_diff",
+            # 数据
+            "json_query",
+            # 草稿本（中间结果暂存）
+            "note_write", "note_read", "note_delete",
+            # 文件（只读，写须显式升级为 code/analyst）
+            "file_read",
+        ],
+        description="通用执行子 agent 工具包：计算 + 搜索 + 文本 + 草稿本 + 文件只读",
     ),
     ToolPackage(
         name="researcher",
-        tools=["web_search", "web_fetch", "knowledge_hybrid_search", "knowledge_save", "knowledge_list"],
-        description="研究型子 agent 工具包：网络搜索 + 知识库读写",
+        tools=[
+            # 网络搜索与抓取
+            "web_search", "web_fetch", "http_request",
+            # 知识库完整读写
+            "knowledge_hybrid_search", "knowledge_save", "knowledge_list",
+            # 草稿本（研究草稿/摘录）
+            "note_write", "note_read", "note_delete",
+            # 成果落盘
+            "file_write", "file_read",
+            # 文本处理
+            "json_query", "regex_extract", "word_count",
+        ],
+        description="研究型子 agent 工具包：网络搜索 + 知识库读写 + 草稿本 + 成果落盘",
     ),
     ToolPackage(
         name="analyst",
-        tools=["calculator", "unit_converter", "get_datetime", "word_count", "python_run",
-               "json_query", "regex_extract"],
-        description="分析型子 agent 工具包：计算 + 数据处理 + 代码执行",
+        tools=[
+            # 计算与换算
+            "calculator", "unit_converter", "get_datetime",
+            # 数据处理
+            "python_run", "json_query", "regex_extract", "text_diff",
+            # 文本统计
+            "word_count", "string_transform",
+            # 数据文件 I/O
+            "file_read", "file_write", "file_list",
+            # 草稿本（中间结论暂存）
+            "note_write", "note_read",
+        ],
+        description="分析型子 agent 工具包：计算 + 数据处理 + 文件 I/O + 草稿本",
     ),
     ToolPackage(
         name="code",
-        tools=["python_run", "file_read", "file_write", "file_list", "file_exists"],
-        description="代码执行子 agent 工具包：Python 运行 + 文件系统",
+        tools=[
+            # 代码执行
+            "python_run",
+            # 文件系统完整访问
+            "file_read", "file_write", "file_list", "file_exists",
+            # 网络下载（获取外部资源）
+            "http_request", "web_fetch",
+            # 数据处理
+            "json_query", "regex_extract",
+            # 时间（脚本依赖）
+            "get_datetime",
+            # 草稿本（调试/日志暂存）
+            "note_write", "note_read",
+        ],
+        description="代码执行子 agent 工具包：Python + 文件系统 + 网络下载 + 数据处理",
     ),
     ToolPackage(
         name="filesystem",
         tools=["file_read", "file_write", "file_list", "file_exists"],
-        description="文件系统子 agent 工具包",
+        description="文件系统子 agent 工具包（只含文件操作）",
     ),
     ToolPackage(
         name="knowledge",
@@ -100,8 +152,41 @@ BUILTIN_PACKAGES: list[ToolPackage] = [
     ),
     ToolPackage(
         name="network",
-        tools=["web_search", "web_fetch", "http_request"],
-        description="网络请求子 agent 工具包",
+        tools=[
+            "web_search", "web_fetch", "http_request",
+            # 结果暂存与落盘
+            "note_write", "note_read",
+            "file_write",
+            "json_query",
+        ],
+        description="网络请求子 agent 工具包：搜索 + 抓取 + HTTP + 结果暂存",
+    ),
+    ToolPackage(
+        name="full",
+        tools=[
+            # math / time
+            "calculator", "get_datetime", "get_weekday",
+            # search / network
+            "weather", "web_search", "web_fetch", "http_request",
+            # conversion / text
+            "unit_converter", "word_count", "string_transform",
+            "base64", "hash", "text_diff",
+            # data
+            "json_query", "regex_extract",
+            # random
+            "random_number", "random_choice", "generate_uuid",
+            # workspace / notes
+            "note_write", "note_read", "note_delete",
+            # filesystem
+            "file_read", "file_write", "file_list", "file_exists",
+            # code
+            "python_run",
+            # knowledge
+            "knowledge_hybrid_search", "knowledge_save", "knowledge_list",
+            # scheduler
+            "scheduler_add", "scheduler_list", "scheduler_cancel",
+        ],
+        description="全量工具包：开放所有已实现工具权限，供测试与研究型任务使用",
     ),
 ]
 

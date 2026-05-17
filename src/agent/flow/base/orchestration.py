@@ -162,6 +162,10 @@ class DagGraphManager:
         with self._lock:
             return list(self._deps)
 
+    def has_node(self, node_id: str) -> bool:
+        with self._lock:
+            return node_id in self._deps
+
     def node_deps(self, node_id: str) -> frozenset[str]:
         with self._lock:
             return self._deps[node_id]
@@ -244,6 +248,37 @@ class DagGraphManager:
                 if s in (NodeStatus.done, NodeStatus.skipped)
             )
         return done, total
+
+
+# ── ManifestAwarePlanSpec ──────────────────────────────────────────────────────
+
+@runtime_checkable
+class ManifestAwarePlanSpec(Protocol):
+    """BasePlanSpec 扩展：提供对 NodeManifest 的直接访问。
+
+    DagOrchestrator 要求 Planner 返回满足此协议的 spec；
+    ManifestPlanSpec 天然满足（无需显式继承）。
+    任何自定义 PlanSpec 只需实现 manifest() 方法即可接入 DagOrchestrator。
+    """
+
+    @property
+    def plan_id(self) -> str: ...
+
+    @property
+    def title(self) -> str: ...
+
+    @property
+    def objective(self) -> str: ...
+
+    def all_node_ids(self) -> list[str]: ...
+
+    def node_deps(self, node_id: str) -> frozenset[str]: ...
+
+    def node_description(self, node_id: str) -> str: ...
+
+    def apply_patch(self, patch: Any) -> None: ...
+
+    def manifest(self, node_id: str) -> Any: ...
 
 
 # ── BasePlanSpec ───────────────────────────────────────────────────────────────
@@ -345,13 +380,20 @@ class ReplanDecision:
     -------------
     done     所有目标已达成；conclusion 提供最终结论。
     continue 计划正常推进，无需修改。
-    modify   需要调整计划；具体补丁由子类字段携带，Orchestrator 调用 spec.apply_patch()。
+    modify   需要调整计划；patch 字段必须非 None，Orchestrator 透传给 spec.apply_patch()。
     abort    不可恢复失败；conclusion 提供当前最佳答案。
+
+    patch 字段
+    ----------
+    decision == "modify" 时必须提供；类型由具体集群定义（ManifestPatch 或域特有 patch 对象）。
+    Orchestrator 将其原样传给 spec.apply_patch(patch)，不解析内容。
+    decision != "modify" 时忽略此字段。
     """
 
     decision: str       # "done" | "continue" | "modify" | "abort"
     conclusion: str = ""
     reason: str = ""
+    patch: Any = None   # 补丁载荷，decision == "modify" 时必须非 None
 
 
 # ── BaseReplanner ──────────────────────────────────────────────────────────────

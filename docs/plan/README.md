@@ -1,38 +1,429 @@
-# plan 模块
+# agent.flow — DAG 规划与编排
 
-Plan-and-Execute 多智能体编排层，支持 Markdown 计划语言、异步 DAG 调度、增量 Replanner、人类编辑通道（Human-in-the-Loop）、文件资源锁、计划快照回滚与结构化日志。
+`agent.flow` 是多智能体编排层，提供两个协作层级：
+
+- **base 层**：与具体 Planner/Replanner 实现无关的通用 DAG 引擎（`DagOrchestrator`、`AtomicPlanner`、`ManifestPlanSpec`）。
+- **cluster 层**：基于 TaoLoop 的 Cluster Planner/Replanner，使用 Markdown 计划语言与 `PlanDocument` IR。
 
 ---
 
-## 架构总览
+## 整体工作流
+
+### 完整路径（Cluster + Base）
 
 ```
-用户目标（question）
+用户目标（goal）
         │
         ▼
-  PlanOrchestrator.run(question)
+[Cluster] PlannerAgent.run(goal)
+        │   使用 TaoLoop 生成 Markdown 计划文本
+        │   PlanParser.parse() → PlanDocument（含 N 个 PlanTask）
+        │   PlanValidator 检查（重复 ID / 未知依赖 / 自引用 / 环检测）
         │
-        ├─ PlannerAgent.plan(question)
-        │       └─ LLM 生成 Markdown 计划
-        │               └─ PlanParser.parse() → PlanDocument（IR）
-        │                       └─ PlanValidator（重复/未知依赖/自引用/拓扑环检测）
+        ▼
+[Cluster] FlowOrchestrator
+        │   _task_to_manifest(task) → NodeManifest（每个 PlanTask → 节点声明）
+        │   ManifestPlanSpec（N 节点声明图）
         │
-        ├─ SnapshotStore.save()  ← 规划完成后立即保存初始快照
+        ▼
+[Base] DagOrchestrator._execute(spec, graph, budget)
         │
-        ├─ _dispatch_all(doc)    ← 异步 DAG 执行引擎
+        ├─ 并发主循环（asyncio.gather）
+        │       每个节点独立协程，等待依赖后执行
         │       │
-        │       ├─ 每个 task 启动独立协程（asyncio.create_task）
-        │       │       ├─ 等待依赖完成（asyncio.Event per task）
-        │       │       ├─ 等待计划恢复（doc._resume_event）
-        │       │       ├─ 排干 HumanEditChannel patch 队列（apply diffs）
-        │       │       ├─ 资源守卫（asyncio.Condition，writes 声明）
-        │       │       ├─ 并发限制（asyncio.Semaphore）
-        │       │       └─ ExecutorAgent.run(task) → CrewRunner → TaoLoop
+        │       ▼
+        │   AtomicPlanner.assess(manifest, budget)
+        │       ├─ is_atomic() 确定性快速路径（无 LLM）
         │       │
-        │       └─ ReplannerAgent 触发（失败/模块完成/人类请求/超时/目标漂移）
-        │               └─ 生成增量 PlanPatch → PlanDocument 原地修补
+        │       ├─ atomic  → SubAgentManifestExecutor.run(manifest, inputs)
+        │       │               └─ SubAgentRunner → TaoLoop（携带 tool_package）
+        │       │
+        │       ├─ flat    → 展开为同层兄弟节点，动态注册到同一 DAG
+        │       │
+        │       └─ nested  → 起子 DagOrchestrator（budget.descend()），
+        │                     将出口节点结果接回父节点
         │
-        └─ PlanResult（plan_id / status / answer / task_results）
+        └─ Replanner 触发
+                on_task_failed   → ReplannerAgent.replan() → patches → spec.apply_patch()
+                on_plan_complete → ReplannerAgent.replan() → done / abort / modify
+```
+
+### 最小路径（仅 Base，无初始 Planner）
+
+```
+goal
+  │
+  ▼
+ManifestPlanSpec.single_node(goal)
+  │   生成单节点种子图（task_id="root"）
+  ▼
+DagOrchestrator._execute(...)
+  │
+  ▼
+AtomicPlanner.assess(root_manifest)
+  │   LLM 决策：root 是否需要拆分？
+  ├─ atomic  → 直接执行
+  ├─ flat    → 展开为 N 个同层节点，各自递归 assess
+  └─ nested  → 起子图，递归 assess
+```
+
+---
+
+## 组件详解
+
+### 1. AtomicPlanner（原子规划层）
+
+**职责**：对单个 `NodeManifest` 决定拓扑类型，是原子还是需要展开。
+
+**判断流程**：
+
+```
+AtomicPlanner.assess(manifest, budget)
+        │
+        ├─ is_atomic(manifest, budget)  ← 确定性检查（无 LLM）
+        │       条件（全部满足则 atomic）：
+        │       · budget.exhausted（depth=0，强制原子）
+        │       · manifest.sub_manifests 非空（已预先展开）
+        │       · input_contract 和 output_contract 均已填写
+        │       · max_steps ≤ budget.max_atom_steps
+        │       · description 不含复合职责关键词
+        │       返回 True → TopologyDecision(atomic, "passed is_atomic()")
+        │
+        ├─ LLM 调用（_assess_sync via thread pool）
+        │       System: AtomicPlanner prompt（含 budget 约束）
+        │       User:   manifest 字段 + context
+        │       输出:   JSON → TopologyDecision
+        │
+        └─ AtomicReviewer.review()（如 budget.review_enabled）
+                → ReviewOutcome
+                approved=True          → 使用原决策
+                approved=False, revised → 使用修订版
+                approved=False, None   → 降级为 atomic
+```
+
+**拓扑类型**：
+
+| 类型 | 含义 | 操作 |
+|------|------|------|
+| `atomic` | 单一职责，可直接执行 | `SubAgentManifestExecutor.run()` |
+| `flat` | 拆为同层兄弟节点 | 注册到当前 DAG，与其他节点共享调度 |
+| `nested` | 自包含子系统 | 起独立子 `DagOrchestrator`，对外暴露 `output_node_id` |
+
+**flat vs nested 选择准则**：
+- **flat**：子任务需要与当前 DAG 中**其他节点**协调（共享数据、有外部依赖）。
+- **nested**：子任务内聚、对外呈现清晰 I/O 界面，内部细节无需暴露。
+
+---
+
+### 2. AtomicReviewer（拓扑决策审查）
+
+**职责**：对 `AtomicPlanner` 的 `TopologyDecision` 做一次自洽性审查。
+
+**审查内容**：
+1. **I/O 链式闭合**：顺序边 A → B 中，A.output_contract 能否满足 B.input_contract。
+2. **依赖正确性**：`depends_on` 中的 task_id 均存在且无环。
+3. **类型适当性**：flat/nested 语义是否正确使用；nested 必须有非空 `output_node_id`。
+4. **宽度约束**：sub_nodes 数量不超过 `budget.max_width`。
+5. **拆分价值**：拆分是否有实质意义（非重命名、非单子节点复制）。
+
+**输出**：`ReviewOutcome`（`approved / critique / revised`）。
+
+审查只在 `budget.review_enabled = True`（即 `max_review_rounds > 0`）时激活。
+
+---
+
+### 3. DecompositionBudget（递归展开预算）
+
+```python
+@dataclass(frozen=True)
+class DecompositionBudget:
+    max_depth: int = 3       # 最大嵌套深度（0 = 强制原子）
+    max_width: int = 8       # 同层最多展开节点数
+    max_atom_steps: int = 5  # 原子节点最大预期 TAO 步数
+    max_review_rounds: int = 1  # 审查轮次（0 = 禁用 reviewer）
+```
+
+进入每层嵌套时，`budget.descend()` 将 `max_depth - 1` 后向下传递。`budget.exhausted`（`max_depth == 0`）时 `AtomicPlanner` 直接返回 atomic，防止无限递归。
+
+---
+
+### 4. ManifestPlanSpec + ManifestPatch
+
+`ManifestPlanSpec` 是 `DagOrchestrator` 的唯一声明式源：
+
+```python
+class ManifestPlanSpec:
+    plan_id: str
+    title: str
+    objective: str
+    _manifests: dict[str, NodeManifest]   # task_id → 节点声明
+
+    # 工厂
+    @classmethod
+    def single_node(cls, goal: str) -> ManifestPlanSpec   # 单节点 bootstrap
+
+    # 访问
+    def manifest(self, node_id: str) -> NodeManifest
+    def all_node_ids(self) -> list[str]
+    def node_deps(self, node_id: str) -> frozenset[str]
+
+    # Replanner 修补
+    def apply_patch(self, patch: ManifestPatch) -> None
+```
+
+`ManifestPatch` 的可操作字段：
+
+| 字段 | 类型 | 作用 |
+|------|------|------|
+| `add_manifests` | `tuple[NodeManifest, ...]` | 新增或覆盖同 task_id 节点 |
+| `remove_ids` | `tuple[str, ...]` | 删除节点 |
+| `update_descriptions` | `dict[str, str]` | 更新节点 description |
+| `add_deps` | `dict[str, tuple[str,...]]` | 追加依赖边 |
+
+---
+
+### 5. NodeManifest（节点声明）
+
+`AtomicPlanner` 评估的对象，同时是 `SubAgentManifestExecutor` 执行的依据：
+
+| 字段 | 类型 | 来源/用途 |
+|------|------|-----------|
+| `task_id` | str | DAG 节点唯一标识（snake_case） |
+| `description` | str | 自然语言任务说明，传给 executor LLM |
+| `depends_on` | tuple[str,...] | 上游节点 ID，调度层使用 |
+| `input_contract` | str | 对上游输入格式的期望（AtomicPlanner 推理依赖合法性） |
+| `output_contract` | str | 产出物约束（executor 知晓目标格式；reviewer 校验） |
+| `tool_package` | str\|None | 工具包名（"executor"/"researcher"/"code"/"full" 等） |
+| `max_steps` | int\|None | TAO 最大步数上限 |
+| `system_note` | str | 追加到 executor system prompt 的任务级约束 |
+| `observation_mode` | ObservationMode | `distilled`（默认）或 `full` |
+| `topology` | TopologyKind | 拓扑类型（AtomicPlanner 填写） |
+| `topology_reason` | str | AtomicPlanner 的决策理由（审计用） |
+| `sub_manifests` | tuple[NodeManifest,...] | flat/nested 时的子节点列表 |
+| `output_node_id` | str | nested 子图的出口节点 task_id |
+| `tags` | dict[str,str] | 任意扩展标注，不影响执行逻辑 |
+
+---
+
+### 6. Cluster 层 PlannerAgent
+
+`PlannerAgent` 通过 TaoLoop 运行，将用户目标转换为结构化 `PlanDocument`：
+
+```
+PlannerAgent.run(goal)
+    │
+    ├─ _build_tao_loop(cfg, llm_cfg_path, _PLANNER_SYSTEM)
+    │       工具：scratchpad（可选 web_search/knowledge_hybrid_search）
+    │
+    ├─ TaoLoop.stream(_DRAFT_PROMPT + goal)
+    │       LLM 输出 Markdown 计划（含草稿和最终版本）
+    │
+    ├─ PlanParser.parse(answer) → PlanDocument
+    │       解析 Markdown 注解：
+    │         `profile:researcher`  `max_steps:15`
+    │         `depends_on:task_id`  `parallel:true`
+    │
+    ├─ PlanValidator.validate(doc)
+    │       检查：重复 ID / 未知依赖 / 自引用 / 拓扑环 / Objective 非空
+    │
+    └─ 返回 AgentResult(output=PlanDocument)
+```
+
+`PlanDocument` 结构：
+
+| 字段 | 说明 |
+|------|------|
+| `plan_id` | UUID |
+| `title` | 计划标题（LLM 自动生成） |
+| `objective` | 目标描述（`## Objective` 小节） |
+| `modules` | `list[PlanModule]`（视觉分组，不影响执行顺序） |
+| `metadata` | `max_replan_cycles`, `timeout`, `paused` |
+| `replan_notes` | Replanner 追加的备注 |
+| `conclusion` | 最终结论（由 Replanner decision=done 填写） |
+
+`PlanTask` 可修改字段（运行前）：
+
+| 方法 | 可覆盖字段 |
+|------|-----------|
+| `doc.set_params(task_id, profile=..., max_steps=...)` | `profile`, `max_steps`, 任意 `params` |
+| `doc.update_task(task_id, ...)` | 任意 dataclass 字段（async，线程安全） |
+
+---
+
+### 7. Cluster 层 ReplannerAgent
+
+**触发条件**（在 `ReplannerConfig.triggers` 中配置）：
+
+| 触发器 | 时机 |
+|--------|------|
+| `on_task_failed` | 任何节点执行失败后 |
+| `on_module_complete` | 一个模块的所有任务完成后 |
+
+**输入**：`ReplannerInputBuilder` 组装执行上下文，包含：
+- 已完成任务摘要（含 step_count 和 result 摘要）
+- 失败任务详情（含 error、last_steps、retry_count）
+- 剩余计划（pending/paused 任务的 Markdown）
+- 触发信息（trigger + cycle 编号）
+
+**输出**：`ReplanDecision`
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `decision` | str | `done`/`continue`/`modify`/`abort` |
+| `confidence` | float | 0.0–1.0 |
+| `reason` | str | 决策理由 |
+| `patches` | list[HumanPatch] | op=`skip`/`set_params`/`add_task` |
+| `conclusion` | str | decision=done/abort 时的最终答案 |
+
+**Patch 操作**：
+
+| op | 效果 |
+|----|------|
+| `skip` | 标记任务为 skipped（可 cascade） |
+| `set_params` | 覆盖 profile / max_steps / system_note |
+| `add_task` | 动态追加新任务节点 |
+
+---
+
+### 8. NodeRegistry（执行器/规划器工厂）
+
+`register_defaults(llm_cfg_path)` 向全局 `NodeRegistry` 注入：
+
+| 注册项 | 实现 |
+|--------|------|
+| `executor_factory` | `lambda pkg: SubAgentManifestExecutor(llm_cfg_path)` |
+| `atomic_planner_factory` | `lambda cfg: AtomicPlanner(llm_call, reviewer)` |
+| `atomic_reviewer_factory` | `lambda cfg: AtomicReviewer(llm_call)` |
+| `known_packages` | 所有 `BUILTIN_PACKAGES` 名称 |
+
+---
+
+## 内置工具包（ToolPackage）
+
+| 包名 | 工具集 | 适用场景 |
+|------|--------|---------|
+| `planner` | note_write/read/delete + web_search + knowledge_hybrid_search | 主 agent 规划推理 |
+| `executor` | calculator + get_datetime + web_search + unit_converter + word_count | 通用执行 |
+| `researcher` | web_search + web_fetch + knowledge_hybrid_search/save/list | 信息研究 |
+| `analyst` | calculator + unit_converter + datetime + python_run + json_query + regex_extract | 数据分析 |
+| `code` | python_run + file_read/write/list/exists | 代码执行 |
+| `filesystem` | file_read/write/list/exists | 文件操作 |
+| `knowledge` | knowledge_hybrid_search/save/list | 知识库操作 |
+| `network` | web_search + web_fetch + http_request | 网络请求 |
+| `full` | 所有已实现工具 | 测试与研究型任务 |
+
+---
+
+## 配置
+
+### DecompositionBudget
+
+```python
+DecompositionBudget(
+    max_depth=3,          # 嵌套深度上限
+    max_width=8,          # 同层展开节点数上限
+    max_atom_steps=5,     # 原子节点最大预期 TAO 步数
+    max_review_rounds=1,  # AtomicReviewer 启用（0 = 禁用）
+)
+```
+
+### PlannerConfig（Cluster 层）
+
+```python
+PlannerConfig(
+    mode="auto",              # "auto" | "interactive"
+    tools=["scratchpad"],     # Planner TaoLoop 可用工具
+    allow_search=False,       # 是否追加 web_search / knowledge_hybrid_search
+    max_steps=8,              # TaoLoop 最大步数
+    max_retries=3,            # Markdown 解析失败重试次数
+    memory_short_term=True,
+    memory_long_term=False,
+)
+```
+
+### ReplannerConfig（Cluster 层）
+
+```python
+ReplannerConfig(
+    triggers=["on_task_failed", "on_module_complete"],
+    max_cycles=3,
+    confidence_threshold=0.0,
+    result_summary_max_chars=300,
+    failed_last_steps=3,      # 失败任务最后 N 条 step 纳入 context
+)
+```
+
+### DagOrchestrator 参数
+
+```python
+DagOrchestrator(
+    planner=None,             # 实现 plan(goal)->ManifestPlanSpec；None 则 single_node bootstrap
+    atomic_planner=atomic,    # AtomicPlanner 实例（register_defaults 后从 registry 取）
+    registry=reg,             # NodeRegistry；None 取全局单例
+    replanner=None,           # BaseReplanner；None 跳过重规划
+    budget=DecompositionBudget(),
+    parallel_limit=0,         # 0 = 不限制
+    replanner_triggers={"on_task_failed", "on_plan_complete"},
+)
+```
+
+---
+
+## 快速开始
+
+### 最小路径（无初始 Planner）
+
+```python
+from agent.flow.base.defaults import register_defaults
+from agent.flow.base.registry import get_registry
+from agent.flow.base.dag_orchestrator import DagOrchestrator
+from agent.flow.base.budget import DecompositionBudget
+
+register_defaults("config/llm_core/config.yaml")
+reg = get_registry()
+atomic = reg.build_atomic_planner("config/llm_core/config.yaml")
+
+orch = DagOrchestrator(atomic_planner=atomic, registry=reg)
+result = asyncio.run(orch.run("列出 3 条学习 Python asyncio 的步骤"))
+print(result.answer)
+```
+
+### 单节点直接执行（跳过 AtomicPlanner）
+
+```python
+from agent.flow.base.components.node_spec import NodeManifest, ObservationMode
+from agent.flow.base.defaults import register_defaults, SubAgentManifestExecutor
+
+register_defaults("config/llm_core/config.yaml")
+manifest = NodeManifest(
+    task_id="my_task",
+    description="搜索 Python asyncio 最佳实践并整理为 3 条建议",
+    tool_package="researcher",
+    max_steps=8,
+    input_contract="无上游依赖",
+    output_contract="3 条结构化建议",
+    observation_mode=ObservationMode.distilled,
+)
+executor = SubAgentManifestExecutor("config/llm_core/config.yaml")
+answer = executor.run(manifest, inputs={})
+print(answer)
+```
+
+### 完整 Cluster 路径
+
+```python
+from agent.flow.cluster.config import FlowConfig
+from agent.flow.cluster.orchestrator import FlowOrchestrator
+
+cfg = FlowConfig(llm_cfg_path="config/llm_core/config.yaml")
+orch = FlowOrchestrator(cfg.orchestrator, cfg.llm_cfg_path)
+
+def on_event(ev):
+    print(f"[{ev['type']}]", ev.get("task_id", ""))
+
+orch.subscribe(on_event)
+result = asyncio.run(orch.run("从多个 RSS 源抓取文章并生成摘要报告"))
+print(result.conclusion)
 ```
 
 ---
@@ -40,365 +431,35 @@ Plan-and-Execute 多智能体编排层，支持 Markdown 计划语言、异步 D
 ## 目录结构
 
 ```
-src/plan/
-├── __init__.py       # 导出所有公共符号
-├── config.py         # PlannerConfig / ReplannerConfig / OrchestratorConfig / LogConfig
-├── document.py       # PlanDocument IR + PlanParser + PlanValidator + CycleDetector
-├── event.py          # PlanEvent 联合类型（10 种事件）
-├── patch.py          # PatchOp + HumanPatch + PlanDiff
-├── channel.py        # HumanEditChannel（shadow copy 文件监视）
-├── snapshot.py       # SnapshotStore + PlanSnapshot
-├── log.py            # PlanLogger（JSONL 结构化日志）
-├── executor.py       # ExecutorAgent（单任务执行器）
-├── planner.py        # PlannerAgent + ConvPlanner
-├── replanner.py      # ReplannerAgent
-├── orchestrator.py   # PlanOrchestrator（主驱动）
-└── result.py         # PlanResult
-```
-
----
-
-## 计划语言（Markdown）
-
-`PlannerAgent` 输出标准 Markdown，`PlanParser` 将其解析为 `PlanDocument` IR。
-
-```markdown
-# objective: 分析竞品市场并生成报告
-
-## module: research
-- task_id: search_web
-  description: 搜索互联网上关于竞品的最新动态
-  profile: researcher
-  depends_on: []
-  writes: [data/raw.json]
-
-- task_id: analyze_data
-  description: 对搜索结果进行量化分析
-  profile: analyst
-  depends_on: [search_web]
-  writes: [data/analysis.json]
-
-## module: report
-- task_id: write_report
-  description: 综合研究结果撰写最终报告
-  profile: minimal
-  depends_on: [analyze_data]
-  writes: [report/final.md]
-```
-
-### 关键字段
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `objective` | str | 计划目标（H1 标题）|
-| `module` | str | 模块名（H2 标题），将任务分组 |
-| `task_id` | str | 唯一任务标识符（全局不重复）|
-| `description` | str | 任务描述，传给 ExecutorAgent |
-| `profile` | str | 执行 profile（`minimal` / `researcher` / `analyst` / 自定义）|
-| `depends_on` | list[str] | 依赖的 task_id 列表（构成 DAG 边）|
-| `writes` | list[str] | 声明写入的外部资源路径（用于资源锁）|
-| `parallel` | bool | 是否允许与其他任务并行（默认 true）|
-| `params` | dict | 传给 ExecutorAgent 的额外参数 |
-
----
-
-## 核心数据结构
-
-### `PlanDocument`
-
-```python
-@dataclass
-class PlanDocument:
-    plan_id: str
-    metadata: PlanMetadata         # objective, created_at, paused
-    modules: dict[str, PlanModule] # module_name → PlanModule
-    _lock: asyncio.Lock            # 状态写入保护
-    _resume_event: asyncio.Event   # 暂停/恢复信号
-```
-
-#### 主要方法
-
-| 方法 | 说明 |
-|---|---|
-| `all_tasks()` | 按模块顺序返回所有 `PlanTask` |
-| `get_task(task_id)` | 按 ID 查找任务 |
-| `to_markdown()` | 转换为 Markdown 字符串（含 `writes:` 注解）|
-| `to_dict()` / `from_dict()` | 序列化 / 反序列化（用于快照）|
-| `pause()` / `resume()` | 暂停/恢复（操作 `_resume_event`）|
-
-### `PlanTask`
-
-```python
-@dataclass
-class PlanTask:
-    task_id: str
-    description: str
-    module: str = ""
-    profile: str = "minimal"
-    max_steps: int | None = None
-    depends_on: list[str] = field(default_factory=list)
-    writes: list[str] = field(default_factory=list)   # 资源锁声明
-    parallel: bool = False
-    status: TaskStatus = TaskStatus.pending
-    result: str | None = None
-    error: str | None = None
-    params: dict = field(default_factory=dict)
-    execution_ctx: TaskExecutionContext | None = None
-```
-
-### `TaskStatus`
-
-```python
-class TaskStatus(str, Enum):
-    pending   = "pending"
-    running   = "running"
-    done      = "done"
-    failed    = "failed"
-    skipped   = "skipped"
-```
-
----
-
-## 验证（`PlanValidator` + `CycleDetector`）
-
-`PlanValidator.validate(doc)` 在计划执行前检查：
-
-1. **重复 task_id**：同一计划内所有任务 ID 唯一
-2. **未知依赖**：`depends_on` 中引用的 task_id 必须存在于计划中
-3. **自引用**：任务不能依赖自身
-4. **拓扑环**：使用**三色 DFS**（`CycleDetector`）检测有向环，发现环则 raise `PlanValidationError` 并报告环路径
-
----
-
-## 异步 DAG 调度（`PlanOrchestrator._dispatch_all`）
-
-采用**事件驱动动态就绪**模型，每个任务一个 `asyncio.Event`：
-
-```
-for each task:
-    create asyncio.create_task(run_when_ready(task))
-
-run_when_ready(task):
-    # 1. 等待所有依赖完成
-    for dep_id in task.depends_on:
-        await done_events[dep_id].wait()
-
-    # 2. 等待计划恢复（如已暂停）
-    await doc._resume_event.wait()
-
-    # 3. 排干 HumanEditChannel patch 队列
-    for patch in channel.drain():
-        PlanDiff.apply(doc, patch)
-
-    # 4. 资源守卫（writes 字段）
-    async with resource_cond:
-        while in_use_writes & set(task.writes):
-            await resource_cond.wait()
-        in_use_writes.update(task.writes)
-
-    # 5. 并发限制
-    async with semaphore:
-        result = await executor.run(task)
-
-    # 6. 释放资源
-    async with resource_cond:
-        in_use_writes.difference_update(task.writes)
-        resource_cond.notify_all()
-
-    # 7. 标记完成，触发后续任务
-    done_events[task.task_id].set()
-```
-
-### 资源锁机制（`writes` 字段）
-
-- 每个 `PlanTask` 可声明 `writes: [path1, path2, ...]`，表示该任务会写入这些外部文件/资源。
-- 编排器在调度时检测 `writes` 集合重叠，有重叠的任务会排队等待，避免并发写冲突。
-- `writes` 字段由 **Planner / Replanner** 在规划阶段根据任务语义填写；编排器只做透明的守卫，不主动推断。
-
----
-
-## 人类编辑通道（`HumanEditChannel`）
-
-实现"影子副本"（shadow copy）机制：
-
-```
-PlanDocument ──→ materialize() ──→ shadow.md（本地文件）
-                                         │
-                              用户直接编辑 shadow.md
-                                         │
-watch() 检测文件变更 ──→ sync() ──→ PlanDiff.compute(old, new)
-                                         │
-                              patch 入队（channel._queue）
-                                         │
-编排器在安全点 ──→ channel.drain() ──→ PlanDiff.apply(doc, patch)
-```
-
-- `sync()` 使用 `PlanParser.parse(text, strict=False)` 解析用户编辑，允许不完整的 Markdown（缺 objective 或 modules 时使用默认值，而非报错）。
-- `watch()` 在文件变更时调用 `doc.pause()` / `doc.resume()`，确保 patch 在单一安全点应用，不中断正在运行的任务。
-
----
-
-## 快照（`SnapshotStore`）
-
-```python
-store = SnapshotStore(base_dir=".react/plan/snapshots")
-
-# 保存
-snap_id = store.save(doc, label="after_replan")
-
-# 列出
-snapshots = store.list(plan_id)
-
-# 加载
-doc = store.load(snapshot_id)
-
-# 回滚（同时重置 running/failed 任务至 pending，清除 execution_ctx）
-doc = store.rollback(snapshot_id)
-```
-
-快照以 JSON 格式存储于 `.react/plan/snapshots/<plan_id>/<snap_id>.json`。
-
----
-
-## 结构化日志（`PlanLogger`）
-
-JSONL 格式，存储于 `.react/plan/logs/<plan_id>.jsonl`。
-
-```python
-logger = PlanLogger(plan_id, base_dir=".react/plan/logs")
-
-await logger.info("task_start", task_id="t1", profile="researcher")
-await logger.error("task_failed", task_id="t1", error="timeout")
-
-# 同步读取（含过滤）
-records = logger.read(level_min=LogLevel.INFO, task_id="t1", n=50)
-
-# 异步读取
-records = await logger.read_async(task_id="t1", n=50)
-```
-
----
-
-## 事件流（`PlanEvent`）
-
-`PlanOrchestrator` 在执行过程中发射事件，可通过 WebUI SSE 端点（`/api/plan/stream`）实时消费：
-
-| 事件类型 | 触发时机 |
-|---|---|
-| `PlanStartEvent` | 编排开始 |
-| `TaskStartEvent` | 任务提交到执行队列 |
-| `TaskRunningEvent` | 任务进入 ExecutorAgent（semaphore 获取后）|
-| `TaskCompleteEvent` | 任务执行成功 |
-| `TaskFailedEvent` | 任务执行失败 |
-| `TaskSkippedEvent` | 任务被跳过 |
-| `ReplanEvent` | Replanner 触发重规划 |
-| `HumanPatchEvent` | 应用了人类编辑 patch |
-| `SnapshotEvent` | 保存了快照 |
-| `PlanCompleteEvent` | 计划全部完成 |
-| `PlanAbortEvent` | 计划异常终止 |
-
----
-
-## Replanner（`ReplannerAgent`）
-
-### 触发条件
-
-| 触发器 | 说明 |
-|---|---|
-| `on_task_failure` | 任何任务失败时 |
-| `on_module_complete` | 一个模块的所有任务完成时 |
-| `on_human_request` | 人类显式请求重规划 |
-| `on_timeout` | 任务超时 |
-| `on_goal_drift` | LLM 判断目标发生漂移 |
-| `on_conflict` | 检测到资源冲突 |
-
-### 增量输入格式
-
-Replanner 接收以下增量上下文：
-
-```
-[已完成任务摘要]
-task_id: xxx | status: done | result: ...
-task_id: yyy | status: failed | error: ...
-
-[失败任务上下文]
-task_id: yyy
-execution_ctx: { thought/action/observation traces }
-
-[剩余计划（Markdown）]
-## module: remaining_work
-- task_id: zzz
-  ...
-```
-
-Replanner 输出 `PlanPatch`（JSON），由编排器原地修补 `PlanDocument`。
-
----
-
-## 对话式规划（`ConvPlanner`）
-
-`ConvPlanner` 继承 `ConvLoop`，提供多轮对话式计划生成：
-
-```python
-conv = ConvPlanner(llm=llm, cfg=planner_cfg)
-doc = await conv.plan_interactive(question)
-```
-
-对话过程中用户可反复提供反馈，LLM 逐轮完善计划，直到用户确认或对话达到轮次上限。最终输出经 `PlanParser.parse()` 转换为 `PlanDocument`。
-
----
-
-## 配置
-
-```python
-@dataclass
-class OrchestratorConfig:
-    parallel_limit: int = 4           # 最大并发执行任务数
-    replan_cfg: ReplannerConfig = ... # Replanner 触发配置
-    log_cfg: LogConfig = ...          # 日志配置
-    snapshot_on_replan: bool = True   # 重规划前自动快照
-    snapshot_on_complete: bool = True # 完成后自动快照
-
-@dataclass
-class ReplannerConfig:
-    triggers: list[str] = field(default_factory=lambda: ["on_task_failure"])
-    max_replan_rounds: int = 3
-
-@dataclass
-class PlannerConfig:
-    max_turns: int = 5          # ConvPlanner 最大对话轮次
-    temperature: float = 0.2
-
-@dataclass
-class LogConfig:
-    base_dir: str = ".react/plan/logs"
-    max_size_mb: float = 10.0
-    rotate: bool = True
-```
-
----
-
-## 快速开始
-
-```python
-from agent.flow import FlowOrchestrator, OrchestratorConfig
-from agent.flow.planner import PlannerAgent
-from agent.flow.replanner import ReplannerAgent
-from agent.flow.executor import ExecutorAgent
-
-orchestrator = FlowOrchestrator(
-    planner=PlannerAgent(llm=llm),
-    replanner=ReplannerAgent(llm=llm),
-    executor=ExecutorAgent(crew_cfg=crew_cfg),
-    cfg=OrchestratorConfig(parallel_limit=4),
-)
-
-result = await orchestrator.run("分析竞品市场并生成报告")
-print(result.answer)
-```
-
-或通过 TaoLoop 工具调用（需 `TaoConfig.plan` 非 `None`）：
-
-```
-[工具调用] run_plan(question="分析竞品市场并生成报告")
+src/agent/flow/
+├── base/                        # 通用 DAG 引擎（无 TaoLoop 直接依赖）
+│   ├── __init__.py
+│   ├── budget.py                # DecompositionBudget + TopologyKind + is_atomic()
+│   ├── dag_orchestrator.py      # DagOrchestrator（主引擎）
+│   ├── defaults.py              # register_defaults() + SubAgentManifestExecutor
+│   ├── orchestration.py         # DagGraphManager + OrchestratorEvent + 协议接口
+│   ├── plan_spec.py             # ManifestPlanSpec + ManifestPatch
+│   ├── registry.py              # NodeRegistry（执行器/规划器工厂）
+│   └── components/
+│       ├── atomic_planner.py    # AtomicPlanner
+│       ├── atomic_reviewer.py   # AtomicReviewer
+│       ├── node_spec.py         # NodeManifest + TopologyDecision + ReviewOutcome
+│       ├── observation.py       # ObservationMode
+│       ├── protocols.py         # BaseAtomicPlanner / ManifestExecutor / NodeVerifier
+│       └── runtime.py           # RunnableNode + NodeResult
+│
+└── cluster/                     # TaoLoop 驱动的 Cluster 层
+    ├── __init__.py
+    ├── config.py                # FlowConfig / OrchestratorConfig / PlannerConfig / ReplannerConfig
+    ├── document.py              # PlanDocument + PlanTask + PlanModule + PlanParser + PlanValidator
+    ├── event.py                 # PlanEvent 系列（含 SSE 序列化）
+    ├── patch.py                 # HumanPatch + PatchOp
+    ├── channel.py               # HumanEditChannel（shadow copy 文件监视）
+    ├── snapshot.py              # SnapshotStore
+    ├── log.py                   # PlanLogger（JSONL）
+    ├── executor.py              # ExecutorAgent
+    ├── planner.py               # PlannerAgent + ConvPlanner
+    ├── replanner.py             # ReplannerAgent
+    ├── orchestrator.py          # FlowOrchestrator
+    └── result.py                # PlanResult
 ```

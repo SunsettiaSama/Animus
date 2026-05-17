@@ -4,7 +4,7 @@ import asyncio
 import os
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass
@@ -32,8 +32,9 @@ class AppState:
         return self.service_registry.get("vllm")
 
     # ── ReAct ─────────────────────────────────────────────────────────────────
-    conv_loop: Any = None             # ConvLoop | None
-    active_tao: Any = None            # TaoLoop | None
+    conv_loop: Any = None             # ConvLoop | None  (backward-compat ref)
+    active_tao: Any = None            # TaoLoop | None   (backward-compat ref)
+    session_manager: Any = None       # SessionManager | None
     react_init_error: str = ""
 
     # ── Streaming lifecycle (thread-safe) ────────────────────────────────────
@@ -54,9 +55,17 @@ class AppState:
     tool_manager: Any = None
     bot_service: Any = None           # BotService | None
 
-    # ── Flow orchestration (agent.flow) ────────────────────────────────────
-    active_orchestrator: Any = None   # FlowOrchestrator | None
-    flow_subscribers: list = field(default_factory=list)  # list[asyncio.Queue]
+    # While /ws/react/run is active: fan-out Flow/plan dicts to these asyncio queues
+    reactive_ws_flow_queues: list[Any] = field(default_factory=list)
+
+    def attach_reactive_ws_flow_queue(self, q: asyncio.Queue) -> Callable[[], None]:
+        self.reactive_ws_flow_queues.append(q)
+
+        def detach() -> None:
+            if q in self.reactive_ws_flow_queues:
+                self.reactive_ws_flow_queues.remove(q)
+
+        return detach
 
     # ── Background task notifications ─────────────────────────────────────────
     notify_queue: Any = None          # asyncio.Queue[dict | None] | None
@@ -125,29 +134,20 @@ class AppState:
             self.current_gen_id = gen_id
             return True
 
-    # ── Flow pub-sub broadcast ────────────────────────────────────────────────
-
-    def flow_subscribe(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue()
-        self.flow_subscribers.append(q)
-        return q
-
-    def flow_unsubscribe(self, q: asyncio.Queue) -> None:
-        if q in self.flow_subscribers:
-            self.flow_subscribers.remove(q)
-
-    def flow_broadcast(self, event: dict) -> None:
-        for q in list(self.flow_subscribers):
-            q.put_nowait(event)
+    # ── Plan pub-sub broadcast ────────────────────────────────────────────────
 
     def plan_subscribe(self) -> asyncio.Queue:
-        return self.flow_subscribe()
+        q: asyncio.Queue = asyncio.Queue()
+        self.plan_subscribers.append(q)
+        return q
 
     def plan_unsubscribe(self, q: asyncio.Queue) -> None:
-        self.flow_unsubscribe(q)
+        if q in self.plan_subscribers:
+            self.plan_subscribers.remove(q)
 
     def plan_broadcast(self, event: dict) -> None:
-        self.flow_broadcast(event)
+        for q in list(self.plan_subscribers):
+            q.put_nowait(event)
 
     # ── Private helpers ───────────────────────────────────────────────────────
 

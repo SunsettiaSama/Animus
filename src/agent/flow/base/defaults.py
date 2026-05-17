@@ -9,13 +9,13 @@ from .registry import NodeRegistry, get_registry
 
 
 def _build_llm_call(llm_cfg_path: str) -> LlmCallFn:
-    """接线层：将 flow/planner._build_tao_loop 包装为 base 层可用的 LlmCallFn。
+    """后备接线：仅在调用方未注入 LlmCallFn 时使用，通过 flow.planner._build_tao_loop 构造。
 
-    base/components/ 的 AtomicPlanner / AtomicReviewer 不直接依赖 TaoLoop；
-    此函数是唯一跨越 base → flow 边界的点，集中于 defaults.py（接线层）。
+    若调用方在 register_defaults(llm_cfg_path, llm_call_fn=my_fn) 时直接传入
+    LlmCallFn，则此函数不会被调用，base 层对 agent.flow.cluster.planner 零依赖。
     """
-    from agent.flow.planner import _build_tao_loop
-    from agent.flow.config import PlannerConfig
+    from agent.flow.cluster.planner import _build_tao_loop
+    from agent.flow.cluster.config import PlannerConfig
     from agent.react.tao import FinishEvent
 
     cfg = PlannerConfig()
@@ -92,6 +92,8 @@ class SubAgentManifestExecutor:
 def register_defaults(
     llm_cfg_path: str,
     registry: NodeRegistry | None = None,
+    *,
+    llm_call_fn: LlmCallFn | None = None,
 ) -> None:
     """向 NodeRegistry 注入默认执行器工厂与全部内置工具包。
 
@@ -101,6 +103,10 @@ def register_defaults(
         LLM 配置文件路径，与 FlowConfig.llm_cfg_path 保持一致。
     registry:
         目标注册表；为 None 时使用全局单例。
+    llm_call_fn:
+        可选的 LlmCallFn 注入。提供后 AtomicPlanner / AtomicReviewer 直接使用，
+        base 层对 agent.flow.cluster.planner 完全零依赖；
+        不提供时退回 _build_llm_call(llm_cfg_path)（仍依赖 flow.planner）。
 
     注意
     ----
@@ -118,13 +124,15 @@ def register_defaults(
     reg.set_executor_factory(lambda _pkg: _executor)
     reg.register_packages(*(pkg.name for pkg in BUILTIN_PACKAGES))
 
-    # AtomicPlanner factory：构建时同步注入 AtomicReviewer
+    def _resolve_llm_call(cfg_path: str) -> LlmCallFn:
+        return llm_call_fn if llm_call_fn is not None else _build_llm_call(cfg_path)
+
     def _build_planner(cfg_path: str) -> AtomicPlanner:
-        llm_call = _build_llm_call(cfg_path)
-        reviewer  = AtomicReviewer(llm_call)
+        llm_call = _resolve_llm_call(cfg_path)
+        reviewer = AtomicReviewer(llm_call)
         return AtomicPlanner(llm_call, reviewer=reviewer)
 
     reg.set_atomic_planner_factory(_build_planner)
     reg.set_atomic_reviewer_factory(
-        lambda cfg_path: AtomicReviewer(_build_llm_call(cfg_path))
+        lambda cfg_path: AtomicReviewer(_resolve_llm_call(cfg_path))
     )

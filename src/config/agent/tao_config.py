@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from config.llm_core.config import LLMConfig
     from agent.scheduler.config import SchedulerConfig
     from agent.profile import SubAgentConfig
-    from agent.flow.config import FlowConfig
+    from agent.flow.cluster.config import FlowConfig
 
 
 @dataclass

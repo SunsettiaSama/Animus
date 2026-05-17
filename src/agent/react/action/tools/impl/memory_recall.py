@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field
 from ....action.base import BaseAction
 
 if TYPE_CHECKING:
-    from ....memory.long_term.memory import LongTermMemory
-    from ....memory.milestone.memory import MilestoneMemory
+    from agent.soul.memory.long_term.memory import LongTermMemory
+    from agent.soul.memory.milestone.memory import MilestoneMemory
 
 
 class MemoryRecallArgs(BaseModel):

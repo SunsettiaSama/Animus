@@ -101,7 +101,7 @@ def scheduler_create(req: SchedulerTaskCreate):
     # If a command dict is provided, render instruction from it
     instruction = req.instruction
     if req.command:
-        from agent.scheduler.command import EventCommand
+        from runtime.scheduler.command import EventCommand
         instruction = EventCommand.from_dict(req.command).render() or instruction
 
     kwargs = dict(
@@ -185,7 +185,7 @@ def scheduler_patch(task_id: str, req: SchedulerTaskPatch):
                 at_dt = at_dt.replace(tzinfo=timezone.utc)
             fields["next_run_at"] = at_dt.isoformat()
         if req.command is not None:
-            from agent.scheduler.command import EventCommand
+            from runtime.scheduler.command import EventCommand
             fields["command"] = req.command
             fields["instruction"] = EventCommand.from_dict(req.command).render()
         elif req.instruction is not None:
@@ -456,8 +456,8 @@ def scheduler_axis():
 
     events: list[dict] = []
     if state.cache is not None:
-        from agent.scheduler.timeline import TimelineStore
-        tl = TimelineStore(state.cache.timeline_dir)
+        from runtime.scheduler.timeline_service import TimelineService
+        tl = TimelineService(state.cache.timeline_dir)
         events = tl.read(date.today().isoformat())
 
     tasks: list[dict] = []
