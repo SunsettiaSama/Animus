@@ -1,6 +1,6 @@
 # subagent / 子 Agent 委派
 
-按需将任务委派给子智能体的编排机制，与 `agent/scheduler/`（时钟触发）并列，负责主 Agent 在运行时动态派发子 Agent 执行具体任务。
+按需将任务委派给子智能体的编排机制，与 **`runtime.scheduler`**（时钟触发任务，`SchedulerEngine`）并列；后者具体的 **`HeartbeatModule` / `TaskRunner`** 实现在 **`agent/soul/heartbeat`**。
 
 ---
 
@@ -24,12 +24,19 @@ SubAgentProfile            （agent/profile.py）
 
 ---
 
+## Soul 子系统（索引）
+
+持久记忆单元、心跳驱动的重构与归档、生命叙事等位于 `agent/soul/`，与推理环内的 React 记忆并行。详见 [agent/soul/README.md](./soul/README.md)，记忆模块详见 [agent/soul/memory/README.md](./soul/memory/README.md)。
+
+---
+
 ## 目录结构
 
 ```
 src/agent/
 ├── profile.py      # SubAgentConfig + SubAgentProfile + 内置 profile 预设
 ├── runner.py       # SubAgentRunner.run_sync() — 同步执行子 TaoLoop
+├── soul/           # Soul 子系统（记忆 / 心跳 / 生命 / 人格，见 docs/agent/soul）
 └── react/
     └── action/
         └── skill/
@@ -86,7 +93,7 @@ cfg = TaoConfig(
 |---|---|---|
 | `minimal` | 全工具集（None）| 通用，无角色限定 |
 | `executor` | 全工具集（None）| 执行型，直接完成任务，不再委派 |
-| `researcher` | web_search + web_fetch + knowledge_hybrid_search + knowledge_save + knowledge_list | 信息研究与知识整理专家 |
+| `researcher` | web_search + web_fetch | 信息研究（知识库工具已移除）|
 | `researcher_with_memory` | researcher 工具集 + memory_recall | 研究专家 + 长期记忆支持 |
 | `analyst` | calculator + unit_converter + web_search + get_datetime + word_count | 数据分析与计算推理专家 |
 
@@ -140,15 +147,15 @@ class SubAgentRunner:
 
 ### 配合调度器
 
-`delegate_task` 本身为同步调用。若需要异步或定时执行子任务，请使用 `scheduler` 模块（`scheduler_add` 工具）；若需要复杂多步骤规划，请使用 `plan` 模块（`run_plan` 工具）。
+`delegate_task` 本身为同步调用。若需要异步或定时执行子任务，请使用 **`SchedulerEngine`**（`scheduler_add` 工具，`TaoConfig.scheduler`）；若需要 DAG 编排，请直接阅读 **`src/agent/flow/`** 源码及下方 **`run_flow` / `flow_*`** 工具说明。
 
 ---
 
-## 与 `scheduler/` 和 `plan/` 的区别
+## 与调度器（`runtime.scheduler`）和 Flow 的区别
 
-| | scheduler | subagent（delegate_task）| plan |
+| | runtime.scheduler | subagent（delegate_task）| Flow（agent.flow）|
 |---|---|---|---|
 | 触发方式 | 时钟（到达指定时间）| 主 Agent 主动调用工具 | 编排器自动按 DAG 依赖 |
 | 执行方式 | 异步后台线程 | 同步阻塞当前步骤 | 异步 DAG 调度 |
-| 结果消费 | 写入 `results/*.json` | 主 Agent 在当前步骤立即读回 | PlanOrchestrator 汇总 |
+| 结果消费 | 写入 `results/*.json` | 主 Agent 在当前步骤立即读回 | FlowOrchestrator / 快照与日志汇总 |
 | 适用场景 | 定时报告、周期监控 | 简单任务分解、角色委派 | 复杂多步骤目标、需要 Replanner |

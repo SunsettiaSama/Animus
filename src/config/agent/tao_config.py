@@ -8,11 +8,12 @@ from config.agent.memory.memory_config import MemoryConfig
 from config.agent.persona_config import PersonaConfig
 from config.agent.prompt_config import PromptConfig
 from config.agent.trace_config import TraceConfig
+from config.infra.db_config import DBConfig
 
 if TYPE_CHECKING:
     from config.knowledge.config import KnowledgeConfig
     from config.llm_core.config import LLMConfig
-    from agent.scheduler.config import SchedulerConfig
+    from runtime.scheduler.config import SchedulerConfig
     from agent.profile import SubAgentConfig
     from agent.flow.cluster.config import FlowConfig
 
@@ -30,6 +31,7 @@ class TaoConfig:
     scheduler: SchedulerConfig | None = field(default=None)
     agent: SubAgentConfig | None = field(default=None)
     flow: FlowConfig | None = field(default=None)
+    db: DBConfig | None = field(default=None)
 
     def __post_init__(self) -> None:
         self._propagate_dirs()

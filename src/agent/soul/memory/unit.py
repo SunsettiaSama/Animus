@@ -24,8 +24,8 @@ class Valence(str, Enum):
 
 
 class MemoryTier(str, Enum):
-    working = "working"   # 工作记忆（Redis，快速衰减）
-    long    = "long"      # 长期记忆（MySQL + Qdrant，慢衰减）
+    short_term = "short_term"  # 短期记忆（Redis，快速衰减）
+    long       = "long"        # 长期记忆（MySQL + Qdrant，慢衰减）
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -70,14 +70,15 @@ class MemoryUnit(ABC):
     valence:           Valence = Valence.neutral  # 粗粒度路由（可由外部推断设定）
 
     # ── 激活度元数据 ──────────────────────────────────────────────────────────
-    tier:            MemoryTier = MemoryTier.working
-    base_activation: float      = 0.5
-    recall_count:    int        = 0
-    rehearsal_count: int        = 0
-    last_accessed:   datetime   = field(default_factory=_now)
-    created_at:      datetime   = field(default_factory=_now)
-    meta:            dict       = field(default_factory=dict)
-    id:              str        = field(default_factory=_uid)
+    tier:                MemoryTier = MemoryTier.short_term
+    base_activation:     float      = 0.5
+    recall_count:        int        = 0   # 被 recall() 命中的次数
+    rehearsal_count:     int        = 0   # 心跳反刍次数
+    narrative_ref_count: int        = 0   # 被 NarrativeMemory 引用的次数
+    last_accessed:       datetime   = field(default_factory=_now)
+    created_at:          datetime   = field(default_factory=_now)
+    meta:                dict       = field(default_factory=dict)
+    id:                  str        = field(default_factory=_uid)
 
     # ── 激活度（懒计算，不持久化）────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ class MemoryUnit(ABC):
         self.last_accessed = _now()
 
     def promote_to_long(self) -> None:
-        """晋升至长期记忆（由 ForgettingEngine 或 Processor 调用）。"""
+        """晋升至长期记忆（由遗忘引擎或 Processor 调用）。"""
         self.tier = MemoryTier.long
 
     @classmethod

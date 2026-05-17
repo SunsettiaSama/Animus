@@ -32,12 +32,16 @@ src/config/
 │   ├── sandbox_config.py           # SandboxConfig
 │   ├── bot_config.py               # BotConfig（OneBot / QQ Official）
 │   ├── bark_config.py              # BarkConfig（Bark 推送）
-│   └── ntfy_config.py              # NtfyConfig（ntfy 推送）
+│   ├── ntfy_config.py              # NtfyConfig（ntfy 推送）
+│   └── db_config.py                # DBConfig（Redis + MySQL，Soul 记忆等）
 ├── network/
 │   └── web_search_config.py        # WebSearchConfig
 ├── tts/                            # TTS / STT 配置
-└── hf_download/
-    └── config.py                   # HFDownloadConfig
+├── hf_download/
+│   └── config.py                   # HFDownloadConfig
+└── soul/
+    └── memory/
+        └── service_config.py       # MemoryServiceConfig（Soul MemoryService）
 ```
 
 ---
@@ -83,7 +87,54 @@ class TaoConfig:
     repair_llm: LLMConfig | None = None
     scheduler: SchedulerConfig | None = None
     agent: SubAgentConfig | None = None   # 子 Agent 委派（注入 DelegateTaskSkill）
-    plan: PlanConfig | None = None
+    flow: FlowConfig | None = None
+    db: DBConfig | None = None            # Soul：Redis/MySQL（可选）
+```
+
+`scheduler` 的类型为 **`runtime.scheduler.config.SchedulerConfig`**（定义不在 `src/config/`）；详见 [runtime/README.md](../../runtime/README.md)。
+
+---
+
+### `SchedulerConfig` / `HeartbeatConfig`（运行时）
+
+- **`SchedulerConfig`**：`runtime/scheduler/config.py`，字段含 `scheduler_dir`、`profiles`、`heartbeat` 等。
+- **`HeartbeatConfig`**：`runtime/scheduler/heartbeat_config.py`，默认清单路径 `.react/scheduler/HEARTBEAT.md`。
+
+默认装配示例：`agent.soul.heartbeat.profiles.make_default_scheduler_config()`。
+
+---
+
+### `DBConfig`（`config/infra/db_config.py`）
+
+聚合 Redis 与 MySQL，约定默认路径 `config/infra/db.yaml`：
+
+```python
+@dataclass
+class DBConfig:
+    redis: RedisConfig = ...
+    mysql: MySQLConfig = ...
+```
+
+- `DBConfig.load_default()`：文件不存在时使用内置默认值。
+- `RedisConfig.build_client()` / `MySQLConfig.build_client()`：构造 `infra.db` 客户端。
+
+---
+
+### `MemoryServiceConfig`（`config/soul/memory/service_config.py`）
+
+Soul `MemoryService` 全局参数；默认读取 `config/soul/memory/service.yaml`：
+
+```python
+@dataclass
+class MemoryServiceConfig:
+    stm_half_life_days: float = 3.0
+    stm_min_ttl_hours: float = 1.0
+    ltm_half_life_days: float = 30.0
+    ltm_forget_threshold: float = 0.05
+    async_ingest: bool = True
+    promote_threshold: float = 0.7
+    recall_top_k: int = 5
+    flush_activation_floor: float = 0.1
 ```
 
 ---

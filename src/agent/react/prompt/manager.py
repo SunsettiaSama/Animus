@@ -19,18 +19,15 @@ if TYPE_CHECKING:
 class StaticPromptParts:
     """Pre-assembled prompt parts that do not depend on the next user question.
 
-    Built in the background after each turn's commit completes.  When the user
-    sends the next message only the long-term recall slot needs to be filled in
-    before the full message list can be constructed.
+    Built in the background after each turn's commit completes.
 
     Fields:
-        system_without_lt: Rendered system string containing the base system
-            prompt, persona blocks, and medium-term distillate — but **not**
-            the long-term recall block (that slot is filled per-question).
+        system: Rendered system string containing the base system prompt,
+            persona blocks, and medium-term distillate.
         history: Snapshot of the conversation history taken right after the
             previous turn's ``add_turn()`` call.
     """
-    system_without_lt: str
+    system: str
     history: list[BaseMessage] = field(default_factory=list)
 
 
@@ -74,9 +71,7 @@ class PromptManager:
         if extra_system_blocks:
             system_blocks.extend(extra_system_blocks)
         system_blocks += [
-            MemoryBlock(tpl.medium_term.title,         tpl.medium_term.desc,         tpl.separator, result.medium_term),
-            MemoryBlock(tpl.milestone.title,           tpl.milestone.desc,           tpl.separator, result.milestone),
-            MemoryBlock(tpl.long_term.title,           tpl.long_term.desc,           tpl.separator, result.long_term),
+            MemoryBlock(tpl.medium_term.title, tpl.medium_term.desc, tpl.separator, result.medium_term),
         ]
         human_blocks: list[PromptBlock] = [
             QuestionBlock(tpl.question_prefix, question),
@@ -100,17 +95,16 @@ class PromptManager:
     ) -> StaticPromptParts:
         """Build the static parts of the next prompt (background pre-assembly).
 
-        Includes base system + persona only.  Both medium-term (recent history
-        loaded from disk) and long-term (vector retrieval) are injected
-        dynamically per turn in build_messages_from_static().
+        Includes base system + persona blocks only.
+        medium_term is injected dynamically per turn in build_messages_from_static().
         """
         system_blocks: list[PromptBlock] = [SystemBlock(self._base_system)]
         if extra_system_blocks:
             system_blocks.extend(extra_system_blocks)
         rendered = [b for block in system_blocks if (b := block.render()) is not None]
-        system_without_lt = "\n\n".join([self._role_prefix] + rendered) if self._role_prefix else "\n\n".join(rendered)
+        system = "\n\n".join([self._role_prefix] + rendered) if self._role_prefix else "\n\n".join(rendered)
         return StaticPromptParts(
-            system_without_lt=system_without_lt,
+            system=system,
             history=list(self._history),
         )
 
@@ -118,27 +112,20 @@ class PromptManager:
         self,
         static: StaticPromptParts,
         question: str,
-        long_term: str = "",
         medium_term: str = "",
-        milestone: str = "",
         short_term: list[Step] | None = None,
     ) -> list[BaseMessage]:
         """Complete prompt assembly using a pre-built :class:`StaticPromptParts`.
 
-        Each memory tier is injected as a separate labeled block so the model
-        clearly understands the origin and nature of each piece of context.
+        medium_term（近期对话摘要）为唯一动态注入块；
+        长期记忆通过 memory_recall 工具由 Agent 主动触发，不做被动注入。
         """
         tpl = self._tpl
 
-        system = static.system_without_lt
-        for label, content in [
-            (tpl.medium_term,         medium_term),
-            (tpl.milestone,           milestone),
-            (tpl.long_term,           long_term),
-        ]:
-            rendered = MemoryBlock(label.title, label.desc, tpl.separator, content).render()
-            if rendered:
-                system = system + "\n\n" + rendered
+        system = static.system
+        rendered = MemoryBlock(tpl.medium_term.title, tpl.medium_term.desc, tpl.separator, medium_term).render()
+        if rendered:
+            system = system + "\n\n" + rendered
 
         human_blocks: list[PromptBlock] = [
             QuestionBlock(tpl.question_prefix, question),

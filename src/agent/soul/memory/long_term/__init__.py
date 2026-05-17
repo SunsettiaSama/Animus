@@ -1,19 +1,7 @@
-from ...memory.long_term.init import init_empty_store, load_store, make_memory
-from ...memory.long_term.memory import LongTermMemory
-from ...memory.long_term.retrieve import Retriever, RetrieveMode, RetrieveRequest, RetrieveResult
-from ...memory.long_term.retrieve.triggers import detect_mode
-from ...memory.long_term.store import LongTermStore, MemoryEntry
+from .manager import LongTermMemoryManager
 
 __all__ = [
-    "LongTermMemory",
-    "LongTermStore",
-    "MemoryEntry",
-    "load_store",
-    "init_empty_store",
-    "make_memory",
-    "Retriever",
-    "RetrieveMode",
-    "RetrieveRequest",
-    "RetrieveResult",
-    "detect_mode",
+    "LongTermMemoryManager",
+    # LongTermMemory / LongTermStore / MemoryEntry (Qdrant-backed legacy)
+    # import directly from .memory / .store to avoid torch eager-load
 ]

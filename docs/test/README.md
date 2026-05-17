@@ -1,29 +1,47 @@
 # test
 
-功能测试，覆盖记忆模块与动作空间模块。
+仓库根目录下 **`src/test/`**：按领域拆分的自动化测试（unittest / pytest）。覆盖 React 记忆与工具、`runtime.scheduler`、`agent.flow`、子 Agent 委派、基准脚本等。
 
-## 文件
+---
 
-| 文件 | 覆盖范围 |
+## 目录概览
+
+| 路径 | 内容 |
 |---|---|
-| `test_memory.py` | 三级记忆系统（ShortTermMemory、MediumTermMemory、MemoryProcessor）|
-| `test_tools.py` | 工具注册、Pydantic 参数校验、各工具执行逻辑 |
+| `src/test/memory/` | `MemoryProcessor`、短期/中期、`LongTermMemory` / Qdrant 相关 |
+| `src/test/tools/` | 内置 Action（计算器、文件、HTTP、`scratchpad` 等）|
+| `src/test/react/` | 解析器、执行器、风险评估、`SchedulerEngine` |
+| `src/test/agent/flow/` | DAG、`FlowOrchestrator`、文档与节点组件 |
+| `src/test/delegate/` | `delegate_task` / SubAgent |
+| `src/test/infra/` | LLM、搜索等基础设施 |
+| `src/test/benchmark/` | Tao / Plan 等基准与回归 |
+| `src/test/voice/` | TTS 相关 |
 
-## 运行
+---
+
+## 运行方式
+
+在**仓库根目录**执行（需已安装依赖）：
 
 ```bash
-cd G:\ReAct\src
-python test/test_memory.py
-python test/test_tools.py
+pytest src/test/memory/test_memory.py -q
+pytest src/test/tools/test_tools_basic.py -q
+pytest src/test/react/test_scheduler.py -q
+```
+
+或运行某一目录：
+
+```bash
+pytest src/test/agent/flow -q
 ```
 
 ---
 
-## test_memory.py
+## `src/test/memory/test_memory.py`
 
-测试三级记忆模块的交互逻辑，共 17 个测试用例。
+测试 **`MemoryProcessor`** 与 **`RecentHistoryMemory`** 的交互（含中期持久化与 Mock L3）。
 
-**依赖隔离方案**：`langchain_community`、FAISS、HuggingFace Embeddings 等重型依赖通过 `sys.modules` Stub 注入，无需安装即可运行。`react` 包本身也被 Stub 以避免 `react/__init__.py` 触发完整依赖链。
+**依赖隔离**：部分用例通过 `sys.modules` Stub 规避 `langchain_community`、嵌入模型等重型依赖；向量侧历史上曾有 FAISS 占位 stub，当前实现以 **Qdrant** 为主。
 
 ### ShortTermMemory
 
@@ -31,7 +49,7 @@ python test/test_tools.py
 |---|---|
 | `test_empty` | 初始状态无步骤 |
 | `test_add_single` | 单步骤正确写入 |
-| `test_eviction_by_turns` | 超过 max_turns 触发驱逐，最旧步骤被移除 |
+| `test_eviction_by_turns` | 超过 max_turns 触发驱逐 |
 | `test_eviction_by_tokens` | Token 超限触发驱逐 |
 | `test_clear` | clear() 后状态归零 |
 
@@ -39,65 +57,41 @@ python test/test_tools.py
 
 | 测试函数 | 验证内容 |
 |---|---|
-| `test_recall_empty` | 空状态 recall 返回零值 |
-| `test_add_and_recall` | add + recall 结果一致 |
-| `test_commit_no_long_term` | 无长期记忆时 commit 正常完成 |
-| `test_trace_contents` | trace 包含所有已添加步骤 |
+| `test_recall_empty` | 空状态 recall |
+| `test_add_and_recall` | add + recall 一致 |
+| `test_commit_no_long_term` | 无长期记忆时 commit |
+| `test_trace_contents` | trace 含已添加步骤 |
 
 ### MemoryProcessor（短期 + 中期）
 
 | 测试函数 | 验证内容 |
 |---|---|
-| `test_medium_term_absorbs_evicted` | 短期驱逐步骤流入中期 |
-| `test_medium_term_distillate_after_trigger` | 达到 distill_trigger_steps 后 LLM 生成蒸馏 |
+| `test_medium_term_absorbs_evicted` | 驱逐步骤流入中期 |
+| `test_medium_term_distillate_after_trigger` | 蒸馏触发 |
 
 ### MemoryProcessor（含 LongTermMemory Mock）
 
 | 测试函数 | 验证内容 |
 |---|---|
-| `test_recall_with_long_term` | long_term.smart_recall 结果出现在 MemoryResult |
-| `test_commit_calls_long_term` | commit 时调用 long.add 和 long.save |
-| `test_include_long_term_false` | include_long_term=False 跳过向量检索 |
-| `test_medium_distillate_property` | medium_distillate 属性返回正确蒸馏文本 |
+| `test_recall_with_long_term` | L3 出现在 MemoryResult |
+| `test_commit_calls_long_term` | commit 调用 long.add/save |
+| `test_include_long_term_false` | 跳过向量检索 |
+| `test_medium_distillate_property` | medium_distillate |
 
 ### 完整交互场景
 
 | 测试函数 | 验证内容 |
 |---|---|
-| `test_full_interaction` | 多轮问答下短/中/长期记忆协同工作的完整链路 |
+| `test_full_interaction` | 短/中/长协同 |
 
 ---
 
-## test_tools.py
+## `src/test/tools/`
 
-测试工具注册与执行，覆盖 Pydantic 参数校验（Zod 风格）的正/负场景。
-
-### ActionExecutor 基础
-
-| 测试函数 | 验证内容 |
+| 文件 | 侧重点 |
 |---|---|
-| `test_register_and_available_actions` | 注册后工具名出现在列表 |
-| `test_unknown_action_raises` | 未注册工具名 → `ValueError` |
-| `test_malformed_json_raises` | 非法 JSON → `json.JSONDecodeError` |
+| `test_tools_basic.py` | `ActionExecutor`、计算器、时间、随机数、字符串、单位换算等 |
+| `test_tools_data.py` | JSONPath / diff 等数据类工具 |
+| `test_file_system.py` / `test_http.py` / `test_python_run.py` / `test_scratchpad.py` | 沙箱与网络工具 |
 
-### 各工具正常执行
-
-| 测试函数 | 验证内容 |
-|---|---|
-| `test_calculator_*` | 四则运算、幂运算、括号优先级 |
-| `test_datetime_*` | 当前时间、指定时区 |
-| `test_random_*` | 整数随机、浮点随机、范围校验 |
-| `test_string_*` | upper/lower/reverse/length/count_words |
-| `test_unit_converter_*` | 温度/长度/重量单位转换 |
-| `test_word_count_*` | 字数统计 |
-| `test_weather_*` | 天气查询（占位）|
-
-### Pydantic 参数校验（负场景）
-
-| 测试函数 | 验证内容 |
-|---|---|
-| `test_calculator_empty_expression` | 空表达式 → `ValueError` |
-| `test_random_invalid_range` | low >= high → `ValueError` |
-| `test_string_invalid_operation` | 非枚举 operation → `ValueError` |
-| `test_unit_converter_invalid_category` | 未知 category → `ValueError` |
-| `test_word_count_missing_text` | 缺少必填参数 → `ValueError` |
+工具测试覆盖 Pydantic 参数校验的正例与反例（非法 JSON、缺参、`ValueError` 等）。

@@ -20,9 +20,7 @@ class PromptBuilder:
 
         blocks = [
             SystemBlock(self._base_system),
-            MemoryBlock(tpl.medium_term.title,         tpl.medium_term.desc,         tpl.separator, result.medium_term),
-            MemoryBlock(tpl.milestone.title,           tpl.milestone.desc,           tpl.separator, result.milestone),
-            MemoryBlock(tpl.long_term.title,           tpl.long_term.desc,           tpl.separator, result.long_term),
+            MemoryBlock(tpl.medium_term.title, tpl.medium_term.desc, tpl.separator, result.medium_term),
             QuestionBlock(tpl.question_prefix, question),
             StepsBlock(tpl.step_format, result.short_term),
             SuffixBlock(tpl.suffix),

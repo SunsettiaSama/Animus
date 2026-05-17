@@ -1,6 +1,6 @@
 # agent/react/prompt
 
-ReAct Prompt 编排模块，负责将角色定义、工具描述、四层记忆上下文与当前问题组装为 LLM 可消费的消息序列。
+ReAct Prompt 编排模块：将角色定义、工具描述、**中期摘要（medium_term）**、当前 **StepsBlock** 与用户问题组装为 LLM 消息序列。**长期记忆**不由此模块拼接，交由 **`memory_recall`**。
 
 ## 文件结构
 

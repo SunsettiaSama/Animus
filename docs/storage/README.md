@@ -72,7 +72,7 @@
 
 | 项目 | 说明 |
 |---|---|
-| 写入模块 | `src/agent/react/memory/medium_term/memory.py` |
+| 写入模块 | `src/agent/react/context/medium_term/memory.py`（`RecentHistoryMemory`）|
 | 触发时机 | `processor.commit()` → `RecentHistoryMemory.append()` |
 | 内容 | JSONL，每行一条 Q&A 对；整合后出现 `summary` 类型条目 |
 | 路径配置字段 | `MediumTermMemoryConfig.memory_dir` |
@@ -84,26 +84,12 @@
 
 | 项目 | 说明 |
 |---|---|
-| 写入模块 | `src/agent/react/memory/long_term/store.py` |
-| 触发时机 | `processor.commit()` → `LongTermMemory.save()` |
-| 文件列表 | `memories.json`（条目元数据）、`qdrant/`（Qdrant 本地集合）|
-| 路径配置字段 | `LongTermMemoryConfig.memory_dir`（memories.json）、`LongTermMemoryConfig.qdrant_path`（集合目录）|
-| 默认值 | `".react/memory"`、`".react/memory/qdrant"` |
+| 写入模块 | `src/agent/soul/memory/long_term/store.py`（`LongTermMemory`）|
+| 触发时机 | **`post_process`** 中的 **`_maybe_consolidate()`**（`consolidation_k > 0` 时）；非每轮 `commit` 默认写入 |
+| 文件列表 | `memories.json`、`qdrant/` |
+| 路径配置字段 | `LongTermMemoryConfig.memory_dir`、`qdrant_path` |
 
-**`memories.json` 结构：**
-
-```json
-[
-  {
-    "id": "uuid",
-    "created_at": "2026-01-01T00:00:00+00:00",
-    "text": "Q: ...\nA: ...",
-    "meta": { "question": "..." }
-  }
-]
-```
-
-召回结果均携带时间戳前缀 `[YYYY-MM-DD HH:MM UTC]`。
+召回：**`memory_recall` 工具**，不在 Prompt 构建阶段被动拼接。
 
 ---
 
@@ -111,13 +97,11 @@
 
 | 项目 | 说明 |
 |---|---|
-| 写入模块 | `src/agent/react/memory/milestone/store.py` |
-| 触发时机 | `processor.commit()` → `MilestoneMemory.try_add()`（LLM 评分 ≥ 阈值时）|
+| 写入模块 | `src/agent/soul/memory/milestone/store.py` |
+| 触发时机 | 由调用方显式 **`MilestoneMemory.try_add`**（当前 TaoLoop **`post_process` 默认不再调用**）；检索经 **`memory_recall`** |
 | 路径配置字段 | `MilestoneConfig.milestone_dir` |
 | 默认值 | `".react/milestones"` |
-| 开关 | `MilestoneConfig.enabled`（默认 `False`）|
-
----
+| 开关 | `MilestoneConfig.enabled` |
 
 ### 5. 人格数据 `.react/persona/`
 
@@ -170,7 +154,7 @@
 
 | 项目 | 说明 |
 |---|---|
-| 写入模块 | `src/agent/scheduler/store.py` / `src/agent/scheduler/engine.py` |
+| 写入模块 | `src/runtime/scheduler/store.py`、`src/runtime/scheduler/engine.py`；任务执行见 `src/agent/soul/heartbeat/task_runner.py` |
 | `tasks.json` | 所有调度任务的状态（TaskStore 持久化）|
 | `heartbeat_log.jsonl` | 心跳检查记录（HeartbeatTickLog）|
 | `results/` | 各任务执行结果，文件名为 `{task_id}.json` |
@@ -182,7 +166,7 @@
 
 | 项目 | 说明 |
 |---|---|
-| 写入模块 | `src/agent/scheduler/timeline.py` |
+| 写入模块 | `src/runtime/scheduler/timeline.py`（或经 TaoLoop 挂载的 TimelineService）|
 | 触发时机 | Scheduler 任务完成后追加时间线事件 |
 | 文件命名 | `{YYYY-MM-DD}.jsonl`（每日一个文件）|
 | 路径配置字段 | `StorageConfig.timeline_dir`（`".react/timeline"`）|
@@ -251,10 +235,9 @@
           └─ 收到 FinishEvent → 前端 saveConv() → .react/history/{uuid}.json ✎
                └─ TaoLoop.post_process()（后台线程）
                     ├─ MemoryProcessor.commit()
-                    │    ├─ RecentHistoryMemory.append()  → .react/memory/medium_term.jsonl ✎
-                    │    ├─ LongTermMemory.save()         → .react/memory/ ✎
-                    │    └─ MilestoneMemory.try_add()
-                    │         └─ score >= threshold → .react/milestones/ ✎
+                    │    └─ RecentHistoryMemory.append()  → .react/memory/medium_term.jsonl ✎
+                    ├─ MemoryService.ingest_turn（可选线程）→ Soul MySQL / Redis ✎
+                    ├─ _maybe_consolidate()（可选）→ LongTermMemory ✎
                     ├─ TraceStore.write()                 → .react/traces/ ✎
                     └─ PersonaManager.evolve()
                          ├─ ProfileStore.save_*()         → .react/persona/ ✎
@@ -263,7 +246,7 @@
 
 Scheduler（后台轮询）
      └─ TaskRunner.run()                                  → .react/scheduler/results/ ✎
-          └─ TimelineStore.append()                       → .react/timeline/{date}.jsonl ✎
+          └─ TimelineService.append()                   → .react/timeline/{date}.jsonl ✎
 
 HeartbeatModule（后台心跳）
      ├─ LifeLog.append()                                  → .react/life/life_log.jsonl ✎

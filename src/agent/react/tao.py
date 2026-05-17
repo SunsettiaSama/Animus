@@ -31,6 +31,7 @@ from .context.medium_term.memory import RecentHistoryMemory
 from .context.memory import Step
 from agent.soul.memory.milestone.init import make_milestone
 from agent.soul.memory.milestone.memory import MilestoneMemory
+from agent.soul.memory.service import MemoryService
 from .context.processor import MemoryProcessor, MemoryResult
 from .prompt.block import MemoryBlock, PromptBlock
 from .prompt.parser import ParseQuality, ParseResult, diagnose, parse_llm_output
@@ -150,7 +151,6 @@ class _PendingFinish:
     answer: str
     processor: MemoryProcessor
     persona_blocks: list[PromptBlock] | None
-    lt_cache: str = ""  # LT result from this turn, seeds _prefetched_lt in post_process
 
 
 # ── TaoLoop ───────────────────────────────────────────────────────────────────
@@ -222,13 +222,29 @@ class TaoLoop:
             else None
         )
 
+        # ── Soul MemoryService（新记忆子系统，Redis + MySQL 驱动）────────────
+        # 仅当 cfg.db 显式提供时才启动；旧 long_term/milestone 仍独立工作。
+        self._soul_memory: MemoryService | None = None
+        if cfg.db is not None:
+            _redis_cfg = cfg.db.redis
+            _mysql_cfg = cfg.db.mysql
+            if _redis_cfg.enabled and _mysql_cfg.enabled:
+                _redis = _redis_cfg.build_client()
+                _mysql = _mysql_cfg.build_client()
+                self._soul_memory = MemoryService.build(
+                    llm=self._llm,
+                    redis_client=_redis,
+                    mysql_client=_mysql,
+                )
+
         # Inject the recall tool when at least one memory backend is active.
         # We copy tool_descriptions to avoid mutating the caller's dict.
         effective_descriptions = dict(tool_descriptions)
-        if self._long_term is not None or self._milestone is not None:
+        if self._soul_memory is not None or self._long_term is not None or self._milestone is not None:
             recall = MemoryRecallAction(
-                long_term=self._long_term,
-                milestone=self._milestone,
+                soul_memory=self._soul_memory,
+                long_term=self._long_term if self._soul_memory is None else None,
+                milestone=self._milestone if self._soul_memory is None else None,
             )
             self._executor.register_instance(recall)
             effective_descriptions[recall.name] = recall.description
@@ -461,17 +477,6 @@ class TaoLoop:
             LLMHandle(LLM(cfg.repair_llm)) if cfg.repair_llm is not None else self._llm
         )
 
-        # Pre-fetched long-term memory — seeded once per session, reused for all
-        # subsequent questions.  Bot sessions populate this via preload_with_recall();
-        # WebUI sessions populate it after the first turn's post_process() completes.
-        # step 0 in stream() uses this value directly and skips the vector search.
-        # None means no preload has completed yet (first question of a session).
-        self._prefetched_lt: str | None = None
-
-        # Dirty flag: set True when a model tool explicitly writes to LT (e.g. a
-        # future memory_save tool).  post_process() re-runs smart_recall and clears
-        # the flag so the next question sees the updated LT snapshot.
-        self._lt_dirty: bool = False
 
     @staticmethod
     def _trunc(text: str, limit: int) -> str:
@@ -544,25 +549,10 @@ class TaoLoop:
         processor = MemoryProcessor(
             self._cfg.memory,
             self._llm,
-            long_term=self._long_term,
-            milestone=self._milestone,
             medium_term=self._medium_term,
         )
 
-        # 短期偏好对 L3 的检索偏置（使用上一轮更新后的偏好，偏置当前轮召回）
-        recall_query = (
-            self._persona.bias_query(question)
-            if self._persona is not None
-            else question
-        )
-
-        # ── Per-question caches ───────────────────────────────────────────────
-        # These three tiers don't change while a question's step loop is running
-        # (updates only happen in post_process() after the turn ends).
-        # Caching them here avoids repeated vector searches, JSONL reads, and
-        # persona file I/O on every step.
-        _cached_lt: str = ""
-        _cached_milestone: str = ""
+        # medium_term 只需渲染一次，在整个问题的步骤循环中保持不变。
         _cached_medium: str = ""
 
         # Persona blocks are also stable across steps.
@@ -581,55 +571,29 @@ class TaoLoop:
         _prev_action: str = ""
 
         for i in range(self._cfg.max_steps):
-            # ── Memory recall ────────────────────────────────────────────────
+            # ── Context assembly ─────────────────────────────────────────────
+            # step 0：渲染 medium_term 并缓存；step > 0 直接复用。
             if i == 0:
-                if self._prefetched_lt is not None:
-                    # Bot session: preload_with_recall() already ran; skip the
-                    # per-query vector search and inject the cached LT result.
-                    result = processor.recall(recall_query, include_long_term=False)
-                    _cached_lt        = self._prefetched_lt
-                    _cached_milestone = result.milestone
-                    _cached_medium    = result.medium_term
-                else:
-                    # Full recall on step 0: long-term vector search + milestone
-                    # retrieval + medium-term render.  Results are cached for
-                    # all subsequent steps in this question.
-                    result = processor.recall(recall_query, include_long_term=True)
-                    _cached_lt        = result.long_term
-                    _cached_milestone = result.milestone
-                    _cached_medium    = result.medium_term
+                result = processor.recall()
+                _cached_medium = result.medium_term
             else:
-                # Steps > 0: reuse cached LT / milestone / medium-term values;
-                # only the current-question trace grows (via processor.add()).
                 result = MemoryResult(
                     short_term=processor.trace,
                     medium_term=_cached_medium,
-                    long_term=_cached_lt,
-                    milestone=_cached_milestone,
                 )
 
             # ── Message assembly ─────────────────────────────────────────────
-            # Each memory tier is passed as a separate labeled slot; the
-            # manager renders independent section headers for each.
             if self._static_cache is not None:
                 messages = self._manager.build_messages_from_static(
                     self._static_cache,
                     question=question,
-                    long_term=_cached_lt,
                     medium_term=result.medium_term,
-                    milestone=_cached_milestone,
                     short_term=result.short_term,
                 )
             else:
-                # First turn or cache invalidated — full build path.
                 messages = self._manager.build_messages(
                     question,
-                    MemoryResult(
-                        short_term=result.short_term,
-                        medium_term=result.medium_term,
-                        long_term=_cached_lt,
-                        milestone=_cached_milestone,
-                    ),
+                    result,
                     extra_system_blocks=persona_blocks,
                 )
 
@@ -861,7 +825,6 @@ class TaoLoop:
                     answer=answer,
                     processor=processor,
                     persona_blocks=persona_blocks,
-                    lt_cache=_cached_lt,
                 )
                 yield FinishEvent(answer=answer)
                 _obs.emit(_SessionEvent(
@@ -1016,24 +979,18 @@ class TaoLoop:
 
         pf.processor.commit(pf.question, pf.answer)
 
-        # Consolidate LT memory window if due (moved from stream() finish path
-        # to eliminate 50-300ms latency spike before FinishEvent was yielded).
-        self._maybe_consolidate()
+        # ── Soul 记忆写入（新系统，异步，不阻塞主线程）────────────────────────
+        if self._soul_memory is not None:
+            _q, _a = pf.question, pf.answer
+            _svc = self._soul_memory
+            threading.Thread(
+                target=_svc.ingest_turn,
+                kwargs={"question": _q, "answer": _a},
+                daemon=True,
+                name="soul-memory-ingest",
+            ).start()
 
-        # Seed _prefetched_lt so subsequent questions in this session skip
-        # the per-query vector search (M1 optimisation).
-        # - First question: _prefetched_lt is None → seed from this turn's result.
-        # - Subsequent questions: keep existing cache (session-level "query once").
-        # - dirty flag: set by a tool that explicitly modifies LT → triggers a
-        #   fresh smart_recall to pick up the change, then clears the flag.
-        if self._long_term is not None:
-            if self._lt_dirty:
-                self._prefetched_lt = self._long_term.smart_recall(
-                    "", is_session_start=False
-                )
-                self._lt_dirty = False
-            elif self._prefetched_lt is None:
-                self._prefetched_lt = pf.lt_cache
+        self._maybe_consolidate()
 
         self._timeline.append("conversation", {
             "q": pf.question[:300],
@@ -1067,27 +1024,10 @@ class TaoLoop:
     # ── Misc ─────────────────────────────────────────────────────────────────
 
     def preload(self) -> None:
-        """触发长期记忆的后台预热（嵌入模型 + Qdrant 索引）。"""
-        if self._long_term is not None:
-            self._long_term.store.preload()
+        """旧接口保留，现为空操作。长期记忆不再在会话启动时预热。"""
 
     def preload_with_recall(self) -> None:
-        """预热 embedder + Qdrant，然后执行会话级长期记忆检索并缓存结果。
-
-        设计意图（bot 会话专用）：
-        - 在 _build_session 后立即由 executor 后台提交，与用户打字的 debounce
-          窗口并行运行，首条消息到达时 embedder 大概率已就绪。
-        - 检索结果写入 _prefetched_lt；stream() step 0 检测到非 None 时直接
-          注入 _cached_lt，跳过每次查询触发的向量搜索。
-        - "不再改了"：_prefetched_lt 写入后本 session 内不再更新，即本轮新增
-          记忆不会反映在后续查询的 LT 上下文中——这是可接受的 trade-off。
-        """
-        if self._long_term is None:
-            return
-        self._long_term.store.preload()
-        self._prefetched_lt = self._long_term.smart_recall(
-            "", is_session_start=True
-        )
+        """旧接口保留，现为空操作。长期记忆通过 memory_recall 工具主动触发。"""
 
     def close(self) -> None:
         if self._long_term is not None:
@@ -1110,8 +1050,6 @@ class TaoLoop:
         self._manager.clear_history()
         self._static_cache = None
         self._pending_finish = None
-        self._prefetched_lt = None
-        self._lt_dirty = False
         self._scratchpad.reset()
         self._stop_event.clear()
 

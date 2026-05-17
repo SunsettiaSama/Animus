@@ -18,9 +18,6 @@ src/agent/react/action/
 │   └── impl/          # 实例注入型工具（需 TaoLoop 注入依赖）
 │       ├── web_fetch.py
 │       ├── memory_recall.py
-│       ├── knowledge_hybrid_search.py
-│       ├── knowledge_save.py
-│       ├── knowledge_list.py
 │       ├── scheduler_add.py
 │       ├── scheduler_list.py
 │       ├── scheduler_cancel.py
@@ -33,7 +30,7 @@ src/agent/react/action/
 │       ├── notify_user.py
 │       ├── send_notification.py
 │       ├── send_bot_message.py
-│       └── plan_tools.py
+│       └── plan_tools.py     # 遗留 plan_* Action（默认 TaoLoop 未注册；当前 Flow 走 flow_skill）
 ├── mcp/               # MCP 工具协议（Model Context Protocol）
 │   ├── base.py
 │   └── registry.py    # MCPRegistry — MCP 工具加载与搜索
@@ -44,7 +41,7 @@ src/agent/react/action/
 │   ├── domain_learning.py
 │   ├── research.py
 │   ├── document_summary.py
-│   └── plan_skill.py  # PlanSkillSet — Plan 模式技能组
+│   └── flow_skill.py    # FlowSkillSet — run_flow / flow_status / flow_wait / flow_skip（由 TaoLoop 按 cfg.flow 注入）
 └── risk/              # 风险评估门控
     ├── level.py       # RiskLevel + OperationRisk
     ├── assessor.py    # BaseRiskAssessor / RuleBasedAssessor / ExternalAPIAssessor
@@ -154,9 +151,7 @@ class CalculatorAction(BaseAction):
 | workspace | `note_read` | 始终 | 读取草稿本笔记；留空则列出全部 |
 | workspace | `note_delete` | 始终 | 删除草稿本指定笔记 |
 | memory | `memory_recall` | 长期记忆或里程碑启用时 | 主动检索长期 / 里程碑记忆 |
-| knowledge | `knowledge_hybrid_search` | `TaoConfig.knowledge` 非空 | 知识库混合检索 |
-| knowledge | `knowledge_save` | 同上 | 向知识库写入新内容 |
-| knowledge | `knowledge_list` | 同上 | 列出知识库已有领域 |
+| knowledge | （已移除）| `KnowledgeBase` 包不存在 | `knowledge_*` 工具块留在源码仅当配置误启用时会失败；请保持 **`TaoConfig.knowledge=None`** |
 | scheduler | `scheduler_add` | `TaoConfig.scheduler` 非空 | 预约一次性或周期性 Agent 任务 |
 | scheduler | `scheduler_list` | 同上 | 查看所有调度任务及状态 |
 | scheduler | `scheduler_cancel` | 同上 | 取消调度任务 |
@@ -171,12 +166,12 @@ class CalculatorAction(BaseAction):
 | notify | `send_notification` | `AppState.bark_notifier` / `ntfy_notifier` 注入 | 通过 Bark / ntfy 推送通知（有频率限制）|
 | notify | `send_bot_message` | `AppState.bot_service` 注入 | 通过 Bot 服务向目标发送消息（有频率限制）|
 | skill | `delegate_task` | `TaoConfig.agent` 非空 | 同步委派子 Agent，阻塞等结果 |
-| plan | `run_plan` | `TaoConfig.plan` 非空 | 启动 Plan-and-Execute 多智能体编排 |
-| plan | `plan_status` | 同上 | 查询当前计划 DAG 执行状态 |
-| plan | `plan_pause` | 同上 | 暂停 / 恢复计划执行 |
-| plan | `plan_skip` | 同上 | 跳过指定任务 |
-| plan | `plan_snapshot` | 同上 | 手动保存计划快照 |
-| plan | `plan_rollback` | 同上 | 回滚到指定快照 |
+| flow | `run_flow` | `TaoConfig.flow` 非空 | 异步启动 Flow DAG 编排（返回 flow_id）|
+| flow | `flow_status` | 同上 | 查询当前 Flow / PlanDocument 执行状态 |
+| flow | `flow_wait` | 同上 | 阻塞等待 Flow 完成（可超时）|
+| flow | `flow_skip` | 同上 | 跳过指定 task_id（可选 cascade）|
+
+> **legacy**：`tools/impl/plan_tools.py` 仍包含 `plan_status` 等 Action 类名，但 **`TaoLoop` 默认仅注入上述 `flow_*` Skill**（见 `flow_skill.py`）。REST `/api/plan/*` 等与编排观测相关的路由仍可能沿用「plan」用词，指同一套 Flow 编排器。
 
 > **注意**：`note_write` / `note_read` / `note_delete`（workspace）由 TaoLoop 无条件注入，无需配置。`notify_user` 也无条件注入。`memory_recall` 由 TaoLoop 在长期记忆或里程碑至少一个启用时注入。`send_notification` / `send_bot_message` 需要 `AppState` 中对应的通知服务初始化后才注入。
 

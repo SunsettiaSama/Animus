@@ -1,6 +1,6 @@
 # WebUI
 
-基于 FastAPI 的 Web 界面，以工作站仪表板为主页，统一展示所有子系统状态与配置入口；支持 Chat / ReAct 双模式对话，集成知识库、语音、调度器与历史管理。
+基于 FastAPI 的 Web 界面，以工作站仪表板为主页，统一展示所有子系统状态与配置入口；支持 Chat / ReAct 双模式对话，集成语音、调度器与历史管理等。
 
 ## 文件结构
 
@@ -18,7 +18,7 @@
 | `src/webui/routers/memory.py` | 记忆配置读写与蒸馏触发 |
 | `src/webui/routers/persona.py` | 人格配置读写 |
 | `src/webui/routers/scheduler.py` | 调度器任务管理 |
-| `src/webui/routers/knowledge.py` | 知识库文档管理与检索 |
+| `src/webui/routers/knowledge.py` | （遗留）知识库路由；运行时 **`src/knowledge/` 包已移除**，勿依赖 |
 | `src/webui/routers/voice.py` | TTS / STT 配置、合成、转录、模型下载 |
 | `src/webui/routers/infra/vllm.py` | vLLM 服务器配置与启停 |
 | `src/webui/routers/infra/sandbox.py` | 沙盒配置读写 |
@@ -38,7 +38,7 @@
 | `src/webui/static/js/modules/voice.js` | TTS / STT 配置 / 工作站卡片 |
 | `src/webui/static/js/modules/scheduler.js` | 调度器任务 / 工作站卡片 |
 | `src/webui/static/js/modules/infra.js` | vLLM / 沙盒 / 服务状态 |
-| `src/webui/static/js/modules/knowledge.js` | 知识库面板 |
+| `src/webui/static/js/modules/knowledge.js` | （遗留 UI）知识库面板 |
 | `src/webui/routers/flow.py` | Flow 模式编排控制（运行 / 状态 / SSE 流 / 快照 / 回滚 / 日志 / 暂停 / 跳步），`/api/flow/*` |
 | `src/webui/static/js/modules/plan.js` | 历史 Plan 前端模块（新 API 为 `/api/flow/*`，路由 `/flow`）|
 | `src/webui/routers/benchmark.py` | Benchmark Suite 后端（场景列表 / 运行 SSE / 报告读写 / 历史 / 清除）|
@@ -274,15 +274,15 @@ POST /api/react/reinit  (react.py:201)
           │      persona=PersonaConfig(...),
           │      scheduler=SchedulerConfig(...),
           │      agent=SubAgentConfig(...),
-          │      plan=PlanConfig(...)
+          │      flow=FlowConfig(...)    # 可选；启用 run_flow / flow_* 工具
           │  )
           │
           ├─ TaoLoop(llm, executor, tool_descriptions, cfg)
           │      │  内部构建顺序（src/agent/react/tao.py）：
           │      ├─ LLMHandle(llm)
-          │      ├─ TraceStore / PersonaManager / TimelineStore
+          │      ├─ TraceStore / PersonaManager / TimelineService
           │      ├─ make_memory / make_milestone / RecentHistoryMemory
-          │      ├─ 注册工具：recall → scratchpad → sandbox → KB → scheduler → delegate → plan
+          │      ├─ 注册工具：recall → scratchpad → sandbox → KB → scheduler → delegate → flow（若启用）
           │      ├─ executor.set_event_sink(timeline.make_tool_sink())
           │      └─ PromptManager(effective_descriptions, cfg.prompt)  ← 必须在所有工具注册后
           │
@@ -526,7 +526,7 @@ ctrl = appendReactMsg()        // 新建 ReAct 卡片，继续后续步骤
 客户端收到 finish → WebSocket 关闭
                           ↓（后台线程）
                     post_process()
-                      commit → FAISS 写入
+                      commit → L3（Qdrant）写入
                       persona.evolve()
                       add_turn() + consolidate()
                       build_static()
@@ -751,6 +751,6 @@ Settings 按钮（⚙）打开模态框，包含 6 个 Tab：
 ```
 
 - **左侧**：当前任务列表（调用 `GET /api/scheduler/tasks`）+ 新建表单（+ New Task 按钮展开）
-- **右侧**：今日时间轴（调用 `GET /api/timeline`，展示 `TimelineStore` 写入的所有事件，时间倒序）
+- **右侧**：今日时间轴（调用 `GET /api/timeline`，展示 `TimelineService` 写入的事件，底层按日落盘 `.react/timeline/*.jsonl`，时间倒序）
 - 时间轴事件类型包括：`conversation`（对话完成）、`tool_call`（工具调用）、`plan_event`（Plan 编排事件）等
 

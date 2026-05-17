@@ -1,6 +1,6 @@
 # agent/react 模块
 
-ReAct（Reasoning + Acting）核心框架，实现两层循环结构、四层记忆系统、块驱动 Prompt 组装、人格演化引擎和推理链存档。
+ReAct（Reasoning + Acting）核心框架：**ConvLoop** + **TaoLoop**，会话上下文在 **`context/`**，向量长期与里程碑的逻辑实现在 **`agent/soul/memory`**（由 **`memory_recall`** 工具按需挂载）；Soul **`MemoryService`** 见 [agent/soul/README.md](../soul/README.md)。
 
 ---
 
@@ -8,69 +8,18 @@ ReAct（Reasoning + Acting）核心框架，实现两层循环结构、四层记
 
 ```
 src/agent/react/
-├── loop.py              # ConvLoop — 外层多轮对话循环
-├── tao.py               # TaoLoop  — 内层 TAO 推理循环 + 事件流
-├── parser.py            # 薄转发层：re-export prompt/parser.py 公共符号
-├── factory.py           # build_conv_loop 工厂函数（返回 ConvLoop）
-│
-├── memory/              # 四层记忆系统（L1 短期 / L2 中期 / 里程碑 / L3 长期）
-│   ├── memory.py        # Step + Memory 基础数据结构
-│   ├── processor.py     # MemoryProcessor：统一读写接口
-│   ├── short_term/      # L1 短期（Token 滑动窗口 + 蒸馏摘要）
-│   ├── medium_term/     # L2 中期（跨 session JSONL Q&A 历史 + 滚动整合）
-│   ├── long_term/       # L3 长期（BGE Embedding + Qdrant + RAG）
-│   │   ├── memory.py
-│   │   ├── store.py     # LongTermStore（向量 + 时间戳 + Qdrant 持久化）
-│   │   ├── init/        # make_memory 工厂函数
-│   │   └── retrieve/    # Retriever + 五场景检索模式（含 TIMELINE）
-│   └── milestone/       # 里程碑记忆（重要事件，关键词检索）
-│       ├── entry.py     # MilestoneEntry 数据类
-│       ├── store.py     # MilestoneStore（JSON 持久化）
-│       ├── retriever.py # MilestoneRetriever（关键词匹配 + jieba 可选）
-│       ├── scorer.py    # ImportanceScorer（LLM 评分 0.0–1.0）
-│       ├── memory.py    # MilestoneMemory 门面
-│       └── init.py      # make_milestone 工厂函数
-│
-├── prompt/              # Prompt 块驱动组装系统
-│   ├── block.py         # PromptBlock 基类 + 内置块
-│   ├── manager.py       # PromptManager：Prompt 构建 + 静态缓存
-│   ├── builder.py       # PromptBuilder：纯文本组装（辅助路径）
-│   ├── parser.py        # ReActOutputParser + ParseQuality 枚举（实现在此）
-│   ├── repair.py        # Prompt 修复（输出格式错误时重试）
-│   └── template.py      # ReActTemplate 语言模板（CN / EN）
-│
-├── persona/             # 人格演化系统（画像-技能-自省 + 近期偏好 + 情绪状态）
-│   ├── engine.py        # EvolutionEngine：LLM 驱动演化
-│   ├── manager.py       # PersonaManager：统一接口
-│   ├── profile/         # 稳定层（画像 + 技能库 + 自省）
-│   │   ├── profile.py   #   PersonaProfile 数据类
-│   │   ├── skills.py    #   Skill + SkillsLibrary
-│   │   ├── evolver.py   #   PersonaEvolver（LLM 增量更新）
-│   │   ├── block.py     #   ProfileBlock / SkillsBlock / ReflectionBlock
-│   │   └── store.py     #   ProfileStore（profile / skills / reflection）
-│   ├── preference/      # 动态层（话题兴趣 / 风格偏移）
-│   │   ├── entry.py     #   PreferenceEntry 快照
-│   │   ├── store.py     #   PreferenceStore（preference.json）
-│   │   ├── updater.py   #   PreferenceUpdater（LLM 生成快照）
-│   │   ├── block.py     #   PreferenceBlock（Prompt 注入）
-│   │   └── recent.py    #   RecentPreference（k 天滑动窗口聚合）
-│   └── emotional/       # 叙事情感层（情绪锚点 + 纹理文本）
-│       ├── state.py     #   EmotionalAnchor + EmotionalState + EmotionalStateStore
-│       ├── evolver.py   #   EmotionalStateEvolver（LLM 更新）
-│       └── block.py     #   EmotionalStateBlock（Prompt 注入）
-│
-├── life/                # 生活状态子系统（活动日志 + 画像 + 日度综合）
-│   ├── manager.py       # LifeManager：协调日志、画像、日度合成
-│   ├── log.py           # LifeLog + LifeLogEntry（JSONL 活动叙事）
-│   ├── profile.py       # LifeProfile + LifeProfileStore + LifeProfileGenerator
-│   ├── synthesis.py     # DailySynthesizer（日度综合报告，写入 LifeLog）
-│   └── block.py         # LifeProfileBlock（注入"近期生活状态"到 Prompt）
-│
-├── action/              # 动作空间（Tool / MCP / Skill）
-│   └── ...              # 见 action/README.md
-│
-└── trace/               # 推理链存档
-    └── store.py         # TraceStore：写入 .react/traces/
+├── loop.py              # ConvLoop
+├── tao.py               # TaoLoop — 推理循环与工具注入
+├── parser.py            # 转发 prompt/parser 符号
+├── factory.py           # build_conv_loop
+├── context/             # MemoryProcessor + RecentHistoryMemory（会话上下文）
+│   ├── processor.py
+│   ├── memory.py        # Step
+│   └── medium_term/memory.py
+├── prompt/              # PromptManager / parser / repair / template
+├── action/              # Tool / MCP / Skill — 见 action/README.md
+├── trace/store.py       # TraceStore
+└── （人格 / 生命：`agent/soul/persona`、`agent/soul/life`）
 ```
 
 ---
@@ -85,7 +34,7 @@ ConvLoop（多轮会话管理）
 TaoLoop.stream(question)
    │
    │  循环 max_steps 次
-   │     ├─ recall(include_long_term=(i==0))  → MemoryResult
+   │     ├─ processor.recall()  → MemoryResult（short_term + medium_term）
    │     ├─ build_messages(...)               → list[BaseMessage]
    │     ├─ LLM.stream_generate_messages()    → raw_output（流式 chunk）
    │     ├─ parse_llm_output()               → (thought, action, action_input)
@@ -106,101 +55,69 @@ TaoLoop.stream(question)
 | 属性 | 类型 | 说明 |
 |---|---|---|
 | `_manager` | `PromptManager` | 负责 Prompt 构建与历史管理 |
-| `_long_term` | `LongTermMemory \| None` | L3 Qdrant 向量存储与检索 |
-| `_milestone` | `MilestoneMemory \| None` | 里程碑事件检索与评分 |
-| `_medium_term` | `RecentHistoryMemory \| None` | L2 中期跨 session JSONL 历史 |
-| `_trace_store` | `TraceStore \| None` | 写入推理链到 `.react/traces/` |
-| `_persona` | `PersonaManager \| None` | 人格注入 + 演化 + 检索偏置 |
+| `_long_term` | `LongTermMemory \| None` | soul 包向量层；**默认不写入 Prompt**，供 `memory_recall` / consolidation |
+| `_milestone` | `MilestoneMemory \| None` | soul 包里程碑；同上 |
+| `_medium_term` | `RecentHistoryMemory \| None` | 中期 JSONL（`context/medium_term`）|
+| `_soul_memory` | `MemoryService \| None` | `cfg.db` 全启用时构造；ingest_turn + recall 工具后端 |
+| `_persona` | `PersonaManager \| None` | 人格块（无 `bias_query` 钩子）|
 | `_life` | `LifeManager \| None` | 生活状态管理（心跳日志 + 日度综合）|
 | `_scheduler_engine` | `SchedulerEngine \| None` | 时钟触发任务引擎（`TaoConfig.scheduler` 非空时启用）|
 | `_delegate_skill` | `DelegateTaskSkill \| None` | 子 Agent 同步委派（`TaoConfig.agent` 非空时注入）|
-| `_plan_orchestrator` | `PlanOrchestrator \| None` | Plan 多智能体编排（`TaoConfig.plan` 非空时启用）|
+| `_flow_orchestrator` | `FlowOrchestrator \| None` | Flow DAG 编排（`TaoConfig.flow` 非空时启用）|
 | `_static_cache` | `StaticPromptParts \| None` | `post_process` 预热的静态 Prompt 片段 |
-| `processor` | `MemoryProcessor` | 统一读写 short_term + medium_term + long_term + milestone |
+| （每轮构造） | `MemoryProcessor` | 仅存于 `stream()` 局部变量；负责 trace + medium_term |
 
 ---
 
 ## 单步推理流程（stream 内循环）
 
 ```
-1. 偏置查询向量（L3 检索方向）
-   recall_query = persona.bias_query(question)   ← 融合近期话题偏好
+1. processor.recall()
+      → short_term : list[Step]
+      → medium_term : str（RecentHistoryMemory；首轮缓存后在后续 step 复用）
 
-2. processor.recall(recall_query, include_long_term=(i==0))
-      → short_term          : list[Step]  （当前 session 推理步骤）
-      → short_term_distillate: str        （被驱逐步骤的 LLM 摘要）
-      → medium_term         : str         （跨 session Q&A 历史，仅首步检索）
-      → long_term           : str         （仅首步检索 L3 FAISS 向量结果）
-      → milestone           : str         （仅首步检索里程碑关键词结果）
+2. Prompt 组装
+     · 首轮或无缓存：PromptManager.build_messages(question, result, persona_blocks)
+         → system：base + persona + medium_term MemoryBlock
+         → human：question + StepsBlock(short_term) + suffix
+     · 后续轮：build_messages_from_static(static_cache, question, medium_term, short_term)
+         → docstring：长期记忆仅靠 memory_recall 工具触发
 
-3. Prompt 构建（system blocks）
-   [SystemBlock]              → ReAct 系统提示 + 工具描述
-   [ProfileBlock]             → 人物画像（persona 启用时）
-   [SkillsBlock]              → 技能列表（skills_enabled 时）
-   [ReflectionBlock]          → 自省文本（reflection_enabled 且非空时）
-   [PreferenceBlock]          → 近期偏好（preference_enabled 且非 neutral 时）
-   [EmotionalStateBlock]      → 情绪纹理（emotion_enabled 且非空时）
-   [LifeProfileBlock]         → 近期生活状态（life 启用时）
-   [MemoryBlock: medium_term] → L2 跨 session 历史
-   [MemoryBlock: milestone]   → 里程碑记忆
-   [MemoryBlock: long_term]   → L3 向量结果
-   human:
-   [QuestionBlock]            → 用户问题 + 任务前缀
-   [MemoryBlock: distillate]  → L1 蒸馏摘要
-   [StepsBlock]               → 本轮 TAO 推理步骤
-   [SuffixBlock]              → "Thought:" 引导后续输出
-
-4. LLM.stream_generate_messages(messages)
-      → 持续 yield ChunkEvent（流式 token）
-
-5. parse_llm_output(raw_output)
-      → (thought, action, action_input)
-
-6. executor.run({"action": action, "args": action_input})
-      → observation（工具返回值）
-
-7. processor.add(Step(...))
+3. LLM 流式生成 → parse → executor.run(tool) → processor.add(Step)
 ```
+
+长期 / 里程碑 / Soul：**不**在上述 Prompt 路径中拼接；Agent 调用 **`memory_recall`** 将观测写入对话。
+
+---
 
 ## finish 后台提交（post_process）
 
 ```
-processor.commit(question, answer)
-      → short_term.flush()
-      → medium_term.append(Q, A)     → 写入 JSONL，异步整合
-      → long_term.add(Q+Steps+A).save()  → FAISS + memories.json
-      → milestone.try_add(Q, A, trace)
-            → ImportanceScorer → score >= threshold → milestones.json
+processor.commit(question, answer)        → RecentHistoryMemory.append（JSONL）
 
-trace_store.write(question, answer, processor.trace)
-      → .react/traces/{timestamp}_{slug}.json
+MemoryService.ingest_turn(...)（线程）   → 若 cfg.db 启用 Soul
 
-persona.evolve(question, answer, processor.trace)
-      → EvolutionEngine（profile / skills / reflect / preference）
+_maybe_consolidate()                     → 可选：窗口整合写入 legacy LongTermMemory
 
-manager.add_turn(question, answer)
-      → _history += [HumanMessage, AIMessage]
+timeline.append("conversation", {...})
 
-self._static_cache = manager.build_static(...)   ← 预热下轮
+trace_store.write(...)
+
+persona.evolve(..., processor.trace, medium_term_chunk)
+
+manager.add_turn + build_static → _static_cache
 ```
 
 ---
 
-## 记忆四层设计
+## 记忆相关文档
 
-| 层 | 名称 | 实现类 | 检索触发 | 持久化 |
-|---|---|---|---|---|
-| L1 | 短期 | `ShortTermMemory`（内存 deque）| 每步自动 | ❌ |
-| L1 蒸馏 | 短期蒸馏 | `ShortTermMemory._distillate`（内存）| 随 L1 溢出触发 | ❌ |
-| L2 | 中期 | `RecentHistoryMemory`（JSONL）| 仅首步，跨 session | ✅ `.react/memory/medium_term.jsonl` |
-| 里程碑 | 重要事件 | `MilestoneMemory`（JSON + 关键词索引）| 仅首步（可选）| ✅ `milestones.json` |
-| L3 | 长期 | `LongTermMemory`（Qdrant + JSON）| 仅首步（可选）| ✅ `qdrant/` + `memories.json` |
+| 文档 | 说明 |
+|---|---|
+| [context/README.md](./context/README.md) | `MemoryProcessor`、`RecentHistoryMemory` |
+| [../soul/memory/README.md](../soul/memory/README.md) | `MemoryService`、`LongTermMemory`、`MilestoneMemory`、`memory_recall` 后端 |
 
-**L2 中期说明**：`RecentHistoryMemory` 以 JSONL 形式持久化跨 session 的近期 Q&A 对，按 `window_days` 时间窗口加载。超出 `max_entries` 时触发 LLM 滚动整合（条目合并为摘要条目）。
-
-**里程碑溢出策略**：条目数超过 `max_milestones`（默认 50）时，按 importance 从低到高淘汰，被淘汰条目自动迁移写入 L3。
-
----
+旧的 **`agent/react/memory/`** 源码树已拆除；向量与里程碑逻辑在 **`agent/soul/memory`**。
 
 ## Prompt 块系统
 
@@ -221,18 +138,18 @@ PromptBlock (ABC)
     └── PreferenceBlock(preference)
 ```
 
-### 消息构建路径
+### 消息构建路径（与 `prompt/manager.py` 一致）
 
 ```
-有 _static_cache（非首步）:
-  build_messages_from_static(static, question, long_term, medium_term, milestone, short_term)
-    → system  = static.system_without_lt + 记忆拼接
-    → history = static.history
-    → human   = question + distillate + short_term steps + suffix
+有 _static_cache（非首轮拼装）:
+  build_messages_from_static(static, question, medium_term, short_term)
+    → system = static.system + medium_term 块
+    → human  = question + StepsBlock(short_term) + suffix
 
-无 _static_cache（首步或重置后）:
-  build_messages(question, result, extra_system_blocks=persona_blocks)
-    → 全量重新序列化所有块
+无 _static_cache（首轮或重置后）:
+  build_messages(question, MemoryResult, extra_system_blocks=persona_blocks)
+    → system = base + persona 块 + medium_term 块
+    → human  = question + StepsBlock(short_term) + suffix
 ```
 
 ---
@@ -252,12 +169,11 @@ profile/store.py  →  profile.json / skills.json / reflection.txt
     → LLM 生成 SkillDelta    → skills 增删改
     → LLM 生成 reflection
 
-preference/  →  preference.json（动态层，持久化）:
+preference/  →  preference.json（动态层）:
   PreferenceUpdater.update(Q, A)
-    → LLM 生成快照 → 更新 mood / topic_interests / style_shifts
-       结果影响 L3 检索偏置方向 + PreferenceBlock 注入 Prompt
+    → LLM 生成快照 → PreferenceBlock 注入
 
-emotional/  →  emotional_state.json（叙事情感层，持久化）:
+emotional/  →  emotional_state.json（叙事情感层）:
   EmotionalStateEvolver.update(Q, A)
     → LLM 追加 EmotionalAnchor（锚点 ≥ _MAX_ANCHORS 时压缩为 texture）
        结果注入 EmotionalStateBlock → 系统提示情绪质地
@@ -310,14 +226,15 @@ TaoConfig
   │     └── preference_window_days: int = 30
   ├── trace: TraceConfig
   │     └── enabled: bool = True
-  ├── knowledge: KnowledgeConfig | None = None
+  ├── knowledge: KnowledgeConfig | None = None   # 遗留字段：运行时包 `knowledge` 已移除，勿启用
   ├── repair_llm: LLMConfig | None = None
-  ├── scheduler: SchedulerConfig | None = None   # 时钟触发的自动化任务
+  ├── scheduler: SchedulerConfig | None = None   # runtime.scheduler；时钟触发任务（见 docs/runtime）
   ├── agent: SubAgentConfig | None = None         # 子 Agent 委派（注入 DelegateTaskSkill）
   │     ├── llm_cfg_path: str
   │     ├── max_concurrent: int = 4
   │     └── profiles: dict[str, SubAgentProfile]
-  └── plan: PlanConfig | None = None              # Plan-and-Execute 多智能体编排
+  ├── flow: FlowConfig | None = None              # Flow DAG / cluster 编排
+  └── db: DBConfig | None = None                  # Soul：Redis/MySQL（可选）
 ```
 
 ---
@@ -342,7 +259,7 @@ TaoConfig
 │   └── emotional_state.json
 ├── traces/               # 推理链存档
 │   └── {timestamp}_{slug}.json
-├── scheduler/            # 调度任务持久化
+├── scheduler/            # 调度持久化目录（TaskStore；心跳清单 HEARTBEAT.md；详见 docs/runtime）
 │   ├── tasks.json
 │   ├── heartbeat_log.jsonl
 │   └── results/
@@ -359,6 +276,7 @@ TaoConfig
 ## 子模块文档
 
 - [action/README.md](./action/README.md) — 工具动作空间（Tool / MCP / Skill）
-- [memory/README.md](./memory/README.md) — 四层记忆系统
+- [context/README.md](./context/README.md) — 会话上下文（MemoryProcessor）
 - [prompt/README.md](./prompt/README.md) — Prompt 块详解
-- [persona/README.md](./persona/README.md) — 人格演化引擎
+- [persona/README.md](./persona/README.md) — 人格文档入口（实现见 [../soul/persona/README.md](../soul/persona/README.md)）
+- [../soul/life/README.md](../soul/life/README.md) — LifeManager / 生活状态
