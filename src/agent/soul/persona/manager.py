@@ -1,89 +1,68 @@
 from __future__ import annotations
 
+import logging
+
 from config.agent.persona_config import PersonaConfig
 from infra.llm import BaseLLM
 from agent.react.context.memory import Step
-from ..persona.emotional import EmotionalState, EmotionalStateBlock, EmotionalStateEvolver, EmotionalStateStore
-from ..persona.engine import EvolutionEngine
-from ..persona.preference.block import PreferenceBlock
-from ..persona.preference.recent import RecentPreference
-from ..persona.preference.store import PreferenceStore
-from ..persona.preference.updater import PreferenceUpdater
-from ..persona.profile.block import ProfileBlock, ReflectionBlock, SkillsBlock
-from ..persona.profile.evolver import PersonaEvolver
+from ..persona.profile.block import ProfileBlock
 from ..persona.profile.profile import PersonaProfile
-from ..persona.profile.skills import SkillsLibrary
 from ..persona.profile.store import ProfileStore
+from ..persona.status import LifeContextInput, StatusManager
 from agent.react.prompt.block import PromptBlock
+from agent.soul.persona.self_concept import (
+    SelfConcept,
+    SelfConceptBlock,
+    SelfConceptEvolver,
+    SelfConceptStore,
+)
+from agent.soul.persona.self_concept.associative import AssociativeEvolver
+from agent.soul.persona.builder import ProfileBuilder
+
+logger = logging.getLogger(__name__)
 
 
 class PersonaManager:
-    """Persona 子系统的统一入口。
+    """Persona 子系统的统一对外接口。
 
-    协调 profile/ preference/ 两个子模块，对外提供：
-    - 各类 PromptBlock（供 TaoLoop 注入 system prompt）
-    - evolve()（每轮对话结束后驱动演化引擎）
+    三层结构
+    --------
+    - 静态层（profile）    ：ProfileBuilder build 后永久只读
+    - 自我认知层（self_concept）：narrative + beliefs，由心跳双链路演化
+    - 动态状态层（status） ：agent 自身情绪体验，由 StatusManager 管理
+
+    对外接口
+    --------
+    - all_blocks()              → 当前轮次应注入 prompt 的全部块
+    - bias_query(query)         → 检索偏置（基于自我认知关键词）
+    - evolve(...)               → 每轮对话后更新情绪状态
+    - evolve_self_concept()     → 时间轴演进（日终心跳触发）
+    - apply_associative_seeds() → 启发式演进（wander tick 触发）
+    - read_state() / receive_drift() → heartbeat bridge 接口
     """
 
     def __init__(self, cfg: PersonaConfig, llm: BaseLLM | None = None) -> None:
         self._cfg = cfg
 
-        # ── 存储层 ────────────────────────────────────────────────────────────
+        # ── 静态层 ────────────────────────────────────────────────────────────
         self._profile_store = ProfileStore(cfg.persona_dir)
-        self._preference_store = PreferenceStore(cfg.persona_dir)
+        self._raw_profile: PersonaProfile = self._profile_store.load_profile()
+        _built: PersonaProfile | None = ProfileBuilder.load_built_profile(cfg.persona_dir)
+        self._profile: PersonaProfile = _built if _built is not None else self._raw_profile
 
-        # ── 数据层 ────────────────────────────────────────────────────────────
-        self._profile: PersonaProfile = self._profile_store.load_profile()
-        self._skills: SkillsLibrary = (
-            self._profile_store.load_skills(cfg.max_skills)
-            if cfg.skills_enabled
-            else SkillsLibrary()
+        # ── 自我认知层 ────────────────────────────────────────────────────────
+        self._sc_store = SelfConceptStore(cfg.persona_dir)
+        self._self_concept: SelfConcept = self._sc_store.load()
+        self._sc_evolver: SelfConceptEvolver | None = (
+            SelfConceptEvolver(llm) if cfg.evolution_enabled and llm is not None else None
         )
-        self._reflection: str = (
-            self._profile_store.load_reflection() if cfg.reflection_enabled else ""
-        )
-        self._turn_count: int = 0
-
-        # ── 演化引擎（需 LLM + evolution_enabled）────────────────────────────
-        self._engine: EvolutionEngine | None = (
-            EvolutionEngine(
-                llm=llm,
-                profile_store=self._profile_store,
-                evolve_interval=cfg.evolve_interval,
-                skills_enabled=cfg.skills_enabled,
-                reflection_enabled=cfg.reflection_enabled,
-                reflect_interval=cfg.reflect_interval,
-            )
-            if cfg.evolution_enabled and llm is not None
-            else None
+        self._assoc_evolver: AssociativeEvolver | None = (
+            AssociativeEvolver(llm) if cfg.evolution_enabled and llm is not None else None
         )
 
-        # ── 情绪状态（叙事型漂移层，持久化到 emotional_state.json）────────────
-        self._emotional_store = EmotionalStateStore(cfg.persona_dir)
-        self._emotional_state: EmotionalState = self._emotional_store.load()
-        self._emotional_evolver: EmotionalStateEvolver | None = (
-            EmotionalStateEvolver(llm)
-            if cfg.evolution_enabled and llm is not None
-            else None
-        )
-
-        # ── 近期偏好（动态层，持久化到 preference.json）───────────────────────
-        self._recent_preference: RecentPreference = (
-            self._preference_store.load(
-                window_days=cfg.preference_window_days,
-                max_topics=cfg.max_preference_topics,
-            )
-            if cfg.preference_enabled
-            else RecentPreference(
-                window_days=cfg.preference_window_days,
-                max_topics=cfg.max_preference_topics,
-            )
-        )
-        self._preference_updater: PreferenceUpdater | None = (
-            PreferenceUpdater(llm)
-            if cfg.preference_enabled and llm is not None
-            else None
-        )
+        # ── 动态状态层（agent 自身情绪）─────────────────────────────────────
+        # 传入 profile 引用，供 StatusSynthesizer 获取性格背景
+        self._status = StatusManager(cfg.persona_dir, cfg, llm, profile=self._profile)
 
     # ── Properties ────────────────────────────────────────────────────────────
 
@@ -92,151 +71,127 @@ class PersonaManager:
         return self._profile
 
     @property
-    def skills(self) -> SkillsLibrary:
-        return self._skills
-
-    @property
-    def reflection(self) -> str:
-        return self._reflection
-
-    @property
-    def recent_preference(self) -> RecentPreference:
-        return self._recent_preference
+    def status(self) -> StatusManager:
+        return self._status
 
     # ── Prompt blocks ──────────────────────────────────────────────────────────
 
     def profile_block(self) -> ProfileBlock:
         return ProfileBlock(self._profile, max_chars=self._cfg.max_profile_chars)
 
-    def skills_block(self) -> SkillsBlock:
-        return SkillsBlock(
-            self._skills,
-            top_k=self._cfg.max_skills_in_prompt,
-            max_chars=self._cfg.max_skills_chars,
-        )
-
-    def reflection_block(self) -> ReflectionBlock:
-        return ReflectionBlock(self._reflection, max_chars=self._cfg.max_reflection_chars)
-
-    def preference_block(self) -> PreferenceBlock:
-        return PreferenceBlock(
-            self._recent_preference,
-            max_chars=self._cfg.max_preference_chars,
-        )
-
-    def emotional_state_block(self) -> EmotionalStateBlock:
-        return EmotionalStateBlock(
-            self._emotional_state,
-            max_chars=getattr(self._cfg, "max_emotional_state_chars", 400),
-        )
+    def self_concept_block(self) -> SelfConceptBlock:
+        return SelfConceptBlock(self._self_concept)
 
     def all_blocks(self) -> list[PromptBlock]:
-        """返回本轮应注入 Prompt 的全部 persona 块。"""
+        """当前轮次应注入 prompt 的全部 persona 块。
+
+        顺序：静态身份 → 自我认知 → 当前情绪状态
+        """
         blocks: list[PromptBlock] = [self.profile_block()]
-        if self._cfg.skills_enabled:
-            blocks.append(self.skills_block())
-        if self._cfg.reflection_enabled and self._reflection:
-            blocks.append(self.reflection_block())
-        if self._cfg.preference_enabled and self._recent_preference.render():
-            blocks.append(self.preference_block())
-        if not self._emotional_state.is_empty():
-            blocks.append(self.emotional_state_block())
+        if not self._self_concept.is_empty():
+            blocks.append(self.self_concept_block())
+        if not self._status.is_empty():
+            blocks.append(self._status.status_block())
         return blocks
 
     def bias_query(self, query: str) -> str:
-        """Return query augmented with recent topic interests for biased L3 retrieval."""
-        bias = self._recent_preference.to_query_bias()
-        if not bias:
-            return query
-        return f"{query} {bias}"
+        """返回附加了自我认知关键词的检索查询。"""
+        sc_keywords = " ".join(self._self_concept.query_bias_keywords())
+        if sc_keywords:
+            return f"{query} {sc_keywords}"
+        return query
 
-    # ── Evolution ──────────────────────────────────────────────────────────────
+    # ── 每轮演化（状态层）────────────────────────────────────────────────────
 
     def evolve(
         self,
         question: str,
         answer: str,
         steps: list[Step],
-        life_summary: str = "",
+        life_context: LifeContextInput | None = None,
         medium_term_context: str = "",
     ) -> None:
-        """每轮对话结束后调用，驱动演化引擎并更新内部状态。"""
-        self._turn_count += 1
+        """每轮对话结束后：轻量缓冲交互内容，达到频率时合成 texture。
 
-        if self._engine is not None:
-            new_reflection = self._engine.run(
-                question=question,
-                answer=answer,
-                steps=steps,
-                profile=self._profile,
-                skills=self._skills,
-                turn_count=self._turn_count,
-            )
-            if new_reflection is not None:
-                self._reflection = new_reflection
+        不再每轮调用 LLM，由 StatusManager 按 update_interval 控制合成时机。
+        life_context 若非空则同时推送至 life 通道（不立即触发合成，等到下次频率触发）。
+        """
+        self._status.record_interaction(question=question, answer=answer)
+        if life_context is not None:
+            self._status.receive_life_context(life_context, trigger_update=False)
 
-        # 叙事型情绪漂移（每轮触发，结果持久化）
-        if self._emotional_evolver is not None:
-            new_state = self._emotional_evolver.evolve(
-                state=self._emotional_state,
-                profile=self._profile,
-                question=question,
-                answer=answer,
-                steps=steps,
-                life_summary=life_summary,
-                medium_term_context=medium_term_context,
-            )
-            if new_state is not self._emotional_state:
-                self._emotional_state = new_state
-                self._emotional_store.save(new_state)
+    # ── SelfConcept 演化（心跳触发）──────────────────────────────────────────
 
-        # 近期偏好更新（每 N 轮触发一次）
-        if (
-            self._preference_updater is not None
-            and self._turn_count % self._cfg.preference_update_every_n == 0
-        ):
-            self._recent_preference = self._preference_updater.update(
-                self._recent_preference, question, answer
-            )
-            self._preference_store.save(self._recent_preference)
+    def evolve_self_concept(
+        self,
+        recent_anchors: list | None = None,
+        recent_ruminations: list | None = None,
+    ) -> bool:
+        """时间轴演进：用近期情绪锚点和反刍记忆微调叙事与信念。
 
-    def save_profile(self) -> None:
-        self._profile_store.save_profile(self._profile)
+        由 HeartbeatModule 日终回顾后调用，返回 True 表示有实质变化并已写盘。
+        """
+        if self._sc_evolver is None:
+            return False
+
+        anchors = recent_anchors or list(self._status.emotional_state.anchors)
+        delta = self._sc_evolver.evolve(
+            concept=self._self_concept,
+            built_profile=self._profile,
+            recent_anchors=anchors,
+            recent_ruminations=recent_ruminations or [],
+        )
+        if delta.is_empty():
+            return False
+
+        self._self_concept.apply_delta(delta)
+        self._sc_store.save(self._self_concept)
+        logger.info(
+            "[SelfConcept] evolved: %d upgrades, %d adds, narrative=%s",
+            len(delta.upgrades),
+            len(delta.adds),
+            bool(delta.narrative),
+        )
+        return True
+
+    def apply_associative_seeds(self, wandered_units: list) -> bool:
+        """启发式演进：从 wander() 浮现的记忆中提炼 emerging 信念种子。
+
+        由 HeartbeatCoreService._run_wander_tick() 触发，返回 True 表示有种子写盘。
+        """
+        if self._assoc_evolver is None or not wandered_units:
+            return False
+
+        delta = self._assoc_evolver.evolve(
+            wandered=wandered_units,
+            concept=self._self_concept,
+            profile=self._profile,
+        )
+        if delta.is_empty():
+            return False
+
+        self._self_concept.apply_delta(delta)
+        self._sc_store.save(self._self_concept)
+        logger.info(
+            "[AssociativeEvolver] seeded %d emerging belief(s) from wander",
+            len(delta.adds),
+        )
+        return True
+
+    # ── Bridge: PersonaHeartbeatPort ──────────────────────────────────────────
+
+    def read_state(self):
+        """实现 PersonaHeartbeatPort.read_state()。"""
+        return self._status.to_persona_snapshot()
+
+    def receive_drift(self, signal) -> None:
+        """实现 PersonaHeartbeatPort.receive_drift()。"""
+        self._status.receive_signal(signal, profile=self._profile)
+
+    # ── 重置 ──────────────────────────────────────────────────────────────────
 
     def clear_drift(self) -> None:
-        """删除所有演化漂移文件（profile/skills/reflection/preference），并重置内存状态。
-
-        不删除 persona_config.json（用户手动配置的基础人格设定）。
-        """
-        import os
-        store = self._profile_store
-        pref_store = self._preference_store
-
-        for path in (
-            store._profile_path,
-            store._skills_path,
-            store._reflection_path,
-        ):
-            if path.exists():
-                os.remove(path)
-
-        pref_path = pref_store._path
-        if os.path.exists(pref_path):
-            os.remove(pref_path)
-
-        self._emotional_store.clear()
-
-        # Reset in-memory objects
-        from ..persona.profile.profile import PersonaProfile
-        from ..persona.profile.skills import SkillsLibrary
-        from ..persona.preference.recent import RecentPreference
-
-        self._profile = PersonaProfile()
-        self._skills = SkillsLibrary()
-        self._reflection = ""
-        self._emotional_state = EmotionalState()
-        self._recent_preference = RecentPreference(
-            window_days=self._cfg.preference_window_days,
-            max_topics=self._cfg.max_preference_topics,
-        )
-        self._turn_count = 0
+        """清除所有演化漂移状态（self_concept + status），保留静态 profile。"""
+        self._sc_store.clear()
+        self._self_concept = SelfConcept()
+        self._status.clear()

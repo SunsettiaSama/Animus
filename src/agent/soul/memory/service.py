@@ -398,6 +398,60 @@ class MemoryService:
         entries = [s.render_line() for s in scored]
         return MemoryBlock(label="记忆参考", entries=entries)
 
+    # ── Bridge: MemoryHeartbeatPort ───────────────────────────────────────────
+
+    def tick(self, snapshot) -> object:
+        """实现 MemoryHeartbeatPort.tick()：wander → ruminate → 构建情绪信号。
+
+        流程
+        ----
+        1. retriever.wander() 随机采样浮现记忆（受 snapshot 情绪偏置影响）
+        2. 对 factual 类型记忆调用 HeartbeatWriter 进行反刍重构
+        3. 从浮现记忆提取情绪信号返回给 PersonaManager.receive_drift()
+        """
+        from agent.soul.heartbeat.bridge import EmotionalSignal, MemoryHeartbeatResult
+
+        wandered = self._retriever.wander(n=2)
+        wandered_ids = [s.unit.id for s in wandered]
+
+        emotional_ctx = getattr(snapshot, "emotional_state", "") or ""
+
+        ruminated_ids: list[str] = []
+        for su in wandered:
+            if su.unit.MEMORY_TYPE == "factual":
+                ru = self._heartbeat_writer.write(
+                    source_unit_id=su.unit.id,
+                    trigger=f"心跳漂移；情绪背景：{emotional_ctx or '平静'}",
+                    emotional_context=emotional_ctx,
+                )
+                if ru is not None:
+                    ruminated_ids.append(ru.id)
+
+        if wandered:
+            top = max(wandered, key=lambda s: s.unit.emotion_intensity)
+            avg_intensity = sum(s.unit.emotion_intensity for s in wandered) / len(wandered)
+            hint = ""
+            if ruminated_ids:
+                ru_unit = self._ltm.get(ruminated_ids[0])
+                if ru_unit is not None:
+                    hint = getattr(ru_unit, "reconstructed_fact", "")[:200]
+            signal = EmotionalSignal(
+                dominant_emotion=top.unit.emotion or "",
+                dominant_valence=top.unit.valence,
+                intensity=round(avg_intensity, 3),
+                source_unit_ids=wandered_ids,
+                narrative_hint=hint,
+            )
+        else:
+            signal = EmotionalSignal()
+
+        return MemoryHeartbeatResult(
+            wandered_ids=wandered_ids,
+            wandered_units=wandered,        # 完整 ScoredUnit 列表，供 AssociativeEvolver 使用
+            ruminated_ids=ruminated_ids,
+            signal=signal,
+        )
+
     # ── Internal helpers ───────────────────────────────────────────────────────
 
     def _safe_ingest_turn(

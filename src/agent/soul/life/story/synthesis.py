@@ -8,19 +8,21 @@ from datetime import datetime, timezone
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from infra.llm import BaseLLM
-from agent.soul.persona.emotional.state import EmotionalAnchor, EmotionalState
 from agent.soul.persona.profile.profile import PersonaProfile
-from .log import LifeLog, LifeLogEntry
+from agent.soul.persona.status.life_bridge import LifeContextInput
+from ..factual.event import EventType, LifeEvent
+from ..factual.event_log import LifeEventLog
 
 _SYSTEM = """\
 你是一个AI助手，正在进行今天的日终回顾。
 
 规则：
-- 以第一人称思考今天，即使交互不多也要填充这一天的血肉
-- 每个字段均可为空列表，不要强行填充
-- scheduler_action 中同时决定 delivery 模式：
+- 以第一人称视角，整理今天客观发生的事
+- 只输出事实性的内容，不要加入情绪描写或主观判断
+- scheduler_action 中决定 delivery 模式：
   push = 完成后通知用户（适合给用户准备的东西）
   store_only = 结果沉淀进记忆（适合自我性质的任务）
+- thought_records 记录今天浮现但未付诸行动的念头（客观描述想到了什么，不描述感受）
 - 严格输出 JSON，不要有任何其他文字"""
 
 _SCHEMA = """{
@@ -33,16 +35,15 @@ _SCHEMA = """{
       "delivery": "push或store_only"
     }
   ],
-  "emotion_expression": "今天的情绪感受（具体叙事，无则空字符串）",
-  "thought_records": ["想法或念头（没去做）"],
+  "thought_records": ["今天浮现但未付诸行动的念头（事实性描述）"],
   "virtual_content": "自由表达的内容片段（100字以内，无则空字符串）"
 }"""
 
 
 @dataclass
 class DailySynthesisResult:
+    """日终回顾结果——只包含事实性内容，不含情感判断。"""
     scheduler_actions: list[dict] = field(default_factory=list)
-    emotion_expression: str = ""
     thought_records: list[str] = field(default_factory=list)
     virtual_content: str = ""
 
@@ -54,17 +55,24 @@ class DailySynthesizer:
     def run(
         self,
         static_profile: PersonaProfile,
-        emotional_state: EmotionalState,
         today_medium_term: str,
         today_scheduler_tasks: str,
-        life_log: LifeLog,
-    ) -> DailySynthesisResult:
+        event_log: LifeEventLog,
+        story_phase: str = "",
+    ) -> tuple[DailySynthesisResult, LifeContextInput]:
+        """执行日终回顾。
+
+        Returns
+        -------
+        (result, life_ctx)
+          result   : scheduler_actions / thought_records / virtual_content
+          life_ctx : 供 status 层使用的 LifeContextInput（事实性上下文）
+        """
         prompt = (
             f"你的基本性格：\n{static_profile.render()}\n\n"
             f"你今天和用户的对话摘要：\n{today_medium_term or '（今天暂无对话）'}\n\n"
             f"你今天完成的任务：\n{today_scheduler_tasks or '（今天暂无任务）'}\n\n"
-            f"你目前的情绪质感：\n{emotional_state.texture or '（暂无记录）'}\n\n"
-            f"基于以上内容，以第一人称进行今天的日终回顾，输出 JSON：\n{_SCHEMA}"
+            f"基于以上内容，以第一人称进行今天的日终事实整理，输出 JSON：\n{_SCHEMA}"
         )
         raw = self._llm.generate_messages(
             [SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)]
@@ -72,60 +80,58 @@ class DailySynthesizer:
         result = self._parse(raw)
 
         now = datetime.now(timezone.utc)
-        self._write_to_log(result, life_log, now)
-        return result
-
-    def _write_to_log(
-        self,
-        result: DailySynthesisResult,
-        life_log: LifeLog,
-        now: datetime,
-    ) -> None:
-        ts = now.isoformat()
         date_str = now.date().isoformat()
 
-        if result.emotion_expression:
-            life_log.append(LifeLogEntry(
-                ts=ts,
-                period_start=date_str,
-                period_end=date_str,
-                narrative=result.emotion_expression,
-                source_tasks=[],
-                entry_type="emotion_expression",
-            ))
+        self._write_to_event_log(result, event_log, now)
 
+        life_ctx = self._build_life_context(
+            event_log=event_log,
+            date_str=date_str,
+            story_phase=story_phase,
+            thought_records=result.thought_records,
+        )
+        return result, life_ctx
+
+    def _write_to_event_log(
+        self,
+        result: DailySynthesisResult,
+        event_log: LifeEventLog,
+        now: datetime,
+    ) -> None:
         for thought in result.thought_records:
             if thought.strip():
-                life_log.append(LifeLogEntry(
-                    ts=ts,
-                    period_start=date_str,
-                    period_end=date_str,
-                    narrative=thought.strip(),
-                    source_tasks=[],
-                    entry_type="thought",
+                event_log.append(LifeEvent.now(
+                    event_type=EventType.THOUGHT,
+                    description=thought.strip(),
+                    source="daily_synthesis",
                 ))
-
         if result.virtual_content:
-            life_log.append(LifeLogEntry(
-                ts=ts,
-                period_start=date_str,
-                period_end=date_str,
-                narrative=result.virtual_content,
-                source_tasks=[],
-                entry_type="creative",
+            event_log.append(LifeEvent.now(
+                event_type=EventType.CREATIVE,
+                description=result.virtual_content,
+                source="daily_synthesis",
             ))
 
-        for action in result.scheduler_actions:
-            name = action.get("name", "")
-            if name:
-                life_log.append(LifeLogEntry(
-                    ts=ts,
-                    period_start=date_str,
-                    period_end=date_str,
-                    narrative=f"[计划] {name}: {action.get('instruction', '')}",
-                    source_tasks=[],
-                    entry_type="scheduler_action",
-                ))
+    def _build_life_context(
+        self,
+        event_log: LifeEventLog,
+        date_str: str,
+        story_phase: str,
+        thought_records: list[str],
+    ) -> LifeContextInput:
+        today_start = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc)
+        events = event_log.since(today_start)
+
+        ctx = LifeContextInput.from_life_events(
+            events=events,
+            date=date_str,
+            story_phase=story_phase,
+        )
+        if thought_records:
+            ctx.notable_flags.extend(
+                f"[thought] {t}" for t in thought_records if t.strip()
+            )
+        return ctx
 
     def _parse(self, raw: str) -> DailySynthesisResult:
         m = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
@@ -136,7 +142,6 @@ class DailySynthesizer:
         d = json.loads(m2.group(0))
         return DailySynthesisResult(
             scheduler_actions=d.get("scheduler_actions", []),
-            emotion_expression=d.get("emotion_expression", "").strip(),
             thought_records=[t for t in d.get("thought_records", []) if t],
             virtual_content=d.get("virtual_content", "").strip(),
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -57,6 +58,7 @@ class HeartbeatCoreService:
         llm_cfg_path: str = "config/llm_core/config.yaml",
         mailbox: HeartbeatInjectMailbox | None = None,
         register_global_mailbox: bool = True,
+        wander_interval_min: float = 30.0,
     ) -> None:
         self._heartbeat = heartbeat
         self._cfg: HeartbeatConfig = heartbeat._cfg
@@ -69,9 +71,22 @@ class HeartbeatCoreService:
         self._deferred: str | None = None
         self._deferred_lock = threading.Lock()
 
+        self._wander_interval_sec: float = wander_interval_min * 60
+        self._last_wander_at: float = 0.0
+        self._memory_port = None   # MemoryHeartbeatPort (MemoryService)
+        self._persona_port = None  # PersonaHeartbeatPort (PersonaManager)
+
     @property
     def mailbox(self) -> HeartbeatInjectMailbox:
         return self._mailbox
+
+    def set_memory_port(self, port) -> None:
+        """注入 MemoryService（实现 MemoryHeartbeatPort.tick()）。"""
+        self._memory_port = port
+
+    def set_persona_port(self, port) -> None:
+        """注入 PersonaManager（实现 PersonaHeartbeatPort.read_state/receive_drift）。"""
+        self._persona_port = port
 
     def start(self) -> None:
         if self._thread is not None:
@@ -109,6 +124,7 @@ class HeartbeatCoreService:
     def _iteration(self) -> None:
         self._flush_deferred_if_due()
         self._maybe_preflight()
+        self._maybe_wander_tick()
         result = self._heartbeat.tick()
         text = self._payload_from_result(result)
         if not text:
@@ -181,6 +197,42 @@ class HeartbeatCoreService:
             llm_cfg_path=self._llm_cfg_path,
             scheduler_engine=engine,
             notify_fn=None,
+        )
+
+    # ── Wander tick（记忆漂移 ↔ 人格驱动）────────────────────────────────────
+
+    def _maybe_wander_tick(self) -> None:
+        """每 wander_interval_min 分钟触发一次 Memory ↔ Persona 漂移循环。"""
+        if self._memory_port is None or self._persona_port is None:
+            return
+        now = time.monotonic()
+        if now - self._last_wander_at < self._wander_interval_sec:
+            return
+        self._last_wander_at = now
+        threading.Thread(
+            target=self._run_wander_tick,
+            daemon=True,
+            name="heartbeat-wander",
+        ).start()
+
+    def _run_wander_tick(self) -> None:
+        snapshot = self._persona_port.read_state()
+        result = self._memory_port.tick(snapshot)
+
+        # 1. 情绪漂移 → Persona 状态层
+        if result.signal.intensity > 0.05:
+            self._persona_port.receive_drift(result.signal)
+
+        # 2. 联想演进 → SelfConcept emerging 种子（独立链路）
+        if result.wandered_units and hasattr(self._persona_port, "apply_associative_seeds"):
+            self._persona_port.apply_associative_seeds(result.wandered_units)
+
+        logger.debug(
+            "[Wander] wandered=%d ruminated=%d intensity=%.3f dominant=%r",
+            len(result.wandered_ids),
+            len(result.ruminated_ids),
+            result.signal.intensity,
+            result.signal.dominant_emotion,
         )
 
     def _resolve_aux_llm(self):

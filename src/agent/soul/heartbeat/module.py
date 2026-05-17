@@ -52,6 +52,7 @@ class HeartbeatModule:
         self._escalate_date: str = ""
         self._daily_review_date: str = ""
         self._life_manager = None
+        self._persona_manager = None
         self._lock = threading.Lock()
         self._ensure_heartbeat_file()
 
@@ -127,6 +128,9 @@ class HeartbeatModule:
     def set_life_manager(self, life_manager) -> None:
         self._life_manager = life_manager
 
+    def set_persona_manager(self, persona_manager) -> None:
+        self._persona_manager = persona_manager
+
     @property
     def pending_force(self) -> bool:
         with self._lock:
@@ -193,6 +197,7 @@ class HeartbeatModule:
             with self._lock:
                 self._daily_review_date = today
             self._run_daily_review(lm)
+            self._run_self_concept_evolution()
 
     def _format_recent_tasks(self) -> str:
         if self._checker._scheduler_engine is None:
@@ -211,6 +216,19 @@ class HeartbeatModule:
             if name:
                 parts.append(f"- {name}: {str(result)[:80]}")
         return "\n".join(parts)
+
+    def _run_self_concept_evolution(self, ruminations: list | None = None) -> None:
+        """触发 SelfConcept 日终演化。
+
+        ruminations 可由 LifeManager 日终回顾后从 LTM 查询到的
+        ReconstructiveMemory 列表传入，提升叙事更新质量。
+        MVP 阶段若无来源，传 None 即可，退化为仅用情绪锚点。
+        """
+        pm = self._persona_manager
+        if pm is None:
+            return
+        changed = pm.evolve_self_concept(recent_ruminations=ruminations)
+        logger.debug("[SelfConcept] daily evolution done, changed=%s", changed)
 
     def _run_daily_review(self, lm) -> None:
         engine = self._checker._scheduler_engine

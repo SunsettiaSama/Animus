@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent.react.prompt.block import PromptBlock
-from .profile import LifeProfile
+from .story.profile import LifeProfile
 
 
 class LifeProfileBlock(PromptBlock):

@@ -140,8 +140,9 @@ class FactualMemory(MemoryUnit):
 
     MEMORY_TYPE = "factual"
 
-    fact:       str  # 客观事实
-    perception: str  # Agent 主观感知（自然语言叙述，无量化约束）
+    fact:           str       # 客观事实（从 LifeEvent.description 派生或直接复制）
+    perception:     str       # Agent 主观感知（自然语言叙述，无量化约束）
+    life_event_id:  str = ""  # 关联的 LifeEvent.id（事实权威来源，可为空表示遗留数据）
 
 
 # ── Reconstructive Memory ─────────────────────────────────────────────────────

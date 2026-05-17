@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from ...persona.profile.profile import PersonaProfile
-from ...persona.profile.skills import SkillsLibrary
+from typing import Protocol
+
 from agent.react.prompt.block import PromptBlock
+
+
+class _SupportsSkillsPrompt(Protocol):
+    def render(self, top_k: int) -> str | None:
+        ...
 
 
 def _trunc(text: str, limit: int) -> str:
@@ -10,9 +15,12 @@ def _trunc(text: str, limit: int) -> str:
 
 
 class ProfileBlock(PromptBlock):
-    """人物画像块。"""
+    """人物画像块。
 
-    def __init__(self, profile: PersonaProfile, max_chars: int = 0) -> None:
+    接受任何实现了 render() -> str 的对象（PersonaProfile 或 BuiltProfile）。
+    """
+
+    def __init__(self, profile: object, max_chars: int = 0) -> None:
         self._profile = profile
         self._max_chars = max_chars
 
@@ -25,7 +33,7 @@ class SkillsBlock(PromptBlock):
 
     def __init__(
         self,
-        skills: SkillsLibrary,
+        skills: _SupportsSkillsPrompt,
         top_k: int = 5,
         max_chars: int = 0,
         separator: str = "---",

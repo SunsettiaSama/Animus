@@ -1,17 +1,94 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from infra.llm import BaseLLM
-from agent.react.context.memory import Step
-from ...persona.profile.profile import PersonaProfile
-from .state import EmotionalAnchor, EmotionalState, _MAX_ANCHORS
+_EMOTIONAL_FILENAME = "emotional_state.json"
+_MAX_ANCHORS = 10
 
-_SYSTEM = """\
+
+# ── 数据层 ─────────────────────────────────────────────────────────────────────
+
+@dataclass
+class EmotionalAnchor:
+    """单条情绪事件记录。"""
+    ts: str
+    event: str
+    felt: str
+
+    def to_dict(self) -> dict:
+        return {"ts": self.ts, "event": self.event, "felt": self.felt}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> EmotionalAnchor:
+        return cls(ts=d.get("ts", ""), event=d.get("event", ""), felt=d.get("felt", ""))
+
+
+@dataclass
+class EmotionalState:
+    """情绪状态：压缩质感文本 + 近期锚点列表。"""
+    updated_at: str = ""
+    texture: str = ""
+    anchors: list[EmotionalAnchor] = field(default_factory=list)
+
+    def render(self) -> str:
+        parts = []
+        if self.texture:
+            parts.append(self.texture)
+        for anchor in self.anchors[-3:]:
+            parts.append(f"[{anchor.ts[:10]}] {anchor.event} → {anchor.felt}")
+        return "\n".join(parts)
+
+    def is_empty(self) -> bool:
+        return not self.texture and not self.anchors
+
+    def to_dict(self) -> dict:
+        return {
+            "updated_at": self.updated_at,
+            "texture": self.texture,
+            "anchors": [a.to_dict() for a in self.anchors],
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> EmotionalState:
+        return cls(
+            updated_at=d.get("updated_at", ""),
+            texture=d.get("texture", ""),
+            anchors=[EmotionalAnchor.from_dict(a) for a in d.get("anchors", [])],
+        )
+
+
+# ── 持久化 ────────────────────────────────────────────────────────────────────
+
+class EmotionalStateStore:
+    def __init__(self, persona_dir: str) -> None:
+        self._path = Path(persona_dir) / _EMOTIONAL_FILENAME
+
+    def load(self) -> EmotionalState:
+        if not self._path.exists():
+            return EmotionalState()
+        with open(self._path, encoding="utf-8") as f:
+            return EmotionalState.from_dict(json.load(f))
+
+    def save(self, state: EmotionalState) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._path, "w", encoding="utf-8") as f:
+            json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+
+    def clear(self) -> None:
+        if self._path.exists():
+            os.remove(self._path)
+
+
+# ── LLM 演化器 ────────────────────────────────────────────────────────────────
+
+_EVOLVE_SYSTEM = """\
 你是一个AI助手的情绪感知系统，分析一次对话对情绪状态的细微影响。
 
 规则：
@@ -29,21 +106,21 @@ _COMPRESS_SYSTEM = """\
 - 自然流畅，体现近期的情绪基调与心理状态
 - 严格输出纯文本，无任何格式标记"""
 
-_SCHEMA = '{"event": "发生了什么（30字以内，无感受则空）", "felt": "感受到了什么（30字以内，无感受则空）"}'
+_EVOLVE_SCHEMA = '{"event": "发生了什么（30字以内，无感受则空）", "felt": "感受到了什么（30字以内，无感受则空）"}'
 
 
 class EmotionalStateEvolver:
-    def __init__(self, llm: BaseLLM, max_anchors: int = _MAX_ANCHORS) -> None:
+    def __init__(self, llm, max_anchors: int = _MAX_ANCHORS) -> None:
         self._llm = llm
         self._max_anchors = max_anchors
 
     def evolve(
         self,
         state: EmotionalState,
-        profile: PersonaProfile,
+        profile,
         question: str,
         answer: str,
-        steps: list[Step],
+        steps: list,
         life_summary: str = "",
         medium_term_context: str = "",
     ) -> EmotionalState:
@@ -54,12 +131,8 @@ class EmotionalStateEvolver:
 
         life_section = f"\n你近期的生活状态：\n{life_summary}" if life_summary else ""
 
-        # Include at most the last 2 MTM entries to give context about recent
-        # interaction patterns without inflating the prompt significantly.
         mtm_section = ""
         if medium_term_context:
-            lines = medium_term_context.strip().splitlines()
-            # Each entry is separated by blank lines; take last 2 blocks.
             blocks = [b.strip() for b in medium_term_context.split("\n\n") if b.strip()]
             snippet = "\n\n".join(blocks[-2:])
             if snippet:
@@ -74,10 +147,10 @@ class EmotionalStateEvolver:
             f"- 用户：{q_excerpt}\n"
             f"- 你的方式：{action_text}\n"
             f"- 你的回答：{a_excerpt}\n\n"
-            f"如果这次交互让你有任何具体感受，输出 JSON；否则两个字段均为空字符串：\n{_SCHEMA}"
+            f"如果这次交互让你有任何具体感受，输出 JSON；否则两个字段均为空字符串：\n{_EVOLVE_SCHEMA}"
         )
         raw = self._llm.generate_messages(
-            [SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)]
+            [SystemMessage(content=_EVOLVE_SYSTEM), HumanMessage(content=prompt)]
         )
         event, felt = self._parse(raw)
         if not event and not felt:
@@ -92,11 +165,7 @@ class EmotionalStateEvolver:
             new_texture = self._compress(new_anchors)
             new_anchors = []
 
-        return EmotionalState(
-            updated_at=now,
-            texture=new_texture,
-            anchors=new_anchors,
-        )
+        return EmotionalState(updated_at=now, texture=new_texture, anchors=new_anchors)
 
     def _compress(self, anchors: list[EmotionalAnchor]) -> str:
         lines = [f"- [{a.ts[:10]}] {a.event} → {a.felt}" for a in anchors]

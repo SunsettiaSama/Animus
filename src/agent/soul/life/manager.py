@@ -1,45 +1,67 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from infra.llm import BaseLLM
-from agent.soul.persona.emotional.state import EmotionalState
 from agent.soul.persona.profile.profile import PersonaProfile
-from .log import LifeLog, LifeLogEntry
-from .profile import LifeProfile, LifeProfileGenerator, LifeProfileStore
-from .synthesis import DailySynthesizer, DailySynthesisResult
+from agent.soul.persona.status.life_bridge import LifeContextInput
+from .factual.event import EventType, LifeEvent
+from .factual.event_log import LifeEventLog
+from .story.arc import StoryPhase
+from .story.engine import StoryEngine
+from .story.profile import LifeProfile, LifeProfileGenerator, LifeProfileStore
+from .story.synthesis import DailySynthesizer, DailySynthesisResult
 
-_ACTIVITY_NARRATIVE_SYSTEM = """\
+_NARRATIVE_SYSTEM = """\
 你是一个AI助手，正在用第一人称记录自己刚刚完成的工作。
-将以下任务清单转化为自然的主观叙事，30-80字，像日记一样。
-不要列举，要叙述感受和经历。"""
-
-_DEFAULT_ACTIVITY_INTERVAL_HOURS = 2
+将以下任务清单转化为自然的叙事，30-80字，像日记一样。
+不要列举，要叙述经历。"""
 
 
 class LifeManager:
-    """Coordinates LifeLog, LifeProfile, and DailySynthesis.
+    """Life 子系统的统一协调器。
 
-    Intended lifecycle:
-    - Instantiated once per TaoLoop (shared reference).
-    - load_profile() called at session start to seed _profile cache.
-    - schedule_daily_review() called by heartbeat daily-review path.
-    - write_activity() called by heartbeat every N hours to log scheduler narrative.
+    两层职责
+    --------
+    factual（事实层）
+        记录与用户的会话及各类事件，作为全系统的事实账本。
+        可多可少，完全由实际发生的事驱动。
+        核心：LifeEvent + LifeEventLog
+
+    story（故事层）
+        用小说式叙事引擎驱动 agent 的内心故事。
+        主动规划叙事弧、章节与阶段，不被动等待事实触发。
+        核心：StoryEngine + DailySynthesizer + LifeProfile
+
+    对外接口
+    --------
+    factual 侧：
+        record_session()  每次与用户的对话结束后调用
+        record_event()    记录任意类型的事实事件
+
+    story 侧：
+        build_life_context()  构建供 status 层使用的 LifeContextInput
+        run_daily_review()    日终回顾（事实整理 + 叙事阶段判断 + profile 刷新）
+        advance_story()       手动推进叙事章节
     """
 
     def __init__(
         self,
         life_dir: str,
         llm: BaseLLM | None = None,
-        activity_interval_hours: int = _DEFAULT_ACTIVITY_INTERVAL_HOURS,
     ) -> None:
-        self._life_log = LifeLog(life_dir)
+        self._life_dir = life_dir
+        self._llm = llm
+
+        # ── Factual 层 ────────────────────────────────────────────────────────
+        self._event_log = LifeEventLog(life_dir)
+
+        # ── Story 层 ──────────────────────────────────────────────────────────
+        self._story = StoryEngine(life_dir, self._event_log)
         self._profile_store = LifeProfileStore(life_dir)
         self._profile: LifeProfile = LifeProfile()
-        self._llm = llm
-        self._activity_interval_hours = activity_interval_hours
 
         self._profile_generator: LifeProfileGenerator | None = (
             LifeProfileGenerator(llm) if llm is not None else None
@@ -48,114 +70,128 @@ class LifeManager:
             DailySynthesizer(llm) if llm is not None else None
         )
 
-    # ── Session-level API ─────────────────────────────────────────────────────
+    # ── Properties ────────────────────────────────────────────────────────────
 
-    def load_profile(self) -> LifeProfile:
-        """Load LifeProfile from disk; refresh if stale (new day). Call at session start."""
-        stored = self._profile_store.load()
-        if stored.is_stale() and self._profile_generator is not None:
-            return self._profile
-        self._profile = stored
-        return self._profile
+    @property
+    def event_log(self) -> LifeEventLog:
+        return self._event_log
+
+    @property
+    def story(self) -> StoryEngine:
+        return self._story
 
     @property
     def profile(self) -> LifeProfile:
         return self._profile
 
-    @property
-    def life_log(self) -> LifeLog:
-        return self._life_log
+    # ── Factual 层接口 ────────────────────────────────────────────────────────
 
-    # ── Heartbeat-driven API ──────────────────────────────────────────────────
-
-    def should_write_activity(self) -> bool:
-        last = self._life_log.last_entry_ts()
-        if last is None:
-            return True
-        threshold = timedelta(hours=self._activity_interval_hours)
-        return (datetime.now(timezone.utc) - last) >= threshold
-
-    def write_activity(
+    def record_session(
         self,
-        narrative: str,
-        period_start: str,
-        period_end: str,
-        source_tasks: list[str] | None = None,
-    ) -> None:
-        entry = LifeLogEntry(
-            ts=datetime.now(timezone.utc).isoformat(),
-            period_start=period_start,
-            period_end=period_end,
-            narrative=narrative,
-            source_tasks=source_tasks or [],
-            entry_type="scheduler_activity",
-        )
-        self._life_log.append(entry)
-        self._life_log.purge_old()
+        description: str,
+        source: str = "",
+        duration_min: int = 0,
+    ) -> LifeEvent:
+        """记录一次与用户的对话会话（最常用的事实写入入口）。
 
-    def generate_and_write_activity(
-        self,
-        tasks_text: str,
-        period_start: str,
-        period_end: str,
-        source_task_names: list[str] | None = None,
-    ) -> None:
-        """Generate a narrative from scheduler tasks and write to LifeLog."""
-        if not tasks_text.strip():
-            return
-        narrative = tasks_text
-        if self._llm is not None:
-            prompt = f"最近完成的任务：\n{tasks_text}\n\n请用第一人称写30-80字的叙事："
-            narrative = self._llm.generate_messages(
-                [SystemMessage(content=_ACTIVITY_NARRATIVE_SYSTEM),
-                 HumanMessage(content=prompt)]
-            ).strip() or tasks_text
-        self.write_activity(
-            narrative=narrative,
-            period_start=period_start,
-            period_end=period_end,
-            source_tasks=source_task_names or [],
+        description 必须是事实陈述，例如：
+          "完成了关于 soul 架构的5轮讨论，涉及 life/memory 分工"
+        """
+        return self.record_event(
+            event_type=EventType.INTERACTION,
+            description=description,
+            source=source,
+            duration_min=duration_min,
         )
+
+    def record_event(
+        self,
+        event_type: EventType,
+        description: str,
+        source: str = "",
+        duration_min: int = 0,
+        **metadata,
+    ) -> LifeEvent:
+        """记录任意类型的事实事件，写入事实账本，通知故事引擎。"""
+        event = LifeEvent.now(
+            event_type=event_type,
+            description=description,
+            source=source,
+            duration_min=duration_min,
+            **metadata,
+        )
+        self._story.record_event_to_chapter(event)
+        return event
+
+    # ── Story 层接口 ──────────────────────────────────────────────────────────
+
+    def build_life_context(self, days: int = 1) -> LifeContextInput:
+        """构建供 status 层使用的 LifeContextInput。
+
+        由故事引擎读取近期事实事件 + 当前叙事阶段组装。
+        """
+        date_str = datetime.now(timezone.utc).date().isoformat()
+        return self._story.build_life_context(days=days, date_str=date_str)
+
+    def advance_story(self, title: str, phase: StoryPhase) -> None:
+        """手动推进叙事到新章节（由外部触发，如特殊里程碑事件）。"""
+        self._story.advance_chapter(title=title, phase=phase)
+
+    def load_profile(self) -> LifeProfile:
+        stored = self._profile_store.load()
+        if not stored.is_stale():
+            self._profile = stored
+        return self._profile
 
     def run_daily_review(
         self,
         static_profile: PersonaProfile,
-        emotional_state: EmotionalState,
         today_medium_term: str = "",
         today_scheduler_tasks: str = "",
         scheduler_engine=None,
-    ) -> DailySynthesisResult | None:
-        """Run DailySynthesis + refresh LifeProfile. Called by heartbeat daily-review."""
+    ) -> tuple[DailySynthesisResult, LifeContextInput] | None:
+        """日终回顾：事实整理 + 叙事阶段判断 + profile 刷新。
+
+        Returns
+        -------
+        (result, life_ctx)
+            result   : 包含 scheduler_actions / thought_records / virtual_content
+            life_ctx : 供 persona_manager 推送给 status 层的事实上下文
+        None 表示 LLM 不可用，跳过。
+        """
         if self._synthesizer is None:
             return None
 
-        result = self._synthesizer.run(
+        detected_phase = self._story.auto_detect_phase(recent_days=7)
+        if detected_phase != self._story.current_phase:
+            self._story.advance_chapter(
+                title=f"进入{detected_phase.value}阶段",
+                phase=detected_phase,
+            )
+
+        result, life_ctx = self._synthesizer.run(
             static_profile=static_profile,
-            emotional_state=emotional_state,
             today_medium_term=today_medium_term,
             today_scheduler_tasks=today_scheduler_tasks,
-            life_log=self._life_log,
+            event_log=self._event_log,
+            story_phase=self._story.current_phase.value,
         )
 
-        # Route scheduler_actions to the scheduler engine
         if scheduler_engine is not None and result.scheduler_actions:
             self._schedule_actions(result.scheduler_actions, scheduler_engine)
 
-        # Refresh LifeProfile after synthesis (new entries just added)
         if self._profile_generator is not None:
-            medium_distillate = today_medium_term
             new_profile = self._profile_generator.generate(
                 static_profile=static_profile,
-                life_log=self._life_log,
-                medium_term_distillate=medium_distillate,
+                event_log=self._event_log,
+                medium_term_distillate=today_medium_term,
             )
             self._profile = new_profile
             self._profile_store.save(new_profile)
 
-        return result
+        return result, life_ctx
 
     def _schedule_actions(self, actions: list[dict], engine) -> None:
-        from datetime import timezone as _tz
         for action in actions:
             name = action.get("name", "").strip()
             instruction = action.get("instruction", "").strip()
@@ -175,17 +211,9 @@ class LifeManager:
             if trigger_type == "once" and at_str:
                 dt = datetime.fromisoformat(at_str.replace("Z", "+00:00"))
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=_tz.utc)
-                engine.schedule_once(
-                    name, instruction, dt,
-                    profile="full",
-                    delivery=delivery,
-                )
+                    dt = dt.replace(tzinfo=timezone.utc)
+                engine.schedule_once(name, instruction, dt, profile="full", delivery=delivery)
             elif trigger_type == "cron":
                 cron_expr = action.get("cron_expr", "")
                 if cron_expr:
-                    engine.schedule_cron(
-                        name, instruction, cron_expr,
-                        profile="full",
-                        delivery=delivery,
-                    )
+                    engine.schedule_cron(name, instruction, cron_expr, profile="full", delivery=delivery)

@@ -154,6 +154,10 @@ class MemoryHeartbeatResult:
     wandered_ids
         本次 wander() 采样到的记忆 ID 列表（可能为空，如果 STM/LTM 均无内容）。
 
+    wandered_units
+        本次 wander() 浮现的完整 ScoredUnit 列表（list[ScoredUnit]，松散类型避免循环依赖）。
+        供 AssociativeEvolver 做跨记忆模式分析使用。
+
     ruminated_ids
         HeartbeatWriter 产生的 ReconstructiveMemory ID 列表。
 
@@ -170,6 +174,7 @@ class MemoryHeartbeatResult:
         链路 ID，与 PersonaSnapshot.tick_id 一致。
     """
     wandered_ids: list[str] = field(default_factory=list)
+    wandered_units: list = field(default_factory=list)   # list[ScoredUnit]
     ruminated_ids: list[str] = field(default_factory=list)
     narrative_triggered: bool = False
     flushed_count: int = 0
