@@ -265,9 +265,13 @@ TaoConfig
 │   └── results/
 ├── timeline/             # 会话级时间线事件
 │   └── {YYYY-MM-DD}.jsonl
-├── life/                 # 生活状态
-│   ├── life_log.jsonl
-│   └── life_profile.json
+├── life/                 # LifeManager（账本 / 叙事 / 体验 / 画像）
+│   ├── tao_dialogue.jsonl
+│   ├── narrative_events.jsonl
+│   ├── experience_hot.jsonl
+│   ├── life_profile.json
+│   ├── story_outline.json
+│   └── story_arc.json
 └── workspace/            # 沙箱工作区文件
 ```
 

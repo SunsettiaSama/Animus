@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from infra.llm import BaseLLM
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
@@ -28,31 +29,117 @@ from .narrative import (
     StoryPhase,
     format_timeline_digest_for_profile,
 )
+from .experience import ExperienceBuilder, ExperienceLog
+from .experience.unit import ExperienceActionKind
+from .orchestrator import ExperienceOrchestrator, MemoryIngestPort
+from .chronicle import ChronicleStore
+from .journal import JournalStore, LifeJournal
+from .service import LifeService
+
+if TYPE_CHECKING:
+    pass
 
 
 class LifeManager:
-    """Life 入口：只 delegating 到 ``ledger`` 与 ``narrative``；演化何时跑由 heartbeat 等上层触发。"""
+    """Life 模块统一入口。
+
+    职责
+    ----
+    - 维护旧有 ledger / narrative 路径（向后兼容 heartbeat / tao.py）
+    - 构建并持有新架构的完整服务栈：
+      ExperienceLog → ExperienceOrchestrator → ExperienceBuilder → LifeService
+      ChronicleStore（客观事实）+ LifeJournal（手账）
+    - 将每次用户回合和心跳体验下发至 LifeService 异步处理
+    """
 
     def __init__(
         self,
         life_dir: str,
         llm: BaseLLM | None = None,
+        memory_port: MemoryIngestPort | None = None,
     ) -> None:
         self._llm = llm
+        self._life_dir = life_dir
 
+        # ── 旧有路径（narrative / ledger）────────────────────────────────────
         self._ledger_log = LedgerEventLog(life_dir)
         self._narrative_log = NarrativeEventLog(life_dir)
-
         self._narrative_evolver = NarrativeArcEvolver(life_dir, self._narrative_log)
         self._profile_store = LifeProfileStore(life_dir)
         self._profile: LifeProfile = LifeProfile()
-
         self._profile_generator: LifeProfileGenerator | None = (
             LifeProfileGenerator(llm) if llm is not None else None
         )
         self._synthesizer: DailySynthesizer | None = (
             DailySynthesizer(llm) if llm is not None else None
         )
+
+        # ── 新架构服务栈 ──────────────────────────────────────────────────────
+        self._exp_log = ExperienceLog(life_dir)
+        self._orchestrator = ExperienceOrchestrator(
+            log=self._exp_log,
+            memory_port=memory_port,
+        )
+        self._chronicle_store = ChronicleStore(life_dir)
+        self._journal_store = JournalStore(life_dir)
+        self._journal: LifeJournal = self._journal_store.load()
+        self._builder = ExperienceBuilder(
+            orchestrator=self._orchestrator,
+            chronicle_store=self._chronicle_store,
+        )
+        self._life_service = LifeService(
+            builder=self._builder,
+            journal=self._journal,
+            journal_store=self._journal_store,
+        )
+        self._life_service.start()
+
+        self._turn_index: int = 0
+
+    # ── 新架构属性 ────────────────────────────────────────────────────────────
+
+    @property
+    def life_service(self) -> LifeService:
+        return self._life_service
+
+    @property
+    def journal(self) -> LifeJournal:
+        return self._journal
+
+    def save_journal(self) -> None:
+        """将当前手账状态持久化（Agent 更新议程后调用）。"""
+        self._journal_store.save(self._journal)
+
+    def add_landmark(
+        self,
+        intention: str,
+        scheduled_at: str,
+        context: str = "",
+    ) -> bool:
+        """向手账追加一个地标并持久化，今日已达上限时返回 False。"""
+        lm = self._journal.add_landmark(intention, scheduled_at, context)
+        if lm is None:
+            return False
+        self._journal_store.save(self._journal)
+        return True
+
+    def set_landmark_filler(self, filler) -> None:
+        """注入地标填充器实现（LLM 就绪后调用）。"""
+        self._life_service.set_filler(filler)
+
+    def set_collapser(self, collapser) -> None:
+        """注入交会折叠器实现（LLM 就绪后调用）。"""
+        self._orchestrator.set_collapser(collapser)
+
+    def set_memory_port(self, memory_port: MemoryIngestPort) -> None:
+        """启动后注入记忆层接口（tao.py 在 MemoryService 就绪后调用）。"""
+        self._orchestrator._memory_port = memory_port
+
+    def stop(self) -> None:
+        """优雅关闭后台线程服务。"""
+        self._life_service.stop()
+
+    # ── 旧有路径属性 ──────────────────────────────────────────────────────────
 
     @property
     def ledger_log(self) -> LedgerEventLog:
@@ -114,6 +201,23 @@ class LifeManager:
             date_str=date_str,
         )
 
+    def record_turn(
+        self,
+        question: str,
+        answer: str,
+        session_id: str = "tao",
+        salience: float = 0.3,
+    ) -> None:
+        """将一次完成的用户对话回合下发至 LifeService 异步处理。"""
+        self._turn_index += 1
+        self._life_service.enqueue_user_turn(
+            session_id=session_id,
+            turn_index=self._turn_index,
+            user_text=question,
+            agent_reply=answer,
+            salience=salience,
+        )
+
     def record_scheduler_digest_from_heartbeat(self, tasks_text: str) -> LedgerEvent | None:
         return append_scheduler_digest(self._ledger_log, tasks_text)
 
@@ -127,6 +231,11 @@ class LifeManager:
                 heartbeat_tick_id=result.tick_id,
             )
             self._narrative_log.append(ev)
+            self._life_service.enqueue_story_beat(
+                narrative_hint=f"心跳反刍线索：{hint}",
+                salience=min(result.signal.intensity * 0.6, 0.8),
+                arousal_delta=result.signal.intensity * 0.15,
+            )
         if result.signal.intensity >= 0.55:
             dom = result.signal.dominant_emotion or "—"
             ev = NarrativeEvent.now(
@@ -137,6 +246,14 @@ class LifeManager:
             )
             self._narrative_log.append(ev)
             self._narrative_evolver.after_narrative_recorded(ev)
+            self._life_service.enqueue_story_beat(
+                narrative_hint=f"心跳漂移节点：烈度 {result.signal.intensity:.2f}，主导情绪 {dom}",
+                emotion_label=dom,
+                valence_delta=result.signal.intensity * -0.1,
+                arousal_delta=result.signal.intensity * 0.2,
+                salience=result.signal.intensity,
+                action_kind=ExperienceActionKind.deciding,
+            )
 
     def get_event_by_id(self, event_id: str) -> LedgerEvent | NarrativeEvent | None:
         le = self._ledger_log.get_by_id(event_id)
@@ -151,6 +268,8 @@ class LifeManager:
         stored = self._profile_store.load()
         if not stored.is_stale():
             self._profile = stored
+        if self._profile.narrative:
+            self._life_service.update_context(profile_narrative=self._profile.narrative)
         return self._profile
 
     def run_daily_review(
@@ -200,6 +319,12 @@ class LifeManager:
             )
             self._profile = new_profile
             self._profile_store.save(new_profile)
+
+            # 反思闭环：将新画像的叙事自述回写到手账，供明日编排地标时参考
+            if new_profile.narrative:
+                self._journal.set_narrative(new_profile.narrative)
+                self._journal_store.save(self._journal)
+                self._life_service.update_context(profile_narrative=new_profile.narrative)
 
         return result, life_ctx
 

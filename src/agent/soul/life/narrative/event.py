@@ -4,6 +4,10 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent.soul.life.experience.unit import ExperienceUnit
 
 
 class NarrativeEventKind(str, Enum):
@@ -68,4 +72,32 @@ class NarrativeEvent:
             source=d.get("source", ""),
             duration_min=int(d.get("duration_min", 0)),
             metadata=d.get("metadata", {}),
+        )
+
+    def to_experience_unit(self) -> ExperienceUnit:
+        from agent.soul.life.experience.unit import (
+            ExperienceAction,
+            ExperienceActionKind,
+            ExperienceFeeling,
+            ExperienceSituation,
+            ExperienceUnit,
+        )
+        _kind_map = {
+            NarrativeEventKind.THOUGHT:    ExperienceActionKind.reasoning,
+            NarrativeEventKind.MILESTONE:  ExperienceActionKind.deciding,
+            NarrativeEventKind.STORY_BEAT: ExperienceActionKind.reasoning,
+            NarrativeEventKind.CREATIVE:   ExperienceActionKind.reasoning,
+        }
+        return ExperienceUnit(
+            id=self.id,
+            ts=self.ts,
+            source="heartbeat",
+            situation=ExperienceSituation(
+                narration=self.description,
+            ),
+            action=ExperienceAction(
+                kind=_kind_map.get(self.kind, ExperienceActionKind.reasoning),
+                content=self.description,
+            ),
+            feeling=ExperienceFeeling(salience=0.4),
         )

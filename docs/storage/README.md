@@ -43,9 +43,13 @@
 │   └── results/                 # 各任务执行结果 JSON
 ├── timeline/                    # 会话级时间线事件
 │   └── {YYYY-MM-DD}.jsonl
-├── life/                        # 生活状态与日志
-│   ├── life_log.jsonl           # 活动叙事日志
-│   └── life_profile.json        # LLM 生成的当前生活状态画像
+├── life/                        # 生活状态与叙事（LifeManager）
+│   ├── tao_dialogue.jsonl       # Tao / 账本事件（LedgerEventLog）
+│   ├── narrative_events.jsonl   # 叙事事件（NarrativeEventLog）
+│   ├── experience_hot.jsonl     # 体验热窗口（ExperienceLog）
+│   ├── life_profile.json        # LLM 生成的当前生活状态画像
+│   ├── story_outline.json       # 故事大纲（StoryOutlineStore）
+│   └── story_arc.json           # 章节弧（StoryArcStore）
 ├── workspace/                   # 沙箱工作区文件（SandboxManager 读写）
 └── logs/                        # 运行时观测日志
     └── obs_{YYYY-MM-DD}.jsonl
@@ -177,10 +181,14 @@
 
 | 文件 | 写入类 | 触发时机 |
 |---|---|---|
-| `life_log.jsonl` | `LifeLog.append()` | 心跳每 N 小时写入活动叙事 |
-| `life_profile.json` | `LifeProfileStore.save()` | `LifeProfileGenerator` LLM 刷新当前生活状态 |
+| `tao_dialogue.jsonl` | `LedgerEventLog.append()` | Tao 账本与会话摘要、调度摘要（如 `record_session` / `record_scheduler_digest_from_heartbeat`）|
+| `narrative_events.jsonl` | `NarrativeEventLog.append()` | 故事节拍 / 心跳反刍入账（如 `record_story_beat`、`receive_experience`）|
+| `experience_hot.jsonl` | `ExperienceLog.append()` | 体验编排层热存储；窗口外由 `purge_old` 重写 |
+| `life_profile.json` | `LifeProfileStore.save()` | `run_daily_review` 末尾 `LifeProfileGenerator` 刷新画像 |
+| `story_outline.json` | `StoryOutlineStore.save()` | `LifeDirector.update_outline` 等更新大纲时 |
+| `story_arc.json` | `StoryArcStore`（叙事弧持久化）| `NarrativeArcEvolver` 演进章节弧时 |
 
-路径配置字段：`StorageConfig.life_dir`（`".react/life"`）。
+路径配置字段：`StorageConfig.life_dir`（`".react/life"`）。整体设计见 [agent/soul/life/README.md](../agent/soul/life/README.md)。
 
 ---
 
@@ -249,8 +257,8 @@ Scheduler（后台轮询）
           └─ TimelineService.append()                   → .react/timeline/{date}.jsonl ✎
 
 HeartbeatModule（后台心跳）
-     ├─ LifeLog.append()                                  → .react/life/life_log.jsonl ✎
-     ├─ LifeProfileStore.save()                           → .react/life/life_profile.json ✎
+     ├─ LedgerEventLog / NarrativeEventLog（Life 钩子）   → .react/life/*.jsonl ✎
+     ├─ LifeProfileStore.save()（日终回顾）               → .react/life/life_profile.json ✎
      └─ HeartbeatTickLog.append()                         → .react/scheduler/heartbeat_log.jsonl ✎
 ```
 

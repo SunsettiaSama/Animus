@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from infra.llm import BaseLLM
     from infra.db.redis import RedisClient
     from infra.db.mysql import MySQLClient
+    from agent.soul.life.experience.unit import ExperienceUnit
 
 
 _HEARTBEAT_FLUSH_INTERVAL_SEC = 6 * 3600
@@ -332,6 +333,48 @@ class MemoryService:
             persona_snapshot=persona_snapshot,
             emotional_context=emotional_context,
         )
+
+    # ── MemoryIngestPort 实现 ─────────────────────────────────────────────────
+
+    def ingest_experience(self, unit: ExperienceUnit) -> FactualMemory:
+        """将体验编排层擢升的 ExperienceUnit 转化为 FactualMemory 写入 STM。
+
+        映射关系
+        --------
+        situation.perception  → fact（客观发生了什么）
+        situation.narration   → perception（agent 对事件的主观叙述）
+        feeling.emotion_label → emotion
+        feeling.salience      → emotion_intensity + base_activation
+        feeling.valence_delta → Valence 枚举（>0.15 正向，<-0.15 负向）
+        experience.id         → life_event_id
+        """
+        from agent.soul.memory.unit import Valence
+
+        vd = unit.feeling.valence_delta
+        if vd > 0.15:
+            valence = Valence.positive
+        elif vd < -0.15:
+            valence = Valence.negative
+        else:
+            valence = Valence.neutral
+
+        fact       = unit.situation.perception or unit.situation.narration or unit.action.content
+        perception = unit.situation.narration  or unit.situation.perception or unit.action.content
+        raw_focus  = perception or fact
+        focus      = raw_focus[:60] if raw_focus else unit.id[:8]
+
+        mem = FactualMemory(
+            focus=focus,
+            fact=fact,
+            perception=perception,
+            emotion=unit.feeling.emotion_label,
+            emotion_intensity=unit.feeling.salience,
+            valence=valence,
+            base_activation=max(0.3, unit.feeling.salience),
+            life_event_id=unit.id,
+        )
+        self._stm.put(mem)
+        return mem
 
     # ── Lifecycle interface ────────────────────────────────────────────────────
 

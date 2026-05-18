@@ -10,7 +10,7 @@ Soul 子系统在 ReAct 推理环之外承载 **持久记忆单元（Redis/MySQL
 |---|---|
 | [memory/README.md](./memory/README.md) | `MemoryService`，STM/LTM，检索与冲刷 |
 | [heartbeat/README.md](./heartbeat/README.md) | `HeartbeatModule`、`TaskRunner` 与 `SchedulerEngine` 对接 |
-| [life/README.md](./life/README.md) | `LifeManager`，活动日志与日终综合 |
+| [life/README.md](./life/README.md) | `LifeManager`（账本 / 叙事 / `LifeService` 体验栈）与日终综合 |
 | [persona/README.md](./persona/README.md) | `PersonaManager`，画像 / 偏好 / 情绪块 |
 
 ---

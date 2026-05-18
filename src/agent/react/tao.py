@@ -34,7 +34,7 @@ from .context.processor import MemoryProcessor, MemoryResult
 from .prompt.block import MemoryBlock, PromptBlock
 from .prompt.parser import ParseQuality, ParseResult, diagnose, parse_llm_output
 from .prompt.repair import repair
-from agent.soul.life import LifeManager, LifeProfileBlock
+from agent.soul.life import JournalBlock, LifeManager, LifeProfileBlock
 from agent.soul.persona import PersonaManager
 from .prompt.manager import PromptManager, StaticPromptParts
 from .trace import TraceStore
@@ -229,6 +229,10 @@ class TaoLoop:
                     redis_client=_redis,
                     mysql_client=_mysql,
                 )
+
+        # Wire MemoryService into LifeService for experience promotion.
+        if self._life is not None and self._soul_memory is not None:
+            self._life.set_memory_port(self._soul_memory)
 
         # Inject the recall tool when at least one memory backend is active.
         # We copy tool_descriptions to avoid mutating the caller's dict.
@@ -557,6 +561,8 @@ class TaoLoop:
             _blocks = self._persona.all_blocks()
             if self._life is not None and not self._life.profile.is_empty():
                 _blocks = _blocks + [LifeProfileBlock(self._life.profile)]
+            if self._life is not None and not self._life.journal.is_empty():
+                _blocks = _blocks + [JournalBlock(self._life.journal)]
             persona_blocks = _blocks
 
         # Track the previous step's action for step-label logging.
@@ -981,6 +987,9 @@ class TaoLoop:
                 daemon=True,
                 name="soul-memory-ingest",
             ).start()
+
+        if self._life is not None:
+            self._life.record_turn(pf.question, pf.answer)
 
         self._maybe_consolidate()
 
