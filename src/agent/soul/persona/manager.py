@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+from dataclasses import replace
+
 from config.agent.persona_config import PersonaConfig
 from infra.llm import BaseLLM
 from agent.react.context.memory import Step
@@ -182,7 +184,10 @@ class PersonaManager:
 
     def read_state(self):
         """实现 PersonaHeartbeatPort.read_state()。"""
-        return self._status.to_persona_snapshot()
+        snap = self._status.to_persona_snapshot()
+        extra_kw = self._self_concept.query_bias_keywords()
+        merged = list(dict.fromkeys([*snap.attention_keywords, *extra_kw]))[:20]
+        return replace(snap, attention_keywords=merged)
 
     def receive_drift(self, signal) -> None:
         """实现 PersonaHeartbeatPort.receive_drift()。"""

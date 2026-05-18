@@ -5,7 +5,7 @@ from .retriever import EmbedderBackend, MemoryRetriever, ScoredUnit, VectorBacke
 from .service import MemoryBlock, MemoryService
 from .short_term import ShortTermMemoryManager
 from .unit import FactualMemory, MemoryTier, MemoryUnit, NarrativeMemory, ReconstructiveMemory, Valence
-from .writer import HeartbeatWriter, NarrativeWriter, TurnWriter
+from .writer import NarrativeWriter, RuminationWriter, TurnWriter
 
 __all__ = [
     # Units
@@ -20,7 +20,7 @@ __all__ = [
     "LongTermMemoryManager",
     # Writers
     "TurnWriter",
-    "HeartbeatWriter",
+    "RuminationWriter",
     "NarrativeWriter",
     # Lifecycle
     "FlushEngine",

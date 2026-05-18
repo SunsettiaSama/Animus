@@ -90,7 +90,7 @@ class SelfConceptEvolver:
         参数
         ----
         recent_ruminations
-            HeartbeatWriter 产出的 ReconstructiveMemory 列表（可选）。
+            反刍（RuminationWriter）产出的 ReconstructiveMemory 列表（可选）。
             反刍是经过 LLM 二次反思的高质量材料，在叙事更新时优先于原始锚点。
             由 PersonaManager.evolve_self_concept() 从 LTM 查询后传入。
         """

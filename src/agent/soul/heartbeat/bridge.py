@@ -33,7 +33,7 @@ heartbeat/bridge.py — 心跳层的双向接口规范
 2. memory_port.tick(PersonaSnapshot)  → MemoryHeartbeatResult
    内部步骤：
      2a. retriever.wander(...)         # 漂移式采样，基于情绪偏置
-     2b. HeartbeatWriter.write(...)    # 对浮现记忆进行反刍，生成 ReconstructiveMemory
+     2b. MemoryService.ruminate(...)    # STM/LTM 统一反刍，生成 ReconstructiveMemory（可链式）
      2c. (可选) NarrativeWriter        # 高情绪密度时自动触发叙事化
      2d. (可选) FlushEngine.run()      # 若距上次 flush 超过阈值，执行 STM→LTM 归档
 
@@ -159,7 +159,7 @@ class MemoryHeartbeatResult:
         供 AssociativeEvolver 做跨记忆模式分析使用。
 
     ruminated_ids
-        HeartbeatWriter 产生的 ReconstructiveMemory ID 列表。
+        本轮记忆层 ruminate 成功产生的 ReconstructiveMemory ID 列表。
 
     narrative_triggered
         本次是否触发了 NarrativeWriter（叙事化阈值被满足）。
@@ -201,7 +201,7 @@ class MemoryHeartbeatPort(Protocol):
         ----------
         1. 解析 snapshot.valence_bias / attention_keywords 作为 wander() 偏置
         2. 调用 retriever.wander(n, emotion_weight, noise, ...)
-        3. 将 wandered 记忆传给 HeartbeatWriter.write()，生成 ReconstructiveMemory
+        3. 将 wandered 记忆 id 交给 MemoryService.ruminate()，生成 ReconstructiveMemory
         4. 判断是否触发 NarrativeWriter（如：本次浮现的高情绪记忆 >= N 条）
         5. 判断是否触发 FlushEngine.run()（如：距上次 flush 超过阈值时间）
         6. 从 wandered 记忆中提取情绪信号，构建 EmotionalSignal
@@ -259,6 +259,43 @@ class PersonaHeartbeatPort(Protocol):
 
     def receive_drift(self, signal: EmotionalSignal) -> None:
         """接收情绪信号，驱动 EmotionalState 演化。"""
+        ...
+
+
+@runtime_checkable
+class PersonaAssociativeHeartbeatPort(Protocol):
+    """人格心跳扩展：联想种子（wander → SelfConcept emerging）。
+
+    PersonaManager 实现此法；纯 Status-only 桩可不实现。
+    """
+
+    def apply_associative_seeds(self, wandered_units: list) -> bool:
+        ...
+
+
+@runtime_checkable
+class PersonaSelfConceptHeartbeatPort(Protocol):
+    """人格心跳扩展：自我叙事 / 信念日终演化。
+
+    由 HeartbeatModule 日终路径调用，而非 wander 线程。
+    """
+
+    def evolve_self_concept(
+        self,
+        recent_anchors: list | None = None,
+        recent_ruminations: list | None = None,
+    ) -> bool:
+        ...
+
+
+@runtime_checkable
+class MemoryLifecycleHeartbeatPort(Protocol):
+    """记忆子系统生命周期（预留：由调度器或显式任务触发，不必绑在每次 wander）。"""
+
+    def flush(self) -> object:
+        ...
+
+    def forget_scan(self, threshold: float = 0.05, dry_run: bool = False) -> list[str]:
         ...
 
 

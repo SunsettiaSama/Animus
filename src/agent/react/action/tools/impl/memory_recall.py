@@ -8,7 +8,6 @@ from ....action.base import BaseAction
 
 if TYPE_CHECKING:
     from agent.soul.memory.long_term.memory import LongTermMemory
-    from agent.soul.memory.milestone.memory import MilestoneMemory
     from agent.soul.memory.service import MemoryService
 
 
@@ -19,10 +18,9 @@ class MemoryRecallArgs(BaseModel):
         "smart",
         description=(
             "召回模式："
-            "smart（智能，自动选择，默认）/ "
+            "smart（智能，默认）/ "
             "semantic（纯语义相似度）/ "
-            "timeline（按时间倒序最近 N 条）/ "
-            "milestone（仅查里程碑记忆，仅旧接口有效）"
+            "timeline（按时间倒序最近 N 条）"
         ),
     )
 
@@ -31,7 +29,7 @@ class MemoryRecallAction(BaseAction):
     """主动记忆召回工具：让 Agent 在推理过程中按需查询记忆。
 
     优先使用 soul_memory（MemoryService）；
-    若未注入，则退回旧的 long_term + milestone 实现（向后兼容）。
+    若未注入，则退回旧的 long_term 实现。
     """
 
     name: str = "memory_recall"
@@ -45,7 +43,6 @@ class MemoryRecallAction(BaseAction):
 
     soul_memory: Any = None  # MemoryService | None
     long_term: Any = None    # LongTermMemory | None（旧接口）
-    milestone: Any = None    # MilestoneMemory | None（旧接口）
 
     def execute(
         self,
@@ -54,30 +51,19 @@ class MemoryRecallAction(BaseAction):
         mode: str = "smart",
         **kwargs,
     ) -> str:
-        # ── 新接口：MemoryService ───────────────────────────────────────────
         if self.soul_memory is not None:
             block = self.soul_memory.recall(query=query, top_k=top_k)
             return block.render() if not block.is_empty() else "暂无与该查询相关的记忆内容。"
 
-        # ── 旧接口：向后兼容 ────────────────────────────────────────────────
-        parts: list[str] = []
-
-        if self.long_term is not None and mode != "milestone":
-            if mode == "timeline":
-                text = self.long_term.recall_timeline(top_k)
-            elif mode == "semantic":
-                text = self.long_term.recall(query)
-            else:
-                text = self.long_term.smart_recall(query)
-            if text:
-                parts.append(f"【长期记忆】\n{text}")
-
-        if self.milestone is not None and mode in ("smart", "milestone"):
-            text = self.milestone.retrieve(query)
-            if text:
-                parts.append(f"【里程碑记忆】\n{text}")
-
-        if not parts:
+        if self.long_term is None:
             return "暂无与该查询相关的记忆内容。"
 
-        return "\n\n".join(parts)
+        if mode == "timeline":
+            text = self.long_term.recall_timeline(top_k)
+        elif mode == "semantic":
+            text = self.long_term.recall(query)
+        else:
+            text = self.long_term.smart_recall(query)
+        if text:
+            return f"【长期记忆】\n{text}"
+        return "暂无与该查询相关的记忆内容。"

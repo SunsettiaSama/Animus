@@ -66,9 +66,6 @@ class MemoryConfig:
         default_factory=lambda: _import_medium_term()
     )
     long_term: LongTermMemoryConfig = field(default_factory=LongTermMemoryConfig)
-    milestone: "MilestoneConfig" = field(
-        default_factory=lambda: _import_milestone()
-    )
 
     @classmethod
     def from_yaml(cls, path: str) -> MemoryConfig:
@@ -82,13 +79,11 @@ class MemoryConfig:
     def from_dict(cls, data: dict) -> MemoryConfig:
         from config.agent.memory.short_term_config import ShortTermMemoryConfig
         from config.agent.memory.medium_term_config import MediumTermMemoryConfig
-        from config.agent.memory.milestone_config import MilestoneConfig
 
         return cls(
             short_term=ShortTermMemoryConfig.from_dict(data.get("short_term", {}) or {}),
             medium_term=MediumTermMemoryConfig.from_dict(data.get("medium_term", {}) or {}),
             long_term=LongTermMemoryConfig.from_dict(data.get("long_term", {}) or {}),
-            milestone=MilestoneConfig.from_dict(data.get("milestone", {}) or {}),
         )
 
 
@@ -100,8 +95,3 @@ def _import_short_term():
 def _import_medium_term():
     from config.agent.memory.medium_term_config import MediumTermMemoryConfig
     return MediumTermMemoryConfig()
-
-
-def _import_milestone():
-    from config.agent.memory.milestone_config import MilestoneConfig
-    return MilestoneConfig()

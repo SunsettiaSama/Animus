@@ -34,7 +34,6 @@ class ReActTemplate:
     react_role: MemoryTierLabel       # agent identity / responsibility block
     chat_role: MemoryTierLabel        # same for pure-chat mode
     long_term: MemoryTierLabel
-    milestone: MemoryTierLabel
     medium_term: MemoryTierLabel
     question_prefix: str
     suffix: str
@@ -88,7 +87,7 @@ EN = ReActTemplate(
         desc=(
             "You are a reasoning-and-acting agent that solves problems step by step. "
             "You have access to external tools and a layered memory system "
-            "(long-term vector store, milestone events, mid-term history, and a short-term scratchpad). "
+            "(long-term vector store, mid-term history, and a short-term scratchpad). "
             "Use the memory context below to inform your reasoning before acting."
         ),
     ),
@@ -102,10 +101,6 @@ EN = ReActTemplate(
     long_term=MemoryTierLabel(
         title="## [L3 Long-Term Memory]",
         desc="Semantically retrieved knowledge from past sessions (vector search over historical Q&A).",
-    ),
-    milestone=MemoryTierLabel(
-        title="## [Milestone Memory]",
-        desc="Important events and key breakthroughs identified in past interactions.",
     ),
     medium_term=MemoryTierLabel(
         title="## [Working Memory]",
@@ -164,7 +159,7 @@ CN = ReActTemplate(
         title="## 【ReAct 智能体】",
         desc=(
             "你是一个通过推理与工具调用逐步解决问题的 ReAct 智能体。"
-            "你拥有外部工具访问能力，以及分层记忆系统（长期向量库、里程碑事件、中期对话历史、短期推理草稿）。"
+            "你拥有外部工具访问能力，以及分层记忆系统（长期向量库、中期对话历史、短期推理草稿）。"
             "在行动前请结合下方的记忆上下文进行推理。"
         ),
     ),
@@ -178,10 +173,6 @@ CN = ReActTemplate(
     long_term=MemoryTierLabel(
         title="## 【L3 长期记忆】",
         desc="根据当前问题从历史 session 语义检索到的相关背景知识。",
-    ),
-    milestone=MemoryTierLabel(
-        title="## 【里程碑记忆】",
-        desc="过往交互中被标记为重要的关键事件与突破性进展。",
     ),
     medium_term=MemoryTierLabel(
         title="## 【工作记忆】",

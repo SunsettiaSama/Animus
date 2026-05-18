@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from agent.soul.memory.short_term.manager import ShortTermMemoryManager
 from agent.soul.memory.long_term.manager import LongTermMemoryManager
 from agent.soul.memory.writer.turn_writer import TurnWriter
-from agent.soul.memory.writer.heartbeat_writer import HeartbeatWriter
+from agent.soul.memory.writer.rumination_writer import RuminationWriter
 from agent.soul.memory.writer.narrative_writer import NarrativeWriter
 from agent.soul.memory.unit import FactualMemory, MemoryUnit, NarrativeMemory, ReconstructiveMemory
 from agent.soul.memory.flush import FlushEngine, FlushResult
@@ -18,6 +19,9 @@ if TYPE_CHECKING:
     from infra.llm import BaseLLM
     from infra.db.redis import RedisClient
     from infra.db.mysql import MySQLClient
+
+
+_HEARTBEAT_FLUSH_INTERVAL_SEC = 6 * 3600
 
 
 # ── Output block ──────────────────────────────────────────────────────────────
@@ -56,8 +60,12 @@ class MemoryService:
         若 emotion_intensity 超过阈值 → 同步晋升 LTM（MySQL）
 
     - ingest_heartbeat(source_unit_id, trigger, emotional_context)
-        心跳重构写入。在心跳周期内调用，内部流程：
-        读取原始 FactualMemory → LLM 重构 → ReconstructiveMemory → LTM
+        与 :meth:`ruminate` 等价别名：反刍指定 ID 的记忆（STM/LTM 皆可；
+        来源可为 FactualMemory 或 ReconstructiveMemory）。
+
+    - ruminate(unit_id, trigger=..., emotional_context=...)
+        **记忆内部统一反刍入口**。解析 STM→LTM，链式支持「事实→重构→再重构…」；
+        心跳与其它调度器只需调用此方法，无需区分存储层或类型。
 
     - recall(query, top_k, emotional_context)
         混合检索。暂为骨架实现，返回 MemoryBlock；
@@ -85,7 +93,7 @@ class MemoryService:
         stm: ShortTermMemoryManager,
         ltm: LongTermMemoryManager,
         turn_writer: TurnWriter,
-        heartbeat_writer: HeartbeatWriter,
+        rumination_writer: RuminationWriter,
         narrative_writer: NarrativeWriter,
         flush_engine: FlushEngine,
         retriever: MemoryRetriever,
@@ -94,11 +102,12 @@ class MemoryService:
         self._stm = stm
         self._ltm = ltm
         self._turn_writer = turn_writer
-        self._heartbeat_writer = heartbeat_writer
+        self._rumination_writer = rumination_writer
         self._narrative_writer = narrative_writer
         self._flush_engine = flush_engine
         self._retriever = retriever
         self._cfg = cfg
+        self._last_heartbeat_flush_mono: float = 0.0
 
 
     # ── Factory ────────────────────────────────────────────────────────────────
@@ -151,7 +160,7 @@ class MemoryService:
             llm, stm, ltm,
             promote_threshold=cfg.promote_threshold,
         )
-        heartbeat_writer = HeartbeatWriter(llm, ltm)
+        rumination_writer = RuminationWriter(llm, ltm)
         narrative_writer = NarrativeWriter(llm, ltm)
         flush_engine = FlushEngine(
             stm, ltm,
@@ -165,7 +174,40 @@ class MemoryService:
             embedder=embedder,
             vector_store=vector_store,
         )
-        return cls(stm, ltm, turn_writer, heartbeat_writer, narrative_writer, flush_engine, retriever, cfg)
+        return cls(stm, ltm, turn_writer, rumination_writer, narrative_writer, flush_engine, retriever, cfg)
+
+    # ── Resolve / Ruminate（反刍：memory 内部闭环）────────────────────────────
+
+    def get_unit(self, unit_id: str) -> MemoryUnit | None:
+        """按 ID 解析记忆单元：优先 STM，其次 LTM。"""
+        u = self._stm.get(unit_id)
+        if u is not None:
+            return u
+        return self._ltm.get(unit_id)
+
+    def ruminate(
+        self,
+        unit_id: str,
+        *,
+        trigger: str,
+        emotional_context: str,
+    ) -> ReconstructiveMemory | None:
+        """对一条已有记忆执行一次反刍，写入新的 ReconstructiveMemory（LTM）。
+
+        ``unit_id`` 可指向 FactualMemory 或 ReconstructiveMemory（允许链式多次反刍）。
+        NarrativeMemory 等类型不适用，返回 None。
+        """
+        source = self.get_unit(unit_id)
+        if source is None:
+            return None
+        if source.MEMORY_TYPE not in ("factual", "reconstructive"):
+            return None
+        return self._rumination_writer.ruminate_from_source(
+            source,
+            trigger,
+            emotional_context,
+            stm=self._stm,
+        )
 
     # ── Write interface ────────────────────────────────────────────────────────
 
@@ -213,7 +255,7 @@ class MemoryService:
         参数
         ----
         source_unit_id
-            待重构的原始 FactualMemory.id
+            待反刍的记忆单元 id（FactualMemory 或 ReconstructiveMemory；须已在 STM 或 LTM）
         trigger
             触发重构的情境描述
         emotional_context
@@ -223,8 +265,8 @@ class MemoryService:
         ----
         写入成功的 ReconstructiveMemory；source 不存在时返回 None。
         """
-        return self._heartbeat_writer.write(
-            source_unit_id=source_unit_id,
+        return self.ruminate(
+            source_unit_id,
             trigger=trigger,
             emotional_context=emotional_context,
         )
@@ -406,26 +448,38 @@ class MemoryService:
         流程
         ----
         1. retriever.wander() 随机采样浮现记忆（受 snapshot 情绪偏置影响）
-        2. 对 factual 类型记忆调用 HeartbeatWriter 进行反刍重构
+        2. 对 factual / reconstructive 调用 :meth:`ruminate`
         3. 从浮现记忆提取情绪信号返回给 PersonaManager.receive_drift()
         """
         from agent.soul.heartbeat.bridge import EmotionalSignal, MemoryHeartbeatResult
 
-        wandered = self._retriever.wander(n=2)
+        tid = getattr(snapshot, "tick_id", "") or ""
+        kws = [k for k in (getattr(snapshot, "attention_keywords", None) or []) if k]
+
+        wandered = self._retriever.wander(n=2, focus_keywords=kws or None)
         wandered_ids = [s.unit.id for s in wandered]
 
         emotional_ctx = getattr(snapshot, "emotional_state", "") or ""
 
         ruminated_ids: list[str] = []
         for su in wandered:
-            if su.unit.MEMORY_TYPE == "factual":
-                ru = self._heartbeat_writer.write(
-                    source_unit_id=su.unit.id,
-                    trigger=f"心跳漂移；情绪背景：{emotional_ctx or '平静'}",
-                    emotional_context=emotional_ctx,
-                )
-                if ru is not None:
-                    ruminated_ids.append(ru.id)
+            if su.unit.MEMORY_TYPE not in ("factual", "reconstructive"):
+                continue
+            ru = self.ruminate(
+                su.unit.id,
+                trigger=f"心跳漂移；情绪背景：{emotional_ctx or '平静'}",
+                emotional_context=emotional_ctx,
+            )
+            if ru is not None:
+                ruminated_ids.append(ru.id)
+
+        flushed_count = 0
+        now_m = time.monotonic()
+        if now_m - self._last_heartbeat_flush_mono >= _HEARTBEAT_FLUSH_INTERVAL_SEC:
+            flushed_count = self.flush().flushed
+            self._last_heartbeat_flush_mono = now_m
+
+        narrative_triggered = False
 
         if wandered:
             top = max(wandered, key=lambda s: s.unit.emotion_intensity)
@@ -441,15 +495,19 @@ class MemoryService:
                 intensity=round(avg_intensity, 3),
                 source_unit_ids=wandered_ids,
                 narrative_hint=hint,
+                tick_id=tid,
             )
         else:
-            signal = EmotionalSignal()
+            signal = EmotionalSignal(tick_id=tid)
 
         return MemoryHeartbeatResult(
             wandered_ids=wandered_ids,
-            wandered_units=wandered,        # 完整 ScoredUnit 列表，供 AssociativeEvolver 使用
+            wandered_units=wandered,
             ruminated_ids=ruminated_ids,
+            narrative_triggered=narrative_triggered,
+            flushed_count=flushed_count,
             signal=signal,
+            tick_id=tid,
         )
 
     # ── Internal helpers ───────────────────────────────────────────────────────

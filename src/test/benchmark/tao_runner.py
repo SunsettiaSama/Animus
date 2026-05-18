@@ -44,7 +44,6 @@ def _run_one(scenario: "Scenario") -> "ScenarioResult":
     # runner stays fast and deterministic (no disk I/O, no vector DB).
     memory = MemoryConfig()
     memory.long_term.enabled = False
-    memory.milestone.enabled = False
     memory.medium_term.enabled = False
 
     cfg = TaoConfig(

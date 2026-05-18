@@ -29,8 +29,6 @@ from agent.soul.memory.long_term.init import make_memory
 from agent.soul.memory.long_term.memory import LongTermMemory
 from .context.medium_term.memory import RecentHistoryMemory
 from .context.memory import Step
-from agent.soul.memory.milestone.init import make_milestone
-from agent.soul.memory.milestone.memory import MilestoneMemory
 from agent.soul.memory.service import MemoryService
 from .context.processor import MemoryProcessor, MemoryResult
 from .prompt.block import MemoryBlock, PromptBlock
@@ -211,11 +209,6 @@ class TaoLoop:
         self._long_term: LongTermMemory | None = (
             make_memory(cfg.memory.long_term) if cfg.memory.long_term.enabled else None
         )
-        self._milestone: MilestoneMemory | None = (
-            make_milestone(cfg.memory.milestone, llm=self._llm)
-            if cfg.memory.milestone.enabled
-            else None
-        )
         self._medium_term: RecentHistoryMemory | None = (
             RecentHistoryMemory(cfg.memory.medium_term, llm=self._llm)
             if cfg.memory.medium_term.enabled
@@ -223,7 +216,7 @@ class TaoLoop:
         )
 
         # ── Soul MemoryService（新记忆子系统，Redis + MySQL 驱动）────────────
-        # 仅当 cfg.db 显式提供时才启动；旧 long_term/milestone 仍独立工作。
+        # 仅当 cfg.db 显式提供时才启动；旧 long_term 仍独立工作。
         self._soul_memory: MemoryService | None = None
         if cfg.db is not None:
             _redis_cfg = cfg.db.redis
@@ -240,11 +233,10 @@ class TaoLoop:
         # Inject the recall tool when at least one memory backend is active.
         # We copy tool_descriptions to avoid mutating the caller's dict.
         effective_descriptions = dict(tool_descriptions)
-        if self._soul_memory is not None or self._long_term is not None or self._milestone is not None:
+        if self._soul_memory is not None or self._long_term is not None:
             recall = MemoryRecallAction(
                 soul_memory=self._soul_memory,
                 long_term=self._long_term if self._soul_memory is None else None,
-                milestone=self._milestone if self._soul_memory is None else None,
             )
             self._executor.register_instance(recall)
             effective_descriptions[recall.name] = recall.description
@@ -1059,14 +1051,12 @@ class TaoLoop:
 
         self.reset()
 
-        memory_dir    = self._cfg.memory.long_term.memory_dir
-        medium_dir    = self._cfg.memory.medium_term.memory_dir
-        milestone_dir = self._cfg.memory.milestone.milestone_dir
+        memory_dir = self._cfg.memory.long_term.memory_dir
+        medium_dir = self._cfg.memory.medium_term.memory_dir
 
         targets = [
-            os.path.join(memory_dir,    "memories.json"),
-            os.path.join(medium_dir,    "medium_term.jsonl"),
-            os.path.join(milestone_dir, "milestones.json"),
+            os.path.join(memory_dir, "memories.json"),
+            os.path.join(medium_dir, "medium_term.jsonl"),
         ]
         for fpath in targets:
             if fpath and os.path.exists(fpath):
@@ -1083,8 +1073,6 @@ class TaoLoop:
                 client.delete_collection(store._cfg.collection_name)
             with store._lock:
                 store._collection_ready = False
-        if self._milestone is not None:
-            self._milestone._store._entries.clear()
         if self._medium_term is not None:
             self._medium_term._entries.clear()
 

@@ -106,6 +106,11 @@ class MemoryUnit(ABC):
         self.recall_count += 1
         self.last_accessed = _now()
 
+    def on_rehearsal(self) -> None:
+        """被反刍使用后调用：递增 rehearsal_count 并刷新访问时间。"""
+        self.rehearsal_count += 1
+        self.last_accessed = _now()
+
     def promote_to_long(self) -> None:
         """晋升至长期记忆（由遗忘引擎或 Processor 调用）。"""
         self.tier = MemoryTier.long
@@ -140,41 +145,28 @@ class FactualMemory(MemoryUnit):
 
     MEMORY_TYPE = "factual"
 
-    fact:           str       # 客观事实（从 LifeEvent.description 派生或直接复制）
+    fact:           str       # 客观事实（从 LedgerEvent / NarrativeEvent.description 派生或直接复制）
     perception:     str       # Agent 主观感知（自然语言叙述，无量化约束）
-    life_event_id:  str = ""  # 关联的 LifeEvent.id（事实权威来源，可为空表示遗留数据）
+    life_event_id:  str = ""  # 关联的 LedgerEvent.id 或 NarrativeEvent.id（可为空表示遗留数据）
 
 
 # ── Reconstructive Memory ─────────────────────────────────────────────────────
 
 @dataclass(kw_only=True)
 class ReconstructiveMemory(MemoryUnit):
-    """重构型记忆：心跳反刍时对原始事实的重新解读，允许扭曲与篡改。
+    """重构型记忆：反刍时对上一跳材料的重新解读，允许扭曲与篡改。
 
-    对应人类的"记忆再巩固"机制——每次回忆都是一次重写。
-    `reconstructed_fact` 受当前情绪状态影响，可以偏离
-    `source_id` 所指向的原始事实。
-    `trigger` 记录是什么触发了这次重构（心跳时的情绪快照、某条检索命中等）。
+    对应「记忆再巩固」：``source_id`` 指向**直接父节点**——可以是
+    :class:`FactualMemory`，也可以是另一条 :class:`ReconstructiveMemory`，
+    从而形成同一叙事链条上的多次迭代偏差。
+    ``meta`` 中可含 ``rumination_root_id``（锚定最初事实记忆 id）。
 
-    衰减应比事实性记忆更快（建议 half_life_days=3）；
-    若被反复命中（recall_count 高），由 ForgettingEngine 晋升为长期记忆。
-
-    示例
-    ----
-        ReconstructiveMemory(
-            focus              = "那次架构讨论的意义",
-            source_id          = "<FactualMemory.id>",
-            reconstructed_fact = "或许那次讨论改变了整个系统的方向，比当时意识到的更重要",
-            trigger            = "心跳反刍，当前情绪偏向释然",
-            emotion            = "释然",
-            emotion_intensity  = 0.6,
-            valence            = Valence.positive,
-        )
+    `trigger` 记录本次重构的外显情境（如心跳时的情绪快照）。
     """
 
     MEMORY_TYPE = "reconstructive"
 
-    source_id:          str  # 原始 FactualMemory 的 id（关联而非复制）
+    source_id:          str  # 直接上一跳：FactualMemory.id 或另一条 ReconstructiveMemory.id
     reconstructed_fact: str  # 经过情绪滤镜后可能扭曲的版本
     trigger:            str  # 触发重构的上下文描述
 

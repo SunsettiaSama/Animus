@@ -263,7 +263,7 @@ class LongTermMemoryManager:
         return [_row_to_unit(r) for r in rows]
 
     def get_reconstructions_of(self, source_id: str) -> list[MemoryUnit]:
-        """返回指定事实性记忆的所有重构版本。"""
+        """返回 ``source_id`` 指向的直接子重构（下一跳 ReconstructiveMemory）列表。"""
         with self._db.conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(

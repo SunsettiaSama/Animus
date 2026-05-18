@@ -644,41 +644,11 @@
           <input id="s-lt-distill-tokens" type="number" value="400" min="100" max="2000" />
         </div>
 
-        <!-- 里程碑 -->
-        <div class="section-divider">里程碑记忆（LLM 重要性评分，稍慢）</div>
-        <div class="toggle-row">
-          <div class="toggle-label">
-            <span class="toggle-title">启用里程碑</span>
-            <span class="toggle-desc">每轮对话结束后 LLM 评分，评分超过阈值的 Q&amp;A 写入里程碑库，按关键词检索注入 prompt。</span>
-          </div>
-          <label class="switch"><input type="checkbox" id="s-ms-enabled"><span class="slider"></span></label>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>重要性阈值 <span style="font-weight:400;color:var(--text3)">0–1，越高越严格</span></label>
-            <input id="s-ms-threshold" type="number" value="0.6" step="0.05" min="0" max="1" />
-          </div>
-          <div class="form-group">
-            <label>检索条目数 <span style="font-weight:400;color:var(--text3)">top_k_retrieve</span></label>
-            <input id="s-ms-top-k" type="number" value="2" min="1" max="10" />
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>最大存储条目 <span style="font-weight:400;color:var(--text3)">max_milestones</span></label>
-            <input id="s-ms-max" type="number" value="50" min="10" max="500" />
-          </div>
-          <div class="form-group" style="display:flex;align-items:center;gap:10px;padding-top:20px">
-            <label class="switch" style="margin:0"><input type="checkbox" id="s-ms-inject-detail" checked><span class="slider"></span></label>
-            <span style="font-size:13px;color:var(--text2)">注入详细内容</span>
-          </div>
-        </div>
-
         <!-- 清空记忆 -->
         <div class="section-divider" style="margin-top:4px;border-color:#fca5a5;color:#ef4444">危险操作</div>
         <div style="padding:4px 0 12px">
           <p style="font-size:12px;color:var(--text2);margin-bottom:10px">
-            清空所有记忆层（L1 短期 / L2 中期 / L3 长期 / 里程碑），操作不可逆。
+            清空所有记忆层（L1 短期 / L2 中期 / L3 长期），操作不可逆。
           </p>
           <button id="btn-clear-memory" class="btn-danger" style="width:100%">🗑 清空所有记忆</button>
           <div id="clear-memory-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>

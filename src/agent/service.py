@@ -89,6 +89,10 @@ class AgentService:
         ChannelRouter 实例，供主动通知投递到对话频道。
     life_manager:
         可选的 LifeManager，供 HeartbeatModule._run_life_hooks 调用。
+    persona_manager:
+        可选的 PersonaManager；用于日终回顾取静态画像，并向 HeartbeatCoreService 注册 wander 漂移端口。
+    memory_service:
+        可选的 MemoryService；向 HeartbeatCoreService 注册记忆 wander.tick 端口。
     """
 
     def __init__(
@@ -102,6 +106,8 @@ class AgentService:
         journal: Any = None,
         channel_router: Any = None,
         life_manager: Any = None,
+        persona_manager: Any = None,
+        memory_service: Any = None,
     ) -> None:
         from agent.soul.heartbeat.profiles import make_default_scheduler_config
         from agent.soul.heartbeat.module import HeartbeatModule
@@ -140,6 +146,11 @@ class AgentService:
         )
         if life_manager is not None:
             self._heartbeat.set_life_manager(life_manager)
+
+        self._persona_manager = persona_manager
+        self._memory_service = memory_service
+        if persona_manager is not None:
+            self._heartbeat.set_persona_manager(persona_manager)
 
         self._engine: "SchedulerEngine | None" = None
         self._core_heartbeat: Any = None
@@ -185,6 +196,12 @@ class AgentService:
                 llm_service=self._llm_service,
                 llm_cfg_path=self._llm_cfg_path,
             )
+            if self._memory_service is not None:
+                self._core_heartbeat.set_memory_port(self._memory_service)
+            if self._persona_manager is not None:
+                self._core_heartbeat.set_persona_port(self._persona_manager)
+            if self._heartbeat._life_manager is not None:
+                self._core_heartbeat.set_life_port(self._heartbeat._life_manager)
             self._core_heartbeat.start()
 
         self._state = "running"

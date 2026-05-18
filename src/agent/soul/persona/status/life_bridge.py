@@ -15,7 +15,7 @@ class LifeContextInput:
     字段
     ----
     date          : 对应的日期（ISO 格式，如 "2026-05-17"）
-    event_lines   : 事实事件列表（每条为 LifeEvent.to_fact_line() 输出的单行文本）
+    event_lines   : 事实事件列表（每条为事件对象的 to_fact_line() 单行文本）
                     使用文本而非对象，避免 life/status 两层之间产生类型强耦合
     story_phase   : 叙事阶段标签，描述当前所处的故事位置
                     这是叙事定位（如"初期建立"、"深入推进"），不是情感标签
@@ -33,17 +33,14 @@ class LifeContextInput:
         date: str = "",
         story_phase: str = "",
     ) -> LifeContextInput:
-        """从 LifeEvent 列表构建输入，负责调用 to_fact_line() 转换。
-
-        events 类型为 list[LifeEvent]，用 Any 避免循环导入。
-        """
+        """从具有 to_fact_line() 的事件列表构建输入（duck typing，避免跨层类型耦合）。"""
         event_lines = [e.to_fact_line() for e in events]
-        notable_flags = [
-            e.to_fact_line()
-            for e in events
-            if getattr(e, "event_type", None) is not None
-            and e.event_type.value == "milestone"
-        ]
+        notable_flags = []
+        for e in events:
+            kind = getattr(e, "kind", None)
+            val = getattr(kind, "value", kind)
+            if val == "milestone":
+                notable_flags.append(e.to_fact_line())
         return cls(
             date=date,
             event_lines=event_lines,

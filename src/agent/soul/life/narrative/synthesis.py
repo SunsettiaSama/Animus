@@ -3,15 +3,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from infra.llm import BaseLLM
 from agent.soul.persona.profile.profile import PersonaProfile
-from agent.soul.persona.status.life_bridge import LifeContextInput
-from ..factual.event import EventType, LifeEvent
-from ..factual.event_log import LifeEventLog
+
+from .event import NarrativeEvent, NarrativeEventKind
+from .event_log import NarrativeEventLog
 
 _SYSTEM = """\
 你是一个AI助手，正在进行今天的日终回顾。
@@ -42,7 +40,6 @@ _SCHEMA = """{
 
 @dataclass
 class DailySynthesisResult:
-    """日终回顾结果——只包含事实性内容，不含情感判断。"""
     scheduler_actions: list[dict] = field(default_factory=list)
     thought_records: list[str] = field(default_factory=list)
     virtual_content: str = ""
@@ -57,17 +54,10 @@ class DailySynthesizer:
         static_profile: PersonaProfile,
         today_medium_term: str,
         today_scheduler_tasks: str,
-        event_log: LifeEventLog,
+        narrative_event_log: NarrativeEventLog,
         story_phase: str = "",
-    ) -> tuple[DailySynthesisResult, LifeContextInput]:
-        """执行日终回顾。
-
-        Returns
-        -------
-        (result, life_ctx)
-          result   : scheduler_actions / thought_records / virtual_content
-          life_ctx : 供 status 层使用的 LifeContextInput（事实性上下文）
-        """
+    ) -> DailySynthesisResult:
+        _ = story_phase
         prompt = (
             f"你的基本性格：\n{static_profile.render()}\n\n"
             f"你今天和用户的对话摘要：\n{today_medium_term or '（今天暂无对话）'}\n\n"
@@ -79,59 +69,31 @@ class DailySynthesizer:
         )
         result = self._parse(raw)
 
-        now = datetime.now(timezone.utc)
-        date_str = now.date().isoformat()
-
-        self._write_to_event_log(result, event_log, now)
-
-        life_ctx = self._build_life_context(
-            event_log=event_log,
-            date_str=date_str,
-            story_phase=story_phase,
-            thought_records=result.thought_records,
-        )
-        return result, life_ctx
+        self._write_to_event_log(result, narrative_event_log)
+        return result
 
     def _write_to_event_log(
         self,
         result: DailySynthesisResult,
-        event_log: LifeEventLog,
-        now: datetime,
+        event_log: NarrativeEventLog,
     ) -> None:
         for thought in result.thought_records:
             if thought.strip():
-                event_log.append(LifeEvent.now(
-                    event_type=EventType.THOUGHT,
-                    description=thought.strip(),
-                    source="daily_synthesis",
-                ))
+                event_log.append(
+                    NarrativeEvent.now(
+                        NarrativeEventKind.THOUGHT,
+                        thought.strip(),
+                        source="daily_synthesis",
+                    )
+                )
         if result.virtual_content:
-            event_log.append(LifeEvent.now(
-                event_type=EventType.CREATIVE,
-                description=result.virtual_content,
-                source="daily_synthesis",
-            ))
-
-    def _build_life_context(
-        self,
-        event_log: LifeEventLog,
-        date_str: str,
-        story_phase: str,
-        thought_records: list[str],
-    ) -> LifeContextInput:
-        today_start = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc)
-        events = event_log.since(today_start)
-
-        ctx = LifeContextInput.from_life_events(
-            events=events,
-            date=date_str,
-            story_phase=story_phase,
-        )
-        if thought_records:
-            ctx.notable_flags.extend(
-                f"[thought] {t}" for t in thought_records if t.strip()
+            event_log.append(
+                NarrativeEvent.now(
+                    NarrativeEventKind.CREATIVE,
+                    result.virtual_content,
+                    source="daily_synthesis",
+                )
             )
-        return ctx
 
     def _parse(self, raw: str) -> DailySynthesisResult:
         m = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)

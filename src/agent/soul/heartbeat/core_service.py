@@ -13,6 +13,7 @@ from agent.soul.heartbeat.inject_mailbox import (
     get_heartbeat_mailbox,
     set_global_mailbox,
 )
+from agent.soul.heartbeat.evolution import run_wander_evolution_step
 from agent.soul.heartbeat.tick_log import HeartbeatTickResult
 from runtime.scheduler.heartbeat_config import HeartbeatConfig
 
@@ -75,6 +76,7 @@ class HeartbeatCoreService:
         self._last_wander_at: float = 0.0
         self._memory_port = None   # MemoryHeartbeatPort (MemoryService)
         self._persona_port = None  # PersonaHeartbeatPort (PersonaManager)
+        self._life_port = None     # LifeHeartbeatPort (LifeManager)
 
     @property
     def mailbox(self) -> HeartbeatInjectMailbox:
@@ -87,6 +89,10 @@ class HeartbeatCoreService:
     def set_persona_port(self, port) -> None:
         """注入 PersonaManager（实现 PersonaHeartbeatPort.read_state/receive_drift）。"""
         self._persona_port = port
+
+    def set_life_port(self, port) -> None:
+        """注入 LifeManager（可选，实现 LifeHeartbeatPort.receive_experience）。"""
+        self._life_port = port
 
     def start(self) -> None:
         if self._thread is not None:
@@ -216,16 +222,11 @@ class HeartbeatCoreService:
         ).start()
 
     def _run_wander_tick(self) -> None:
-        snapshot = self._persona_port.read_state()
-        result = self._memory_port.tick(snapshot)
-
-        # 1. 情绪漂移 → Persona 状态层
-        if result.signal.intensity > 0.05:
-            self._persona_port.receive_drift(result.signal)
-
-        # 2. 联想演进 → SelfConcept emerging 种子（独立链路）
-        if result.wandered_units and hasattr(self._persona_port, "apply_associative_seeds"):
-            self._persona_port.apply_associative_seeds(result.wandered_units)
+        result = run_wander_evolution_step(
+            memory_port=self._memory_port,
+            persona_port=self._persona_port,
+            life_port=self._life_port,
+        )
 
         logger.debug(
             "[Wander] wandered=%d ruminated=%d intensity=%.3f dominant=%r",

@@ -179,16 +179,10 @@ class HeartbeatModule:
         if lm is None:
             return
 
-        if lm.should_write_activity():
-            tasks_text = self._format_recent_tasks()
-            if tasks_text:
-                now = datetime.now(timezone.utc)
-                lm.generate_and_write_activity(
-                    tasks_text=tasks_text,
-                    period_start=now.date().isoformat(),
-                    period_end=now.date().isoformat(),
-                )
-                logger.debug("[Life] wrote activity entry")
+        tasks_text = self._format_recent_tasks()
+        if tasks_text:
+            lm.record_scheduler_digest_from_heartbeat(tasks_text)
+            logger.debug("[Life] recorded scheduler digest")
 
         with self._lock:
             needs_review = self._daily_review_date != today
@@ -231,32 +225,29 @@ class HeartbeatModule:
         logger.debug("[SelfConcept] daily evolution done, changed=%s", changed)
 
     def _run_daily_review(self, lm) -> None:
-        engine = self._checker._scheduler_engine
-        profile_obj = None
-        emotional_state_obj = None
-
-        if hasattr(lm, "_static_profile"):
-            profile_obj = lm._static_profile
-        if hasattr(lm, "_emotional_state_ref"):
-            try:
-                emotional_state_obj = lm._emotional_state_ref()
-            except Exception:
-                pass
-
-        if profile_obj is None or emotional_state_obj is None:
-            logger.debug("[Life] daily review skipped — no profile/emotional state available")
+        pm = self._persona_manager
+        if pm is None:
+            logger.debug("[Life] daily review skipped — no persona_manager")
             return
 
+        engine = self._checker._scheduler_engine
         today_tasks = self._format_recent_tasks()
-        result = lm.run_daily_review(
-            static_profile=profile_obj,
-            emotional_state=emotional_state_obj,
+        out = lm.run_daily_review(
+            static_profile=pm.profile,
+            today_medium_term="",
             today_scheduler_tasks=today_tasks,
             scheduler_engine=engine,
         )
-        if result is not None:
-            logger.info("[Life] daily review complete — %d scheduler actions, emotion=%r",
-                        len(result.scheduler_actions), result.emotion_expression[:60] if result.emotion_expression else "")
+        if out is None:
+            return
+        result, life_ctx = out
+        if life_ctx is not None and not life_ctx.is_empty():
+            pm.status.receive_life_context(life_ctx, trigger_update=True)
+        logger.info(
+            "[Life] daily review complete — %d scheduler actions, %d thought lines",
+            len(result.scheduler_actions),
+            len(result.thought_records),
+        )
 
     def _ensure_heartbeat_file(self) -> None:
         path = self._cfg.heartbeat_file

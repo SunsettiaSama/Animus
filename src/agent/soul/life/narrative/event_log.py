@@ -4,34 +4,20 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .event import EventType, LifeEvent  # noqa: F401 (re-exported)
+from .event import NarrativeEvent
 
-_FILENAME = "life_events.jsonl"
+_FILENAME = "narrative_events.jsonl"
 _RETENTION_DAYS = 365
 
 
-class LifeEventLog:
-    """事实账本——只追加，不修改，不衰减。
-
-    职责
-    ----
-    记录"发生了什么"的客观事实，是全系统事实的权威来源。
-    memory 层的 FactualMemory 通过 life_event_id 关联回这里。
-    status 层通过 LifeContextInput 读取这里的数据。
-
-    设计约束
-    --------
-    - append-only：写入后不允许修改，只能追加
-    - 不做情感解读，description 必须是事实陈述
-    - 留存时间远长于记忆（默认 365 天）
-    """
+class NarrativeEventLog:
+    """叙事事件日志（单文件 append-only）。"""
 
     def __init__(self, life_dir: str, retention_days: int = _RETENTION_DAYS) -> None:
         self._path = Path(life_dir) / _FILENAME
         self._retention_days = retention_days
 
-    def append(self, event: LifeEvent) -> LifeEvent:
-        """追加一条事件，返回写入的事件（携带已设定的 id）。"""
+    def append(self, event: NarrativeEvent) -> NarrativeEvent:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "a", encoding="utf-8") as f:
             f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
@@ -40,13 +26,12 @@ class LifeEventLog:
     def recent(
         self,
         days: int = 7,
-        event_types: list[EventType] | None = None,
-    ) -> list[LifeEvent]:
-        """读取最近 N 天内的事件，可按类型过滤。"""
+        kinds: list | None = None,
+    ) -> list[NarrativeEvent]:
         if not self._path.exists():
             return []
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        events: list[LifeEvent] = []
+        out: list[NarrativeEvent] = []
         with open(self._path, encoding="utf-8") as f:
             for raw in f:
                 raw = raw.strip()
@@ -61,19 +46,18 @@ class LifeEventLog:
                     ts = ts.replace(tzinfo=timezone.utc)
                 if ts < cutoff:
                     continue
-                event = LifeEvent.from_dict(d)
-                if event_types and event.event_type not in event_types:
+                ev = NarrativeEvent.from_dict(d)
+                if kinds is not None and ev.kind not in kinds:
                     continue
-                events.append(event)
-        return events
+                out.append(ev)
+        return out
 
-    def since(self, dt: datetime) -> list[LifeEvent]:
-        """读取某时间点之后的所有事件。"""
+    def since(self, dt: datetime) -> list[NarrativeEvent]:
         if not self._path.exists():
             return []
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        events: list[LifeEvent] = []
+        out: list[NarrativeEvent] = []
         with open(self._path, encoding="utf-8") as f:
             for raw in f:
                 raw = raw.strip()
@@ -87,11 +71,10 @@ class LifeEventLog:
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
                 if ts >= dt:
-                    events.append(LifeEvent.from_dict(d))
-        return events
+                    out.append(NarrativeEvent.from_dict(d))
+        return out
 
-    def get_by_id(self, event_id: str) -> LifeEvent | None:
-        """按 id 查找特定事件（用于 FactualMemory 关联查询）。"""
+    def get_by_id(self, event_id: str) -> NarrativeEvent | None:
         if not self._path.exists():
             return None
         with open(self._path, encoding="utf-8") as f:
@@ -101,7 +84,7 @@ class LifeEventLog:
                     continue
                 d = json.loads(raw)
                 if d.get("id") == event_id:
-                    return LifeEvent.from_dict(d)
+                    return NarrativeEvent.from_dict(d)
         return None
 
     def purge_old(self) -> None:

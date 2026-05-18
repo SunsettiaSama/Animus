@@ -382,6 +382,8 @@ class MemoryRetriever:
         include_stm: bool = True,
         include_ltm: bool = True,
         ltm_limit: int = 60,
+        focus_keywords: list[str] | None = None,
+        keyword_boost: float = 0.28,
     ) -> list[ScoredUnit]:
         """心理漂移式检索：不需要查询文本，记忆自发"闪现"。
 
@@ -456,6 +458,10 @@ class MemoryRetriever:
                 + rehearsal_weight * rehearsal_score
                 + noise            * random.random()
             )
+            if focus_keywords:
+                hay = _memory_unit_keyword_haystack(u).lower()
+                if any(k.strip() and k.strip().lower() in hay for k in focus_keywords):
+                    raw += keyword_boost
             saliences.append(max(raw, 1e-6))   # 保证每条记忆都有非零被选中概率
 
         # ── 加权随机采样（无放回）───────────────────────────────────────────
@@ -483,6 +489,17 @@ class MemoryRetriever:
             return ""
         lines = [f"[{label}]"] + [s.render_line(max_content) for s in scored]
         return "\n".join(f"- {l}" if i > 0 else l for i, l in enumerate(lines))
+
+
+def _memory_unit_keyword_haystack(unit: MemoryUnit) -> str:
+    chunks = [
+        unit.focus,
+        getattr(unit, "fact", "") or "",
+        getattr(unit, "perception", "") or "",
+        getattr(unit, "reconstructed_fact", "") or "",
+        getattr(unit, "narrative", "") or "",
+    ]
+    return " ".join(str(c) for c in chunks if c)
 
 
 # ── 模块级辅助 ──────────────────────────────────────────────────────────────

@@ -163,8 +163,6 @@ _simple_stubs = {
     "agent.soul.memory.long_term.memory":       dict(LongTermMemory=MagicMock()),
     "agent.react.context.medium_term.memory":    dict(RecentHistoryMemory=MagicMock()),
     "agent.react.context.memory":                dict(Step=MagicMock()),
-    "agent.soul.memory.milestone.init":         dict(make_milestone=MagicMock()),
-    "agent.soul.memory.milestone.memory":       dict(MilestoneMemory=MagicMock()),
     "agent.react.context.processor":             dict(MemoryProcessor=MagicMock(), MemoryResult=MagicMock()),
     "agent.react.prompt.block":                 dict(MemoryBlock=MagicMock(), PromptBlock=MagicMock()),
     "agent.react.prompt.parser":                dict(

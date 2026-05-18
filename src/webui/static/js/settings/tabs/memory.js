@@ -30,13 +30,6 @@ export async function load() {
   _si('s-lt-consolidation',  lt.consolidation_k ?? 0);
   _sc('s-lt-distill',        lt.distill_enabled);
   _si('s-lt-distill-tokens', lt.distill_max_tokens ?? 400);
-
-  const ms = d.milestone ?? {};
-  _sc('s-ms-enabled',       ms.enabled);
-  _si('s-ms-threshold',     ms.importance_threshold ?? 0.6);
-  _si('s-ms-top-k',         ms.top_k_retrieve ?? 2);
-  _si('s-ms-max',           ms.max_milestones ?? 50);
-  _sc('s-ms-inject-detail', ms.inject_detail ?? true);
 }
 
 export async function save() {
@@ -66,13 +59,6 @@ export async function save() {
       consolidation_k:    parseInt(_v('s-lt-consolidation')) || 0,
       distill_enabled:    _c('s-lt-distill'),
       distill_max_tokens: parseInt(_v('s-lt-distill-tokens')) || 400,
-    },
-    milestone: {
-      enabled:              _c('s-ms-enabled'),
-      importance_threshold: parseFloat(_v('s-ms-threshold')) || 0.6,
-      top_k_retrieve:       parseInt(_v('s-ms-top-k'))       || 2,
-      max_milestones:       parseInt(_v('s-ms-max'))         || 50,
-      inject_detail:        _c('s-ms-inject-detail'),
     },
   });
 }

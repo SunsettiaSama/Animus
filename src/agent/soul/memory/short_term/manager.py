@@ -120,6 +120,14 @@ class ShortTermMemoryManager:
         self.put(unit)
         return unit
 
+    def add_rehearsal(self, unit_id: str) -> None:
+        """反刍命中该条 STM 记忆后更新 rehearsal_count + last_accessed，并刷新 TTL。"""
+        unit = self.get(unit_id)
+        if unit is None:
+            return
+        unit.on_rehearsal()
+        self.put(unit)
+
     # ── Delete ────────────────────────────────────────────────────────────────
 
     def delete(self, unit_id: str) -> None:

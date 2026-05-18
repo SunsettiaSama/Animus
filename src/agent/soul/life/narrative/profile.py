@@ -9,7 +9,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from infra.llm import BaseLLM
 from agent.soul.persona.profile.profile import PersonaProfile
-from ..factual.event_log import LifeEventLog
 
 _FILENAME = "life_profile.json"
 
@@ -88,12 +87,9 @@ class LifeProfileGenerator:
     def generate(
         self,
         static_profile: PersonaProfile,
-        event_log: LifeEventLog,
+        timeline_digest: str,
         medium_term_distillate: str = "",
     ) -> LifeProfile:
-        events = event_log.recent(days=30)
-        log_text = "\n".join(f"[{e.ts[:10]}] {e.to_fact_line()}" for e in events[-20:])
-
         medium_section = (
             f"\n你与用户的近期对话摘要：\n{medium_term_distillate}"
             if medium_term_distillate
@@ -103,7 +99,7 @@ class LifeProfileGenerator:
         prompt = (
             f"你的基本性格：\n{static_profile.render()}\n\n"
             f"这段时间你经历的事情：\n"
-            f"{log_text or '（暂无记录）'}"
+            f"{timeline_digest or '（暂无记录）'}"
             f"{medium_section}\n\n"
             "以第一人称写一段近况（100-200字）："
         )

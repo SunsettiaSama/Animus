@@ -20,7 +20,7 @@ src/agent/soul/memory/
 │   └── manager.py       # LongTermMemoryManager（CRUD、forget_scan、命中反馈）
 └── writer/
     ├── turn_writer.py       # TurnWriter — 轮末提炼 → FactualMemory → STM（高情绪可直写 LTM）
-    ├── heartbeat_writer.py   # HeartbeatWriter — 事实 → ReconstructiveMemory → LTM
+    ├── rumination_writer.py   # RuminationWriter — 记忆反刍入口：事实/重构 → ReconstructiveMemory → LTM
     └── narrative_writer.py   # NarrativeWriter — 多条 unit → NarrativeMemory → LTM
 ```
 

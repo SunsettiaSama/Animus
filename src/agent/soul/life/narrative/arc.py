@@ -31,8 +31,8 @@ class Chapter:
     phase           : 该章节对应的叙事阶段
     started_at      : 章节开始时间（ISO UTC）
     ended_at        : 章节结束时间（空表示进行中）
-    key_event_ids   : 该章节中具有代表性的 LifeEvent.id 列表（指向事实账本）
-    summary         : 该章节的叙事摘要（由 StoryEngine/LLM 生成）
+    key_event_ids   : 该章节中具有代表性的叙事事件 id（如 NarrativeEvent.id）
+    summary         : 该章节的叙事摘要（由 NarrativeArcEvolver / LLM 生成）
     """
     id:             str
     title:          str

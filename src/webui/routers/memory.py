@@ -35,12 +35,6 @@ class MemorySaveRequest(BaseModel):
     lt_distill_enabled: bool = False
     lt_max_distill_tokens: int = 400
 
-    ms_enabled: bool = False
-    ms_max_milestones: int = 50
-    ms_importance_threshold: float = 0.6
-    ms_top_k_retrieve: int = 2
-    ms_inject_detail: bool = True
-
 
 def _load_memory_config():
     from config.agent.memory.memory_config import MemoryConfig
@@ -79,13 +73,6 @@ def get_memory_config():
             "consolidation_k":    cfg.long_term.consolidation_k,
             "distill_enabled":    cfg.long_term.distill_enabled,
             "max_distill_tokens": cfg.long_term.max_distill_tokens,
-        },
-        "milestone": {
-            "enabled":              cfg.milestone.enabled,
-            "max_milestones":       cfg.milestone.max_milestones,
-            "importance_threshold": cfg.milestone.importance_threshold,
-            "top_k_retrieve":       cfg.milestone.top_k_retrieve,
-            "inject_detail":        cfg.milestone.inject_detail,
         },
     }
 
@@ -129,14 +116,7 @@ def save_memory_config(req: MemorySaveRequest):
         "distill_enabled":    req.lt_distill_enabled,
         "max_distill_tokens": req.lt_max_distill_tokens,
     }
-    existing["milestone"] = {
-        **existing.get("milestone", {}),
-        "enabled":              req.ms_enabled,
-        "max_milestones":       req.ms_max_milestones,
-        "importance_threshold": req.ms_importance_threshold,
-        "top_k_retrieve":       req.ms_top_k_retrieve,
-        "inject_detail":        req.ms_inject_detail,
-    }
+    existing.pop("milestone", None)
 
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

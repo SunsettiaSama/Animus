@@ -39,6 +39,5 @@ export async function updateWorkstationCard() {
 
   bodyEl.innerHTML = `
     ${row('Long-term',  badge(data.long_term?.enabled))}
-    ${row('Medium',     badge(data.medium_term?.enabled))}
-    ${row('Milestone',  badge(data.milestone?.enabled))}`;
+    ${row('Medium',     badge(data.medium_term?.enabled))}`;
 }

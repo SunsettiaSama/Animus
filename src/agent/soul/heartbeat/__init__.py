@@ -10,6 +10,7 @@ from agent.soul.heartbeat.inject_mailbox import (
     set_global_mailbox,
 )
 from agent.soul.heartbeat.core_service import HeartbeatCoreService
+from agent.soul.heartbeat.evolution import new_heartbeat_tick_id, run_wander_evolution_step
 
 __all__ = [
     "HeartbeatConfig",
@@ -24,4 +25,6 @@ __all__ = [
     "get_heartbeat_mailbox",
     "set_global_mailbox",
     "HeartbeatCoreService",
+    "new_heartbeat_tick_id",
+    "run_wander_evolution_step",
 ]

@@ -10,11 +10,16 @@
 
 ```
 src/agent/soul/life/
-├── manager.py      # LifeManager — load_profile / write_activity / run_daily_review
-├── log.py          # LifeLog（JSONL）、LifeLogEntry
-├── profile.py      # LifeProfile、LifeProfileGenerator、LifeProfileStore
-├── synthesis.py    # DailySynthesizer、DailySynthesisResult（含 scheduler_actions）
-└── block.py        # LifeProfileBlock → Prompt
+├── manager.py       # LifeManager — ledger + narrative 编排
+├── block.py         # LifeProfileBlock → Prompt
+├── ledger/          # 事件账本：LifeEvent / LifeEventLog（Tao 对话 + 叙事 beat）
+│   ├── event.py
+│   └── event_log.py
+└── narrative/       # 人生叙事引擎：弧、章节、日更、LifeProfile
+    ├── arc.py
+    ├── engine.py
+    ├── profile.py
+    └── synthesis.py
 ```
 
 ---
