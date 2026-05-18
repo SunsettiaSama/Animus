@@ -26,6 +26,14 @@ from .journal import (
 from .service import LifeService
 from .manager import LifeManager
 from .block import JournalBlock, LifeProfileBlock
+from .surprise import (
+    NullSurpriseGenerator,
+    SurpriseEvent,
+    SurpriseGenerator,
+    SurpriseKind,
+    SurpriseLauncher,
+    SurpriseStore,
+)
 
 __all__ = [
     # ── Experience layer ──────────────────────────────────────────────────────
@@ -56,6 +64,13 @@ __all__ = [
     "K_RECENT_LANDMARKS",
     "LifeJournal",
     "JournalStore",
+    # ── Surprise (意外事件) ────────────────────────────────────────────────────
+    "SurpriseEvent",
+    "SurpriseKind",
+    "SurpriseGenerator",
+    "NullSurpriseGenerator",
+    "SurpriseLauncher",
+    "SurpriseStore",
     # ── Service ───────────────────────────────────────────────────────────────
     "LifeService",
     # ── Legacy / tao.py contract ──────────────────────────────────────────────

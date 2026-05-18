@@ -15,7 +15,10 @@ from .experience.unit import (
 if TYPE_CHECKING:
     from .experience.collapser import ExperienceCollapser
 
-# 碰撞检测扫描的最大候选数量（避免 O(n) 全扫）
+# 参与碰撞检测的来源类型
+_COLLISION_SOURCES: frozenset[str] = frozenset({"user", "narrative", "surprise"})
+
+# 碰撞扫描的最大候选数量（避免 O(n) 全扫）
 _COLLISION_SCAN_LIMIT = 20
 
 
@@ -26,7 +29,7 @@ class MemoryIngestPort(Protocol):
 
 
 class ExperienceOrchestrator:
-    """体验编排层（纯机械层）：热存储 + 即时/批量擢升 + 交会折叠。
+    """体验编排层（纯机械层）：热存储 + 即时/批量擢升 + 多路交会折叠。
 
     职责
     ----
@@ -34,16 +37,17 @@ class ExperienceOrchestrator:
     - 写入 ``ExperienceLog`` 热存储
     - 按显著性阈值即时或批量触发向 ``MemoryIngestPort`` 的擢升
     - 心跳驱动的清仓（purge_old）
-    - **交会折叠**：当 ``source="user"`` 与 ``source="narrative"`` 的体验
-      在时间上相距不足 ``collision_window_min`` 分钟时，调用
-      ``ExperienceCollapser`` 生成交会叙事，创建新的 ``source="collision"``
-      体验单元，原始两个单元标记为已折叠
+    - **多路交会折叠**：当 ``{user, narrative, surprise}`` 中的
+      两路或三路体验在 ``collision_window_min`` 分钟内相遇，
+      调用 ``ExperienceCollapser`` 生成交会叙事，
+      产出 ``source="collision"`` 的新体验单元
 
-    入口
-    ----
-    - ``ingest(unit)``   — 主写入路径
-    - ``tick()``         — 心跳批处理（扫描 + 擢升 + 清仓）
-    - ``hot_window()``   — 只读热存储快照
+    折叠规则
+    --------
+    - 检测范围：热存储最近 ``_COLLISION_SCAN_LIMIT`` 条
+    - 每路来源最多取一个代表单元（先到先得，已折叠的跳过）
+    - 2路或3路均支持；collision unit 不再参与折叠检测
+    - 折叠后原始单元标记为已折叠（内存集合，服务重启后重置）
     """
 
     def __init__(
@@ -68,13 +72,13 @@ class ExperienceOrchestrator:
     # ── 主写入路径 ────────────────────────────────────────────────────────────
 
     def ingest(self, unit: ExperienceUnit) -> None:
-        """写入热存储；若显著性达阈值立即擢升；检测交会折叠。"""
+        """写入热存储；若显著性达阈值立即擢升；检测多路交会折叠。"""
         self._log.append(unit)
         if unit.is_salient(self._salience_threshold):
             self._promote(unit)
         if (
             self._collapser is not None
-            and unit.source in ("user", "narrative")
+            and unit.source in _COLLISION_SOURCES
             and unit.id not in self._collapsed_ids
         ):
             self._maybe_collapse(unit)
@@ -96,12 +100,15 @@ class ExperienceOrchestrator:
         """返回当前热存储窗口内的所有体验单元（只读快照）。"""
         return self._log.recent()
 
-    # ── 交会折叠 ──────────────────────────────────────────────────────────────
+    # ── 多路交会折叠 ──────────────────────────────────────────────────────────
 
     def _maybe_collapse(self, incoming: ExperienceUnit) -> None:
-        """检查最近热存储，看是否有另一路来源的体验在时间窗口内相遇。"""
-        target_source = "narrative" if incoming.source == "user" else "user"
-        incoming_ts = _parse_ts(incoming.ts)
+        """扫描热存储，收集与 incoming 在时间窗口内且来源不同的体验，触发折叠。"""
+        other_sources = _COLLISION_SOURCES - {incoming.source}
+        incoming_ts   = _parse_ts(incoming.ts)
+
+        partners: list[ExperienceUnit] = []
+        seen_sources: set[str] = {incoming.source}
 
         candidates = self._log.recent()[-_COLLISION_SCAN_LIMIT:]
         for candidate in reversed(candidates):
@@ -109,45 +116,52 @@ class ExperienceOrchestrator:
                 continue
             if candidate.id in self._collapsed_ids:
                 continue
-            if candidate.source != target_source:
+            if candidate.source not in other_sources:
                 continue
+            if candidate.source in seen_sources:
+                continue  # 每路来源只取一个代表
             delta = abs((incoming_ts - _parse_ts(candidate.ts)).total_seconds())
             if delta <= self._collision_window_sec:
-                self._do_collapse(incoming, candidate)
-                return
+                partners.append(candidate)
+                seen_sources.add(candidate.source)
 
-    def _do_collapse(self, unit_a: ExperienceUnit, unit_b: ExperienceUnit) -> None:
-        """执行交会折叠：调用 Collapser → 生成 collision 体验单元 → 入库。"""
-        user_unit      = unit_a if unit_a.source == "user" else unit_b
-        narrative_unit = unit_b if unit_b.source == "narrative" else unit_a
+        if partners:
+            self._do_collapse([incoming] + partners)
 
-        merged_text = self._collapser.collapse(user_unit, narrative_unit)  # type: ignore[union-attr]
+    def _do_collapse(self, units: list[ExperienceUnit]) -> None:
+        """执行交会折叠：Collapser → collision unit → 入库 → 标记已折叠。"""
+        merged_text = self._collapser.collapse(units)  # type: ignore[union-attr]
+
+        # 优先用 user unit 的 session 信息作为 collision unit 的来源标识
+        user_units = [u for u in units if u.source == "user"]
+        ref = user_units[0] if user_units else units[0]
+
+        prior_parts = [
+            f"[{u.source}] {(u.situation.perception or u.situation.narration or u.action.content)[:40]}"
+            for u in units
+        ]
 
         collision_unit = ExperienceUnit.make(
             situation=ExperienceSituation(
-                session_id=user_unit.situation.session_id,
-                turn_index=user_unit.situation.turn_index,
+                session_id=ref.situation.session_id,
+                turn_index=ref.situation.turn_index,
                 narration=merged_text,
-                prior_thought=(
-                    f"用户对话：{user_unit.situation.perception[:40]}；"
-                    f"叙事意图：{narrative_unit.situation.narration[:40]}"
-                ),
+                prior_thought="；".join(prior_parts),
             ),
             action=ExperienceAction(
                 kind=ExperienceActionKind.deciding,
                 content=merged_text,
             ),
-            feeling=ExperienceFeeling(),  # 情感字段全部清零，由叙事文本本身承载
+            feeling=ExperienceFeeling(),  # 全部清零，由叙事文本本身承载情绪
             source="collision",
         )
 
-        # 直接写入，不再触发交会检测（source="collision" 不在检测范围内）
         self._log.append(collision_unit)
         if collision_unit.is_salient(self._salience_threshold):
             self._promote(collision_unit)
 
-        self._collapsed_ids.add(unit_a.id)
-        self._collapsed_ids.add(unit_b.id)
+        for u in units:
+            self._collapsed_ids.add(u.id)
 
     # ── 擢升 ──────────────────────────────────────────────────────────────────
 

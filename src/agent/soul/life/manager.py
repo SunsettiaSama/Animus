@@ -35,6 +35,7 @@ from .orchestrator import ExperienceOrchestrator, MemoryIngestPort
 from .chronicle import ChronicleStore
 from .journal import JournalStore, LifeJournal
 from .service import LifeService
+from .surprise import NullSurpriseGenerator, SurpriseGenerator, SurpriseStore
 
 if TYPE_CHECKING:
     pass
@@ -83,6 +84,7 @@ class LifeManager:
         self._chronicle_store = ChronicleStore(life_dir)
         self._journal_store = JournalStore(life_dir)
         self._journal: LifeJournal = self._journal_store.load()
+        self._surprise_store = SurpriseStore(life_dir)
         self._builder = ExperienceBuilder(
             orchestrator=self._orchestrator,
             chronicle_store=self._chronicle_store,
@@ -91,6 +93,7 @@ class LifeManager:
             builder=self._builder,
             journal=self._journal,
             journal_store=self._journal_store,
+            surprise_store=self._surprise_store,
         )
         self._life_service.start()
 
@@ -130,6 +133,10 @@ class LifeManager:
     def set_collapser(self, collapser) -> None:
         """注入交会折叠器实现（LLM 就绪后调用）。"""
         self._orchestrator.set_collapser(collapser)
+
+    def set_surprise_generator(self, generator: SurpriseGenerator) -> None:
+        """注入意外事件生成器实现（LLM 就绪后调用）。"""
+        self._life_service.set_surprise_generator(generator)
 
     def set_memory_port(self, memory_port: MemoryIngestPort) -> None:
         """启动后注入记忆层接口（tao.py 在 MemoryService 就绪后调用）。"""

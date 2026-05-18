@@ -18,6 +18,7 @@ class ChronicleKind(str, Enum):
     user_turn   = "user_turn"
     story_beat  = "story_beat"
     landmark    = "landmark"   # 地标被填充并内化为体验单元
+    surprise    = "surprise"   # 意外事件触发并内化为体验单元
 
 
 @dataclass

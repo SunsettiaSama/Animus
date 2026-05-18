@@ -114,6 +114,31 @@ class ExperienceBuilder:
         self._append_chronicle_story_beat(unit, narrative_hint, salience, emotion_label)
         return unit
 
+    # ── 意外事件路径 ──────────────────────────────────────────────────────────
+
+    def record_surprise(
+        self,
+        narrative_hint: str,
+        dice_value: int = 0,
+        dice_tendency: str = "",
+        salience: float = 0.5,
+    ) -> ExperienceUnit:
+        """意外事件触发：构造 source="surprise" 的体验单元并写入热存储 + Chronicle。"""
+        unit = ExperienceUnit.make(
+            situation=ExperienceSituation(
+                narration=narrative_hint,
+            ),
+            action=ExperienceAction(
+                kind=ExperienceActionKind.attending,
+                content=narrative_hint,
+            ),
+            feeling=ExperienceFeeling(salience=salience),
+            source="surprise",
+        )
+        self._orchestrator.ingest(unit)
+        self._append_chronicle_surprise(unit, narrative_hint, salience, dice_tendency)
+        return unit
+
     # ── 心跳代理 ──────────────────────────────────────────────────────────────
 
     def tick(self) -> list[ExperienceUnit]:
@@ -158,6 +183,26 @@ class ExperienceBuilder:
             kind=ChronicleKind.story_beat,
             summary=narrative_hint[:80],
             emotion_label=emotion_label,
+            salience=salience,
+            experience_id=unit.id,
+        ))
+
+    def _append_chronicle_surprise(
+        self,
+        unit: ExperienceUnit,
+        narrative_hint: str,
+        salience: float,
+        dice_tendency: str,
+    ) -> None:
+        if self._chronicle_store is None:
+            return
+        from ..chronicle.entry import ChronicleEntry, ChronicleKind
+        summary = narrative_hint[:60]
+        if dice_tendency:
+            summary = f"{summary}（{dice_tendency}）"
+        self._chronicle_store.append(ChronicleEntry(
+            kind=ChronicleKind.surprise,
+            summary=summary,
             salience=salience,
             experience_id=unit.id,
         ))

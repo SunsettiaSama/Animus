@@ -13,6 +13,9 @@ from .journal.filler import LandmarkFiller, NullLandmarkFiller
 from .journal.item import Landmark, LandmarkStatus
 from .journal.journal import LifeJournal
 from .journal.store import JournalStore
+from .surprise.generator import NullSurpriseGenerator, SurpriseGenerator
+from .surprise.launcher import SurpriseLauncher
+from .surprise.store import SurpriseStore
 
 _WAKE_POLL_SEC = 0.5
 
@@ -25,7 +28,8 @@ class LifeService(BaseServiceManager):
     - **即时层**（ExperienceBuilder）：原始输入 → ExperienceUnit → 热存储 + Chronicle
     - **手账层**（LifeJournal）：Agent 的地标时间轴与自述
     - **地标填充**（LandmarkFiller）：到点后调用 API 填充情节 → ExperienceUnit
-    - **后台线程**：异步消费 ``enqueue_*`` 任务，心跳检查到期地标
+    - **意外层**（SurpriseLauncher + SurpriseGenerator）：心跳累积概率 → 意外事件
+    - **后台线程**：异步消费 ``enqueue_*`` 任务；心跳检查地标 + 意外概率
 
     地标处理时机
     ------------
@@ -33,6 +37,12 @@ class LifeService(BaseServiceManager):
     2. 心跳 tick：检查所有 due 地标，入队处理
     3. 处理流程：LandmarkFiller.fill() → ExperienceBuilder.record_story_beat()
        → Landmark.mark_done() → JournalStore.save()
+
+    意外事件处理时机
+    ----------------
+    - 每次心跳触发 ``SurpriseLauncher.tick()``，累积概率随时间上升
+    - 触发后：SurpriseGenerator.generate() → ExperienceBuilder.record_surprise()
+      → SurpriseStore.append()
     """
 
     def __init__(
@@ -41,6 +51,8 @@ class LifeService(BaseServiceManager):
         journal: LifeJournal,
         journal_store: JournalStore | None = None,
         filler: LandmarkFiller | None = None,
+        surprise_generator: SurpriseGenerator | None = None,
+        surprise_store: SurpriseStore | None = None,
         tick_interval_sec: float = 60.0,
         profile_narrative: str = "",
         recent_memories: list[str] | None = None,
@@ -49,6 +61,9 @@ class LifeService(BaseServiceManager):
         self._journal = journal
         self._journal_store = journal_store
         self._filler: LandmarkFiller = filler or NullLandmarkFiller()
+        self._surprise_generator: SurpriseGenerator = surprise_generator or NullSurpriseGenerator()
+        self._surprise_store = surprise_store
+        self._surprise_launcher = SurpriseLauncher()
         self._tick_interval = tick_interval_sec
         self._profile_narrative = profile_narrative
         self._recent_memories: list[str] = recent_memories or []
@@ -82,9 +97,10 @@ class LifeService(BaseServiceManager):
             queued = len(self._tasks)
         due = len(self._journal.due_landmarks())
         return {
-            "state":         state,
-            "queued":        queued,
-            "due_landmarks": due,
+            "state":            state,
+            "queued":           queued,
+            "due_landmarks":    due,
+            "surprise_p":       round(self._surprise_launcher.probability, 3),
         }
 
     @property
@@ -98,15 +114,17 @@ class LifeService(BaseServiceManager):
         profile_narrative: str = "",
         recent_memories: list[str] | None = None,
     ) -> None:
-        """更新填充器使用的上下文（画像 + 记忆检索）。"""
         if profile_narrative:
             self._profile_narrative = profile_narrative
         if recent_memories is not None:
             self._recent_memories = recent_memories
 
     def set_filler(self, filler: LandmarkFiller) -> None:
-        """热替换填充器实现（LLM 就绪后调用）。"""
         self._filler = filler
+
+    def set_surprise_generator(self, generator: SurpriseGenerator) -> None:
+        """热替换意外事件生成器（LLM 就绪后调用）。"""
+        self._surprise_generator = generator
 
     # ── 非阻塞入队（TaoLoop 调用侧）────────────────────────────────────────
 
@@ -122,7 +140,6 @@ class LifeService(BaseServiceManager):
         arousal_delta: float = 0.0,
         activated_memory_ids: list[str] | None = None,
     ) -> None:
-        """非阻塞：将用户回合提交至后台线程。"""
         self._enqueue(lambda: self._builder.record_user_turn(
             session_id=session_id,
             turn_index=turn_index,
@@ -144,7 +161,6 @@ class LifeService(BaseServiceManager):
         salience: float = 0.0,
         action_kind: ExperienceActionKind = ExperienceActionKind.reasoning,
     ) -> None:
-        """非阻塞：将故事引擎产出提交至后台线程。"""
         self._enqueue(lambda: self._builder.record_story_beat(
             narrative_hint=narrative_hint,
             emotion_label=emotion_label,
@@ -157,10 +173,9 @@ class LifeService(BaseServiceManager):
     # ── 同步接口（心跳调用侧）────────────────────────────────────────────────
 
     def tick(self) -> list[ExperienceUnit]:
-        """心跳驱动批处理（同步）：扫描热存储，擢升显著体验，清仓过期条目。"""
         return self._builder.tick()
 
-    # ── 手账 ──────────────────────────────────────────────────────────────────
+    # ── 手账 & 构造器代理 ─────────────────────────────────────────────────────
 
     @property
     def journal(self) -> LifeJournal:
@@ -178,7 +193,6 @@ class LifeService(BaseServiceManager):
         self._wake.set()
 
     def _scan_and_enqueue_overdue(self) -> None:
-        """启动时扫描超时地标，立即入队处理。"""
         overdue = self._journal.scan_overdue()
         for lm in overdue:
             self._enqueue_fill_landmark(lm)
@@ -190,7 +204,6 @@ class LifeService(BaseServiceManager):
         self._enqueue(lambda: self._fill_landmark(lm_id))
 
     def _fill_landmark(self, landmark_id: str) -> None:
-        """填充一个地标：投骰 → 调用 Filler → 内化为 ExperienceUnit → Chronicle → 保存手账。"""
         lm = self._journal.get_landmark(landmark_id)
         if lm is None or lm.status == LandmarkStatus.done:
             return
@@ -229,7 +242,6 @@ class LifeService(BaseServiceManager):
         experience_id: str,
         dice: DiceResult | None = None,
     ) -> None:
-        """地标完成后写入 Chronicle（landmark 类型），附带骰点倾向标注。"""
         chronicle_store = self._builder._chronicle_store
         if chronicle_store is None:
             return
@@ -245,11 +257,35 @@ class LifeService(BaseServiceManager):
         ))
 
     def _check_and_enqueue_due(self) -> None:
-        """心跳时检查所有到期地标，入队处理。"""
         for lm in self._journal.due_landmarks():
             if lm.status == LandmarkStatus.overdue:
                 lm.mark_overdue()
             self._enqueue_fill_landmark(lm)
+
+    def _tick_surprise(self) -> None:
+        """心跳累积概率；触发时生成意外事件并写入热存储 + SurpriseStore。"""
+        if not self._surprise_launcher.tick():
+            return
+        dice = roll_d100()
+        narrative = self._surprise_generator.generate(
+            dice=dice,
+            recent_memories=self._recent_memories,
+            profile_narrative=self._profile_narrative,
+        )
+        unit = self._builder.record_surprise(
+            narrative_hint=narrative,
+            dice_value=dice.value,
+            dice_tendency=dice.tendency,
+            salience=0.5,
+        )
+        if self._surprise_store is not None:
+            from .surprise.event import SurpriseEvent
+            self._surprise_store.append(SurpriseEvent(
+                narrative=narrative,
+                dice_value=dice.value,
+                dice_tendency=dice.tendency,
+                experience_id=unit.id,
+            ))
 
     def _run(self) -> None:
         last_tick = time.monotonic()
@@ -266,4 +302,5 @@ class LifeService(BaseServiceManager):
             if time.monotonic() - last_tick >= self._tick_interval:
                 self._builder.tick()
                 self._check_and_enqueue_due()
+                self._tick_surprise()
                 last_tick = time.monotonic()
