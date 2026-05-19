@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from config.storage import StorageConfig
+
 from ...persona.profile.profile import PersonaProfile
 
 
@@ -14,6 +16,7 @@ class ProfileStore:
     """
 
     def __init__(self, persona_dir: str) -> None:
+        persona_dir = StorageConfig().resolve_persona_dir(persona_dir)
         self._dir = Path(persona_dir)
         self._profile_path = self._dir / "profile.json"
 

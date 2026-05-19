@@ -6,6 +6,8 @@ import os
 import threading
 from datetime import datetime, timedelta, timezone
 
+from config.storage import StorageConfig
+
 from runtime.scheduler.task import ScheduledTask, TaskStatus
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,7 @@ def _parse_utc(iso: str) -> datetime:
 
 class TaskStore:
     def __init__(self, scheduler_dir: str):
+        scheduler_dir = StorageConfig().resolve_scheduler_dir(scheduler_dir)
         self._dir = scheduler_dir
         self._tasks_path = os.path.join(scheduler_dir, "tasks.json")
         self._lock = threading.Lock()

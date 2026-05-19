@@ -1285,37 +1285,12 @@
         <!-- ── 心跳循环 ── -->
         <div class="section-divider" style="margin-top:16px">心跳循环（Heartbeat）</div>
         <div class="info-banner" style="margin-bottom:12px">
-          心跳循环让 Agent 主动醒来检查任务清单。第一层使用廉价 LLM 预判，仅在需要处理时升级为完整 Agent 执行（ESCALATE）。
+          心跳循环按 Soul checklist 定时驱动 memory / life / persona 演化；间隔与活跃时段见下方配置。
         </div>
         <div class="form-row">
           <div class="form-group">
             <label>心跳间隔（秒，0 = 禁用）</label>
             <input id="s-hb-interval" type="number" min="0" step="60" value="1800" style="width:100px" />
-          </div>
-          <div class="form-group">
-            <label>心跳 Profile</label>
-            <select id="s-hb-profile">
-              <option value="minimal">minimal</option>
-              <option value="with_memory">with_memory</option>
-              <option value="full">full</option>
-            </select>
-          </div>
-        </div>
-        <div class="form-group">
-          <label>辅助模型名称 <span style="font-weight:400;color:var(--text3)">LLMService._aux 中的 key（空 = 使用主模型）</span></label>
-          <input id="s-hb-llm-aux-name" type="text" placeholder="heartbeat" style="width:180px" />
-        </div>
-        <div class="toggle-row">
-          <div class="toggle-label">
-            <span class="toggle-title">Light Context</span>
-            <span class="toggle-desc">第一层预检关闭记忆检索，大幅降低成本</span>
-          </div>
-          <label class="switch"><input type="checkbox" id="s-hb-light-context" checked><span class="slider"></span></label>
-        </div>
-        <div class="form-row" style="margin-top:8px">
-          <div class="form-group">
-            <label>每日最大 ESCALATE 次数</label>
-            <input id="s-hb-max-escalations" type="number" min="0" max="100" value="10" style="width:90px" />
           </div>
         </div>
 
@@ -1334,23 +1309,6 @@
             <label>时区</label>
             <input id="s-hb-active-tz" type="text" placeholder="Asia/Shanghai" style="width:160px" />
           </div>
-        </div>
-
-        <!-- ── 心跳文件 HEARTBEAT.md ── -->
-        <div class="section-divider" style="margin-top:16px">心跳文件（HEARTBEAT.md）</div>
-        <div class="form-group">
-          <label>文件路径</label>
-          <input id="s-hb-file-path" type="text" style="width:100%;box-sizing:border-box;font-size:12px" placeholder=".react/scheduler/HEARTBEAT.md" />
-        </div>
-        <div class="form-group" style="margin-top:6px">
-          <label style="display:flex;align-items:center;gap:8px">
-            HEARTBEAT.md 内容
-            <button id="btn-hb-file-reload" class="btn-secondary" style="padding:2px 10px;font-size:11px">↻ 加载</button>
-            <button id="btn-hb-file-save" class="btn-secondary" style="padding:2px 10px;font-size:11px">保存</button>
-          </label>
-          <textarea id="s-hb-file-content" rows="6"
-            style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;margin-top:4px"
-            placeholder="# Heartbeat Checklist&#10;&#10;- 检查有无即将到期的任务…"></textarea>
         </div>
 
         <!-- ── Webhook ── -->
@@ -1837,19 +1795,6 @@
           </div>
         </div>
 
-        <!-- HEARTBEAT.md inline editor -->
-        <div class="sched-hb-file-wrap">
-          <div class="sched-hb-file-hdr">
-            <span style="font-size:12px;font-weight:600;color:var(--text2)">HEARTBEAT.md</span>
-            <div style="display:flex;gap:6px">
-              <button id="btn-sched-hb-load" class="btn-secondary" style="height:22px;font-size:11px;padding:0 8px">Load</button>
-              <button id="btn-sched-hb-save" class="btn-secondary" style="height:22px;font-size:11px;padding:0 8px">Save</button>
-            </div>
-          </div>
-          <textarea id="sched-hb-content" class="sched-hb-content"
-            placeholder="# Heartbeat Checklist&#10;&#10;- 检查时间线有无即将到期的任务…" rows="5"></textarea>
-          <div id="sched-hb-file-msg" style="font-size:11px;color:var(--text3);min-height:14px;padding:2px 10px"></div>
-        </div>
       </div>
 
       <!-- ③ Work Journal (removed — moved to session window in main column) -->

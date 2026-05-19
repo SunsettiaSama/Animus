@@ -42,6 +42,11 @@ def do_react_init(req: Any, state: Any) -> None:
     state.active_tao = tl
     state.conv_loop = conv_loop
 
+    if getattr(state, "agent_service", None) is not None:
+        soul = getattr(tl, "_soul", None)
+        if soul is not None:
+            state.agent_service.set_soul_service(soul)
+
     def _notify(task: str, message: str, done: bool) -> None:
         push_notify(state, task, message, done)
 

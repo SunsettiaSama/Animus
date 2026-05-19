@@ -44,10 +44,13 @@ def _default_profiles() -> dict[str, SubAgentProfile]:
             max_steps=15,
             memory=_sub_memory(long_term=True),
             tool_package="researcher",
-            tools=["memory_recall"],
+            tools=[
+                "soul_memory_search",
+                "soul_life_chronicle",
+            ],
             system_note=(
                 "你是一个专注于信息研究与知识整理的助手，"
-                "善于通过网络搜索、知识库检索和长期记忆获取准确信息。"
+                "善于通过网络搜索、知识库检索和 Soul 记忆/生活经历获取准确信息。"
                 "重要发现应通过 knowledge_save 保存到知识库。"
             ),
         ),

@@ -3,6 +3,7 @@ from .store import SelfConceptStore
 from .evolver import SelfConceptEvolver
 from .associative import AssociativeEvolver
 from .block import SelfConceptBlock
+from .reflection import SelfReflectionResult, ReflectionDecomposer, TaoReflectionSession
 
 __all__ = [
     "Belief",
@@ -13,4 +14,7 @@ __all__ = [
     "SelfConceptEvolver",
     "AssociativeEvolver",
     "SelfConceptBlock",
+    "SelfReflectionResult",
+    "ReflectionDecomposer",
+    "TaoReflectionSession",
 ]

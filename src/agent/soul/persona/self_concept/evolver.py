@@ -10,6 +10,7 @@ from agent.soul.memory.unit import ReconstructiveMemory
 from agent.soul.persona.status.emotional import EmotionalAnchor
 from agent.soul.persona.profile.profile import PersonaProfile
 from .concept import BeliefStrength, SelfConcept, SelfConceptDelta
+from .reflection import SelfReflectionResult
 
 # ── Step 1：叙事更新 ──────────────────────────────────────────────────────────
 
@@ -72,7 +73,7 @@ class SelfConceptEvolver:
         LLM 对比旧信念列表与新叙事 → 输出结构化 delta
         关键词匹配而非 ID 匹配，避免 UUID 幻觉
 
-    不持有状态，不决定何时调用，由 Heartbeat 日终回顾触发。
+    不持有状态，不决定何时调用，由 Heartbeat 日终自我反省触发。
     """
 
     def __init__(self, llm: BaseLLM) -> None:
@@ -84,6 +85,7 @@ class SelfConceptEvolver:
         built_profile: PersonaProfile,
         recent_anchors: list[EmotionalAnchor],
         recent_ruminations: list[ReconstructiveMemory] | None = None,
+        daily_reflection: SelfReflectionResult | None = None,
     ) -> SelfConceptDelta:
         """主入口：两步调用，返回 SelfConceptDelta。
 
@@ -100,6 +102,7 @@ class SelfConceptEvolver:
             profile=built_profile,
             anchors=recent_anchors,
             ruminations=recent_ruminations or [],
+            daily_reflection=daily_reflection,
         )
 
         # Step 2：信念提取——仅在叙事真正更新时才运行
@@ -127,14 +130,23 @@ class SelfConceptEvolver:
         profile: PersonaProfile,
         anchors: list[EmotionalAnchor],
         ruminations: list[ReconstructiveMemory],
+        daily_reflection: SelfReflectionResult | None = None,
     ) -> str:
         """让 LLM 判断是否需要更新叙事，返回新叙事文本或空字符串。
 
-        优先级：反刍记忆 > 原始情绪锚点。
-        两者都为空时跳过，不调用 LLM。
+        优先级：日终反省 > 反刍记忆 > 原始情绪锚点。
+        三者都为空时跳过，不调用 LLM。
         """
-        if not anchors and not ruminations:
+        if not anchors and not ruminations and (
+            daily_reflection is None or daily_reflection.is_empty()
+        ):
             return ""
+
+        reflection_section = ""
+        if daily_reflection is not None and not daily_reflection.is_empty():
+            reflection_section = (
+                f"\n\n{daily_reflection.render_for_evolver()}"
+            )
 
         rumination_section = ""
         if ruminations:
@@ -157,9 +169,10 @@ class SelfConceptEvolver:
         prompt = (
             f"【基础画像】\n{profile.render()}\n\n"
             f"【当前叙事摘要】\n{current_narrative or '（暂无）'}"
+            f"{reflection_section}"
             f"{rumination_section}"
             f"{anchor_section}\n\n"
-            "如果以上材料（尤其是反刍记忆）具有阶段性意义，请更新叙事摘要（100-200字）；"
+            "如果以上材料（尤其是日终反省与反刍记忆）具有阶段性意义，请更新叙事摘要（100-200字）；"
             "否则只输出空字符串。"
         )
         result = self._llm.generate_messages(

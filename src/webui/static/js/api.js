@@ -45,7 +45,6 @@ export const PATHS = {
     status:         '/api/scheduler/status',
     control:        '/api/scheduler/control',
     journal:        '/api/scheduler/journal',
-    heartbeatFile:  '/api/scheduler/heartbeat-file',
     heartbeatLog:   (n = 50) => `/api/scheduler/heartbeat-log?n=${n}`,
     webhookTrigger: '/api/scheduler/webhook/heartbeat',
   },

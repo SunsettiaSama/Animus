@@ -40,15 +40,9 @@ export async function load() {
     // ── Heartbeat fields ──
     const hb = cfg.heartbeat ?? {};
     _si('s-hb-interval',        hb.interval ?? 1800);
-    const hbProfileEl = document.getElementById('s-hb-profile');
-    if (hbProfileEl) hbProfileEl.value = hb.profile ?? 'with_memory';
-    _si('s-hb-llm-aux-name',    hb.llm_aux_name ?? 'heartbeat');
-    _sc('s-hb-light-context',   hb.light_context ?? true);
-    _si('s-hb-max-escalations', hb.max_escalations_per_day ?? 10);
     _si('s-hb-active-start',    hb.active_hours_start ?? '07:00');
     _si('s-hb-active-end',      hb.active_hours_end ?? '22:00');
     _si('s-hb-active-tz',       hb.active_timezone ?? 'Asia/Shanghai');
-    _si('s-hb-file-path',       hb.heartbeat_file ?? '.react/scheduler/HEARTBEAT.md');
     _si('s-hb-webhook-secret',  hb.webhook_secret ?? '');
 
     // ── Comm rate limits ──
@@ -128,25 +122,6 @@ function _wireEngineButtons() {
 }
 
 function _wireHeartbeatButtons() {
-  // Heartbeat file load/save
-  document.getElementById('btn-hb-file-reload')?.addEventListener('click', async () => {
-    const res = await fetch('/api/scheduler/heartbeat-file').catch(() => null);
-    if (res && res.ok) {
-      const data = await res.json();
-      _si('s-hb-file-content', data.content ?? '');
-    }
-  });
-
-  document.getElementById('btn-hb-file-save')?.addEventListener('click', async () => {
-    const content = _v('s-hb-file-content');
-    await fetch('/api/scheduler/heartbeat-file', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    });
-  });
-
-  // Tick log refresh
   document.getElementById('btn-hb-log-refresh')?.addEventListener('click', _refreshTickLog);
 }
 
@@ -191,14 +166,9 @@ export async function save() {
 
   const heartbeat = {
     interval:                parseInt(_v('s-hb-interval'), 10) || 1800,
-    profile:                 _v('s-hb-profile') || 'with_memory',
-    llm_aux_name:            _v('s-hb-llm-aux-name') || 'heartbeat',
-    light_context:           _c('s-hb-light-context'),
-    max_escalations_per_day: parseInt(_v('s-hb-max-escalations'), 10) || 10,
     active_hours_start:      _v('s-hb-active-start') || '07:00',
     active_hours_end:        _v('s-hb-active-end') || '22:00',
     active_timezone:         _v('s-hb-active-tz') || 'Asia/Shanghai',
-    heartbeat_file:          _v('s-hb-file-path') || '.react/scheduler/HEARTBEAT.md',
     webhook_secret:          _v('s-hb-webhook-secret') || '',
   };
 

@@ -157,7 +157,13 @@ def _build_tao(llm_cfg) -> object:
         if paths.memory_config_yaml.exists()
         else MemoryConfig()
     )
-    cfg        = TaoConfig(storage=storage, memory=memory)
+    from config.agent.persona_config import PersonaConfig
+    persona = PersonaConfig()
+    db_cfg = None
+    if persona.enabled:
+        from config.infra.db_config import DBConfig
+        db_cfg = DBConfig.load_default()
+    cfg        = TaoConfig(storage=storage, memory=memory, persona=persona, db=db_cfg)
     llm        = LLM(llm_cfg)
     manager    = ToolManager()
     executor   = manager.build_executor()

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -13,7 +12,6 @@ from agent.soul.heartbeat.inject_mailbox import (
     get_heartbeat_mailbox,
     set_global_mailbox,
 )
-from agent.soul.heartbeat.evolution import run_wander_evolution_step
 from agent.soul.heartbeat.tick_log import HeartbeatTickResult
 from runtime.scheduler.heartbeat_config import HeartbeatConfig
 
@@ -59,7 +57,6 @@ class HeartbeatCoreService:
         llm_cfg_path: str = "config/llm_core/config.yaml",
         mailbox: HeartbeatInjectMailbox | None = None,
         register_global_mailbox: bool = True,
-        wander_interval_min: float = 30.0,
     ) -> None:
         self._heartbeat = heartbeat
         self._cfg: HeartbeatConfig = heartbeat._cfg
@@ -72,27 +69,9 @@ class HeartbeatCoreService:
         self._deferred: str | None = None
         self._deferred_lock = threading.Lock()
 
-        self._wander_interval_sec: float = wander_interval_min * 60
-        self._last_wander_at: float = 0.0
-        self._memory_port = None   # MemoryHeartbeatPort (MemoryService)
-        self._persona_port = None  # PersonaHeartbeatPort (PersonaManager)
-        self._life_port = None     # LifeHeartbeatPort (LifeManager)
-
     @property
     def mailbox(self) -> HeartbeatInjectMailbox:
         return self._mailbox
-
-    def set_memory_port(self, port) -> None:
-        """注入 MemoryService（实现 MemoryHeartbeatPort.tick()）。"""
-        self._memory_port = port
-
-    def set_persona_port(self, port) -> None:
-        """注入 PersonaManager（实现 PersonaHeartbeatPort.read_state/receive_drift）。"""
-        self._persona_port = port
-
-    def set_life_port(self, port) -> None:
-        """注入 LifeManager（可选，实现 LifeHeartbeatPort.receive_experience）。"""
-        self._life_port = port
 
     def start(self) -> None:
         if self._thread is not None:
@@ -130,7 +109,6 @@ class HeartbeatCoreService:
     def _iteration(self) -> None:
         self._flush_deferred_if_due()
         self._maybe_preflight()
-        self._maybe_wander_tick()
         result = self._heartbeat.tick()
         text = self._payload_from_result(result)
         if not text:
@@ -185,15 +163,16 @@ class HeartbeatCoreService:
         raw = (self._cfg.preflight_instruction or "").strip()
         if not raw:
             return
-        engine = self._heartbeat._checker._scheduler_engine
-        if engine is None:
+        engine = self._heartbeat._scheduler_engine
+        scheduler_cfg = self._heartbeat._scheduler_cfg
+        if engine is None or scheduler_cfg is None:
             logger.warning("[HeartbeatCore] preflight skipped — scheduler_engine not wired")
             return
         from agent.profile import SubAgentProfile
         from agent.runner import SubAgentRunner
 
         base = (
-            self._heartbeat._checker._scheduler_cfg.profiles.get("minimal")
+            scheduler_cfg.profiles.get("minimal")
             or SubAgentProfile()
         )
         runner = SubAgentRunner()
@@ -203,37 +182,6 @@ class HeartbeatCoreService:
             llm_cfg_path=self._llm_cfg_path,
             scheduler_engine=engine,
             notify_fn=None,
-        )
-
-    # ── Wander tick（记忆漂移 ↔ 人格驱动）────────────────────────────────────
-
-    def _maybe_wander_tick(self) -> None:
-        """每 wander_interval_min 分钟触发一次 Memory ↔ Persona 漂移循环。"""
-        if self._memory_port is None or self._persona_port is None:
-            return
-        now = time.monotonic()
-        if now - self._last_wander_at < self._wander_interval_sec:
-            return
-        self._last_wander_at = now
-        threading.Thread(
-            target=self._run_wander_tick,
-            daemon=True,
-            name="heartbeat-wander",
-        ).start()
-
-    def _run_wander_tick(self) -> None:
-        result = run_wander_evolution_step(
-            memory_port=self._memory_port,
-            persona_port=self._persona_port,
-            life_port=self._life_port,
-        )
-
-        logger.debug(
-            "[Wander] wandered=%d ruminated=%d intensity=%.3f dominant=%r",
-            len(result.wandered_ids),
-            len(result.ruminated_ids),
-            result.signal.intensity,
-            result.signal.dominant_emotion,
         )
 
     def _resolve_aux_llm(self):

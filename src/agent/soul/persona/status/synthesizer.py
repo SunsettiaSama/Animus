@@ -54,24 +54,32 @@ class StatusSynthesizer:
         profile,
         interaction_buffer: list[str],
         life_context: str = "",
+        medium_term_context: str = "",
     ) -> EmotionalState:
         """
-        current            当前情绪状态（texture + anchors）
-        profile            PersonaProfile，提供性格背景
-        interaction_buffer 近期交互摘要列表（轻量文本，非完整对话）
-        life_context       life 层传入的故事背景/日常摘要（可为空）
+        current              当前情绪状态（texture + anchors）
+        profile              PersonaProfile，提供性格背景
+        interaction_buffer   近期交互摘要列表（轻量文本，非完整对话）
+        life_context         life 层传入的故事背景/日常摘要（可为空）
+        medium_term_context  ReAct 中期记忆窗口摘要（可为空）
         """
-        if not interaction_buffer and not life_context:
+        if not interaction_buffer and not life_context and not medium_term_context:
             return current
 
         interactions_text = "\n".join(f"- {s}" for s in interaction_buffer[-10:])
         life_section = f"\n\n【故事背景 / 生活摘要】\n{life_context}" if life_context else ""
+        mtm_section = (
+            f"\n\n【近期对话窗口】\n{medium_term_context}"
+            if medium_term_context
+            else ""
+        )
         current_section = f"\n\n【当前情绪质感】\n{current.texture}" if current.texture else ""
 
         prompt = (
             f"【角色性格】\n{profile.render()}"
             f"{current_section}"
-            f"{life_section}\n\n"
+            f"{life_section}"
+            f"{mtm_section}\n\n"
             f"【近期交互摘要】\n{interactions_text}\n\n"
             f"请综合以上信息，输出更新后的情绪质感：\n{_SCHEMA}"
         )

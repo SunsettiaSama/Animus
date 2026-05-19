@@ -17,7 +17,6 @@ from infra.llm import LLM, LLMHandle
 from .action.executor import ActionExecutor
 from .action.risk.gate import RiskGate
 from .action.risk.level import RiskLevel
-from .action.tools.impl.memory_recall import MemoryRecallAction
 from .action.tools.impl.knowledge_hybrid_search import KnowledgeHybridSearchAction
 from .action.tools.impl.knowledge_save import KnowledgeSaveAction
 from .action.tools.impl.knowledge_list import KnowledgeListAction
@@ -25,8 +24,6 @@ from .action.tools.impl.scratchpad import NoteDeleteAction, NoteReadAction, Note
 from .action.skill.domain_learning import DomainLearningSkill
 from .action.tools.impl.web_fetch import WebFetchAction
 from .action.tools.impl.web_search import WebSearchAction
-from agent.soul.memory.long_term.init import make_memory
-from agent.soul.memory.long_term.memory import LongTermMemory
 from .context.medium_term.memory import RecentHistoryMemory
 from .context.memory import Step
 from agent.soul.memory.service import MemoryService
@@ -35,6 +32,7 @@ from .prompt.block import MemoryBlock, PromptBlock
 from .prompt.parser import ParseQuality, ParseResult, diagnose, parse_llm_output
 from .prompt.repair import repair
 from agent.soul.life import JournalBlock, LifeManager, LifeProfileBlock
+from agent.soul import SoulConfig, SoulService
 from agent.soul.persona import PersonaManager
 from .prompt.manager import PromptManager, StaticPromptParts
 from .trace import TraceStore
@@ -167,7 +165,14 @@ class TaoLoop:
         reply_target: dict | None = None,
         notify_fn=None,
         comm_rate_cfg=None,
+        llm_service=None,
+        soul_service: SoulService | None = None,
     ):
+        if cfg.persona.enabled and cfg.db is None:
+            raise ValueError(
+                "Soul 已启用（persona.enabled）但未配置 TaoConfig.db（Redis+MySQL）"
+            )
+
         self._llm = llm   # canonical handle from LLMService — shared by all sub-components
         self._executor = executor
         self._cfg = cfg
@@ -176,19 +181,38 @@ class TaoLoop:
         self._trace_store: TraceStore | None = (
             TraceStore(cfg.trace) if cfg.trace.enabled else None
         )
-        self._persona: PersonaManager | None = (
-            PersonaManager(cfg.persona, llm=self._llm) if cfg.persona.enabled else None
-        )
+        self._persona: PersonaManager | None = None
 
-        # Life module — optional, enabled when persona is enabled.
-        self._life: LifeManager | None = (
-            LifeManager(
+        # Soul 子系统 — 可注入已有 SoulService，或在 persona 启用时自建
+        self._soul: SoulService | None = soul_service
+        self._life: LifeManager | None = None
+        self._soul_memory: MemoryService | None = None
+        if self._soul is not None:
+            self._persona = self._soul.persona.api
+            self._life = self._soul.life.api
+            self._soul_memory = self._soul.memory.api
+        elif cfg.persona.enabled:
+            _redis_cfg = cfg.db.redis
+            _mysql_cfg = cfg.db.mysql
+            if not (_redis_cfg.enabled and _mysql_cfg.enabled):
+                raise ValueError(
+                    "Soul 记忆需要 Redis 与 MySQL 均已启用（config/infra/db.yaml）"
+                )
+            _redis = _redis_cfg.build_client()
+            _mysql = _mysql_cfg.build_client()
+            self._soul = SoulService(
                 life_dir=cfg.storage.life_dir,
-                llm=self._llm,
+                persona_cfg=cfg.persona,
+                redis_client=_redis,
+                mysql_client=_mysql,
+                llm_service=llm_service,
+                primary_llm=self._llm,
+                cfg=SoulConfig.load_default(),
             )
-            if cfg.persona.enabled
-            else None
-        )
+            self._soul.start()
+            self._persona = self._soul.persona.api
+            self._life = self._soul.life.api
+            self._soul_memory = self._soul.memory.api
 
         # 时间轴仅经 TimelineService 读写，与调度/心跳隔离。
         self._timeline = TimelineService(cfg.storage.timeline_dir)
@@ -204,46 +228,19 @@ class TaoLoop:
         self._approval_results: dict[str, bool] = {}
         self._approval_lock = threading.Lock()
 
-        # Build memory stores before PromptManager so the recall tool can be
-        # injected into the executor and its description added to the prompt.
-        self._long_term: LongTermMemory | None = (
-            make_memory(cfg.memory.long_term) if cfg.memory.long_term.enabled else None
-        )
         self._medium_term: RecentHistoryMemory | None = (
             RecentHistoryMemory(cfg.memory.medium_term, llm=self._llm)
             if cfg.memory.medium_term.enabled
             else None
         )
 
-        # ── Soul MemoryService（新记忆子系统，Redis + MySQL 驱动）────────────
-        # 仅当 cfg.db 显式提供时才启动；旧 long_term 仍独立工作。
-        self._soul_memory: MemoryService | None = None
-        if cfg.db is not None:
-            _redis_cfg = cfg.db.redis
-            _mysql_cfg = cfg.db.mysql
-            if _redis_cfg.enabled and _mysql_cfg.enabled:
-                _redis = _redis_cfg.build_client()
-                _mysql = _mysql_cfg.build_client()
-                self._soul_memory = MemoryService.build(
-                    llm=self._llm,
-                    redis_client=_redis,
-                    mysql_client=_mysql,
-                )
-
-        # Wire MemoryService into LifeService for experience promotion.
         if self._life is not None and self._soul_memory is not None:
             self._life.set_memory_port(self._soul_memory)
 
-        # Inject the recall tool when at least one memory backend is active.
-        # We copy tool_descriptions to avoid mutating the caller's dict.
         effective_descriptions = dict(tool_descriptions)
-        if self._soul_memory is not None or self._long_term is not None:
-            recall = MemoryRecallAction(
-                soul_memory=self._soul_memory,
-                long_term=self._long_term if self._soul_memory is None else None,
-            )
-            self._executor.register_instance(recall)
-            effective_descriptions[recall.name] = recall.description
+        if self._soul is not None:
+            from agent.soul.handlers.tao.tools import register_soul_tools
+            register_soul_tools(self._executor, self._soul, effective_descriptions)
 
         # Inject scratchpad tools (always active; stateful, session-scoped).
         self._scratchpad = ScratchpadStore()
@@ -350,7 +347,7 @@ class TaoLoop:
             from agent.soul.heartbeat.task_runner import TaskRunner
             _runner = TaskRunner(
                 cfg=cfg.scheduler,
-                long_term=self._long_term,
+                memory_service=self._soul_memory,
                 timeline=self._timeline,
             )
             _engine_to_use = SchedulerEngine(
@@ -552,12 +549,23 @@ class TaoLoop:
         _cached_medium: str = ""
 
         # Persona blocks are also stable across steps.
-        # Load LifeProfile once per session (daily cache; no-op on subsequent questions).
+        # Load persisted LifeProfile once per TaoLoop session.
         if self._life is not None:
             self._life.load_profile()
 
         persona_blocks: list[PromptBlock] | None = None
-        if self._persona is not None:
+        if self._soul is not None:
+            from agent.soul.handlers.tao.persona_prompt import blocks_from_soul_query
+
+            persona_blocks = blocks_from_soul_query(
+                self._soul,
+                max_profile_chars=self._cfg.persona.max_profile_chars,
+            )
+            if self._life is not None and not self._life.profile.is_empty():
+                persona_blocks = persona_blocks + [LifeProfileBlock(self._life.profile)]
+            if self._life is not None and not self._life.journal.is_empty():
+                persona_blocks = persona_blocks + [JournalBlock(self._life.journal)]
+        elif self._persona is not None:
             _blocks = self._persona.all_blocks()
             if self._life is not None and not self._life.profile.is_empty():
                 _blocks = _blocks + [LifeProfileBlock(self._life.profile)]
@@ -977,21 +985,12 @@ class TaoLoop:
 
         pf.processor.commit(pf.question, pf.answer)
 
-        # ── Soul 记忆写入（新系统，异步，不阻塞主线程）────────────────────────
+        # ── Soul 记忆写入（MemoryService 内部 async_ingest 负责异步）────────────
         if self._soul_memory is not None:
-            _q, _a = pf.question, pf.answer
-            _svc = self._soul_memory
-            threading.Thread(
-                target=_svc.ingest_turn,
-                kwargs={"question": _q, "answer": _a},
-                daemon=True,
-                name="soul-memory-ingest",
-            ).start()
+            self._soul_memory.ingest_turn(pf.question, pf.answer)
 
         if self._life is not None:
             self._life.record_turn(pf.question, pf.answer)
-
-        self._maybe_consolidate()
 
         self._timeline.append("conversation", {
             "q": pf.question[:300],
@@ -1002,13 +1001,14 @@ class TaoLoop:
             self._trace_store.write(pf.question, pf.answer, pf.processor.trace)
 
         if self._persona is not None:
-            life_summary = (
-                self._life.profile.render()
-                if self._life is not None and not self._life.profile.is_empty()
-                else ""
-            )
-            # Pass the last ~2 MTM blocks so emotional drift can sense recent
-            # interaction patterns (e.g. repeated questions, topic shifts).
+            from agent.soul.persona.status.life_bridge import LifeContextInput
+
+            life_context: LifeContextInput | None = None
+            if self._life is not None:
+                ctx = self._life.build_life_context(days=1)
+                if not ctx.is_empty():
+                    life_context = ctx
+
             medium_term_context = (
                 pf.processor._medium.render()
                 if pf.processor._medium is not None
@@ -1018,8 +1018,8 @@ class TaoLoop:
                 pf.question,
                 pf.answer,
                 pf.processor.trace,
-                life_summary,
-                medium_term_context,
+                life_context=life_context,
+                medium_term_context=medium_term_context,
             )
 
     # ── Misc ─────────────────────────────────────────────────────────────────
@@ -1028,11 +1028,11 @@ class TaoLoop:
         """旧接口保留，现为空操作。长期记忆不再在会话启动时预热。"""
 
     def preload_with_recall(self) -> None:
-        """旧接口保留，现为空操作。长期记忆通过 memory_recall 工具主动触发。"""
+        """旧接口保留，现为空操作。长期记忆通过 soul_memory_search 工具主动触发。"""
 
     def close(self) -> None:
-        if self._long_term is not None:
-            self._long_term.store.close()
+        if self._soul is not None:
+            self._soul.stop()
 
     def update_llm(self, llm: LLM) -> None:
         self._llm.update(llm)
@@ -1060,28 +1060,15 @@ class TaoLoop:
 
         self.reset()
 
-        memory_dir = self._cfg.memory.long_term.memory_dir
         medium_dir = self._cfg.memory.medium_term.memory_dir
 
         targets = [
-            os.path.join(memory_dir, "memories.json"),
             os.path.join(medium_dir, "medium_term.jsonl"),
         ]
         for fpath in targets:
             if fpath and os.path.exists(fpath):
                 os.remove(fpath)
 
-        # Reset in-memory state of live objects
-        if self._long_term is not None:
-            store = self._long_term.store
-            store._entries.clear()
-            # Drop the Qdrant collection so it is recreated clean on next access.
-            client = store._get_client()
-            existing = {c.name for c in client.get_collections().collections}
-            if store._cfg.collection_name in existing:
-                client.delete_collection(store._cfg.collection_name)
-            with store._lock:
-                store._collection_ready = False
         if self._medium_term is not None:
             self._medium_term._entries.clear()
 
@@ -1101,29 +1088,3 @@ class TaoLoop:
                     f"TaoLoop exceeded max_steps={event.max_steps} without finishing"
                 )
         raise RuntimeError(f"TaoLoop exhausted stream without FinishEvent")
-
-    # ── Long-term memory consolidation ───────────────────────────────────────
-
-    def _maybe_consolidate(self) -> None:
-        k = self._cfg.memory.long_term.consolidation_k
-        if k <= 0 or self._long_term is None:
-            return
-        n = self._manager.turn_count
-        if n > 0 and n % k == 0:
-            self._consolidate(k, n)
-
-    def _consolidate(self, k: int, turn: int) -> None:
-        turns = self._manager.recent_turns(k)
-        if not turns:
-            return
-
-        parts = [f"[会话窗口整合 @ 第 {turn} 轮]"]
-        for idx, (q, a) in enumerate(turns, 1):
-            parts.append(f"\n第 {idx} 轮：\nQ: {q}\nA: {a}")
-
-        self._long_term.add(
-            "\n".join(parts),
-            source="consolidation",
-            turn=turn,
-        )
-        self._long_term.save()

@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from config.soul.memory.service_config import MemoryServiceConfig
+from infra.db.mysql import MySQLClient
+from infra.db.redis import RedisClient
+from infra.llm import BaseLLM
+
+from agent.soul.memory.codec import unit_to_dict
+from agent.soul.memory.service import MemoryBlock, MemoryService
+from config.soul.config import SoulConfig
+from agent.soul.ports import LLMServicePort
+
+from ._llm import resolve_module_llm
+from .actions import MemoryAction
+
+if TYPE_CHECKING:
+    from agent.soul.workers import DomainWorker
+
+__all__ = ["MemoryAction", "MemoryHandler"]
+
+
+class MemoryHandler:
+    """Memory API Handler：模块 LLM 直调 + MemoryService。"""
+
+    DEFAULT_AUX_NAME = "memory"
+
+    def __init__(
+        self,
+        redis_client: RedisClient,
+        mysql_client: MySQLClient,
+        llm_service: LLMServicePort | None = None,
+        llm_aux_name: str = DEFAULT_AUX_NAME,
+        primary_llm: BaseLLM | None = None,
+        cfg: MemoryServiceConfig | None = None,
+        soul_config: SoulConfig | None = None,
+    ) -> None:
+        self._redis_client = redis_client
+        self._mysql_client = mysql_client
+        self._llm_service = llm_service
+        self._llm_aux_name = llm_aux_name
+        self._primary_llm = primary_llm
+        self._cfg = cfg
+        self._soul_config = soul_config
+        self._service: MemoryService | None = None
+        self._worker: DomainWorker | None = None
+
+    def set_worker(self, worker: DomainWorker) -> None:
+        self._worker = worker
+        if self._service is not None:
+            self._service.set_worker(worker)
+
+    def resolve_llm(self) -> BaseLLM | None:
+        return resolve_module_llm(
+            self._llm_service, self._llm_aux_name, self._primary_llm
+        )
+
+    @property
+    def api(self) -> MemoryService:
+        return self._ensure_service()
+
+    def _ensure_service(self) -> MemoryService:
+        if self._service is None:
+            if self._soul_config is None:
+                raise RuntimeError("MemoryHandler 需要 soul_config，请由 SoulService 注入")
+            llm = self.resolve_llm()
+            if llm is None:
+                raise RuntimeError("Memory service unavailable — no LLM resolved")
+            cfg = self._cfg or MemoryServiceConfig.load_default()
+            self._service = MemoryService.build(
+                llm=llm,
+                redis_client=self._redis_client,
+                mysql_client=self._mysql_client,
+                cfg=cfg,
+                soul_config=self._soul_config,
+            )
+            if self._worker is not None:
+                self._service.set_worker(self._worker)
+        return self._service
+
+    def handle(self, action: str, payload: dict[str, Any]) -> Any:
+        service = self._ensure_service()
+
+        if action == MemoryAction.INGEST_TURN:
+            service.ingest_turn(**payload)
+            return None
+
+        if action == MemoryAction.RECALL:
+            block: MemoryBlock = service.recall(**payload)
+            return block.render()
+
+        if action == MemoryAction.SEARCH:
+            payload = dict(payload)
+            mode = str(payload.pop("mode", "hybrid"))
+            results = service.search(mode, **payload)
+            return {"mode": mode, "count": len(results), "results": results}
+
+        if action == MemoryAction.RUMINATE:
+            unit = service.ruminate(**payload)
+            return unit_to_dict(unit) if unit is not None else None
+
+        if action == MemoryAction.HEARTBEAT_RUMINATE:
+            return service.heartbeat_ruminate()
+
+        if action == MemoryAction.INGEST_EXPERIENCE:
+            unit = service.ingest_experience(payload["unit"])
+            return unit_to_dict(unit)
+
+        if action == MemoryAction.FLUSH:
+            if self._worker is not None:
+                service.enqueue_flush()
+                return {"queued": True}
+            result = service.flush()
+            return {
+                "flushed": result.flushed,
+                "skipped": result.skipped,
+                "errors": result.errors,
+            }
+
+        raise ValueError(f"unknown memory action: {action!r}")

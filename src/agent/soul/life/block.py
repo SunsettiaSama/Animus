@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from agent.react.prompt.block import PromptBlock
-from .narrative.profile import LifeProfile
-from .journal.journal import LifeJournal
+from .profile import LifeProfile
+from .virtual.journal.journal import LifeJournal
 
 
 class LifeProfileBlock(PromptBlock):

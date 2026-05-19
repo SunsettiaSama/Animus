@@ -21,8 +21,8 @@ class ExperienceCollapser(Protocol):
 
     注意
     ----
-    新 collision unit 的 ``ExperienceFeeling`` 全部清零，不继承任何参与单元的
-    情感倾向，由叙事文本本身承载情绪信息。
+    新 collision unit 的情感字段继承参与单元中 salience 最高者；
+    是否写入 STM 仍由 ``stm_ingest_threshold``（体验 feeling.salience）决定。
     """
 
     def collapse(self, units: list[ExperienceUnit]) -> str:

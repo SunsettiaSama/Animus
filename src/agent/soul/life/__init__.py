@@ -10,8 +10,22 @@ from .experience import (
     NullCollapser,
 )
 from .orchestrator import ExperienceOrchestrator, MemoryIngestPort
-from .chronicle import ChronicleEntry, ChronicleKind, ChronicleStore
-from .journal import (
+from .anchor.chronicle import (
+    AnchorChronicleEntry,
+    AnchorChronicleKind,
+    AnchorChronicleStore,
+    ChronicleEntry,
+    ChronicleKind,
+    ChronicleStore,
+)
+from .anchor import (
+    AnchorLayer,
+    RealityAnchorLayer,
+    ProactiveOutboundIntent,
+    ProactiveOutboundPort,
+)
+from .virtual import (
+    VirtualLayer,
     DiceResult,
     JournalStore,
     K_RECENT_LANDMARKS,
@@ -22,21 +36,17 @@ from .journal import (
     MAX_DAILY_LANDMARKS,
     NullLandmarkFiller,
     roll_d100,
+    build_life_context_from_chronicle,
+    NarrativeEngine,
+    NullSurpriseGenerator,
+    SurpriseGenerator,
 )
+from .block import JournalBlock, LifeProfileBlock
+from .profile import LifeProfile, LifeProfileStore
 from .service import LifeService
 from .manager import LifeManager
-from .block import JournalBlock, LifeProfileBlock
-from .surprise import (
-    NullSurpriseGenerator,
-    SurpriseEvent,
-    SurpriseGenerator,
-    SurpriseKind,
-    SurpriseLauncher,
-    SurpriseStore,
-)
 
 __all__ = [
-    # ── Experience layer ──────────────────────────────────────────────────────
     "ExperienceUnit",
     "ExperienceAction",
     "ExperienceActionKind",
@@ -46,14 +56,14 @@ __all__ = [
     "ExperienceBuilder",
     "ExperienceCollapser",
     "NullCollapser",
-    # ── Orchestration ─────────────────────────────────────────────────────────
     "ExperienceOrchestrator",
     "MemoryIngestPort",
-    # ── Chronicle ─────────────────────────────────────────────────────────────
     "ChronicleEntry",
     "ChronicleKind",
     "ChronicleStore",
-    # ── Journal (手账) ─────────────────────────────────────────────────────────
+    "AnchorChronicleEntry",
+    "AnchorChronicleKind",
+    "AnchorChronicleStore",
     "DiceResult",
     "roll_d100",
     "Landmark",
@@ -64,17 +74,19 @@ __all__ = [
     "K_RECENT_LANDMARKS",
     "LifeJournal",
     "JournalStore",
-    # ── Surprise (意外事件) ────────────────────────────────────────────────────
-    "SurpriseEvent",
-    "SurpriseKind",
     "SurpriseGenerator",
     "NullSurpriseGenerator",
-    "SurpriseLauncher",
-    "SurpriseStore",
-    # ── Service ───────────────────────────────────────────────────────────────
+    "LifeProfile",
+    "LifeProfileStore",
     "LifeService",
-    # ── Legacy / tao.py contract ──────────────────────────────────────────────
     "LifeManager",
+    "RealityAnchorLayer",
+    "AnchorLayer",
+    "ProactiveOutboundIntent",
+    "ProactiveOutboundPort",
+    "VirtualLayer",
+    "NarrativeEngine",
     "LifeProfileBlock",
     "JournalBlock",
+    "build_life_context_from_chronicle",
 ]

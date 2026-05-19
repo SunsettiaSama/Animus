@@ -115,3 +115,13 @@ def unit_from_dict(d: dict[str, Any]) -> MemoryUnit:
 
 def unit_from_json(s: str) -> MemoryUnit:
     return unit_from_dict(json.loads(s))
+
+
+def scored_to_dict(scored) -> dict[str, Any]:
+    """ScoredUnit → 可 JSON 序列化的检索结果。"""
+    d = unit_to_dict(scored.unit)
+    d["relevance"] = scored.relevance
+    d["activation"] = scored.activation
+    d["final_score"] = scored.final_score
+    d["source"] = scored.source
+    return d

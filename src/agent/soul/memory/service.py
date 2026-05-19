@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from agent.soul.memory.short_term.manager import ShortTermMemoryManager
 from agent.soul.memory.long_term.manager import LongTermMemoryManager
@@ -20,9 +20,7 @@ if TYPE_CHECKING:
     from infra.db.redis import RedisClient
     from infra.db.mysql import MySQLClient
     from agent.soul.life.experience.unit import ExperienceUnit
-
-
-_HEARTBEAT_FLUSH_INTERVAL_SEC = 6 * 3600
+    from agent.soul.workers import DomainWorker
 
 
 # ── Output block ──────────────────────────────────────────────────────────────
@@ -74,8 +72,8 @@ class MemoryService:
 
     线程安全性
     ----------
-    ingest_turn 默认在调用线程的后台异步提交（async_ingest=True）；
-    如需在同一线程同步等待，可设 async_ingest=False。
+    async_ingest=True（默认）时，ingest_turn 在 MemoryService 内部起一条后台线程；
+    调用方（如 TaoLoop.post_process）应直接调用 ingest_turn，勿再外包 Thread。
 
     使用示例
     --------
@@ -99,6 +97,8 @@ class MemoryService:
         flush_engine: FlushEngine,
         retriever: MemoryRetriever,
         cfg: MemoryServiceConfig,
+        heartbeat_flush_interval_sec: float = 21600.0,
+        worker: DomainWorker | None = None,
     ) -> None:
         self._stm = stm
         self._ltm = ltm
@@ -108,9 +108,21 @@ class MemoryService:
         self._flush_engine = flush_engine
         self._retriever = retriever
         self._cfg = cfg
+        self._heartbeat_flush_interval_sec = heartbeat_flush_interval_sec
         self._last_heartbeat_flush_mono: float = 0.0
+        self._worker = worker
 
+    def set_worker(self, worker: DomainWorker | None) -> None:
+        self._worker = worker
 
+    def _enqueue_write(self, fn: Callable[[], None]) -> None:
+        if self._worker is not None:
+            self._worker.enqueue(fn)
+            return
+        if self._cfg.async_ingest:
+            threading.Thread(target=fn, daemon=True, name="memory-write").start()
+        else:
+            fn()
     # ── Factory ────────────────────────────────────────────────────────────────
 
     @property
@@ -127,6 +139,7 @@ class MemoryService:
         cfg: MemoryServiceConfig | None = None,
         embedder: EmbedderBackend | None = None,
         vector_store: VectorBackend | None = None,
+        soul_config=None,
     ) -> MemoryService:
         """从基础设施实例组装完整的 MemoryService。
 
@@ -150,6 +163,12 @@ class MemoryService:
         """
         if cfg is None:
             cfg = MemoryServiceConfig.load_default()
+
+        if soul_config is None:
+            raise ValueError("MemoryService.build 需要 soul_config，请由 SoulService 注入")
+
+        sc = soul_config
+        hb_flush_sec = sc.memory_heartbeat_flush_interval_sec
 
         stm = ShortTermMemoryManager(
             redis_client,
@@ -175,7 +194,11 @@ class MemoryService:
             embedder=embedder,
             vector_store=vector_store,
         )
-        return cls(stm, ltm, turn_writer, rumination_writer, narrative_writer, flush_engine, retriever, cfg)
+        return cls(
+            stm, ltm, turn_writer, rumination_writer, narrative_writer,
+            flush_engine, retriever, cfg,
+            heartbeat_flush_interval_sec=hb_flush_sec,
+        )
 
     # ── Resolve / Ruminate（反刍：memory 内部闭环）────────────────────────────
 
@@ -232,16 +255,16 @@ class MemoryService:
         persona_snapshot
             PersonaManager.all_blocks() 渲染后的字符串（可选）
         """
-        if self._cfg.async_ingest:
-            t = threading.Thread(
-                target=self._safe_ingest_turn,
-                args=(question, answer, persona_snapshot),
-                daemon=True,
-                name="memory-ingest-turn",
-            )
-            t.start()
-        else:
-            self._safe_ingest_turn(question, answer, persona_snapshot)
+        self._enqueue_write(
+            lambda: self._safe_ingest_turn(question, answer, persona_snapshot)
+        )
+
+    def enqueue_flush(self) -> None:
+        """STM → LTM 归档（入 memory-worker 队列）。"""
+        self._enqueue_write(self._safe_flush)
+
+    def _safe_flush(self) -> None:
+        self.flush()
 
     def ingest_heartbeat(
         self,
@@ -318,9 +341,6 @@ class MemoryService:
         """叙事写入接口（unit 对象直传版）→ NarrativeMemory → LTM。
 
         当调用方已在内存中持有 MemoryUnit 列表时使用此方法，避免二次读 DB。
-        典型场景：LifeManager 在 run_daily_review() 期间已检索了相关 unit。
-
-        参数
         ----
         source_units
             参与叙事编织的 MemoryUnit 实例列表
@@ -375,6 +395,16 @@ class MemoryService:
         )
         self._stm.put(mem)
         return mem
+
+    def retract_experience(self, life_event_id: str) -> bool:
+        """从 STM 撤回与 ``ExperienceUnit.id`` 关联的条目（交会折叠 supersede 时调用）。"""
+        if not life_event_id:
+            return False
+        for unit in self._stm.list_all():
+            if unit.life_event_id == life_event_id:
+                self._stm.delete(unit.id)
+                return True
+        return False
 
     # ── Lifecycle interface ────────────────────────────────────────────────────
 
@@ -472,16 +502,107 @@ class MemoryService:
             self._stm.on_recall(uid)   # 内联：Redis pipeline，极轻
 
         if ltm_ids:
-            threading.Thread(
-                target=self._ltm_on_recall_batch,
-                args=(ltm_ids,),
-                daemon=True,
-                name="memory-recall-feedback",
-            ).start()
+            self._enqueue_write(lambda: self._ltm_on_recall_batch(ltm_ids))
 
         # ── 渲染 MemoryBlock ───────────────────────────────────────────────────
         entries = [s.render_line() for s in scored]
         return MemoryBlock(label="记忆参考", entries=entries)
+
+    def search(self, mode: str, **kwargs) -> list[dict]:
+        """对外检索接口：recent / semantic / by_valence / by_field / hybrid。"""
+        from agent.soul.memory.codec import scored_to_dict
+        from agent.soul.memory.unit import Valence
+
+        m = mode.strip().lower()
+        retriever = self._retriever
+
+        if m in ("recent", "timeline"):
+            scored = retriever.recent(
+                limit=int(kwargs.get("limit", kwargs.get("top_k", 10))),
+                memory_type=kwargs.get("memory_type"),
+                include_stm=bool(kwargs.get("include_stm", True)),
+                include_ltm=bool(kwargs.get("include_ltm", True)),
+            )
+        elif m == "semantic":
+            scored = retriever.semantic(
+                query=str(kwargs["query"]),
+                top_k=int(kwargs.get("top_k", 10)),
+            )
+        elif m == "by_valence":
+            valence = Valence(str(kwargs.get("valence", "neutral")))
+            scored = retriever.by_valence(
+                valence=valence,
+                limit=int(kwargs.get("limit", kwargs.get("top_k", 10))),
+                emotion_hint=str(kwargs.get("emotion_hint", "")),
+                include_stm=bool(kwargs.get("include_stm", True)),
+                include_ltm=bool(kwargs.get("include_ltm", True)),
+            )
+        elif m == "by_field":
+            valence_raw = kwargs.get("valence")
+            valence = Valence(str(valence_raw)) if valence_raw else None
+            scored = retriever.by_field(
+                memory_type=kwargs.get("memory_type"),
+                valence=valence,
+                chapter=kwargs.get("chapter"),
+                source_id=kwargs.get("source_id"),
+                emotion_contains=kwargs.get("emotion_contains"),
+                created_after=kwargs.get("created_after"),
+                created_before=kwargs.get("created_before"),
+                limit=int(kwargs.get("limit", 20)),
+            )
+        elif m in ("hybrid", "smart", "recall"):
+            valence_raw = kwargs.get("valence")
+            valence = Valence(str(valence_raw)) if valence_raw else None
+            scored = retriever.hybrid(
+                query=str(kwargs.get("query", "")),
+                top_k=int(kwargs.get("top_k", self._cfg.recall_top_k)),
+                valence=valence,
+                memory_type=kwargs.get("memory_type"),
+                w_relevance=float(kwargs.get("w_relevance", 0.6)),
+                w_activation=float(kwargs.get("w_activation", 0.4)),
+            )
+        else:
+            raise ValueError(
+                f"unknown memory search mode: {mode!r} "
+                "(expected recent|semantic|by_valence|by_field|hybrid)"
+            )
+
+        return [scored_to_dict(s) for s in scored]
+
+    # ── Heartbeat: 受控反刍 ───────────────────────────────────────────────────
+
+    def heartbeat_ruminate(self) -> dict:
+        """轻量反刍 API：wander(1) + ruminate(1)，不串联 Persona/Life。
+
+        心跳默认定时任务已升级为完整 wander 演化（见 HeartbeatOrchestrator._run_wander）；
+        本方法保留供测试或直接 API 调用。
+        """
+        wandered = self._retriever.wander(n=1)
+        if not wandered:
+            return {"wandered": 0, "ruminated": 0}
+
+        su = wandered[0]
+        if su.unit.MEMORY_TYPE not in ("factual", "reconstructive"):
+            return {
+                "wandered": 1,
+                "ruminated": 0,
+                "skipped_type": su.unit.MEMORY_TYPE,
+                "unit_id": su.unit.id,
+            }
+
+        ru = self.ruminate(
+            su.unit.id,
+            trigger="心跳反刍",
+            emotional_context="",
+        )
+        out: dict = {
+            "wandered": 1,
+            "ruminated": 1 if ru is not None else 0,
+            "unit_id": su.unit.id,
+        }
+        if ru is not None:
+            out["reconstructed_id"] = ru.id
+        return out
 
     # ── Bridge: MemoryHeartbeatPort ───────────────────────────────────────────
 
@@ -518,7 +639,7 @@ class MemoryService:
 
         flushed_count = 0
         now_m = time.monotonic()
-        if now_m - self._last_heartbeat_flush_mono >= _HEARTBEAT_FLUSH_INTERVAL_SEC:
+        if now_m - self._last_heartbeat_flush_mono >= self._heartbeat_flush_interval_sec:
             flushed_count = self.flush().flushed
             self._last_heartbeat_flush_mono = now_m
 

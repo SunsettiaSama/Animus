@@ -6,6 +6,8 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from config.storage import StorageConfig
+
 
 @dataclass
 class HeartbeatTickResult:
@@ -17,6 +19,7 @@ class HeartbeatTickResult:
 
 class HeartbeatTickLog:
     def __init__(self, scheduler_dir: str) -> None:
+        scheduler_dir = StorageConfig().resolve_scheduler_dir(scheduler_dir)
         self._path = os.path.join(scheduler_dir, "heartbeat_log.jsonl")
         self._lock = threading.Lock()
         os.makedirs(scheduler_dir, exist_ok=True)

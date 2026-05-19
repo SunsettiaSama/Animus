@@ -4,8 +4,7 @@
 ----
 AgentService 将以下四个组件组装成一个 start()/stop() 生命周期单元：
 
-    HeartbeatModule  — 定期读取 HEARTBEAT.md，通过 LLM precheck 决定是否需要
-                       主动介入（escalate → SubAgentRunner）
+    HeartbeatModule  — 周期性执行 Soul checklist（memory/life/persona 编排）
     TaskRunner       — 执行调度任务（实现 TaskExecutorProtocol）
     SchedulerEngine  — 顶层调度门面，内含 TemporalClock（独立 daemon 线程）；
                        时钟驱动任务分发 + 心跳 tick
@@ -20,7 +19,7 @@ AgentService 将以下四个组件组装成一个 start()/stop() 生命周期单
 
     AgentService.start()
         ├─ 创建 SchedulerEngine（传入 task_runner + heartbeat）
-        ├─ 回注 engine 到 heartbeat._checker 和 task_runner._engine
+        ├─ 回注 engine 到 heartbeat 和 task_runner._engine
         └─ engine.start() → TemporalClock.start()
 
 状态机：idle → running → stopped
@@ -75,8 +74,7 @@ class AgentService:
     scheduler_cfg:
         完整 SchedulerConfig；None 时使用 make_default_scheduler_config 生成默认配置。
     llm_service:
-        可选，提供 get_aux_llm(name) 接口（如 AppLLMService）；
-        HeartbeatChecker precheck 时优先从此处取 auxiliary LLM。
+        可选，提供 get_aux_llm(name) 接口（如 AppLLMService）。
     notify_fn:
         调度任务完成后的通知回调 (task, answer) -> None。
     long_term:
@@ -84,7 +82,7 @@ class AgentService:
     timeline:
         时间线实例，供 TaskRunner 追加事件。
     journal:
-        WorkJournal 实例，供 TaskRunner / HeartbeatChecker 写入运行日志。
+        WorkJournal 实例，供 TaskRunner 写入运行日志。
     channel_router:
         ChannelRouter 实例，供主动通知投递到对话频道。
     life_manager:
@@ -92,7 +90,9 @@ class AgentService:
     persona_manager:
         可选的 PersonaManager；用于日终回顾取静态画像，并向 HeartbeatCoreService 注册 wander 漂移端口。
     memory_service:
-        可选的 MemoryService；向 HeartbeatCoreService 注册记忆 wander.tick 端口。
+        可选的 MemoryService；已废弃，请改用 soul_service。
+    soul_service:
+        Soul 顶层服务；Heartbeat 经编排器向 life/memory/persona 分发待办。
     """
 
     def __init__(
@@ -108,6 +108,7 @@ class AgentService:
         life_manager: Any = None,
         persona_manager: Any = None,
         memory_service: Any = None,
+        soul_service: Any = None,
     ) -> None:
         from agent.soul.heartbeat.profiles import make_default_scheduler_config
         from agent.soul.heartbeat.module import HeartbeatModule
@@ -137,20 +138,17 @@ class AgentService:
         self._heartbeat: HeartbeatModule = HeartbeatModule(
             cfg=scheduler_cfg.heartbeat,
             scheduler_dir=scheduler_cfg.scheduler_dir,
-            llm_service=llm_service,
             llm_cfg_path=llm_cfg_path,
             scheduler_engine=None,  # start() 后补 wire
             scheduler_cfg=scheduler_cfg,
-            journal=journal,
-            channel_router=channel_router,
+            soul_config=soul_service.config if soul_service is not None else None,
         )
-        if life_manager is not None:
-            self._heartbeat.set_life_manager(life_manager)
+        self._soul_service = soul_service
+        if soul_service is not None:
+            self._heartbeat.set_soul_service(soul_service)
 
         self._persona_manager = persona_manager
         self._memory_service = memory_service
-        if persona_manager is not None:
-            self._heartbeat.set_persona_manager(persona_manager)
 
         self._engine: "SchedulerEngine | None" = None
         self._core_heartbeat: Any = None
@@ -183,11 +181,13 @@ class AgentService:
             heartbeat=self._heartbeat,
         )
 
-        # 补 wire：HeartbeatChecker 和 TaskRunner 都需要 engine 引用
-        self._heartbeat._checker._scheduler_engine = self._engine
+        self._heartbeat.set_scheduler_engine(self._engine)
         self._task_runner._engine = self._engine
 
         self._engine.start()
+        if self._soul_service is not None and not self._soul_service.is_running:
+            self._soul_service.start()
+            self._heartbeat.set_soul_service(self._soul_service)
         if self._scheduler_cfg.heartbeat.core_service_enabled:
             from agent.soul.heartbeat.core_service import HeartbeatCoreService
 
@@ -196,12 +196,6 @@ class AgentService:
                 llm_service=self._llm_service,
                 llm_cfg_path=self._llm_cfg_path,
             )
-            if self._memory_service is not None:
-                self._core_heartbeat.set_memory_port(self._memory_service)
-            if self._persona_manager is not None:
-                self._core_heartbeat.set_persona_port(self._persona_manager)
-            if self._heartbeat._life_manager is not None:
-                self._core_heartbeat.set_life_port(self._heartbeat._life_manager)
             self._core_heartbeat.start()
 
         self._state = "running"
@@ -217,6 +211,8 @@ class AgentService:
         if self._core_heartbeat is not None:
             self._core_heartbeat.stop()
             self._core_heartbeat = None
+        if self._soul_service is not None and self._soul_service.is_running:
+            self._soul_service.stop()
         self._engine.stop()
         self._state = "stopped"
         logger.info("[AgentService] stopped")
@@ -287,19 +283,22 @@ class AgentService:
             llm_cfg_path=self._llm_cfg_path,
             scheduler_engine=self._engine,
             notify_fn=notify_fn,
+            soul=self._soul_service,
         )
 
     def force_heartbeat(self) -> "HeartbeatTickResult":
         """立即执行一次心跳检查（同步，在调用线程运行）。"""
         return self._heartbeat.tick()
 
-    def update_heartbeat_file(self, content: str) -> None:
-        """覆盖 HEARTBEAT.md 内容，下次 tick 时生效。"""
-        self._heartbeat.write_file(content)
-
-    def read_heartbeat_file(self) -> str:
-        """读取当前 HEARTBEAT.md 内容。"""
-        return self._heartbeat.read_file()
+    def set_soul_service(self, soul: Any) -> None:
+        """运行时注入 SoulService（如 WebUI 在 TaoLoop 初始化后接线）。"""
+        self._soul_service = soul
+        soul.wire_agent_service(self)
+        if self._state == "running" and not soul.is_running:
+            soul.start()
+        self._heartbeat.set_soul_service(soul)
+        if self._engine is not None:
+            self._heartbeat.set_scheduler_engine(self._engine)
 
     # ── 调度器代理（便捷接口）─────────────────────────────────────────────────
 

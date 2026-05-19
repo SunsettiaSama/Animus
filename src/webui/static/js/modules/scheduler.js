@@ -633,10 +633,6 @@ function _calDotClasses(statuses) {
 function _wireHeartbeatPanel() {
   document.getElementById('btn-sched-hb-refresh')?.addEventListener('click', () => renderHeartbeatPanel());
 
-  document.getElementById('btn-sched-hb-load')?.addEventListener('click', () => _loadHbFile());
-
-  document.getElementById('btn-sched-hb-save')?.addEventListener('click', () => _saveHbFile());
-
   document.getElementById('btn-hb-trigger-now')?.addEventListener('click', async () => {
     const btn = document.getElementById('btn-hb-trigger-now');
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
@@ -648,37 +644,6 @@ function _wireHeartbeatPanel() {
     if (btn) { btn.disabled = false; btn.textContent = '▶ Now'; }
     setTimeout(() => renderHeartbeatPanel(), 1500);
   });
-
-  _loadHbFile();
-}
-
-async function _loadHbFile() {
-  const ta  = document.getElementById('sched-hb-content');
-  const msg = document.getElementById('sched-hb-file-msg');
-  if (!ta) return;
-  const res = await fetch(PATHS.scheduler.heartbeatFile)
-    .then(r => r.ok ? r.json() : null).catch(() => null);
-  if (res?.content !== undefined) {
-    ta.value = res.content;
-    if (msg) msg.textContent = '';
-  } else {
-    if (msg) msg.textContent = '未能加载文件（引擎尚未就绪？）';
-  }
-}
-
-async function _saveHbFile() {
-  const ta  = document.getElementById('sched-hb-content');
-  const msg = document.getElementById('sched-hb-file-msg');
-  if (!ta) return;
-  const res = await fetch(PATHS.scheduler.heartbeatFile, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: ta.value }),
-  }).then(r => r.json()).catch(() => null);
-  if (msg) {
-    msg.textContent = res?.ok ? '已保存 ✓' : '保存失败';
-    if (res?.ok) setTimeout(() => { msg.textContent = ''; }, 2000);
-  }
 }
 
 export async function renderHeartbeatPanel() {

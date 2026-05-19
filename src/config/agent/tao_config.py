@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from config.storage import StorageConfig
+from config.storage import StorageConfig, resolve_cache_path
 from config.agent.memory.memory_config import MemoryConfig
 from config.agent.persona_config import PersonaConfig
 from config.agent.prompt_config import PromptConfig
@@ -41,9 +41,16 @@ class TaoConfig:
             self.memory.medium_term.memory_dir = self.storage.memory_dir
         if not self.memory.long_term.memory_dir:
             self.memory.long_term.memory_dir = self.storage.memory_dir
-        if not self.memory.milestone.milestone_dir:
-            self.memory.milestone.milestone_dir = self.storage.milestones_dir
-        if not self.persona.persona_dir:
-            self.persona.persona_dir = self.storage.persona_dir
+        milestone = getattr(self.memory, "milestone", None)
+        if milestone is not None and not milestone.milestone_dir:
+            milestone.milestone_dir = self.storage.milestones_dir
+        self.persona.persona_dir = resolve_cache_path(
+            self.persona.persona_dir,
+            default=self.storage.persona_dir,
+        )
+        if self.scheduler is not None:
+            self.scheduler.scheduler_dir = self.storage.resolve_scheduler_dir(
+                self.scheduler.scheduler_dir
+            )
         if not self.trace.trace_dir:
             self.trace.trace_dir = self.storage.traces_dir

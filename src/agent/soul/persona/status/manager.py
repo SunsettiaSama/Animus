@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import threading
 from datetime import datetime, timezone
 
 from config.agent.persona_config import PersonaConfig
@@ -19,7 +18,7 @@ class StatusManager:
 
     两条输入通道
     ────────────
-    1. record_interaction()  每轮对话轻量缓冲，不调用 LLM
+    1. record_interaction()  每轮对话轻量缓冲 + 可选 medium_term 摘要，不调用 LLM
     2. receive_life_context() life 层故事背景接口，可主动触发 texture 更新
 
     texture 更新策略
@@ -52,6 +51,7 @@ class StatusManager:
         # ── 缓冲区 ────────────────────────────────────────────────────────────
         self._interaction_buffer: list[str] = []
         self._life_context: str = ""
+        self._medium_term_context: str = ""
 
         # ── 合成器 ────────────────────────────────────────────────────────────
         self._synthesizer: StatusSynthesizer | None = (
@@ -77,16 +77,24 @@ class StatusManager:
 
     # ── 输入通道 1：每轮交互缓冲（轻量，不调用 LLM）────────────────────────
 
-    def record_interaction(self, question: str, answer: str) -> None:
+    def record_interaction(
+        self,
+        question: str,
+        answer: str,
+        *,
+        medium_term_context: str = "",
+    ) -> None:
         """每轮对话后调用：将交互摘要写入缓冲区，达到频率时触发 texture 合成。
 
-        不调用 LLM，只做轻量文本记录。
+        medium_term_context  近期对话窗口摘要（ReAct MTM），供合成时感知话题连续性。
         """
         summary = f"用户：{question[:80]}"
         if answer:
             summary += f" | 回应：{answer[:80]}"
         self._interaction_buffer.append(summary)
         self._turn_count += 1
+        if medium_term_context.strip():
+            self._medium_term_context = medium_term_context.strip()
 
         if (
             self._synthesizer is not None
@@ -115,7 +123,11 @@ class StatusManager:
     def _synthesize_texture(self) -> None:
         if self._synthesizer is None:
             return
-        if not self._interaction_buffer and not self._life_context:
+        if (
+            not self._interaction_buffer
+            and not self._life_context
+            and not self._medium_term_context
+        ):
             return
         if self._profile is None:
             return
@@ -125,6 +137,7 @@ class StatusManager:
             profile=self._profile,
             interaction_buffer=list(self._interaction_buffer),
             life_context=self._life_context,
+            medium_term_context=self._medium_term_context,
         )
         if new_state is not self._emotional:
             self._emotional = new_state
@@ -158,12 +171,7 @@ class StatusManager:
         self._emotional_store.save(self._emotional)
 
         if signal.intensity >= 0.3 and self._synthesizer is not None and _profile is not None:
-            threading.Thread(
-                target=self._async_synthesize,
-                args=(_profile,),
-                daemon=True,
-                name="status-signal-synth",
-            ).start()
+            self._async_synthesize(_profile)
 
     def _async_synthesize(self, profile) -> None:
         new_state = self._synthesizer.synthesize(
@@ -171,6 +179,7 @@ class StatusManager:
             profile=profile,
             interaction_buffer=list(self._interaction_buffer),
             life_context=self._life_context,
+            medium_term_context=self._medium_term_context,
         )
         if new_state is not self._emotional:
             self._emotional = new_state
@@ -194,4 +203,5 @@ class StatusManager:
         self._emotional = EmotionalState()
         self._interaction_buffer.clear()
         self._life_context = ""
+        self._medium_term_context = ""
         self._turn_count = 0

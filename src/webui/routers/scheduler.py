@@ -396,28 +396,6 @@ def scheduler_journal_get(date: str | None = None):
     }
 
 
-@router.get("/api/scheduler/heartbeat-file")
-def heartbeat_file_get():
-    eng = _scheduler_engine()
-    if eng is None:
-        return JSONResponse(status_code=503, content={"error": "Scheduler not initialized."})
-    content = eng.heartbeat.read_file()
-    return {"content": content}
-
-
-class HeartbeatFileBody(BaseModel):
-    content: str
-
-
-@router.put("/api/scheduler/heartbeat-file")
-def heartbeat_file_put(body: HeartbeatFileBody):
-    eng = _scheduler_engine()
-    if eng is None:
-        return JSONResponse(status_code=503, content={"error": "Scheduler not initialized."})
-    eng.heartbeat.write_file(body.content)
-    return {"ok": True}
-
-
 @router.get("/api/scheduler/heartbeat-log")
 def heartbeat_log_get(n: int = 50):
     eng = _scheduler_engine()

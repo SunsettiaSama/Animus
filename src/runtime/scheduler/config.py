@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from config.storage import StorageConfig, resolve_cache_path
 from runtime.scheduler.heartbeat_config import HeartbeatConfig
 
 
@@ -39,8 +40,12 @@ class SchedulerConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> SchedulerConfig:
+        default_scheduler_dir = StorageConfig().scheduler_dir
         inst = cls(
-            scheduler_dir=d.get("scheduler_dir", ".react/scheduler"),
+            scheduler_dir=resolve_cache_path(
+                str(d.get("scheduler_dir") or ""),
+                default=default_scheduler_dir,
+            ),
             poll_interval=float(d.get("poll_interval", 1.0)),
             llm_cfg_path=d.get("llm_cfg_path", "config/llm_core/config.yaml"),
             proactive_enabled=bool(d.get("proactive_enabled", True)),

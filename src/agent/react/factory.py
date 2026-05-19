@@ -69,12 +69,18 @@ def build_conv_loop(
     tool_descriptions = state.tool_manager.primary_descriptions(primary_tools)
     category_summary  = state.tool_manager.category_summary()
 
+    persona_cfg = _load_persona_config()
+    db_cfg = None
+    if persona_cfg.enabled:
+        from config.infra.db_config import DBConfig
+        db_cfg = DBConfig.load_default()
+
     cfg = TaoConfig(
         max_steps=max_steps,
         storage=state.cache,
         prompt=PromptConfig(lang=lang),
         memory=_load_memory_config(),
-        persona=_load_persona_config(),
+        persona=persona_cfg,
         knowledge=state.kb_cfg if enable_kb else None,
         scheduler=SchedulerConfig(
             scheduler_dir=state.cache.scheduler_dir,
@@ -82,6 +88,7 @@ def build_conv_loop(
         ),
         agent=SubAgentConfig(llm_cfg_path=state.llm_config_yaml),
         flow=FlowConfig(),
+        db=db_cfg,
     )
 
     # Prefer the caller-supplied global engine; fall back to per-loop creation via cfg.scheduler.
@@ -98,5 +105,6 @@ def build_conv_loop(
         risk_gate=risk_gate,
         scheduler_engine=_sched_engine,
         reply_target=reply_target,
+        llm_service=state.llm_service,
     )
     return ConvLoop(tao)

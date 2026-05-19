@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from agent.adapters.fastapi_react import create_react_router
 from agent.adapters.fastapi_chat import create_chat_router
-from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe
+from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe, soul
 from routers.infra import router as infra_router
 from state import get_state
 
@@ -55,6 +55,7 @@ for _r in [
     plan.router,
     benchmark.router,
     probe.router,
+    soul.router,
 ]:
     app.include_router(_r)
 
@@ -141,10 +142,11 @@ def _startup():
         if _sched_yaml.exists():
             with open(_sched_yaml, encoding="utf-8") as _f:
                 _sched_dict = _yaml.safe_load(_f) or {}
+            _sched_dict.pop("scheduler_dir", None)
             sch_cfg = SchedulerConfig.from_dict({
+                **_sched_dict,
                 "scheduler_dir": state.cache.scheduler_dir,
                 "llm_cfg_path": state.llm_config_yaml,
-                **_sched_dict,
             })
         else:
             sch_cfg = SchedulerConfig(
@@ -167,6 +169,7 @@ def _startup():
         )
         _agent_service.start()
         state.scheduler_engine = _agent_service.engine
+        state.agent_service = _agent_service
         print("[webui] Global scheduler engine started via AgentService (TemporalClock thread)")
 
         from agent.adapters.react_bridge import do_react_init

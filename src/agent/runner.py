@@ -43,6 +43,7 @@ class SubAgentRunner:
         reply_target=None,
         scheduler_engine=None,
         comm_rate_cfg=None,
+        soul=None,
     ) -> dict:
         from config.llm_core.config import LLMConfig
         from config.agent.tao_config import TaoConfig
@@ -65,6 +66,12 @@ class SubAgentRunner:
             resolved_tools = pkg_tools + [t for t in profile.tools if t not in pkg_tools]
 
         tool_descriptions = tool_manager.primary_descriptions(resolved_tools)
+        if soul is not None:
+            from agent.soul.handlers.tao.tools import merge_profile_soul_tool_descriptions
+            merge_profile_soul_tool_descriptions(profile.tools, tool_descriptions)
+            if not profile.tools:
+                from agent.soul.handlers.tao.tools import soul_tool_descriptions
+                tool_descriptions.update(soul_tool_descriptions())
         category_summary = tool_manager.category_summary()
 
         tao_cfg = TaoConfig(
@@ -84,6 +91,7 @@ class SubAgentRunner:
             reply_target=reply_target,
             scheduler_engine=scheduler_engine,
             comm_rate_cfg=comm_rate_cfg,
+            soul_service=soul,
         )
 
         full_instruction = (
@@ -91,6 +99,7 @@ class SubAgentRunner:
         )
 
         steps_log: list[str] = []
+        steps: list[dict] = []
         answer = ""
         for event in tao.stream(full_instruction):
             if event_callback is not None:
@@ -98,12 +107,20 @@ class SubAgentRunner:
             if isinstance(event, StepEvent):
                 obs_preview = event.observation[:200] if event.observation else ""
                 steps_log.append(f"[{event.action}] {obs_preview}")
+                steps.append({
+                    "index": event.index,
+                    "thought": event.thought,
+                    "action": event.action,
+                    "action_input": event.action_input,
+                    "observation": event.observation,
+                })
             if isinstance(event, FinishEvent):
                 answer = event.answer
         tao.post_process()
 
         return {
             "answer": answer,
-            "step_count": len(steps_log),
+            "step_count": len(steps),
             "steps_log": steps_log,
+            "steps": steps,
         }

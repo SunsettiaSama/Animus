@@ -148,7 +148,7 @@ _simple_stubs = {
     "agent.react.action.executor":    dict(ActionExecutor=MagicMock()),
     "agent.react.action.risk.gate":   dict(RiskGate=MagicMock()),
     "agent.react.action.risk.level":  dict(RiskLevel=MagicMock(), OperationRisk=MagicMock()),
-    "agent.react.action.tools.impl.memory_recall": dict(MemoryRecallAction=MagicMock()),
+    "agent.soul.handlers.tao.tools.memory_search": dict(SoulMemorySearchAction=MagicMock()),
     "agent.react.action.tools.impl.knowledge_hybrid_search": dict(KnowledgeHybridSearchAction=MagicMock()),
     "agent.react.action.tools.impl.knowledge_save": dict(KnowledgeSaveAction=MagicMock()),
     "agent.react.action.tools.impl.knowledge_list": dict(KnowledgeListAction=MagicMock()),

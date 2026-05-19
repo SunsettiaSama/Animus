@@ -4,6 +4,14 @@ import os
 from dataclasses import dataclass
 
 
+def resolve_cache_path(path: str, *, default: str) -> str:
+    """空串、`.`、`./` 视为未配置，回退到 ``default``（通常为 ``.react/...``）。"""
+    normalized = (path or "").strip()
+    if not normalized or normalized in {".", "./"}:
+        return default
+    return normalized
+
+
 @dataclass
 class StorageConfig:
     root: str = ".react"
@@ -71,3 +79,12 @@ class StorageConfig:
     @property
     def merged_dir(self) -> str:
         return os.path.join(self.root, "train", "merged")
+
+    def resolve_scheduler_dir(self, scheduler_dir: str) -> str:
+        return resolve_cache_path(scheduler_dir, default=self.scheduler_dir)
+
+    def resolve_persona_dir(self, persona_dir: str) -> str:
+        return resolve_cache_path(persona_dir, default=self.persona_dir)
+
+    def resolve_life_dir(self, life_dir: str) -> str:
+        return resolve_cache_path(life_dir, default=self.life_dir)

@@ -145,9 +145,9 @@ class FactualMemory(MemoryUnit):
 
     MEMORY_TYPE = "factual"
 
-    fact:           str       # 客观事实（从 LedgerEvent / NarrativeEvent.description 派生或直接复制）
+    fact:           str       # 客观事实（从 ExperienceUnit / Chronicle 派生或直接复制）
     perception:     str       # Agent 主观感知（自然语言叙述，无量化约束）
-    life_event_id:  str = ""  # 关联的 LedgerEvent.id 或 NarrativeEvent.id（可为空表示遗留数据）
+    life_event_id:  str = ""  # 关联的 ExperienceUnit.id（可为空表示遗留数据）
 
 
 # ── Reconstructive Memory ─────────────────────────────────────────────────────

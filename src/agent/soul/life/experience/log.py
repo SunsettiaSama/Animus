@@ -11,7 +11,11 @@ _DEFAULT_WINDOW_HOURS = 2
 
 
 class ExperienceLog:
-    """时间窗口热存储——append-only JSONL，自然衰减，窗口外的体验由 purge_old 清仓。"""
+    """体验热存储——以本地 JSONL 缓存为唯一事实源（非进程内内存）。
+
+    append-only 写入 ``life_dir/experience_hot.jsonl``，窗口外由 ``purge_old`` 清仓。
+    交会折叠时从文件中物理移除被 supersede 的参与单元，仅保留 collision unit。
+    """
 
     def __init__(self, life_dir: str, window_hours: int = _DEFAULT_WINDOW_HOURS) -> None:
         self._path = Path(life_dir) / _FILENAME
@@ -22,6 +26,28 @@ class ExperienceLog:
         with open(self._path, "a", encoding="utf-8") as f:
             f.write(json.dumps(unit.to_dict(), ensure_ascii=False) + "\n")
         return unit
+
+    def remove_by_ids(self, unit_ids: set[str]) -> int:
+        """从热存储中删除指定体验单元（交会折叠 supersede 参与方）。"""
+        if not unit_ids or not self._path.exists():
+            return 0
+        kept: list[str] = []
+        removed = 0
+        with open(self._path, encoding="utf-8") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                d = json.loads(raw)
+                if d.get("id") in unit_ids:
+                    removed += 1
+                    continue
+                kept.append(raw)
+        if removed:
+            with open(self._path, "w", encoding="utf-8") as f:
+                for line in kept:
+                    f.write(line + "\n")
+        return removed
 
     def recent(self, hours: int | None = None) -> list[ExperienceUnit]:
         if not self._path.exists():
