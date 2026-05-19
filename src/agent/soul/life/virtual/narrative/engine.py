@@ -35,20 +35,16 @@ _PLAN_SYSTEM = """\
 _COMPOSE_SCHEMA = """{"intention": "...", "context": "..."}"""
 
 
-def _format_memories(memories: list[str]) -> str:
-    if not memories:
-        return "（暂无）"
-    return "\n".join(f"- {m}" for m in memories[:8])
+def _format_continuity(lines: list[str]) -> str:
+    if not lines:
+        return "（无相关记忆，可自由发挥）"
+    return "\n".join(f"- {line}" for line in lines[:2])
 
 
-def _format_landmarks(landmarks: list[Landmark]) -> str:
-    if not landmarks:
+def _format_landmark_intents(intents: list[str]) -> str:
+    if not intents:
         return "（暂无）"
-    lines: list[str] = []
-    for lm in landmarks:
-        snippet = lm.narrative[:80] if lm.narrative else lm.intention
-        lines.append(f"- {snippet}")
-    return "\n".join(lines)
+    return "\n".join(f"- {line}" for line in intents[:3])
 
 
 def _format_unit(u: ExperienceUnit) -> str:
@@ -77,19 +73,18 @@ class NarrativeEngine:
         self,
         hint: str,
         profile_narrative: str = "",
-        recent_memories: list[str] | None = None,
+        continuity_memories: list[str] | None = None,
         dice: DiceResult | None = None,
     ) -> str:
-        """直接杜撰一段虚拟叙事（供心跳线索等场景调用）。"""
         dice_section = (
             f"\n命运骰基调（d100={dice.value}）：{dice.tendency}"
             if dice is not None
             else ""
         )
         prompt = (
-            f"你的近期自述：\n{profile_narrative or '（暂无）'}\n\n"
-            f"近期记忆：\n{_format_memories(recent_memories or [])}\n\n"
-            f"叙事线索：{hint.strip()}"
+            f"【身份与状态】\n{profile_narrative or '（暂无）'}\n\n"
+            f"【相关记忆（最多 2 条）】\n{_format_continuity(continuity_memories or [])}\n\n"
+            f"【叙事线索】\n{hint.strip()}"
             f"{dice_section}\n\n"
             "据此杜撰一段第一人称内在体验："
         )
@@ -99,19 +94,17 @@ class NarrativeEngine:
         self,
         landmark: Landmark,
         profile_narrative: str,
-        recent_memories: list[str],
-        recent_landmarks: list[Landmark],
+        continuity_memories: list[str],
         dice: DiceResult,
     ) -> str:
         context = landmark.context.strip()
-        context_section = f"\n背景：{context}" if context else ""
+        context_section = f"\n补充背景：{context}" if context else ""
         prompt = (
-            f"你的近期自述：\n{profile_narrative or '（暂无）'}\n\n"
-            f"近期记忆：\n{_format_memories(recent_memories)}\n\n"
-            f"近期已完成的地标经历：\n{_format_landmarks(recent_landmarks)}\n\n"
-            f"你预约了此刻要经历的事：{landmark.intention}"
+            f"【身份与状态】\n{profile_narrative or '（暂无）'}\n\n"
+            f"【相关记忆（最多 2 条）】\n{_format_continuity(continuity_memories)}\n\n"
+            f"【本刻预约】\n{landmark.intention}"
             f"{context_section}\n\n"
-            f"命运骰（d100={dice.value}）：{dice.tendency}\n\n"
+            f"【命运骰 d100={dice.value}】\n{dice.tendency}\n\n"
             "写一段第一人称经历，描述你此刻如何度过这个预约时刻："
         )
         return self._generate(prompt)
@@ -119,13 +112,13 @@ class NarrativeEngine:
     def generate(
         self,
         dice: DiceResult,
-        recent_memories: list[str],
+        continuity_memories: list[str],
         profile_narrative: str,
     ) -> str:
         prompt = (
-            f"你的近期自述：\n{profile_narrative or '（暂无）'}\n\n"
-            f"近期记忆：\n{_format_memories(recent_memories)}\n\n"
-            f"命运骰（d100={dice.value}）：{dice.tendency}\n\n"
+            f"【身份与状态】\n{profile_narrative or '（暂无）'}\n\n"
+            f"【相关记忆（最多 2 条）】\n{_format_continuity(continuity_memories)}\n\n"
+            f"【命运骰 d100={dice.value}】\n{dice.tendency}\n\n"
             "没有预设计划——一件意外的事在此刻发生了。"
             "杜撰这段意外经历的第一人称叙事："
         )
@@ -134,15 +127,13 @@ class NarrativeEngine:
     def compose_landmark_intent(
         self,
         profile_narrative: str,
-        recent_memories: list[str],
-        recent_landmarks: list[Landmark],
+        recent_landmark_intents: list[str],
     ) -> dict | None:
-        """LLM 仅生成地标内容（意图 + 背景），不含触发时间。"""
         prompt = (
-            f"你的近期自述：\n{profile_narrative or '（暂无）'}\n\n"
-            f"近期记忆：\n{_format_memories(recent_memories)}\n\n"
-            f"近期已完成的地标：\n{_format_landmarks(recent_landmarks)}\n\n"
-            f"为 agent 构思下一个内在体验时刻，输出 JSON：\n{_COMPOSE_SCHEMA}"
+            f"【身份与状态】\n{profile_narrative or '（暂无）'}\n\n"
+            f"【近期已预约并完成的地标意图（勿重复）】\n"
+            f"{_format_landmark_intents(recent_landmark_intents)}\n\n"
+            f"构思下一个不同的内在体验时刻，输出 JSON：\n{_COMPOSE_SCHEMA}"
         )
         raw = self._llm.generate_messages(
             [SystemMessage(content=_PLAN_SYSTEM), HumanMessage(content=prompt)]

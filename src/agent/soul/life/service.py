@@ -66,10 +66,9 @@ class LifeService(DomainWorker):
     def enqueue_wander_experience(
         self,
         result: MemoryHeartbeatResult,
-        profile_narrative: str,
     ) -> None:
         self.enqueue(
-            lambda: self._virtual.process_wander_experience(result, profile_narrative)
+            lambda: self._virtual.process_wander_experience(result)
         )
 
     def enqueue_scheduler_digest(self, tasks_text: str) -> None:
@@ -81,11 +80,11 @@ class LifeService(DomainWorker):
     def update_context(
         self,
         profile_narrative: str = "",
-        recent_memories: list[str] | None = None,
+        continuity_memories: list[str] | None = None,
     ) -> None:
         self._virtual.update_context(
             profile_narrative=profile_narrative,
-            recent_memories=recent_memories,
+            continuity_memories=continuity_memories,
         )
 
     def set_filler(self, filler) -> None:
@@ -104,6 +103,7 @@ class LifeService(DomainWorker):
         valence_delta: float = 0.0,
         arousal_delta: float = 0.0,
         activated_memory_ids: list[str] | None = None,
+        proactive_intent_id: str = "",
     ) -> None:
         self.enqueue(lambda: self._anchor.record_user_turn(
             session_id=session_id,
@@ -114,6 +114,7 @@ class LifeService(DomainWorker):
             valence_delta=valence_delta,
             arousal_delta=arousal_delta,
             activated_memory_ids=activated_memory_ids,
+            proactive_intent_id=proactive_intent_id,
         ))
 
     def enqueue_story_beat(

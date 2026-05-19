@@ -404,7 +404,12 @@ class SoulService:
         return self._life_handler
 
     def _wire_workers(self) -> None:
+        from agent.soul.narrative_context_bridge import SoulNarrativeContextSupplier
+
         self._workers.register_life(self.life.api.worker)
         self.memory.set_worker(self._workers.memory)
         self.persona.set_worker(self._workers.persona)
         self.life.api.set_memory_port(self.memory.api)
+        self.life.api.set_narrative_context_supplier(
+            SoulNarrativeContextSupplier(self)
+        )

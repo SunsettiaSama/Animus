@@ -75,7 +75,6 @@ class InboundRecorder:
             proactive_intent_id=proactive_intent_id,
         ))
         self._append_chronicle(unit, user_text, agent_reply)
-        self._orchestrator.ingest(unit)
         return unit
 
     def _append_chronicle(

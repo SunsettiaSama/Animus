@@ -9,6 +9,7 @@ from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
 
 from ..experience.builder import ExperienceBuilder
 from ..experience.unit import ExperienceActionKind, ExperienceUnit
+from ..narrative_context import NarrativeContextSupplier, NarrativePurpose, NarrativePurpose
 from .chronicle import VirtualChronicleStore
 from .journal.dice import DiceResult, roll_d100
 from .journal.filler import LandmarkFiller, NullLandmarkFiller
@@ -50,7 +51,8 @@ class VirtualLayer:
         )
         self._surprise_launcher = SurpriseLauncher()
         self._profile_narrative = ""
-        self._recent_memories: list[str] = []
+        self._continuity_memories: list[str] = []
+        self._context_supplier: NarrativeContextSupplier | None = None
 
     @property
     def builder(self) -> ExperienceBuilder:
@@ -73,8 +75,8 @@ class VirtualLayer:
         return self._profile_narrative
 
     @property
-    def recent_memories(self) -> list[str]:
-        return self._recent_memories
+    def continuity_memories(self) -> list[str]:
+        return self._continuity_memories
 
     @property
     def surprise_probability(self) -> float:
@@ -95,15 +97,37 @@ class VirtualLayer:
     def set_surprise_generator(self, generator: SurpriseGenerator) -> None:
         self._surprise_generator = generator
 
+    def set_narrative_context_supplier(
+        self, supplier: NarrativeContextSupplier | None
+    ) -> None:
+        self._context_supplier = supplier
+
+    def apply_narrative_context(
+        self,
+        portrait: str,
+        continuity: list[str],
+    ) -> None:
+        self._profile_narrative = portrait
+        self._continuity_memories = continuity
+
+    def ensure_narrative_context(
+        self,
+        purpose: NarrativePurpose,
+        *,
+        query: str = "",
+    ) -> None:
+        if self._context_supplier is not None:
+            self._context_supplier.refresh(self, purpose, query=query)
+
     def update_context(
         self,
         profile_narrative: str = "",
-        recent_memories: list[str] | None = None,
+        continuity_memories: list[str] | None = None,
     ) -> None:
         if profile_narrative:
             self._profile_narrative = profile_narrative
-        if recent_memories is not None:
-            self._recent_memories = recent_memories
+        if continuity_memories is not None:
+            self._continuity_memories = continuity_memories
 
     def save_journal(self) -> None:
         self._journal_store.save(self._journal)
@@ -120,13 +144,13 @@ class VirtualLayer:
         self.save_journal()
         return True
 
-    def compose_landmark(self, profile_narrative: str) -> dict | None:
+    def compose_landmark(self) -> dict | None:
+        self.ensure_narrative_context(NarrativePurpose.compose)
         if self._narrative is None:
             return None
         return self._narrative.compose_landmark_intent(
-            profile_narrative=profile_narrative,
-            recent_memories=self._recent_memories,
-            recent_landmarks=self._journal.recent_done(),
+            profile_narrative=self._profile_narrative,
+            recent_landmark_intents=self._journal.recent_done_intent_lines(3),
         )
 
     def count_landmarks_written_since(self, since_iso: str) -> int:
@@ -181,13 +205,16 @@ class VirtualLayer:
         if lm is None or lm.status == LandmarkStatus.done:
             return
 
+        query = lm.intention.strip()
+        if lm.context.strip():
+            query = f"{query} {lm.context.strip()}"
+        self.ensure_narrative_context(NarrativePurpose.fill, query=query)
         lm.mark_processing()
         dice = roll_d100()
         narrative = self._filler.fill(
             landmark=lm,
             profile_narrative=self._profile_narrative,
-            recent_memories=self._recent_memories,
-            recent_landmarks=self._journal.recent_done(),
+            continuity_memories=self._continuity_memories,
             dice=dice,
         )
         unit = self.record_story_beat(
@@ -215,10 +242,11 @@ class VirtualLayer:
                 "triggered": False,
                 "probability": round(self._surprise_launcher.probability, 3),
             }
+        self.ensure_narrative_context(NarrativePurpose.surprise)
         dice = roll_d100()
         narrative = self._surprise_generator.generate(
             dice=dice,
-            recent_memories=self._recent_memories,
+            continuity_memories=self._continuity_memories,
             profile_narrative=self._profile_narrative,
         )
         unit = self.record_surprise(
@@ -236,15 +264,18 @@ class VirtualLayer:
     def process_wander_experience(
         self,
         result: MemoryHeartbeatResult,
-        profile_narrative: str,
     ) -> None:
         """Wander 反刍信号 → 虚拟叙事 beat（在 LifeService 线程内执行）。"""
+        portrait = self._profile_narrative
         hint = (result.signal.narrative_hint or "").strip()
         if hint:
+            self.ensure_narrative_context(NarrativePurpose.fabricate, query=hint)
+            portrait = self._profile_narrative
             narrative_hint = (
                 self._narrative.fabricate(
                     hint=f"心跳反刍线索：{hint}",
-                    profile_narrative=profile_narrative,
+                    profile_narrative=portrait,
+                    continuity_memories=self._continuity_memories,
                 )
                 if self._narrative is not None
                 else f"心跳反刍线索：{hint}"
@@ -261,10 +292,13 @@ class VirtualLayer:
             seed = (
                 f"心跳漂移节点：烈度 {result.signal.intensity:.2f}，主导情绪 {dom}"
             )
+            self.ensure_narrative_context(NarrativePurpose.fabricate, query=seed)
+            portrait = self._profile_narrative
             narrative_hint = (
                 self._narrative.fabricate(
                     hint=seed,
-                    profile_narrative=profile_narrative,
+                    profile_narrative=portrait,
+                    continuity_memories=self._continuity_memories,
                 )
                 if self._narrative is not None
                 else seed

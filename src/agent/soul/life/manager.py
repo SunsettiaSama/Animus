@@ -13,6 +13,7 @@ from .experience import ExperienceBuilder, ExperienceLog
 from .orchestrator import ExperienceOrchestrator, MemoryIngestPort
 from .anchor.chronicle import AnchorChronicleStore
 from .virtual.chronicle import VirtualChronicleStore
+from .narrative_context import NarrativeContextSupplier
 from .virtual.narrative import NarrativeEngine
 from .virtual.review import build_life_context_from_chronicle
 from .service import LifeService
@@ -126,6 +127,11 @@ class LifeManager:
     def set_memory_port(self, memory_port: MemoryIngestPort) -> None:
         self._orchestrator._memory_port = memory_port
 
+    def set_narrative_context_supplier(
+        self, supplier: NarrativeContextSupplier | None
+    ) -> None:
+        self._virtual.set_narrative_context_supplier(supplier)
+
     def stop(self) -> None:
         self._life_service.stop()
 
@@ -136,7 +142,7 @@ class LifeManager:
         return self._virtual.count_landmarks_written_since(since_iso)
 
     def compose_landmark(self) -> dict | None:
-        return self._virtual.compose_landmark(self._profile.narrative)
+        return self._virtual.compose_landmark()
 
     def trigger_due_landmarks(self) -> dict:
         return self._life_service.trigger_due_landmarks()
@@ -168,6 +174,16 @@ class LifeManager:
             salience=salience,
         )
 
+    def close_interaction(self, session_id: str = "tao") -> None:
+        self._life_service.enqueue(
+            lambda: self._anchor.close_interaction(session_id)
+        )
+
+    def close_idle_interactions(self) -> None:
+        self._life_service.enqueue(
+            lambda: self._anchor.close_idle_interactions()
+        )
+
     def record_scheduler_digest_from_heartbeat(self, tasks_text: str) -> None:
         self._life_service.enqueue_scheduler_digest(tasks_text)
 
@@ -196,12 +212,10 @@ class LifeManager:
 
     def apply_wander_experience(self, result: MemoryHeartbeatResult) -> None:
         """Wander 体验入账；须在 life-worker 线程内执行。"""
-        self._virtual.process_wander_experience(result, self._profile.narrative)
+        self._virtual.process_wander_experience(result)
 
     def load_profile(self) -> LifeProfile:
         self._profile = self._profile_store.load()
-        if self._profile.narrative:
-            self._life_service.update_context(profile_narrative=self._profile.narrative)
         return self._profile
 
     def recent_chronicle(self, *, days: int = 7, tail: int = 50) -> list[dict]:

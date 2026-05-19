@@ -76,6 +76,19 @@ class LifeJournal:
         done.sort(key=lambda lm: lm.created_at, reverse=True)
         return done[:n]
 
+    def recent_done_intent_lines(self, n: int = 3) -> list[str]:
+        """仅返回已完成地标的意图行（compose 防重复，不含 narrative 正文）。"""
+        lines: list[str] = []
+        for lm in self.recent_done(n):
+            line = lm.intention.strip()
+            if not line:
+                continue
+            ctx = lm.context.strip()
+            if ctx:
+                line = f"{line}（{ctx}）"
+            lines.append(line)
+        return lines
+
     def today_landmarks(self) -> list[Landmark]:
         today = datetime.now(timezone.utc).date().isoformat()
         return [lm for lm in self._landmarks if lm.created_at[:10] == today]

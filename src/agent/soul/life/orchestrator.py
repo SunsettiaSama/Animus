@@ -135,8 +135,8 @@ class ExperienceOrchestrator:
         self._retract_participants_from_stm(units)
         self._retract_chronicles(participant_ids)
 
-        has_user = any(u.source == "user" for u in units)
-        user_units = [u for u in units if u.source == "user"]
+        has_user = any(u.source in ("user", "interaction") for u in units)
+        user_units = [u for u in units if u.source in ("user", "interaction")]
         ref = user_units[0] if user_units else units[0]
         top = max(units, key=lambda u: u.feeling.salience)
 

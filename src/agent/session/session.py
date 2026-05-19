@@ -35,6 +35,9 @@ class AgentSession:
             daemon=True,
         )
         self._thread.start()
+        tao = getattr(conv_loop, "tao_loop", None)
+        if tao is not None and hasattr(tao, "set_life_interaction_session"):
+            tao.set_life_interaction_session(session_id)
         logger.info("[AgentSession] %r started", session_id)
 
     # ── Public API ─────────────────────────────────────────────────────────────
@@ -63,6 +66,7 @@ class AgentSession:
         self._conv_loop.restore(messages)
 
     def reset(self) -> None:
+        """清空对话历史并闭合当前 Anchor 交互会话（内化入 life-worker）。"""
         self._conv_loop.reset()
 
     def close(self) -> None:

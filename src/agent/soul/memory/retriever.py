@@ -371,6 +371,59 @@ class MemoryRetriever:
         candidates.sort(key=lambda s: s.final_score, reverse=True)
         return candidates[:top_k]
 
+    def continuity_for_narrative(
+        self,
+        query: str,
+        *,
+        top_k: int = 2,
+        candidate_k: int = 12,
+        min_relevance: float = 0.30,
+        min_final_score: float = 0.12,
+        max_score_gap: float = 0.20,
+        w_relevance: float = 0.7,
+        w_activation: float = 0.3,
+    ) -> list[ScoredUnit]:
+        """Life 叙事连续性：混合检索 + 重排后按相关度与分差筛选。
+
+        流程
+        ----
+        1. hybrid 拉 candidate_k 条并重排（语义 × 激活）
+        2. 首条 relevance 低于 min_relevance → 空（与任务无关则不注入）
+        3. 首条 final_score 低于 min_final_score → 空（降级模式保底）
+        4. 仅保留 final_score >= top - max_score_gap 的条目，最多 top_k 条
+        """
+        q = query.strip()
+        if not q:
+            return []
+
+        ranked = self.hybrid(
+            q,
+            top_k=candidate_k,
+            w_relevance=w_relevance,
+            w_activation=w_activation,
+        )
+        if not ranked:
+            return []
+
+        has_semantic = self._embedder is not None and self._vector_store is not None
+        if has_semantic and ranked[0].relevance < min_relevance:
+            return []
+        if ranked[0].final_score < min_final_score:
+            return []
+
+        top = ranked[0].final_score
+        floor = top - max_score_gap
+        picked: list[ScoredUnit] = []
+        for s in ranked:
+            if s.final_score < floor:
+                break
+            if has_semantic and s.relevance < min_relevance:
+                continue
+            picked.append(s)
+            if len(picked) >= top_k:
+                break
+        return picked
+
     # ── 6. 心理漂移式检索（走神/闪现）───────────────────────────────────────
 
     def wander(

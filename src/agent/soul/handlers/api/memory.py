@@ -96,6 +96,10 @@ class MemoryHandler:
             results = service.search(mode, **payload)
             return {"mode": mode, "count": len(results), "results": results}
 
+        if action == MemoryAction.NARRATIVE_CONTINUITY:
+            lines = service.continuity_for_narrative(str(payload.get("query", "")))
+            return {"count": len(lines), "lines": lines}
+
         if action == MemoryAction.RUMINATE:
             unit = service.ruminate(**payload)
             return unit_to_dict(unit) if unit is not None else None

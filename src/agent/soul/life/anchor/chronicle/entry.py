@@ -18,6 +18,8 @@ class AnchorChronicleKind(str, Enum):
     """锚点层 Chronicle 条目类型（现实交互）。"""
 
     user_turn = "user_turn"
+    interaction_open = "interaction_open"
+    interaction_close = "interaction_close"
     collision = "collision"
     scheduler_digest = "scheduler_digest"
 

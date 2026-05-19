@@ -82,6 +82,14 @@ class PersonaHandler:
         if action == PersonaAction.GET_SNAPSHOT:
             return manager.snapshot()
 
+        if action == PersonaAction.PORTRAIT_REVISION:
+            return manager.portrait_revision()
+
+        if action == PersonaAction.PORTRAIT_FOR_NARRATIVE:
+            max_chars = int(payload.get("max_chars", 1200))
+            compact = bool(payload.get("compact", False))
+            return manager.portrait_for_narrative(max_chars=max_chars, compact=compact)
+
         if action == PersonaAction.RECORD_INTERACTION:
             manager.evolve(
                 question=str(payload.get("question", "")),

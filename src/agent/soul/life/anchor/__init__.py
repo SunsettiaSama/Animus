@@ -8,6 +8,13 @@ from .chronicle import (
     ChronicleStore,
 )
 from .inbound import InboundRecorder, SchedulerDigestRecorder
+from .internalization import (
+    AnchorInternalizer,
+    InteractionBuffer,
+    InteractionSession,
+    InteractionTurn,
+    synthesize_interaction_unit,
+)
 from .outbound import (
     InMemoryProactiveOutbound,
     ProactiveOutboundIntent,
@@ -31,6 +38,11 @@ __all__ = [
     "ChronicleStore",
     "InboundRecorder",
     "SchedulerDigestRecorder",
+    "AnchorInternalizer",
+    "InteractionBuffer",
+    "InteractionSession",
+    "InteractionTurn",
+    "synthesize_interaction_unit",
     "ProactiveOutboundIntent",
     "ProactiveOutboundPort",
     "InMemoryProactiveOutbound",

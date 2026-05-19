@@ -143,6 +143,49 @@ class PersonaManager:
             "attention_keywords": self.read_state().attention_keywords,
         }
 
+    def portrait_revision(self) -> str:
+        """Life 叙事引擎用：轻量版本指纹，画像未变时可跳过全量拉取。"""
+        emotional = self._status.emotional_state
+        profile_tag = self._profile.built_at or f"raw:{self._profile.name}"
+        return f"{profile_tag}|{self._self_concept.updated_at}|{emotional.updated_at}"
+
+    def portrait_for_narrative(
+        self,
+        max_chars: int = 1200,
+        *,
+        compact: bool = False,
+    ) -> str:
+        """Life 叙事引擎用：compact=填充实况；完整版=规划地标。"""
+        if compact:
+            parts: list[str] = []
+            narrative = self._self_concept.narrative.strip()
+            if narrative:
+                parts.append(narrative)
+            texture = self._status.emotional_state.texture.strip()
+            if texture:
+                parts.append(texture)
+            text = "\n\n".join(parts)
+            if not text:
+                text = self._profile.render()
+        else:
+            trait_hint = ""
+            if self._profile.core_traits:
+                trait_hint = "、".join(self._profile.core_traits[:4])
+            head = f"【{self._profile.name}】"
+            if trait_hint:
+                head += f" {trait_hint}"
+            parts = [head]
+            narrative = self._self_concept.narrative.strip()
+            if narrative:
+                parts.append(narrative)
+            texture = self._status.emotional_state.texture.strip()
+            if texture:
+                parts.append(texture)
+            text = "\n\n".join(parts)
+        if max_chars > 0 and len(text) > max_chars:
+            text = text[-max_chars:]
+        return text
+
     # ── 每轮演化（状态层）────────────────────────────────────────────────────
 
     def evolve(

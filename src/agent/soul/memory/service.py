@@ -508,6 +508,21 @@ class MemoryService:
         entries = [s.render_line() for s in scored]
         return MemoryBlock(label="记忆参考", entries=entries)
 
+    def continuity_for_narrative(self, query: str) -> list[str]:
+        """Life 叙事连续性：混合检索 + 分差筛选，返回最多 2 条 prompt 行。"""
+        q = query.strip()
+        if not q:
+            return []
+        scored = self._retriever.continuity_for_narrative(
+            q,
+            top_k=self._cfg.narrative_continuity_top_k,
+            candidate_k=self._cfg.narrative_continuity_candidate_k,
+            min_relevance=self._cfg.narrative_continuity_min_relevance,
+            min_final_score=self._cfg.narrative_continuity_min_final_score,
+            max_score_gap=self._cfg.narrative_continuity_max_score_gap,
+        )
+        return [s.render_line(max_content=100) for s in scored]
+
     def search(self, mode: str, **kwargs) -> list[dict]:
         """对外检索接口：recent / semantic / by_valence / by_field / hybrid。"""
         from agent.soul.memory.codec import scored_to_dict
