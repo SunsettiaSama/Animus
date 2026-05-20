@@ -13,7 +13,7 @@ from .experience import ExperienceBuilder, ExperienceLog
 from .orchestrator import ExperienceOrchestrator, MemoryIngestPort
 from .anchor.chronicle import AnchorChronicleStore
 from .virtual.chronicle import VirtualChronicleStore
-from .narrative_context import NarrativeContextSupplier
+from .narrative_context import NarrativeContextSupplier, StoryWorldContextSupplier
 from .virtual.narrative import NarrativeEngine
 from .virtual.review import build_life_context_from_chronicle
 from .service import LifeService
@@ -94,6 +94,14 @@ class LifeManager:
     ) -> bool:
         return self._virtual.add_landmark(intention, scheduled_at, context)
 
+    def plan_landmark(
+        self,
+        intention: str,
+        scheduled_at: str,
+        context: str = "",
+    ) -> dict | None:
+        return self._virtual.plan_landmark(intention, scheduled_at, context)
+
     def enqueue_add_landmark(
         self,
         intention: str,
@@ -132,6 +140,12 @@ class LifeManager:
     ) -> None:
         self._virtual.set_narrative_context_supplier(supplier)
 
+    def set_story_world_context_supplier(
+        self,
+        supplier: StoryWorldContextSupplier | None,
+    ) -> None:
+        self._virtual.set_story_world_context_supplier(supplier)
+
     def stop(self) -> None:
         self._life_service.stop()
 
@@ -148,7 +162,18 @@ class LifeManager:
         return self._life_service.trigger_due_landmarks()
 
     def tick_surprise(self, elapsed_sec: float) -> dict:
-        return self._life_service.tick_surprise(elapsed_sec=elapsed_sec)
+        return self.run_surprise_tick(elapsed_sec)
+
+    def run_surprise_tick(self, elapsed_sec: float) -> dict:
+        return self._virtual.tick_surprise(elapsed_sec=elapsed_sec)
+
+    def fill_due_landmarks(self) -> list[dict]:
+        filled: list[dict] = []
+        for lm in list(self._virtual.due_landmarks()):
+            item = self._virtual.fill_landmark(lm.id)
+            if item is not None:
+                filled.append(item)
+        return filled
 
     def build_life_context(self, days: int = 1) -> LifeContextInput:
         return build_life_context_from_chronicle(
@@ -210,9 +235,9 @@ class LifeManager:
             lambda: self.apply_wander_experience(result)
         )
 
-    def apply_wander_experience(self, result: MemoryHeartbeatResult) -> None:
+    def apply_wander_experience(self, result: MemoryHeartbeatResult) -> list[dict]:
         """Wander 体验入账；须在 life-worker 线程内执行。"""
-        self._virtual.process_wander_experience(result)
+        return self._virtual.process_wander_experience(result)
 
     def load_profile(self) -> LifeProfile:
         self._profile = self._profile_store.load()

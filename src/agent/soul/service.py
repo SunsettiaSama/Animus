@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from config.agent.persona_config import PersonaConfig
 from config.storage import StorageConfig
@@ -16,6 +16,15 @@ from agent.soul.access import is_read_api_action
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
 from agent.soul.heartbeat.evolution import new_heartbeat_tick_id
 from agent.soul.heartbeat.orchestrator import HeartbeatOrchestrator
+from agent.soul.drive import (
+    CaptureEvent,
+    DriveContext,
+    DriveEvent,
+    DriveIngestResult,
+    DriveOutboundRequest,
+    DriveService,
+    Expectation,
+)
 from agent.soul.workers import SoulWorkers
 
 from .handlers.api.actions import LifeAction, MemoryAction, PersonaAction
@@ -27,6 +36,10 @@ from .handlers.tao.handler import BaseTaoHandler
 from .handlers.tao.persona import TaoPersonaHandler
 from .ports import LLMServicePort
 from .request import SoulChannel, SoulDomain, SoulRequest
+
+if TYPE_CHECKING:
+    from agent.soul.life.narrative_context import StoryWorldContextSupplier
+    from agent.soul.ports import ExternalOpportunitySupplier
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +97,10 @@ class SoulService:
         self._heartbeat: Any = None
         self._orchestrator: HeartbeatOrchestrator | None = None
         self._workers = SoulWorkers()
+        self._drive_service: DriveService | None = None
+        self._drive_outbound_handlers: list[Any] = []
+        self._story_world_context_supplier: StoryWorldContextSupplier | None = None
+        self._external_opportunity_supplier: ExternalOpportunitySupplier | None = None
 
     @property
     def config(self) -> SoulConfig:
@@ -128,6 +145,58 @@ class SoulService:
     @property
     def workers(self) -> SoulWorkers:
         return self._workers
+
+    @property
+    def drive(self) -> DriveService:
+        self._ensure_drive_service()
+        return self._drive_service
+
+    def register_drive_outbound_handler(
+        self,
+        handler: Any,
+    ) -> None:
+        """注册顶层回调：冲动突破限值后发起交互请求。"""
+        self._drive_outbound_handlers.append(handler)
+        self._ensure_drive_service()
+        self._drive_service.set_outbound_handler(self._emit_drive_outbound)
+
+    def set_story_world_context_supplier(
+        self,
+        supplier: StoryWorldContextSupplier | None,
+    ) -> None:
+        """注入顶层世界观引擎接口（供 life 虚拟编撰按需拉取背景）。"""
+        self._story_world_context_supplier = supplier
+        self._ensure_life_handler()
+        self.life.api.set_story_world_context_supplier(supplier)
+
+    def set_external_opportunity_supplier(
+        self,
+        supplier: ExternalOpportunitySupplier | None,
+    ) -> None:
+        """注入外界时机探测接口（供 heartbeat 定期扫描）。"""
+        self._external_opportunity_supplier = supplier
+
+    def ingest_drive_event(
+        self,
+        event: DriveEvent,
+        *,
+        line_open: bool = False,
+        proactive_intent_id: str = "",
+    ) -> DriveIngestResult:
+        """顶层边界事件注入（capture → transition → gate）。"""
+        self._require_running()
+        return self.drive.ingest(
+            event,
+            context=DriveContext(
+                line_open=line_open,
+                proactive_intent_id=proactive_intent_id,
+            ),
+        )
+
+    def capture_drive_evolution(self, event: CaptureEvent) -> DriveIngestResult:
+        """Soul 内部演化捕获（capture → 冲动累积 → gate → 顶层请求）。"""
+        self._require_running()
+        return self.drive.capture_evolution(event)
 
     def start(self) -> None:
         if self._state == "running":
@@ -222,7 +291,9 @@ class SoulService:
             return self.persona_tao.handle(request.action, request.payload)
         raise ValueError(f"unknown soul tao domain: {request.domain!r}")
 
-    def run_wander(self, drift_intensity_floor: float | None = None) -> MemoryHeartbeatResult:
+    def run_wander(
+        self, drift_intensity_floor: float | None = None
+    ) -> tuple[MemoryHeartbeatResult, list[dict]]:
         """跨域 wander pipeline：persona 读态 → memory tick → persona/life 异步入账。"""
         self._require_running()
         floor = (
@@ -246,10 +317,50 @@ class SoulService:
         self._workers.persona.enqueue(
             lambda: self.persona.api.apply_wander_result(result, floor)
         )
-        self._workers.life.enqueue(
+        story_beats = self._workers.life.submit(
             lambda: self.life.api.apply_wander_experience(result)
+        ).result()
+        return result, story_beats
+
+    def run_trigger_landmarks(self) -> list[dict]:
+        self._require_running()
+        return self._workers.life.submit(
+            lambda: self.life.api.fill_due_landmarks()
+        ).result()
+
+    def run_surprise_tick(self, elapsed_sec: float) -> dict:
+        self._require_running()
+        return self._workers.life.submit(
+            lambda: self.life.api.run_surprise_tick(elapsed_sec)
+        ).result()
+
+    def run_external_opportunity_scan(self, session_id: str = "tao") -> dict[str, Any]:
+        self._require_running()
+        supplier = self._external_opportunity_supplier
+        if supplier is None:
+            return {"checked": False, "reason": "no supplier", "triggered": False}
+
+        snap = self.drive.snapshot(session_id)
+        opportune = bool(supplier.is_opportune(
+            session_id=session_id,
+            impulse_level=snap.impulse_level,
+            expectation=snap.expectation.value,
+        ))
+        if not opportune:
+            return {"checked": True, "opportune": False, "triggered": False}
+
+        outbound = self.drive.flush_accumulated(
+            session_id=session_id,
+            source="external_opportunity_scan",
+            wait_reply=True,
+            expectation=Expectation.required,
         )
-        return result
+        return {
+            "checked": True,
+            "opportune": True,
+            "triggered": outbound is not None,
+            "session_id": session_id,
+        }
 
     def execute_plan_landmark(self) -> dict[str, Any]:
         """在 life-worker 线程内执行地标规划（compose + add）。"""
@@ -283,18 +394,21 @@ class SoulService:
             gap_rounds=cfg.landmark_write_gap_rounds,
             round_sec=cfg.landmark_trigger_interval_sec,
         )
-        ok = lm.add_landmark(
+        planned_event = lm.plan_landmark(
             intention=draft["intention"],
             scheduled_at=scheduled_at.isoformat(),
             context=draft.get("context", ""),
         )
+        ok = planned_event is not None
         return {
             "planned": bool(ok),
             "intention": draft["intention"],
+            "context": draft.get("context", ""),
             "scheduled_at": scheduled_at.isoformat(),
             "gap_rounds": cfg.landmark_write_gap_rounds,
             "trigger_round_sec": cfg.landmark_trigger_interval_sec,
             "written_in_window": written + (1 if ok else 0),
+            "subjective_event": planned_event or {},
         }
 
     # ── 对外查询接口（HTTP / 外部集成）────────────────────────────────────────
@@ -395,13 +509,28 @@ class SoulService:
 
     def _ensure_life_handler(self) -> LifeHandler:
         if self._life_handler is None:
+            self._ensure_drive_service()
             self._life_handler = LifeHandler(
                 life_dir=self._life_dir,
                 llm_service=self._llm_service,
                 llm_aux_name=self._cfg.life_llm_aux_name,
                 primary_llm=self._primary_llm,
             )
+            self._life_handler.api.set_story_world_context_supplier(
+                self._story_world_context_supplier
+            )
         return self._life_handler
+
+    def _ensure_drive_service(self) -> DriveService:
+        if self._drive_service is None:
+            self._drive_service = DriveService(
+                on_outbound_request=self._emit_drive_outbound,
+            )
+        return self._drive_service
+
+    def _emit_drive_outbound(self, request: DriveOutboundRequest) -> None:
+        for handler in self._drive_outbound_handlers:
+            handler(request)
 
     def _wire_workers(self) -> None:
         from agent.soul.narrative_context_bridge import SoulNarrativeContextSupplier
@@ -412,4 +541,7 @@ class SoulService:
         self.life.api.set_memory_port(self.memory.api)
         self.life.api.set_narrative_context_supplier(
             SoulNarrativeContextSupplier(self)
+        )
+        self.life.api.set_story_world_context_supplier(
+            self._story_world_context_supplier
         )

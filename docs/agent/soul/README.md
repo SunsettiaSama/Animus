@@ -8,7 +8,6 @@ Soul 子系统在 ReAct 推理环之外承载 **持久记忆单元（Redis/MySQL
 
 | 文档 | 说明 |
 |---|---|
-| [design/interaction-anchor-principles.md](../design/interaction-anchor-principles.md) | **交互锚点与期待状态机**（顶层原则，待实现） |
 | [memory/README.md](./memory/README.md) | `MemoryService`，STM/LTM，检索与冲刷 |
 | [heartbeat/README.md](./heartbeat/README.md) | `HeartbeatModule`、`TaskRunner` 与 `SchedulerEngine` 对接 |
 | [life/README.md](./life/README.md) | `LifeManager`（账本 / 叙事 / `LifeService` 体验栈）与日终综合 |
@@ -20,6 +19,11 @@ Soul 子系统在 ReAct 推理环之外承载 **持久记忆单元（Redis/MySQL
 
 ```
 src/agent/soul/
+├── drive/
+│   ├── fsm/           # 状态（期待 + 冲动）
+│   ├── capture/       # 事件捕获：顶层注入 + Soul 内部演化
+│   ├── transition/    # 纯期待 FSM 转移
+│   └── gate/          # 限值 → SoulService → 顶层请求
 ├── memory/
 ├── heartbeat/
 ├── life/

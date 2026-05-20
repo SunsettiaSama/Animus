@@ -16,8 +16,10 @@ if TYPE_CHECKING:
     from .worker import SoulEvolutionWorker
 
 from .checklist import ChecklistItem, ChecklistRegistry, default_checklist
+from .evolution_capture import EvolutionBeat, EvolutionCapture
 
 logger = logging.getLogger(__name__)
+_DRIVE_SCAN_EXTERNAL_ACTION = "scan_external_opportunity"
 
 _HEAVY_ITEM_KEYS: frozenset[tuple[str, str]] = frozenset({
     (SoulDomain.memory.value, MemoryAction.WANDER),
@@ -142,8 +144,14 @@ class HeartbeatOrchestrator:
 
         if item.domain == SoulDomain.memory.value and item.action == MemoryAction.WANDER:
             return self._run_wander(item)
+        if item.domain == "drive" and item.action == _DRIVE_SCAN_EXTERNAL_ACTION:
+            return self._run_scan_external(item)
         if item.domain == SoulDomain.life.value and item.action == LifeAction.PLAN_LANDMARK:
             return self._run_plan_landmark(item)
+        if item.domain == SoulDomain.life.value and item.action == LifeAction.TRIGGER_LANDMARKS:
+            return self._run_trigger_landmarks(item)
+        if item.domain == SoulDomain.life.value and item.action == LifeAction.TICK_SURPRISE:
+            return self._run_tick_surprise(item)
         if item.channel == SoulChannel.tao.value and (
             item.domain == SoulDomain.persona.value
             and item.action == TaoPersonaAction.RUN_DAILY_REFLECTION
@@ -179,6 +187,20 @@ class HeartbeatOrchestrator:
         detail = life_worker.submit(
             lambda: self._soul.execute_plan_landmark()
         ).result()
+        capture_report = None
+        if detail.get("planned"):
+            subjective_event = dict(detail.get("subjective_event", {}))
+            if subjective_event.get("hint"):
+                capture_report = EvolutionCapture.after_landmark_filled(
+                    self._soul,
+                    self._beats_from_dicts([subjective_event]),
+                )
+        if capture_report is not None:
+            detail = {
+                **detail,
+                "capture_events": len(capture_report.events),
+                "capture_outbound": capture_report.outbound_count,
+            }
         return ChecklistRunResult(
             item.id,
             item.domain,
@@ -188,7 +210,12 @@ class HeartbeatOrchestrator:
         )
 
     def _run_wander(self, item: ChecklistItem) -> ChecklistRunResult:
-        result = self._soul.run_wander()
+        result, story_beats = self._soul.run_wander()
+        capture_report = EvolutionCapture.after_wander(
+            self._soul,
+            result,
+            self._beats_from_dicts(story_beats),
+        )
         return ChecklistRunResult(
             item.id,
             item.domain,
@@ -202,8 +229,83 @@ class HeartbeatOrchestrator:
                 "dominant_emotion": result.signal.dominant_emotion,
                 "flushed": result.flushed_count,
                 "narrative_triggered": result.narrative_triggered,
+                "story_beats": len(story_beats),
+                "capture_events": len(capture_report.events),
+                "capture_outbound": capture_report.outbound_count,
             },
         )
+
+    def _run_trigger_landmarks(self, item: ChecklistItem) -> ChecklistRunResult:
+        fills = self._soul.run_trigger_landmarks()
+        capture_report = EvolutionCapture.after_landmark_filled(
+            self._soul,
+            self._beats_from_dicts(fills),
+        )
+        return ChecklistRunResult(
+            item.id,
+            item.domain,
+            item.action,
+            True,
+            detail={
+                "filled": len(fills),
+                "capture_events": len(capture_report.events),
+                "capture_outbound": capture_report.outbound_count,
+            },
+        )
+
+    def _run_tick_surprise(self, item: ChecklistItem) -> ChecklistRunResult:
+        elapsed = float(item.payload.get("elapsed_sec", self._cfg.surprise_tick_interval_sec))
+        detail = self._soul.run_surprise_tick(elapsed)
+        capture_report = None
+        if detail.get("triggered"):
+            capture_report = EvolutionCapture.after_surprise(
+                self._soul,
+                hint=str(detail.get("narrative", "")),
+                salience=float(detail.get("salience", 0.5)),
+                emotion_text=str(detail.get("emotion_text", "")),
+                emotion_intensity=float(detail.get("emotion_intensity", 0.0)),
+                emotion_strength=str(detail.get("emotion_strength", "")),
+            )
+        if capture_report is not None:
+            detail = {
+                **detail,
+                "capture_events": len(capture_report.events),
+                "capture_outbound": capture_report.outbound_count,
+            }
+        return ChecklistRunResult(
+            item.id,
+            item.domain,
+            item.action,
+            True,
+            detail=detail,
+        )
+
+    def _run_scan_external(self, item: ChecklistItem) -> ChecklistRunResult:
+        session_id = str(item.payload.get("session_id", "tao"))
+        detail = self._soul.run_external_opportunity_scan(session_id=session_id)
+        return ChecklistRunResult(
+            item.id,
+            item.domain,
+            item.action,
+            True,
+            detail=detail,
+        )
+
+    @staticmethod
+    def _beats_from_dicts(items: list[dict]) -> list[EvolutionBeat]:
+        return [
+            EvolutionBeat(
+                hint=str(item.get("hint", "")),
+                salience=float(item.get("salience", 0.4)),
+                trigger=str(item.get("trigger", "")),
+                source=str(item.get("source", "")),
+                share_desire=str(item.get("share_desire", "")),
+                emotion_text=str(item.get("emotion_text", "")),
+                emotion_intensity=float(item.get("emotion_intensity", 0.0)),
+                emotion_strength=str(item.get("emotion_strength", "")),
+            )
+            for item in items
+        ]
 
     def _run_persona_daily_reflection(self, item: ChecklistItem) -> ChecklistRunResult:
         lm = self._soul.life.api

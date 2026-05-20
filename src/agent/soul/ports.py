@@ -18,3 +18,15 @@ class BaseTaoServicePort(Protocol):
     """Base Tao 推理服务：走完整 ReAct 链，与模块 LLM 直调分离。"""
 
     def run(self, request: TaoRunRequest) -> TaoRunResult: ...
+
+
+class ExternalOpportunitySupplier(Protocol):
+    """顶层外界时机探测接口（可为空实现）。"""
+
+    def is_opportune(
+        self,
+        *,
+        session_id: str,
+        impulse_level: float,
+        expectation: str,
+    ) -> bool: ...

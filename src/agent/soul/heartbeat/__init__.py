@@ -10,7 +10,9 @@ from agent.soul.heartbeat.inject_mailbox import (
 )
 from agent.soul.heartbeat.core_service import HeartbeatCoreService
 from agent.soul.heartbeat.evolution import new_heartbeat_tick_id, run_wander_evolution_step
+from agent.soul.heartbeat.evolution_capture import EvolutionBeat, EvolutionCapture, EvolutionCaptureReport
 from agent.soul.heartbeat.orchestrator import HeartbeatOrchestrator, ChecklistRunResult
+from agent.soul.heartbeat.evolution_capture import EvolutionCapture, EvolutionBeat
 from agent.soul.heartbeat.worker import SoulEvolutionWorker
 
 __all__ = [
@@ -28,6 +30,9 @@ __all__ = [
     "HeartbeatOrchestrator",
     "ChecklistRunResult",
     "SoulEvolutionWorker",
+    "EvolutionBeat",
+    "EvolutionCapture",
+    "EvolutionCaptureReport",
     "new_heartbeat_tick_id",
     "run_wander_evolution_step",
 ]

@@ -36,3 +36,14 @@ class NarrativeContextSupplier(Protocol):
         *,
         query: str = "",
     ) -> None: ...
+
+
+class StoryWorldContextSupplier(Protocol):
+    """向上请求世界观背景，供虚拟叙事引擎注入。"""
+
+    def background(
+        self,
+        purpose: NarrativePurpose,
+        *,
+        query: str = "",
+    ) -> str: ...

@@ -15,7 +15,10 @@ def virtual_entry_from_unit(unit: ExperienceUnit) -> VirtualChronicleEntry | Non
         trigger = VirtualUnitTrigger.surprise.value
     elif unit.source == "narrative":
         trigger = ctx.trigger.value if ctx else VirtualUnitTrigger.fabricate.value
-        if trigger == VirtualUnitTrigger.landmark.value:
+        if trigger in (
+            VirtualUnitTrigger.landmark.value,
+            VirtualUnitTrigger.landmark_plan.value,
+        ):
             kind = VirtualChronicleKind.landmark
         elif trigger == VirtualUnitTrigger.wander.value:
             kind = VirtualChronicleKind.wander_beat

@@ -57,6 +57,14 @@ def default_checklist(cfg: SoulConfig | None = None) -> list[ChecklistItem]:
             interval_sec=c.memory_flush_interval_sec,
         ),
         ChecklistItem(
+            id="drive-external-scan",
+            domain="drive",
+            action="scan_external_opportunity",
+            trigger=ChecklistTrigger.interval,
+            interval_sec=900.0,
+            payload={"session_id": "tao"},
+        ),
+        ChecklistItem(
             id="persona-reflection",
             domain="persona",
             action=TaoPersonaAction.RUN_DAILY_REFLECTION,

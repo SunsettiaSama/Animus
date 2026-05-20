@@ -28,8 +28,6 @@ SubAgentProfile            （agent/profile.py）
 
 持久记忆单元、心跳驱动的重构与归档、生命叙事等位于 `agent/soul/`，与推理环内的 React 记忆并行。详见 [agent/soul/README.md](./soul/README.md)，记忆模块详见 [agent/soul/memory/README.md](./soul/memory/README.md)。
 
-**设计备忘（待实现）**：[design/interaction-anchor-principles.md](./design/interaction-anchor-principles.md) — 现实锚点 = 对话、期待驱动的会话状态机、ReAct 边界与出站管线 backlog。
-
 ---
 
 ## 目录结构
