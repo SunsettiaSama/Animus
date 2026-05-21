@@ -24,7 +24,7 @@ class MemoryProcessor:
     - medium_term：近期对话摘要窗口（会话情节记忆）
 
     长期记忆的读取由 memory_recall 工具主动触发；
-    长期记忆的写入由 MemoryService.ingest_turn() 在 post_process() 异步完成。
+    长期记忆的写入由 Life.record_turn → 体验擢升 → MemoryService.ingest_experience 完成。
     """
 
     def __init__(

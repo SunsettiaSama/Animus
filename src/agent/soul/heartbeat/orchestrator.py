@@ -7,8 +7,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from config.soul.config import SoulConfig
-from agent.soul.handlers.api.actions import LifeAction, MemoryAction
-from agent.soul.handlers.tao.actions import TaoPersonaAction
+from agent.soul.handlers.api.actions import LifeAction, MemoryAction, PersonaAction
 from agent.soul.request import SoulChannel, SoulDomain, SoulRequest
 
 if TYPE_CHECKING:
@@ -23,9 +22,9 @@ _DRIVE_SCAN_EXTERNAL_ACTION = "scan_external_opportunity"
 
 _HEAVY_ITEM_KEYS: frozenset[tuple[str, str]] = frozenset({
     (SoulDomain.memory.value, MemoryAction.WANDER),
-    (SoulDomain.memory.value, MemoryAction.FLUSH),
+    (SoulDomain.memory.value, MemoryAction.FORGET_SCAN),
     (SoulDomain.life.value, LifeAction.PLAN_LANDMARK),
-    (SoulDomain.persona.value, TaoPersonaAction.RUN_DAILY_REFLECTION),
+    (SoulDomain.persona.value, PersonaAction.RUN_MONTHLY_DRIFT),
 })
 
 
@@ -152,11 +151,6 @@ class HeartbeatOrchestrator:
             return self._run_trigger_landmarks(item)
         if item.domain == SoulDomain.life.value and item.action == LifeAction.TICK_SURPRISE:
             return self._run_tick_surprise(item)
-        if item.channel == SoulChannel.tao.value and (
-            item.domain == SoulDomain.persona.value
-            and item.action == TaoPersonaAction.RUN_DAILY_REFLECTION
-        ):
-            return self._run_persona_daily_reflection(item)
         if item.domain == SoulDomain.life.value and item.action == LifeAction.RECORD_SCHEDULER_DIGEST:
             tasks_text = self._format_recent_tasks()
             if not tasks_text.strip():
@@ -227,9 +221,11 @@ class HeartbeatOrchestrator:
                 "ruminated": len(result.ruminated_ids),
                 "intensity": result.signal.intensity,
                 "dominant_emotion": result.signal.dominant_emotion,
-                "flushed": result.flushed_count,
+                "flushed": result.forgotten_count,
+                "forgotten": result.forgotten_count,
                 "narrative_triggered": result.narrative_triggered,
                 "story_beats": len(story_beats),
+                "buffer_signals": len(result.buffer_candidates),
                 "capture_events": len(capture_report.events),
                 "capture_outbound": capture_report.outbound_count,
             },
@@ -306,25 +302,6 @@ class HeartbeatOrchestrator:
             )
             for item in items
         ]
-
-    def _run_persona_daily_reflection(self, item: ChecklistItem) -> ChecklistRunResult:
-        lm = self._soul.life.api
-        detail = self._soul.dispatch_tao(SoulRequest(
-            domain=SoulDomain.persona,
-            action=TaoPersonaAction.RUN_DAILY_REFLECTION,
-            payload={
-                "today_dialogue": lm.format_dialogue_digest(days=1),
-                "today_scheduler_tasks": self._format_recent_tasks(),
-            },
-            channel=SoulChannel.tao,
-        ))
-        return ChecklistRunResult(
-            item.id,
-            item.domain,
-            item.action,
-            bool(detail.get("ok")),
-            detail=detail,
-        )
 
     def _format_recent_tasks(self) -> str:
         if self._scheduler_engine is None:

@@ -52,6 +52,8 @@ def unit_to_dict(unit: MemoryUnit) -> dict[str, Any]:
     if isinstance(unit, FactualMemory):
         d["fact"]       = unit.fact
         d["perception"] = unit.perception
+        if unit.life_event_id:
+            d["meta"] = {**d["meta"], "life_event_id": unit.life_event_id}
     elif isinstance(unit, ReconstructiveMemory):
         d["source_id"]          = unit.source_id
         d["reconstructed_fact"] = unit.reconstructed_fact
@@ -91,10 +93,13 @@ def unit_from_dict(d: dict[str, Any]) -> MemoryUnit:
     }
 
     if cls is FactualMemory:
+        meta = common["meta"]
+        life_event_id = d.get("life_event_id") or meta.get("life_event_id") or ""
         return FactualMemory(
             **common,
             fact       = d.get("fact", ""),
             perception = d.get("perception", ""),
+            life_event_id=str(life_event_id),
         )
     if cls is ReconstructiveMemory:
         return ReconstructiveMemory(

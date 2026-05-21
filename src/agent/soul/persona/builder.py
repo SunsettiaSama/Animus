@@ -212,17 +212,20 @@ class ProfileBuilder:
     # ── Persistence helpers ────────────────────────────────────────────────────
 
     @staticmethod
+    def save_built_profile(profile: PersonaProfile, persona_dir: str) -> None:
+        """仅写入 built_profile.json。"""
+        d = Path(persona_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        bp_path = d / _BUILT_PROFILE_FILENAME
+        with open(bp_path, "w", encoding="utf-8") as f:
+            json.dump(profile.to_dict(), f, ensure_ascii=False, indent=2)
+
+    @staticmethod
     def save(result: BuildResult, persona_dir: str) -> None:
         """将 BuildResult 写入 persona_dir（built_profile.json + self_concept.json）。"""
         from agent.soul.persona.self_concept.store import SelfConceptStore
 
-        d = Path(persona_dir)
-        d.mkdir(parents=True, exist_ok=True)
-
-        bp_path = d / _BUILT_PROFILE_FILENAME
-        with open(bp_path, "w", encoding="utf-8") as f:
-            json.dump(result.profile.to_dict(), f, ensure_ascii=False, indent=2)
-
+        ProfileBuilder.save_built_profile(result.profile, persona_dir)
         SelfConceptStore(persona_dir).save(result.self_concept)
 
     @staticmethod

@@ -8,8 +8,8 @@ from config.agent.persona_config import PersonaConfig
 from config.storage import StorageConfig
 from config.soul.memory.service_config import MemoryServiceConfig
 from infra.db.mysql import MySQLClient
-from infra.db.redis import RedisClient
 from infra.llm import BaseLLM
+from infra.memory import MemoryInfraService
 
 from config.soul.config import SoulConfig
 from agent.soul.access import is_read_api_action
@@ -64,12 +64,12 @@ class SoulService:
         *,
         life_dir: str,
         persona_cfg: PersonaConfig,
-        redis_client: RedisClient,
         mysql_client: MySQLClient,
         llm_service: LLMServicePort | None = None,
         primary_llm: BaseLLM | None = None,
         cfg: SoulConfig | None = None,
         memory_cfg: MemoryServiceConfig | None = None,
+        memory_infra: MemoryInfraService | None = None,
         tao_handler: BaseTaoHandler | None = None,
     ) -> None:
         self._cfg = cfg or SoulConfig.load_default()
@@ -81,8 +81,8 @@ class SoulService:
         if _persona_dir != persona_cfg.persona_dir:
             persona_cfg = replace(persona_cfg, persona_dir=_persona_dir)
         self._persona_cfg = persona_cfg
-        self._redis_client = redis_client
         self._mysql_client = mysql_client
+        self._memory_infra = memory_infra
         self._llm_service = llm_service
         self._primary_llm = primary_llm
 
@@ -205,6 +205,7 @@ class SoulService:
             raise RuntimeError("SoulService 已 stop，请新建实例后再 start")
 
         self._ensure_memory_handler()
+        self.memory.api.init_infra()
         self._ensure_life_handler()
         self._ensure_persona_handler()
         self._ensure_persona_tao_handler()
@@ -247,7 +248,9 @@ class SoulService:
                 "heartbeat_scan_interval_sec": self._cfg.heartbeat_scan_interval_sec,
                 "memory_ruminate_interval_sec": self._cfg.memory_ruminate_interval_sec,
                 "wander_interval_sec": self._cfg.wander_interval_sec,
-                "persona_reflection_interval_sec": self._cfg.persona_reflection_interval_sec,
+                "persona_drift_day_of_month": self._cfg.persona_drift_day_of_month,
+                "persona_drift_at": self._cfg.persona_drift_at,
+                "persona_drift_interval_days": self._cfg.persona_drift_interval_days,
             },
             "workers": workers_status,
             "evolution_worker": evolution_status,
@@ -294,7 +297,9 @@ class SoulService:
     def run_wander(
         self, drift_intensity_floor: float | None = None
     ) -> tuple[MemoryHeartbeatResult, list[dict]]:
-        """跨域 wander pipeline：persona 读态 → memory tick → persona/life 异步入账。"""
+        """跨域 wander：memory tick → drive.affect → life。"""
+        from agent.soul.heartbeat.bridge import PersonaSnapshot
+
         self._require_running()
         floor = (
             drift_intensity_floor
@@ -302,10 +307,13 @@ class SoulService:
             else self._cfg.wander_drift_intensity_floor
         )
         tid = new_heartbeat_tick_id()
-        snap = self._workers.persona.submit(
-            lambda: self.persona.api.read_state()
-        ).result()
-        snap.tick_id = tid
+        drive_snap = self.drive.snapshot("tao")
+        persona_snap = self.persona.service.snapshot()
+        snap = PersonaSnapshot(
+            emotional_state=drive_snap.state.affect.texture or "",
+            attention_keywords=list(persona_snap.get("attention_keywords") or [])[:20],
+            tick_id=tid,
+        )
 
         result = self._workers.memory.submit(
             lambda: self.memory.api.tick(snap)
@@ -314,9 +322,12 @@ class SoulService:
         if result.signal.tick_id == "":
             result.signal.tick_id = tid
 
-        self._workers.persona.enqueue(
-            lambda: self.persona.api.apply_wander_result(result, floor)
+        self.drive.receive_heartbeat_signal(
+            result.signal,
+            session_id="tao",
+            intensity_floor=floor,
         )
+        self._record_persona_cluster_signals(result.buffer_candidates)
         story_beats = self._workers.life.submit(
             lambda: self.life.api.apply_wander_experience(result)
         ).result()
@@ -414,11 +425,14 @@ class SoulService:
     # ── 对外查询接口（HTTP / 外部集成）────────────────────────────────────────
 
     def query_persona(self) -> dict[str, Any]:
-        """只读 Persona 快照（→ dispatch GET_SNAPSHOT）。"""
-        return self.dispatch(SoulRequest(
+        """只读 Persona 快照 + Drive.affect。"""
+        snap = self.dispatch(SoulRequest(
             domain=SoulDomain.persona,
             action=PersonaAction.GET_SNAPSHOT,
         ))
+        self._ensure_drive_service()
+        snap["drive_affect"] = self.drive.snapshot("tao").state.affect.to_dict()
+        return snap
 
     def record_persona_interaction(
         self,
@@ -427,15 +441,31 @@ class SoulService:
         *,
         medium_term_context: str = "",
     ) -> dict[str, Any]:
-        """外部写入一轮对话，驱动 Persona 状态层缓冲（→ dispatch RECORD_INTERACTION）。"""
+        """兼容接口：轮级 persona 演化已移除，快变状态见 Drive.affect。"""
+        _ = (question, answer, medium_term_context)
+        return {
+            "ok": True,
+            "applied": False,
+            "reason": "persona turn evolution removed; use Drive.affect",
+        }
+
+    def reload_persona_profile(self) -> dict[str, Any]:
+        """热加载 persona_dir 下的 profile / built_profile / self_concept。"""
         return self.dispatch(SoulRequest(
             domain=SoulDomain.persona,
-            action=PersonaAction.RECORD_INTERACTION,
-            payload={
-                "question": question,
-                "answer": answer,
-                "medium_term_context": medium_term_context,
-            },
+            action=PersonaAction.RELOAD_PROFILE,
+        ))
+
+    def rebuild_persona_profile(
+        self,
+        *,
+        preserve_self_concept: bool = False,
+    ) -> dict[str, Any]:
+        """LLM 规范化 raw profile 并写盘；默认同时重置 self_concept。"""
+        return self.dispatch(SoulRequest(
+            domain=SoulDomain.persona,
+            action=PersonaAction.REBUILD_PROFILE,
+            payload={"preserve_self_concept": preserve_self_concept},
         ))
 
     def search_memory(self, mode: str = "hybrid", **kwargs: Any) -> dict[str, Any]:
@@ -444,6 +474,23 @@ class SoulService:
             domain=SoulDomain.memory,
             action=MemoryAction.SEARCH,
             payload={"mode": mode, **kwargs},
+        ))
+
+    def recall_memory(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        emotional_context: str = "",
+    ) -> dict[str, Any]:
+        """记忆 recall（→ dispatch RECALL）。"""
+        payload: dict[str, Any] = {"query": query, "emotional_context": emotional_context}
+        if top_k is not None:
+            payload["top_k"] = top_k
+        return self.dispatch(SoulRequest(
+            domain=SoulDomain.memory,
+            action=MemoryAction.RECALL,
+            payload=payload,
         ))
 
     def query_life_chronicle(self, *, days: int = 7, tail: int = 50) -> list[dict[str, Any]]:
@@ -497,13 +544,13 @@ class SoulService:
     def _ensure_memory_handler(self) -> MemoryHandler:
         if self._memory_handler is None:
             self._memory_handler = MemoryHandler(
-                redis_client=self._redis_client,
                 mysql_client=self._mysql_client,
                 llm_service=self._llm_service,
                 llm_aux_name=self._cfg.memory_llm_aux_name,
                 primary_llm=self._primary_llm,
                 cfg=self._memory_cfg,
                 soul_config=self._cfg,
+                memory_infra=self._memory_infra,
             )
         return self._memory_handler
 
@@ -524,6 +571,7 @@ class SoulService:
     def _ensure_drive_service(self) -> DriveService:
         if self._drive_service is None:
             self._drive_service = DriveService(
+                life_dir=self._life_dir,
                 on_outbound_request=self._emit_drive_outbound,
             )
         return self._drive_service
@@ -532,12 +580,22 @@ class SoulService:
         for handler in self._drive_outbound_handlers:
             handler(request)
 
+    def _record_persona_cluster_signals(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        """Memory.persona_clusters 元数据 → PersonaService.record_cluster_signals。"""
+        if not candidates:
+            return {"ok": True, "applied": 0, "signal_ids": []}
+        return self._workers.persona.submit(
+            lambda: self.persona.service.record_cluster_signals(candidates)
+        ).result()
+
     def _wire_workers(self) -> None:
         from agent.soul.narrative_context_bridge import SoulNarrativeContextSupplier
 
         self._workers.register_life(self.life.api.worker)
         self.memory.set_worker(self._workers.memory)
         self.persona.set_worker(self._workers.persona)
+        self.persona.set_memory_port(self.memory.api)
+        self.persona.set_embedder(self.memory.api.drift_embedder())
         self.life.api.set_memory_port(self.memory.api)
         self.life.api.set_narrative_context_supplier(
             SoulNarrativeContextSupplier(self)

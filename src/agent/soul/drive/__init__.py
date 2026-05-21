@@ -15,7 +15,10 @@ from .capture import (
     enqueue_share_event,
     fold_share_buffer,
 )
+from .affect import AffectAnchor, AffectState, EmotionalAnchor
+from .block import DriveAffectBlock
 from .expectation import Expectation
+from .store import DriveStateStore
 from .fsm import DriveContext, DriveEvent, DriveEventKind, DriveState
 from .gate import DriveGate, DriveGateConfig, DriveOutboundRequest
 from .share_desire import ShareDesire, share_desire_weight
@@ -48,6 +51,11 @@ __all__ = [
     "DriveState",
     "DriveTransitionResult",
     "EVOLUTION_KINDS",
+    "AffectAnchor",
+    "AffectState",
+    "DriveAffectBlock",
+    "DriveStateStore",
+    "EmotionalAnchor",
     "Expectation",
     "ShareBuffer",
     "ShareBufferEntry",

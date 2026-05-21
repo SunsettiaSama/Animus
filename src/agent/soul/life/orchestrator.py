@@ -29,7 +29,7 @@ class MemoryIngestPort(Protocol):
 
 
 class ExperienceOrchestrator:
-    """体验编排层：热存储 + STM 擢升 + 交会折叠 + 双 Chronicle 路由。
+    """体验编排层：热存储 + 记忆擢升 + 交会折叠 + 双 Chronicle 路由。
 
     Chronicle 路由约定
     ------------------
@@ -47,7 +47,7 @@ class ExperienceOrchestrator:
         *,
         anchor_chronicle: AnchorChroniclePort | None = None,
         chronicle_store: AnchorChroniclePort | None = None,
-        stm_ingest_threshold: float = 0.5,
+        memory_ingest_threshold: float = 0.5,
         collapser: ExperienceCollapser | None = None,
         collision_window_min: int = 30,
     ) -> None:
@@ -55,10 +55,10 @@ class ExperienceOrchestrator:
         self._memory_port = memory_port
         self._anchor_chronicle = anchor_chronicle or reality_chronicle or chronicle_store
         self._virtual_chronicle = virtual_chronicle
-        self._stm_ingest_threshold = stm_ingest_threshold
+        self._memory_ingest_threshold = memory_ingest_threshold
         self._collapser = collapser
         self._collision_window_sec = collision_window_min * 60
-        self._stm_ingested_ids: set[str] = set()
+        self._memory_ingested_ids: set[str] = set()
 
     @property
     def anchor_chronicle(self) -> AnchorChroniclePort | None:
@@ -94,8 +94,8 @@ class ExperienceOrchestrator:
         for unit in hot:
             if unit.source == "collision":
                 continue
-            if unit.is_salient(self._stm_ingest_threshold) and unit.id not in self._stm_ingested_ids:
-                self._promote_to_stm(unit)
+            if unit.is_salient(self._memory_ingest_threshold) and unit.id not in self._memory_ingested_ids:
+                self._promote_to_memory(unit)
                 promoted.append(unit)
         self._log.purge_old()
         return promoted
@@ -132,7 +132,7 @@ class ExperienceOrchestrator:
 
         participant_ids = {u.id for u in units}
         self._log.remove_by_ids(participant_ids)
-        self._retract_participants_from_stm(units)
+        self._retract_participants_from_memory(units)
         self._retract_chronicles(participant_ids)
 
         has_user = any(u.source in ("user", "interaction") for u in units)
@@ -167,13 +167,13 @@ class ExperienceOrchestrator:
 
         self._log.append(collision_unit)
         self._write_collision_chronicle(collision_unit, merged_text, has_user=has_user)
-        if collision_unit.is_salient(self._stm_ingest_threshold):
-            self._promote_to_stm(collision_unit)
+        if collision_unit.is_salient(self._memory_ingest_threshold):
+            self._promote_to_memory(collision_unit)
 
     def _finalize_single(self, unit: ExperienceUnit) -> None:
         self._route_chronicle(unit)
-        if unit.is_salient(self._stm_ingest_threshold):
-            self._promote_to_stm(unit)
+        if unit.is_salient(self._memory_ingest_threshold):
+            self._promote_to_memory(unit)
 
     def _route_chronicle(self, unit: ExperienceUnit) -> None:
         if is_reality_source(unit.source):
@@ -227,15 +227,15 @@ class ExperienceOrchestrator:
         if self._virtual_chronicle is not None:
             self._virtual_chronicle.retract_by_experience_ids(experience_ids)
 
-    def _promote_to_stm(self, unit: ExperienceUnit) -> None:
+    def _promote_to_memory(self, unit: ExperienceUnit) -> None:
         if self._memory_port is None:
             return
-        if unit.id in self._stm_ingested_ids:
+        if unit.id in self._memory_ingested_ids:
             return
         self._memory_port.ingest_experience(unit)
-        self._stm_ingested_ids.add(unit.id)
+        self._memory_ingested_ids.add(unit.id)
 
-    def _retract_participants_from_stm(self, units: list[ExperienceUnit]) -> None:
+    def _retract_participants_from_memory(self, units: list[ExperienceUnit]) -> None:
         if self._memory_port is None:
             return
         retract = getattr(self._memory_port, "retract_experience", None)
@@ -243,7 +243,7 @@ class ExperienceOrchestrator:
             return
         for u in units:
             if retract(u.id):
-                self._stm_ingested_ids.discard(u.id)
+                self._memory_ingested_ids.discard(u.id)
 
 
 def _parse_ts(ts: str) -> datetime:

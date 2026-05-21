@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
-from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
+from agent.soul.heartbeat.bridge import EmotionalSignal, MemoryHeartbeatResult
+
+from .affect import AffectAnchor
+from .store import DriveStateStore
 
 from .capture import (
     CaptureEvent,
@@ -44,6 +48,14 @@ class DriveSnapshot:
     def ignite_reason(self) -> str:
         return self.state.impulse_reason
 
+    @property
+    def share_desire(self) -> ShareDesire:
+        return self.state.share_desire
+
+    @property
+    def affect(self):
+        return self.state.affect
+
 
 @dataclass
 class DriveIngestResult:
@@ -65,10 +77,16 @@ class DriveService:
     def __init__(
         self,
         *,
+        life_dir: str = "",
         on_outbound_request: Callable[[DriveOutboundRequest], None] | None = None,
         gate_config: DriveGateConfig | None = None,
     ) -> None:
+        self._life_dir = life_dir
+        self._store = DriveStateStore(life_dir) if life_dir else None
         self._sessions: dict[str, DriveSession] = {}
+        if self._store is not None:
+            for sid, state in self._store.load_sessions().items():
+                self._sessions[sid] = DriveSession(session_id=sid, state=state)
         self._capture = DriveCapture()
         self._gate = DriveGate(gate_config)
         self._on_outbound_request = on_outbound_request
@@ -79,6 +97,39 @@ class DriveService:
 
     def share_buffer_size(self, session_id: str) -> int:
         return len(self._session(session_id).share_buffer)
+
+    def affect_anchors(self, session_id: str = "tao") -> list[AffectAnchor]:
+        return list(self._session(session_id).state.affect.anchors)
+
+    def receive_heartbeat_signal(
+        self,
+        signal: EmotionalSignal,
+        *,
+        session_id: str = "tao",
+        intensity_floor: float = 0.05,
+    ) -> bool:
+        """Heartbeat / wander 情绪信号 → Drive.affect 锚点（原 Persona status 路径）。"""
+        if signal.intensity < intensity_floor:
+            return False
+        session = self._session(session_id)
+        affect = session.state.affect
+        now = datetime.now(timezone.utc).isoformat()
+        anchor = AffectAnchor(
+            ts=now,
+            event=signal.narrative_hint or f"心跳漂移（{signal.dominant_emotion}）",
+            felt=f"{signal.dominant_emotion}，烈度 {signal.intensity:.2f}",
+        )
+        affect.anchors = (affect.anchors + [anchor])[-10:]
+        affect.updated_at = now
+        if signal.intensity >= 0.3 and signal.narrative_hint.strip():
+            affect.texture = signal.narrative_hint.strip()[:200]
+        self._persist(session_id)
+        return True
+
+    def reset_affect(self, session_id: str = "tao") -> None:
+        session = self._session(session_id)
+        session.state.reset_affect()
+        self._persist(session_id)
 
     def bind(
         self,
@@ -94,6 +145,7 @@ class DriveService:
         session.state.share_desire = ShareDesire.none
         session.share_buffer.clear()
         self._sessions[session_id] = session
+        self._persist(session_id)
         return self.snapshot(session_id)
 
     def ingest(
@@ -198,6 +250,7 @@ class DriveService:
                 self._on_outbound_request(outbound)
 
         self._sessions[sid] = session
+        self._persist(sid)
         after = self.snapshot(sid)
 
         return DriveIngestResult(
@@ -261,7 +314,15 @@ class DriveService:
         session.share_buffer.clear()
         if self._on_outbound_request is not None:
             self._on_outbound_request(request)
+        self._persist(session_id)
         return request
+
+    def _persist(self, session_id: str) -> None:
+        if self._store is None:
+            return
+        self._store.save_sessions(
+            {sid: sess.state for sid, sess in self._sessions.items()}
+        )
 
 
 DriveLayer = DriveService

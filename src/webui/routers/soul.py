@@ -38,7 +38,7 @@ def _soul_or_400():
             status_code=400,
             content={
                 "status": "error",
-                "detail": "Soul 未就绪：请先初始化 ReAct（persona + Redis/MySQL）。",
+                "detail": "Soul 未就绪：请先初始化 ReAct（persona + MySQL）。",
             },
         )
     return soul, None
@@ -60,8 +60,6 @@ class MemorySearchRequest(BaseModel):
     emotion_contains: str | None = None
     created_after: str | None = None
     created_before: str | None = None
-    include_stm: bool = True
-    include_ltm: bool = True
     w_relevance: float = 0.6
     w_activation: float = 0.4
 

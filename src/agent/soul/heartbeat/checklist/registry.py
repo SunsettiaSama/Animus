@@ -3,8 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from config.soul.config import SoulConfig
-from agent.soul.handlers.api.actions import LifeAction, MemoryAction
-from agent.soul.handlers.tao.actions import TaoPersonaAction
+from agent.soul.handlers.api.actions import LifeAction, MemoryAction, PersonaAction
 
 from .item import ChecklistItem, ChecklistTrigger
 
@@ -50,11 +49,11 @@ def default_checklist(cfg: SoulConfig | None = None) -> list[ChecklistItem]:
             interval_sec=c.wander_interval_sec,
         ),
         ChecklistItem(
-            id="memory-flush",
+            id="memory-forget",
             domain="memory",
-            action=MemoryAction.FLUSH,
+            action=MemoryAction.FORGET_SCAN,
             trigger=ChecklistTrigger.interval,
-            interval_sec=c.memory_flush_interval_sec,
+            interval_sec=c.memory_forget_interval_sec,
         ),
         ChecklistItem(
             id="drive-external-scan",
@@ -65,12 +64,13 @@ def default_checklist(cfg: SoulConfig | None = None) -> list[ChecklistItem]:
             payload={"session_id": "tao"},
         ),
         ChecklistItem(
-            id="persona-reflection",
+            id="persona-monthly-drift",
             domain="persona",
-            action=TaoPersonaAction.RUN_DAILY_REFLECTION,
-            channel="tao",
-            trigger=ChecklistTrigger.interval,
-            interval_sec=c.persona_reflection_interval_sec,
+            action=PersonaAction.RUN_MONTHLY_DRIFT,
+            trigger=ChecklistTrigger.monthly,
+            monthly_day=c.persona_drift_day_of_month,
+            monthly_at=c.persona_drift_at,
+            enabled=True,
         ),
     ]
 
@@ -104,9 +104,20 @@ class ChecklistRegistry:
                 hh, mm = item.daily_at.split(":")
                 if now_dt.hour > int(hh) or (now_dt.hour == int(hh) and now_dt.minute >= int(mm)):
                     due.append(item)
+            elif item.trigger == ChecklistTrigger.monthly:
+                month_key = now_dt.strftime("%Y-%m")
+                if item.last_run_month == month_key:
+                    continue
+                if now_dt.day < item.monthly_day:
+                    continue
+                hh, mm = item.monthly_at.split(":")
+                if now_dt.hour > int(hh) or (now_dt.hour == int(hh) and now_dt.minute >= int(mm)):
+                    due.append(item)
         return due
 
     def mark_run(self, item: ChecklistItem, now_mono: float, now_dt: datetime) -> None:
         item.last_run_mono = now_mono
         if item.trigger == ChecklistTrigger.daily:
             item.last_run_date = now_dt.date().isoformat()
+        if item.trigger == ChecklistTrigger.monthly:
+            item.last_run_month = now_dt.strftime("%Y-%m")

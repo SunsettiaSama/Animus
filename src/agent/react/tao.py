@@ -33,7 +33,7 @@ from .prompt.parser import ParseQuality, ParseResult, diagnose, parse_llm_output
 from .prompt.repair import repair
 from agent.soul.life import JournalBlock, LifeManager, LifeProfileBlock
 from agent.soul import SoulConfig, SoulService
-from agent.soul.persona import PersonaManager
+from agent.soul.persona import PersonaService
 from .prompt.manager import PromptManager, StaticPromptParts
 from .trace import TraceStore
 from runtime.scheduler.timeline_service import TimelineService
@@ -171,7 +171,7 @@ class TaoLoop:
     ):
         if cfg.persona.enabled and cfg.db is None:
             raise ValueError(
-                "Soul 已启用（persona.enabled）但未配置 TaoConfig.db（Redis+MySQL）"
+                "Soul 已启用（persona.enabled）但未配置 TaoConfig.db（MySQL）"
             )
 
         self._llm = llm   # canonical handle from LLMService — shared by all sub-components
@@ -182,7 +182,7 @@ class TaoLoop:
         self._trace_store: TraceStore | None = (
             TraceStore(cfg.trace) if cfg.trace.enabled else None
         )
-        self._persona: PersonaManager | None = None
+        self._persona: PersonaService | None = None
         self._life_session_id: str = "tao"
 
         # Soul 子系统 — 可注入已有 SoulService，或在 persona 启用时自建
@@ -190,29 +190,26 @@ class TaoLoop:
         self._life: LifeManager | None = None
         self._soul_memory: MemoryService | None = None
         if self._soul is not None:
-            self._persona = self._soul.persona.api
+            self._persona = self._soul.persona.service
             self._life = self._soul.life.api
             self._soul_memory = self._soul.memory.api
         elif cfg.persona.enabled:
-            _redis_cfg = cfg.db.redis
             _mysql_cfg = cfg.db.mysql
-            if not (_redis_cfg.enabled and _mysql_cfg.enabled):
+            if not _mysql_cfg.enabled:
                 raise ValueError(
-                    "Soul 记忆需要 Redis 与 MySQL 均已启用（config/infra/db.yaml）"
+                    "Soul 记忆需要 MySQL 已启用（config/infra/db.yaml）"
                 )
-            _redis = _redis_cfg.build_client()
             _mysql = _mysql_cfg.build_client()
             self._soul = SoulService(
                 life_dir=cfg.storage.life_dir,
                 persona_cfg=cfg.persona,
-                redis_client=_redis,
                 mysql_client=_mysql,
                 llm_service=llm_service,
                 primary_llm=self._llm,
                 cfg=SoulConfig.load_default(),
             )
             self._soul.start()
-            self._persona = self._soul.persona.api
+            self._persona = self._soul.persona.service
             self._life = self._soul.life.api
             self._soul_memory = self._soul.memory.api
 
@@ -349,7 +346,6 @@ class TaoLoop:
             from agent.soul.heartbeat.task_runner import TaskRunner
             _runner = TaskRunner(
                 cfg=cfg.scheduler,
-                memory_service=self._soul_memory,
                 timeline=self._timeline,
             )
             _engine_to_use = SchedulerEngine(
@@ -997,10 +993,7 @@ class TaoLoop:
 
         pf.processor.commit(pf.question, pf.answer)
 
-        # ── Soul 记忆写入（MemoryService 内部 async_ingest 负责异步）────────────
-        if self._soul_memory is not None:
-            self._soul_memory.ingest_turn(pf.question, pf.answer)
-
+        # ── 长期记忆：仅经 Life 体验链显著性擢升 → Memory.ingest_experience ────
         if self._life is not None:
             self._life.record_turn(
                 pf.question,
@@ -1016,27 +1009,7 @@ class TaoLoop:
         if self._trace_store is not None:
             self._trace_store.write(pf.question, pf.answer, pf.processor.trace)
 
-        if self._persona is not None:
-            from agent.soul.persona.status.life_bridge import LifeContextInput
-
-            life_context: LifeContextInput | None = None
-            if self._life is not None:
-                ctx = self._life.build_life_context(days=1)
-                if not ctx.is_empty():
-                    life_context = ctx
-
-            medium_term_context = (
-                pf.processor._medium.render()
-                if pf.processor._medium is not None
-                else ""
-            )
-            self._persona.evolve(
-                pf.question,
-                pf.answer,
-                pf.processor.trace,
-                life_context=life_context,
-                medium_term_context=medium_term_context,
-            )
+        # Persona 自动演化已断开；轮末不再调用 PersonaService.evolution.record_turn。
 
     # ── Misc ─────────────────────────────────────────────────────────────────
 
@@ -1091,10 +1064,14 @@ class TaoLoop:
             self._medium_term._entries.clear()
 
     def clear_persona(self) -> None:
-        """删除人格漂移数据（profile / skills / reflection / preference），重置内存状态。"""
+        """清空 self_concept、体验 buffer 与 Drive.affect（管理操作，非漂移）。"""
+        if self._soul is not None:
+            self._soul.persona.service.reset_self_concept()
+            self._soul.drive.reset_affect()
+            return
         if self._persona is None:
             raise RuntimeError("Persona not enabled.")
-        self._persona.clear_drift()
+        self._persona.reset_self_concept()
 
     def run(self, question: str) -> str:
         for event in self.stream(question):

@@ -6,19 +6,20 @@ from config.agent.persona_config import PersonaConfig
 from infra.llm import BaseLLM
 
 from agent.soul.ports import LLMServicePort
+from agent.soul.persona.manager import PersonaManager
+from agent.soul.persona.service import PersonaService
 
 from ._llm import resolve_module_llm
 from .actions import PersonaAction
 
 if TYPE_CHECKING:
-    from agent.soul.persona import PersonaManager
     from agent.soul.workers import DomainWorker
 
 __all__ = ["PersonaAction", "PersonaHandler"]
 
 
 class PersonaHandler:
-    """Persona API Handler：模块 LLM 直调 + PersonaManager（不含 Tao 推理）。"""
+    """Persona API：只读查询 + profile 管理 + 月度漂移（唯一 self_concept 演化入口）。"""
 
     DEFAULT_AUX_NAME = "persona"
 
@@ -33,13 +34,25 @@ class PersonaHandler:
         self._llm_service = llm_service
         self._llm_aux_name = llm_aux_name
         self._primary_llm = primary_llm
-        self._manager: PersonaManager | None = None
+        self._service: PersonaService | None = None
         self._worker: DomainWorker | None = None
+        self._memory_port = None
+        self._embedder = None
 
     def set_worker(self, worker: DomainWorker) -> None:
         self._worker = worker
-        if self._manager is not None:
-            self._manager.set_worker(worker)
+        if self._service is not None:
+            self._service.set_worker(worker)
+
+    def set_memory_port(self, port) -> None:
+        self._memory_port = port
+        if self._service is not None:
+            self._service.set_memory_port(port)
+
+    def set_embedder(self, embedder) -> None:
+        self._embedder = embedder
+        if self._service is not None:
+            self._service.set_embedder(embedder)
 
     def resolve_llm(self) -> BaseLLM | None:
         return resolve_module_llm(
@@ -47,57 +60,53 @@ class PersonaHandler:
         )
 
     @property
-    def api(self) -> PersonaManager:
-        return self._ensure_manager()
+    def service(self) -> PersonaService:
+        return self._ensure_service()
 
-    def _ensure_manager(self) -> "PersonaManager":
-        if self._manager is None:
-            from agent.soul.persona import PersonaManager
-            self._manager = PersonaManager(
-                self._cfg,
-                llm=self.resolve_llm(),
-            )
+    def _ensure_service(self) -> PersonaService:
+        if self._service is None:
+            manager = PersonaManager(self._cfg, llm=self.resolve_llm())
+            self._service = PersonaService(manager)
             if self._worker is not None:
-                self._manager.set_worker(self._worker)
-        return self._manager
-
-    def set_tao_handler(self, handler) -> None:
-        if self._manager is not None:
-            self._manager.set_tao_handler(handler)
+                self._service.set_worker(self._worker)
+            if self._memory_port is not None:
+                self._service.set_memory_port(self._memory_port)
+            if self._embedder is not None:
+                self._service.set_embedder(self._embedder)
+        return self._service
 
     def handle(self, action: str, payload: dict[str, Any]) -> Any:
-        manager = self._ensure_manager()
+        svc = self._ensure_service()
 
-        if action == PersonaAction.EVOLVE:
-            manager.evolve(**payload)
-            return None
-
-        if action == PersonaAction.CLEAR_DRIFT:
-            manager.clear_drift()
-            return None
-
-        if action == PersonaAction.EVOLVE_SELF_CONCEPT:
-            return manager.evolve_self_concept(**payload)
+        if action == PersonaAction.RESET_SELF_CONCEPT:
+            svc.reset_self_concept()
+            return {"ok": True, "applied": True, "reason": "reset_self_concept"}
 
         if action == PersonaAction.GET_SNAPSHOT:
-            return manager.snapshot()
+            return svc.snapshot()
 
         if action == PersonaAction.PORTRAIT_REVISION:
-            return manager.portrait_revision()
+            return svc.portrait_revision()
 
         if action == PersonaAction.PORTRAIT_FOR_NARRATIVE:
             max_chars = int(payload.get("max_chars", 1200))
             compact = bool(payload.get("compact", False))
-            return manager.portrait_for_narrative(max_chars=max_chars, compact=compact)
+            return svc.portrait_for_narrative(max_chars=max_chars, compact=compact)
 
-        if action == PersonaAction.RECORD_INTERACTION:
-            manager.evolve(
-                question=str(payload.get("question", "")),
-                answer=str(payload.get("answer", "")),
-                steps=payload.get("steps") or [],
-                life_context=payload.get("life_context"),
-                medium_term_context=str(payload.get("medium_term_context", "")),
-            )
-            return {"ok": True}
+        if action == PersonaAction.RELOAD_PROFILE:
+            return svc.reload_profile()
+
+        if action == PersonaAction.REBUILD_PROFILE:
+            preserve_self_concept = bool(payload.get("preserve_self_concept", False))
+            return svc.rebuild_profile(preserve_self_concept=preserve_self_concept)
+
+        if action == PersonaAction.GET_BUFFER:
+            include_signals = bool(payload.get("include_signals", False))
+            return svc.buffer_snapshot(include_signals=include_signals)
+
+        if action == PersonaAction.RUN_MONTHLY_DRIFT:
+            force = bool(payload.get("force", False))
+            month = str(payload.get("month", ""))
+            return svc.run_monthly_drift(force=force, month=month)
 
         raise ValueError(f"unknown persona api action: {action!r}")

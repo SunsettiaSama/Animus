@@ -51,7 +51,6 @@ def soul_service(soul_temp_dir, persona_cfg, mock_llm):
     return SoulService(
         life_dir=os.path.join(soul_temp_dir, "life"),
         persona_cfg=persona_cfg,
-        redis_client=MagicMock(),
         mysql_client=MagicMock(),
         primary_llm=mock_llm,
         cfg=SoulConfig(),

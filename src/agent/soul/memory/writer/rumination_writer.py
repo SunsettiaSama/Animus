@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.soul.memory.long_term.manager import LongTermMemoryManager
-from agent.soul.memory.short_term.manager import ShortTermMemoryManager
 from agent.soul.memory.unit import MemoryTier, MemoryUnit, ReconstructiveMemory, Valence
 
 if TYPE_CHECKING:
@@ -81,48 +80,33 @@ def _render_source_block(source: MemoryUnit) -> str:
     raise ValueError(f"不支持反刍的记忆类型：{source.MEMORY_TYPE}")
 
 
-def _record_parent_rehearsal(
-    stm: ShortTermMemoryManager,
-    ltm: LongTermMemoryManager,
-    parent_id: str,
-) -> None:
-    if stm.get(parent_id) is not None:
-        stm.add_rehearsal(parent_id)
-        return
-    if ltm.get(parent_id) is not None:
-        ltm.add_rehearsal(parent_id)
-
-
 class RuminationWriter:
-    """记忆反刍入口：LLM 重构 → ReconstructiveMemory → LTM，并更新父节点 rehearsal。
+    """记忆反刍：LLM 重构 → ReconstructiveMemory → MySQL。"""
 
-    调度方（如 MemoryService.ruminate / tick）只负责解析 STM/LTM 与过滤类型；
-    具体「怎么反刍」集中在本模块。
-    """
-
-    def __init__(self, llm: BaseLLM, ltm: LongTermMemoryManager) -> None:
+    def __init__(
+        self,
+        llm: BaseLLM,
+        store: LongTermMemoryManager,
+        on_written: Callable[[MemoryUnit], None] | None = None,
+    ) -> None:
         self._llm = llm
-        self._ltm = ltm
+        self._store = store
+        self._on_written = on_written
 
     def ruminate_from_source(
         self,
         source: MemoryUnit,
         trigger: str,
         emotional_context: str,
-        *,
-        stm: ShortTermMemoryManager,
     ) -> ReconstructiveMemory | None:
-        """由给定记忆单元生成一条新的 ReconstructiveMemory 并写入 LTM。
-
-        ``source`` 可为 FactualMemory 或 ReconstructiveMemory（链式再巩固）。
-        父节点若在 STM 则更新其 rehearsal；若在 LTM 则 SQL 更新 rehearsal。
-        """
         if source.MEMORY_TYPE not in ("factual", "reconstructive"):
             return None
 
         unit = self._extract(source, trigger, emotional_context)
-        self._ltm.put(unit)
-        _record_parent_rehearsal(stm, self._ltm, source.id)
+        self._store.put(unit)
+        self._store.add_rehearsal(source.id)
+        if self._on_written is not None:
+            self._on_written(unit)
         return unit
 
     def _extract(
@@ -131,27 +115,19 @@ class RuminationWriter:
         trigger: str,
         emotional_context: str,
     ) -> ReconstructiveMemory:
-        block = _render_source_block(source)
         prompt = (
-            f"{block}\n"
-            f"【当前情绪状态】\n{emotional_context}\n\n"
-            f"【触发情境】\n{trigger}\n\n"
-            f"请从当前情绪视角重构上述记忆材料，输出 JSON：\n{_SCHEMA}"
+            f"{_render_source_block(source)}\n"
+            f"【触发情境】{trigger}\n"
+            f"【当前情绪背景】{emotional_context or '（未提供）'}\n\n"
+            f"请输出重构记忆 JSON：\n{_SCHEMA}"
         )
         raw = self._llm.generate_messages(
             [SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)]
         )
-        return self._parse(raw, source=source, trigger=trigger)
-
-    def _parse(self, raw: str, source: MemoryUnit, trigger: str) -> ReconstructiveMemory:
         d = _extract_json(raw)
-        root = _rumination_root_id(source)
-        meta = {
-            "rumination_root_id": root,
-            "rumination_parent_id": source.id,
-        }
+        root_id = _rumination_root_id(source)
         return ReconstructiveMemory(
-            focus=d.get("focus", "（未提取）"),
+            focus=d.get("focus", source.focus),
             source_id=source.id,
             reconstructed_fact=d.get("reconstructed_fact", ""),
             trigger=trigger,
@@ -160,5 +136,5 @@ class RuminationWriter:
             valence=_valence(d.get("valence", "neutral")),
             base_activation=float(d.get("base_activation", 0.6)),
             tier=MemoryTier.long,
-            meta=meta,
+            meta={"rumination_root_id": root_id},
         )

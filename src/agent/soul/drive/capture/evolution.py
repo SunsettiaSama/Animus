@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
-
 from ..fsm.events import DriveEvent, DriveEventKind
 from .events import BOUNDARY_KINDS, CaptureEvent, CaptureKind
 
@@ -22,7 +20,7 @@ def drive_event_from_capture(event: CaptureEvent) -> DriveEvent:
 
 
 def capture_event_from_wander(
-    _result: MemoryHeartbeatResult,
+    _result: object,
     *,
     session_id: str = "tao",
 ) -> CaptureEvent | None:

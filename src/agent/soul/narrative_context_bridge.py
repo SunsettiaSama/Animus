@@ -20,12 +20,12 @@ class SoulNarrativeContextSupplier:
 
     def _portrait(self, *, compact: bool) -> str:
         revision = self._soul.workers.persona.submit(
-            lambda: self._soul.persona.api.portrait_revision()
+            lambda: self._soul.persona.service.portrait_revision()
         ).result()
         cache = self._cached_portrait_compact if compact else self._cached_portrait_full
         if revision != self._cached_revision or not cache:
             text = self._soul.workers.persona.submit(
-                lambda: self._soul.persona.api.portrait_for_narrative(
+                lambda: self._soul.persona.service.portrait_for_narrative(
                     max_chars=600 if compact else 900,
                     compact=compact,
                 )

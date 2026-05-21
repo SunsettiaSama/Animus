@@ -14,7 +14,7 @@ def test_idle_allows_read_rejects_write(soul_service):
     with pytest.raises(RuntimeError, match="未运行"):
         soul_service.dispatch(SoulRequest(
             domain=SoulDomain.memory,
-            action=MemoryAction.FLUSH,
+            action=MemoryAction.FORGET_SCAN,
         ))
 
 
@@ -36,7 +36,9 @@ def test_start_stop_lifecycle(soul_service):
 def test_running_write_and_life_reads(soul_service):
     soul_service.start()
 
-    soul_service.record_persona_interaction("你好", "你好呀")
+    result = soul_service.record_persona_interaction("你好", "你好呀")
+    assert result.get("applied") is False
+    assert "Drive" in str(result.get("reason", ""))
     chronicle = soul_service.query_life_chronicle(days=1, tail=10)
     hot = soul_service.query_life_hot()
     memory = soul_service.search_memory(mode="recent", top_k=3)
@@ -50,12 +52,16 @@ def test_running_write_and_life_reads(soul_service):
 
 
 def test_query_persona_matches_dispatch(soul_service):
+    soul_service.start()
     via_query = soul_service.query_persona()
     via_dispatch = soul_service.dispatch(SoulRequest(
         domain=SoulDomain.persona,
         action=PersonaAction.GET_SNAPSHOT,
     ))
-    assert via_query == via_dispatch
+    assert via_query["profile"] == via_dispatch["profile"]
+    assert via_query["self_concept"] == via_dispatch["self_concept"]
+    assert "drive_affect" in via_query
+    soul_service.stop()
 
 
 def test_search_memory_matches_dispatch(soul_service):
@@ -88,7 +94,7 @@ def test_tao_channel_requires_running(soul_service):
     with pytest.raises(RuntimeError, match="未运行"):
         soul_service.dispatch(SoulRequest(
             domain=SoulDomain.persona,
-            action=TaoPersonaAction.RUN_DAILY_REFLECTION,
+            action=TaoPersonaAction.RUN,
             channel=SoulChannel.tao,
-            payload={"today_dialogue": "", "today_scheduler_tasks": ""},
+            payload={"instruction": "test", "profile_name": "default"},
         ))

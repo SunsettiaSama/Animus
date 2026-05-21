@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from agent.soul.drive import CaptureEvent, ShareDesire
+from agent.soul.drive.capture.events import CaptureEvent
+from agent.soul.drive.share_desire import ShareDesire
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
 
 if TYPE_CHECKING:

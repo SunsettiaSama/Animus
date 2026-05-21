@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from agent.soul.heartbeat.module import HeartbeatModule
 from runtime.scheduler.heartbeat_config import HeartbeatConfig
 
@@ -63,27 +61,19 @@ def test_tao_config_accepts_subagent_memory_profile():
     TaoConfig(memory=_sub_memory())
 
 
-def test_run_daily_reflection_builds_tao_request(soul_service):
-    """日终反省至少能构造 Tao 请求；SubAgentRunner 由 mock 短路。"""
-    from agent.soul.handlers.tao.actions import TaoPersonaAction
-    from agent.soul.handlers.tao.types import TaoRunResult
-    from agent.soul.request import SoulChannel, SoulDomain, SoulRequest
+def test_monthly_drift_stub(persona_cfg):
+    from agent.soul.handlers.api.actions import PersonaAction
+    from agent.soul.handlers.api.persona import PersonaHandler
 
-    soul_service.start()
-    fake_result = {
-        "answer": '{"thought_records":[],"reflective_note":""}',
-        "step_count": 0,
-        "steps_log": [],
-        "steps": [],
-    }
-
-    with patch("agent.runner.SubAgentRunner.run_sync", return_value=fake_result):
-        detail = soul_service.dispatch(SoulRequest(
-            domain=SoulDomain.persona,
-            action=TaoPersonaAction.RUN_DAILY_REFLECTION,
-            channel=SoulChannel.tao,
-            payload={"today_dialogue": "无", "today_scheduler_tasks": "无"},
-        ))
+    handler = PersonaHandler(persona_cfg)
+    handler.service.manager.record_cluster_signals([{"theme": "测试主题", "tick_id": "t1"}])
+    detail = handler.handle(
+        PersonaAction.RUN_MONTHLY_DRIFT,
+        {"force": True},
+    )
 
     assert detail["ok"] is True
-    soul_service.stop()
+    assert detail["applied"] is False
+    assert detail["reason"] == "no_memory_port"
+    assert detail["themes"] == ["测试主题"]
+

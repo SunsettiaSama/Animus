@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from infra.llm import BaseLLM
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
-from agent.soul.persona.status.life_bridge import LifeContextInput
+from agent.soul.life.life_bridge import LifeContextInput
 
 from .anchor import AnchorLayer, RealityAnchorLayer, ProactiveOutboundIntent, ProactiveOutboundPort
 from .virtual import VirtualLayer

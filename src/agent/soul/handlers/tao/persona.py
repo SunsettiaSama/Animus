@@ -13,7 +13,7 @@ __all__ = ["TaoPersonaAction", "TaoPersonaHandler"]
 
 
 class TaoPersonaHandler:
-    """Persona Tao Handler：经 Base Tao 完整推理（日终反省等）。"""
+    """Persona Tao Handler（月度 self_concept 漂移走 API checklist，不经 Tao）。"""
 
     def __init__(
         self,
@@ -25,19 +25,12 @@ class TaoPersonaHandler:
 
     def set_tao_handler(self, handler: BaseTaoHandler) -> None:
         self._tao_handler = handler
-        self._persona_api.set_tao_handler(handler)
 
     @property
     def tao(self) -> BaseTaoHandler:
         return self._tao_handler
 
     def handle(self, action: str, payload: dict[str, Any]) -> Any:
-        manager = self._persona_api.api
-        manager.set_tao_handler(self._tao_handler)
-
-        if action == TaoPersonaAction.RUN_DAILY_REFLECTION:
-            return manager.run_daily_reflection(**payload)
-
         if action == TaoPersonaAction.RUN:
             req = TaoRunRequest(**payload)
             result = self._tao_handler.run(req)

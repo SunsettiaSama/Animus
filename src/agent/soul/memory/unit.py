@@ -24,8 +24,8 @@ class Valence(str, Enum):
 
 
 class MemoryTier(str, Enum):
-    short_term = "short_term"  # 短期记忆（Redis，快速衰减）
-    long       = "long"        # 长期记忆（MySQL + Qdrant，慢衰减）
+    short_term = "short_term"  # 逻辑短期层（较快衰减，仍存 MySQL）
+    long       = "long"        # 逻辑长期层（较慢衰减）
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

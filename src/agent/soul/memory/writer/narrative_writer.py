@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -90,9 +90,15 @@ class NarrativeWriter:
         长期记忆管理器（MySQL）；用于读取 source units 和写入 NarrativeMemory
     """
 
-    def __init__(self, llm: BaseLLM, ltm: LongTermMemoryManager) -> None:
+    def __init__(
+        self,
+        llm: BaseLLM,
+        store: LongTermMemoryManager,
+        on_written: Callable[[MemoryUnit], None] | None = None,
+    ) -> None:
         self._llm = llm
-        self._ltm = ltm
+        self._store = store
+        self._on_written = on_written
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -120,7 +126,7 @@ class NarrativeWriter:
         ----
         写入的 NarrativeMemory；source_unit_ids 全部无效时返回 None。
         """
-        source_units = self._ltm.get_many(source_unit_ids)
+        source_units = self._store.get_many(source_unit_ids)
         if not source_units:
             return None
         return self.write_from_units(
@@ -157,10 +163,11 @@ class NarrativeWriter:
         写入的 NarrativeMemory
         """
         unit = self._extract(source_units, chapter, persona_snapshot, emotional_context)
-        self._ltm.put(unit)
-        # 递增每条 source unit 的 narrative_ref_count
+        self._store.put(unit)
         for src in source_units:
-            self._ltm.add_narrative_ref(src.id)
+            self._store.add_narrative_ref(src.id)
+        if self._on_written is not None:
+            self._on_written(unit)
         return unit
 
     # ── Internal ──────────────────────────────────────────────────────────────

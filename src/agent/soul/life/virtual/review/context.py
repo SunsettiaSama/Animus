@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from config.soul.config import SoulConfig
-from agent.soul.persona.status.life_bridge import LifeContextInput
+from agent.soul.life.life_bridge import LifeContextInput
 
 from ...anchor.chronicle.entry import AnchorChronicleKind
 from ...anchor.chronicle.store import AnchorChronicleStore

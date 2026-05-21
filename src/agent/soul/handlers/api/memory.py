@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Any
 
 from config.soul.memory.service_config import MemoryServiceConfig
 from infra.db.mysql import MySQLClient
-from infra.db.redis import RedisClient
 from infra.llm import BaseLLM
+from infra.memory import MemoryInfraService
 
 from agent.soul.memory.codec import unit_to_dict
 from agent.soul.memory.service import MemoryBlock, MemoryService
@@ -28,21 +28,21 @@ class MemoryHandler:
 
     def __init__(
         self,
-        redis_client: RedisClient,
         mysql_client: MySQLClient,
         llm_service: LLMServicePort | None = None,
         llm_aux_name: str = DEFAULT_AUX_NAME,
         primary_llm: BaseLLM | None = None,
         cfg: MemoryServiceConfig | None = None,
         soul_config: SoulConfig | None = None,
+        memory_infra: MemoryInfraService | None = None,
     ) -> None:
-        self._redis_client = redis_client
         self._mysql_client = mysql_client
         self._llm_service = llm_service
         self._llm_aux_name = llm_aux_name
         self._primary_llm = primary_llm
         self._cfg = cfg
         self._soul_config = soul_config
+        self._memory_infra = memory_infra
         self._service: MemoryService | None = None
         self._worker: DomainWorker | None = None
 
@@ -68,12 +68,12 @@ class MemoryHandler:
             if llm is None:
                 raise RuntimeError("Memory service unavailable — no LLM resolved")
             cfg = self._cfg or MemoryServiceConfig.load_default()
+            infra = self._memory_infra or MemoryInfraService.build()
             self._service = MemoryService.build(
                 llm=llm,
-                redis_client=self._redis_client,
                 mysql_client=self._mysql_client,
                 cfg=cfg,
-                soul_config=self._soul_config,
+                memory_infra=infra,
             )
             if self._worker is not None:
                 self._service.set_worker(self._worker)
@@ -82,13 +82,9 @@ class MemoryHandler:
     def handle(self, action: str, payload: dict[str, Any]) -> Any:
         service = self._ensure_service()
 
-        if action == MemoryAction.INGEST_TURN:
-            service.ingest_turn(**payload)
-            return None
-
         if action == MemoryAction.RECALL:
-            block: MemoryBlock = service.recall(**payload)
-            return block.render()
+            block = service.recall(**payload)
+            return {"text": block.render()}
 
         if action == MemoryAction.SEARCH:
             payload = dict(payload)
@@ -100,26 +96,33 @@ class MemoryHandler:
             lines = service.continuity_for_narrative(str(payload.get("query", "")))
             return {"count": len(lines), "lines": lines}
 
-        if action == MemoryAction.RUMINATE:
-            unit = service.ruminate(**payload)
-            return unit_to_dict(unit) if unit is not None else None
-
-        if action == MemoryAction.HEARTBEAT_RUMINATE:
-            return service.heartbeat_ruminate()
-
-        if action == MemoryAction.INGEST_EXPERIENCE:
-            unit = service.ingest_experience(payload["unit"])
-            return unit_to_dict(unit)
+        if action == MemoryAction.FORGET_SCAN:
+            archived = service.forget_scan(
+                threshold=payload.get("threshold"),
+                dry_run=bool(payload.get("dry_run", False)),
+            )
+            return {"archived": len(archived), "unit_ids": archived}
 
         if action == MemoryAction.FLUSH:
-            if self._worker is not None:
-                service.enqueue_flush()
-                return {"queued": True}
-            result = service.flush()
+            archived = service.forget_scan()
+            return {"archived": len(archived), "unit_ids": archived}
+
+        if action == MemoryAction.FETCH_PERSONA_CLUSTER:
+            return service.fetch_persona_cluster(
+                str(payload.get("theme", "")),
+                unit_ids=list(payload.get("unit_ids") or []) or None,
+                cluster_key=str(payload.get("cluster_key", "")),
+            )
+
+        if action == MemoryAction.LIST_DRIFT_UNITS:
+            units = service.list_drift_units(
+                month=str(payload.get("month", "")),
+                anchor_unit_ids=list(payload.get("anchor_unit_ids") or []) or None,
+                limit=int(payload.get("limit", 120)),
+            )
             return {
-                "flushed": result.flushed,
-                "skipped": result.skipped,
-                "errors": result.errors,
+                "count": len(units),
+                "units": [unit_to_dict(u) for u in units],
             }
 
         raise ValueError(f"unknown memory action: {action!r}")

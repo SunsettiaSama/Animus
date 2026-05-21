@@ -15,22 +15,22 @@ class LifeAction:
 
 
 class MemoryAction:
-    INGEST_TURN = "ingest_turn"
     RECALL = "recall"
     SEARCH = "search"
     NARRATIVE_CONTINUITY = "narrative_continuity"
-    RUMINATE = "ruminate"
     WANDER = "wander"
-    HEARTBEAT_RUMINATE = "heartbeat_ruminate"
-    INGEST_EXPERIENCE = "ingest_experience"
+    FORGET_SCAN = "forget_scan"
     FLUSH = "flush"
+    FETCH_PERSONA_CLUSTER = "fetch_persona_cluster"
+    LIST_DRIFT_UNITS = "list_drift_units"
 
 
 class PersonaAction:
-    EVOLVE = "evolve"
-    CLEAR_DRIFT = "clear_drift"
-    EVOLVE_SELF_CONCEPT = "evolve_self_concept"
+    RESET_SELF_CONCEPT = "reset_self_concept"
     GET_SNAPSHOT = "get_snapshot"
     PORTRAIT_REVISION = "portrait_revision"
     PORTRAIT_FOR_NARRATIVE = "portrait_for_narrative"
-    RECORD_INTERACTION = "record_interaction"
+    RELOAD_PROFILE = "reload_profile"
+    REBUILD_PROFILE = "rebuild_profile"
+    GET_BUFFER = "get_buffer"
+    RUN_MONTHLY_DRIFT = "run_monthly_drift"

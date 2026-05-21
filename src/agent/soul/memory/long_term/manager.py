@@ -112,19 +112,16 @@ def _row_to_unit(row: dict) -> MemoryUnit:
 
 
 class LongTermMemoryManager:
-    """长期记忆管理器（MySQL 后端）。
+    """记忆库管理器（MySQL 后端，唯一持久化存储）。
 
     职责
     ----
-    - put / get / delete MemoryUnit（tier=long）
+    - put / get / delete MemoryUnit
     - on_recall：命中时 UPDATE recall_count + last_accessed
     - forget_scan：软删除激活度低于阈值的条目（archived=1）
     - init_schema：建表（应用启动时调用一次）
 
-    Qdrant 向量检索
-    ---------------
-    本管理器仅负责结构化字段的 CRUD。语义检索（向量索引、混合重排）
-    由独立的 Retriever 模块负责，Retriever 按需从本管理器获取完整 unit。
+    语义向量索引由 ``MemoryInfraService``（Qdrant）维护，与本管理器通过 unit.id 关联。
 
     使用
     ----
@@ -208,6 +205,47 @@ class LongTermMemoryManager:
                 )
                 rows = cur.fetchall()
         return [_row_to_unit(r) for r in rows]
+
+    def list_all(self, limit: int = 2000) -> list[MemoryUnit]:
+        """返回全部未归档记忆，按 last_accessed 倒序。"""
+        with self._db.conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT * FROM soul_memory_units
+                    WHERE archived=0
+                    ORDER BY last_accessed DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall()
+        return [_row_to_unit(r) for r in rows]
+
+    def archive_by_life_event_id(self, life_event_id: str) -> bool:
+        unit = self.get_by_life_event_id(life_event_id)
+        if unit is None:
+            return False
+        self.archive(unit.id)
+        return True
+
+    def get_by_life_event_id(self, life_event_id: str) -> MemoryUnit | None:
+        if not life_event_id:
+            return None
+        with self._db.conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT * FROM soul_memory_units
+                    WHERE archived=0
+                      AND memory_type='factual'
+                      AND JSON_UNQUOTE(JSON_EXTRACT(meta_json, '$.life_event_id'))=%s
+                    LIMIT 1
+                    """,
+                    (life_event_id,),
+                )
+                row = cur.fetchone()
+        return _row_to_unit(row) if row else None
 
     def query_by_fields(
         self,
