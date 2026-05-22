@@ -2,39 +2,39 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..fsm.events import DriveEvent, DriveEventKind
-from ..fsm.state import DriveContext, DriveState
-from .edges import match_drive_edge
+from ..fsm.events import PresenceEvent, PresenceEventKind
+from ..fsm.state import PresenceContext, PresenceState
+from .edges import match_presence_edge
 
 
 @dataclass
 class TransitionResult:
     session_id: str
-    event: DriveEvent
-    before: DriveState
-    after: DriveState
+    event: PresenceEvent
+    before: PresenceState
+    after: PresenceState
     notes: list[str] = field(default_factory=list)
 
 
 def _apply_expectation_edge(
-    state: DriveState,
-    context: DriveContext,
-    event: DriveEvent,
+    state: PresenceState,
+    context: PresenceContext,
+    event: PresenceEvent,
 ) -> list[str]:
     before = state.copy()
     notes: list[str] = []
 
-    edge = match_drive_edge(before, context, event)
+    edge = match_presence_edge(before, context, event)
     if edge is None:
-        notes.append(f"drive: no edge for {event.kind.value}")
+        notes.append(f"presence: no edge for {event.kind.value}")
         return notes
 
     after = state.copy()
     if edge.mutate is not None:
         edge.mutate(after, before, context, event.payload)
-    state.expectation = after.expectation
+    state.behavior.expectation = after.behavior.expectation
 
-    if event.kind == DriveEventKind.agent_utterance:
+    if event.kind == PresenceEventKind.agent_utterance:
         p = event.payload
         if p.get("notify_only"):
             notes.append("agent notify → optional")
@@ -51,18 +51,18 @@ def _apply_expectation_edge(
 
 
 def apply_transition(
-    state: DriveState,
-    event: DriveEvent,
-    context: DriveContext,
+    state: PresenceState,
+    event: PresenceEvent,
+    context: PresenceContext,
 ) -> TransitionResult:
     """纯 FSM 期待转移（由 capture 在边界事件注入时调用）。"""
     before = state.copy()
     notes: list[str] = []
     kind = event.kind
 
-    if kind == DriveEventKind.close:
+    if kind == PresenceEventKind.close:
         state.reset()
-        notes.append(f"drive reset via {kind.value}")
+        notes.append(f"presence reset via {kind.value}")
     else:
         notes.extend(_apply_expectation_edge(state, context, event))
 
@@ -75,4 +75,4 @@ def apply_transition(
     )
 
 
-apply_drive_transition = apply_transition
+apply_presence_transition = apply_transition

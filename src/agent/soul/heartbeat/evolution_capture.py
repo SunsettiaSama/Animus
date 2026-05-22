@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from agent.soul.drive.capture.events import CaptureEvent
-from agent.soul.drive.share_desire import ShareDesire
+from agent.soul.presence.capture.events import CaptureEvent
+from agent.soul.presence.share_desire import ShareDesire
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
 
 if TYPE_CHECKING:
@@ -30,13 +30,13 @@ class EvolutionCaptureReport:
 
 
 class EvolutionCapture:
-    """心跳统一编排：Soul 内部演化 → drive capture。"""
+    """心跳统一编排：Soul 内部演化 → presence capture。"""
 
     @staticmethod
     def emit(soul: SoulService, event: CaptureEvent) -> bool:
         if not soul.is_running:
             return False
-        result = soul.capture_drive_evolution(event)
+        result = soul.capture_presence_evolution(event)
         return result.outbound_request is not None
 
     @staticmethod

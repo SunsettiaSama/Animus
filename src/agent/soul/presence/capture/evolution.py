@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from ..fsm.events import DriveEvent, DriveEventKind
+from ..fsm.events import PresenceEvent, PresenceEventKind
 from .events import BOUNDARY_KINDS, CaptureEvent, CaptureKind
 
 
-def capture_event_from_drive(event: DriveEvent) -> CaptureEvent:
+def capture_event_from_presence(event: PresenceEvent) -> CaptureEvent:
     kind = CaptureKind(event.kind.value)
     return CaptureEvent(kind=kind, session_id=event.session_id, payload=dict(event.payload))
 
 
-def drive_event_from_capture(event: CaptureEvent) -> DriveEvent:
+def presence_event_from_capture(event: CaptureEvent) -> PresenceEvent:
     if event.kind not in BOUNDARY_KINDS:
         raise ValueError(f"not a boundary capture event: {event.kind.value}")
-    return DriveEvent(
-        DriveEventKind(event.kind.value),
+    return PresenceEvent(
+        PresenceEventKind(event.kind.value),
         event.session_id,
         dict(event.payload),
     )

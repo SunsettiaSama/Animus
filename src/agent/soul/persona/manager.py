@@ -35,7 +35,7 @@ class PersonaManager:
     - buffer：聚类主题元数据（月度 self_concept 漂移调度）
     - self_concept：慢变自我叙事（build 初始化；**仅**月度漂移写入）
 
-    快变情绪状态在 ``DriveState.affect``。
+    快变情绪状态在 ``PresenceState.affect``。
     """
 
     def __init__(

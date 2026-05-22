@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from agent.soul.drive import (
+from agent.soul.presence import (
     CaptureEvent,
     CaptureResult,
-    DriveContext,
-    DriveEvent,
-    DriveGate,
-    DriveState,
+    PresenceContext,
+    PresenceEvent,
+    PresenceGate,
+    PresenceState,
     ShareDesire,
     apply_evolution_impulse,
     enqueue_share_event,
 )
-from agent.soul.drive.share_desire import share_desire_weight
+from agent.soul.presence.share_desire import share_desire_weight
 
 
 def test_apply_evolution_impulse_uses_share_desire_weight():
-    state = DriveState()
+    state = PresenceState()
     note = apply_evolution_impulse(
         state,
         CaptureEvent.wander(
@@ -25,14 +25,14 @@ def test_apply_evolution_impulse_uses_share_desire_weight():
             share_desire=ShareDesire.moderate,
         ),
     )
-    assert state.impulse_level == share_desire_weight(ShareDesire.moderate)
-    assert state.share_desire == ShareDesire.moderate
-    assert state.impulse_reason == "反刍线索"
+    assert state.behavior.impulse_level == share_desire_weight(ShareDesire.moderate)
+    assert state.motivation.share_desire == ShareDesire.moderate
+    assert state.behavior.impulse_reason == "反刍线索"
     assert "wander" in note
 
 
 def test_mild_share_desire_accumulates_slowly():
-    state = DriveState()
+    state = PresenceState()
     apply_evolution_impulse(
         state,
         CaptureEvent.story_beat(
@@ -41,52 +41,52 @@ def test_mild_share_desire_accumulates_slowly():
             share_desire=ShareDesire.mild,
         ),
     )
-    assert state.impulse_level == share_desire_weight(ShareDesire.mild)
-    assert DriveGate().evaluate(
+    assert state.behavior.impulse_level == share_desire_weight(ShareDesire.mild)
+    assert PresenceGate().evaluate(
         CaptureResult(
             session_id="tao",
             event=CaptureEvent.story_beat("tao", hint="一点念头"),
-            before=DriveState(),
+            before=PresenceState(),
             after=state.copy(),
         )
     ) is None
 
 
 def test_capture_routes_boundary_to_transition():
-    from agent.soul.drive import DriveCapture, capture_event_from_drive
+    from agent.soul.presence import PresenceCapture, capture_event_from_presence
 
-    capture = DriveCapture()
-    state = DriveState()
+    capture = PresenceCapture()
+    state = PresenceState()
     result = capture.ingest(
         state,
-        capture_event_from_drive(DriveEvent.user_text("tao")),
-        DriveContext(line_open=False),
+        capture_event_from_presence(PresenceEvent.user_text("tao")),
+        PresenceContext(line_open=False),
     )
     assert result.boundary is True
-    assert state.expectation.value == "required"
+    assert state.behavior.expectation.value == "required"
 
 
 def test_capture_routes_evolution_to_impulse():
-    from agent.soul.drive import DriveCapture
+    from agent.soul.presence import PresenceCapture
 
-    capture = DriveCapture()
-    state = DriveState()
+    capture = PresenceCapture()
+    state = PresenceState()
     result = capture.ingest(
         state,
         CaptureEvent.landmark("tao", intention="去海边走走"),
-        DriveContext(),
+        PresenceContext(),
     )
     assert result.boundary is False
-    assert state.impulse_level == 0.0
-    assert state.share_desire == ShareDesire.none
-    assert "海边" in state.impulse_reason
+    assert state.behavior.impulse_level == 0.0
+    assert state.motivation.share_desire == ShareDesire.none
+    assert "海边" in state.behavior.impulse_reason
 
 
 def test_gate_breaks_on_eager_share_desire():
-    from agent.soul.drive import DriveCapture, ShareBuffer, enqueue_share_event
+    from agent.soul.presence import PresenceCapture, ShareBuffer, enqueue_share_event
 
-    state = DriveState()
-    capture = DriveCapture()
+    state = PresenceState()
+    capture = PresenceCapture()
     buffer = ShareBuffer()
     event = CaptureEvent.wander(
         "tao",
@@ -94,9 +94,9 @@ def test_gate_breaks_on_eager_share_desire():
         salience=0.8,
         share_desire=ShareDesire.eager,
     )
-    result = capture.ingest(state, event, DriveContext())
+    result = capture.ingest(state, event, PresenceContext())
     enqueue_share_event(buffer, event)
-    outbound = DriveGate().evaluate(result, buffer)
+    outbound = PresenceGate().evaluate(result, buffer)
     assert outbound is not None
     assert outbound.reason == "想说话"
     assert outbound.share_desire == ShareDesire.eager
@@ -104,10 +104,10 @@ def test_gate_breaks_on_eager_share_desire():
 
 
 def test_gate_breaks_after_multiple_mild_events():
-    from agent.soul.drive import DriveCapture, ShareBuffer, enqueue_share_event
+    from agent.soul.presence import PresenceCapture, ShareBuffer, enqueue_share_event
 
-    state = DriveState()
-    capture = DriveCapture()
+    state = PresenceState()
+    capture = PresenceCapture()
     buffer = ShareBuffer()
     for hint in ("慢慢想说", "还有一件", "第三件", "第四件"):
         event = CaptureEvent.story_beat(
@@ -116,7 +116,7 @@ def test_gate_breaks_after_multiple_mild_events():
             salience=0.4,
             share_desire=ShareDesire.mild,
         )
-        capture.ingest(state, event, DriveContext())
+        capture.ingest(state, event, PresenceContext())
         enqueue_share_event(buffer, event)
     result = capture.ingest(
         state,
@@ -125,10 +125,10 @@ def test_gate_breaks_after_multiple_mild_events():
             hint="慢慢想说",
             share_desire=ShareDesire.mild,
         ),
-        DriveContext(),
+        PresenceContext(),
     )
     enqueue_share_event(buffer, result.event)
-    outbound = DriveGate().evaluate(result, buffer)
+    outbound = PresenceGate().evaluate(result, buffer)
     assert outbound is not None
     assert outbound.package.count == 5
     assert "另有" in outbound.reason

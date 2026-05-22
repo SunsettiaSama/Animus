@@ -3,58 +3,58 @@ from .capture import (
     CaptureEvent,
     CaptureKind,
     CaptureResult,
-    DriveCapture,
+    PresenceCapture,
     EVOLUTION_KINDS,
     ShareBuffer,
     ShareBufferEntry,
     ShareFoldedPackage,
     apply_evolution_impulse,
-    capture_event_from_drive,
+    capture_event_from_presence,
     capture_event_from_wander,
-    drive_event_from_capture,
+    presence_event_from_capture,
     enqueue_share_event,
     fold_share_buffer,
 )
 from .affect import AffectAnchor, AffectState, EmotionalAnchor
-from .block import DriveAffectBlock
+from .block import PresenceAffectBlock
 from .expectation import Expectation
-from .store import DriveStateStore
-from .fsm import DriveContext, DriveEvent, DriveEventKind, DriveState
-from .gate import DriveGate, DriveGateConfig, DriveOutboundRequest
+from .store import PresenceStateStore
+from .fsm import PresenceContext, PresenceEvent, PresenceEventKind, PresenceState
+from .gate import PresenceGate, PresenceGateConfig, PresenceOutboundRequest
 from .share_desire import ShareDesire, share_desire_weight
 from .service import (
-    DriveIngestResult,
-    DriveLayer,
-    DriveService,
-    DriveSnapshot,
-    DriveTransitionResult,
+    PresenceIngestResult,
+    PresenceLayer,
+    PresenceService,
+    PresenceSnapshot,
+    PresenceTransitionResult,
 )
-from .transition import DRIVE_EDGES, TransitionResult, apply_drive_transition, apply_transition, match_drive_edge
+from .transition import PRESENCE_EDGES, TransitionResult, apply_presence_transition, apply_transition, match_presence_edge
 
 __all__ = [
     "BOUNDARY_KINDS",
     "CaptureEvent",
     "CaptureKind",
     "CaptureResult",
-    "DRIVE_EDGES",
-    "DriveCapture",
-    "DriveContext",
-    "DriveEvent",
-    "DriveEventKind",
-    "DriveGate",
-    "DriveGateConfig",
-    "DriveIngestResult",
-    "DriveLayer",
-    "DriveOutboundRequest",
-    "DriveService",
-    "DriveSnapshot",
-    "DriveState",
-    "DriveTransitionResult",
+    "PRESENCE_EDGES",
+    "PresenceCapture",
+    "PresenceContext",
+    "PresenceEvent",
+    "PresenceEventKind",
+    "PresenceGate",
+    "PresenceGateConfig",
+    "PresenceIngestResult",
+    "PresenceLayer",
+    "PresenceOutboundRequest",
+    "PresenceService",
+    "PresenceSnapshot",
+    "PresenceState",
+    "PresenceTransitionResult",
     "EVOLUTION_KINDS",
     "AffectAnchor",
     "AffectState",
-    "DriveAffectBlock",
-    "DriveStateStore",
+    "PresenceAffectBlock",
+    "PresenceStateStore",
     "EmotionalAnchor",
     "Expectation",
     "ShareBuffer",
@@ -63,11 +63,11 @@ __all__ = [
     "ShareDesire",
     "share_desire_weight",
     "TransitionResult",
-    "apply_drive_transition",
+    "apply_presence_transition",
     "apply_evolution_impulse",
     "apply_transition",
-    "capture_event_from_drive",
+    "capture_event_from_presence",
     "capture_event_from_wander",
-    "drive_event_from_capture",
-    "match_drive_edge",
+    "presence_event_from_capture",
+    "match_presence_edge",
 ]

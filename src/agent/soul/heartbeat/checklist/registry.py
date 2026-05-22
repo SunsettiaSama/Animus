@@ -56,8 +56,8 @@ def default_checklist(cfg: SoulConfig | None = None) -> list[ChecklistItem]:
             interval_sec=c.memory_forget_interval_sec,
         ),
         ChecklistItem(
-            id="drive-external-scan",
-            domain="drive",
+            id="presence-external-scan",
+            domain="presence",
             action="scan_external_opportunity",
             trigger=ChecklistTrigger.interval,
             interval_sec=900.0,

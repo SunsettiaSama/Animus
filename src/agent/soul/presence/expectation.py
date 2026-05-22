@@ -4,7 +4,7 @@ from enum import Enum
 
 
 class Expectation(str, Enum):
-    """Agent 对「用户下一话语」的立场（由 Soul 驱动层维护）。"""
+    """Agent 对「用户下一话语」的立场（由 Soul 当下态层维护）。"""
 
     none = "none"
     optional = "optional"

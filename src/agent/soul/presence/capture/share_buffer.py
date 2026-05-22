@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..fsm.state import DriveState
+from ..fsm.state import PresenceState
 from ..share_desire import ShareDesire, max_share_desire, parse_share_desire
 from .events import CaptureEvent, CaptureKind
 from .impulse import default_share_desire, evolution_hint
@@ -101,15 +101,15 @@ def enqueue_share_event(buffer: ShareBuffer, event: CaptureEvent) -> bool:
 
 def fold_share_buffer(
     entries: list[ShareBufferEntry],
-    state: DriveState,
+    state: PresenceState,
 ) -> ShareFoldedPackage:
     if not entries:
         return ShareFoldedPackage(
-            summary=state.impulse_reason,
+            summary=state.behavior.impulse_reason,
             entries=(),
             peak_salience=0.0,
             total_salience=0.0,
-            peak_share_desire=state.share_desire,
+            peak_share_desire=state.motivation.share_desire,
             count=0,
         )
 

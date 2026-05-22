@@ -4,9 +4,9 @@ from .events import (
     CaptureEvent,
     CaptureKind,
 )
-from .evolution import capture_event_from_drive, capture_event_from_wander, drive_event_from_capture
+from .evolution import capture_event_from_presence, capture_event_from_wander, presence_event_from_capture
 from .impulse import apply_evolution_impulse, default_share_desire, evolution_hint
-from .intake import CaptureResult, DriveCapture
+from .intake import CaptureResult, PresenceCapture
 from .share_buffer import (
     ShareBuffer,
     ShareBufferEntry,
@@ -21,16 +21,16 @@ __all__ = [
     "CaptureEvent",
     "CaptureKind",
     "CaptureResult",
-    "DriveCapture",
+    "PresenceCapture",
     "EVOLUTION_KINDS",
     "ShareBuffer",
     "ShareBufferEntry",
     "ShareFoldedPackage",
     "apply_evolution_impulse",
-    "capture_event_from_drive",
+    "capture_event_from_presence",
     "capture_event_from_wander",
     "default_share_desire",
-    "drive_event_from_capture",
+    "presence_event_from_capture",
     "enqueue_share_event",
     "evolution_hint",
     "fold_share_buffer",

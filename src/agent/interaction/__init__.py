@@ -3,7 +3,7 @@
 - ``core``：SemanticInteraction、连续性（全模态共性）
 - ``dialogue`` / ``virtual_world`` / ``drone`` / ``robot_dog``：并列交互形式
 
-交互姿态层见 ``agent.posture``；期待驱动见 ``agent.soul.drive``。
+交互姿态层见 ``agent.posture``；当下态见 ``agent.soul.presence``。
 """
 
 from .core import (

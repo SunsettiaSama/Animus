@@ -38,7 +38,7 @@ def test_running_write_and_life_reads(soul_service):
 
     result = soul_service.record_persona_interaction("你好", "你好呀")
     assert result.get("applied") is False
-    assert "Drive" in str(result.get("reason", ""))
+    assert "Presence" in str(result.get("reason", ""))
     chronicle = soul_service.query_life_chronicle(days=1, tail=10)
     hot = soul_service.query_life_hot()
     memory = soul_service.search_memory(mode="recent", top_k=3)
@@ -60,7 +60,7 @@ def test_query_persona_matches_dispatch(soul_service):
     ))
     assert via_query["profile"] == via_dispatch["profile"]
     assert via_query["self_concept"] == via_dispatch["self_concept"]
-    assert "drive_affect" in via_query
+    assert "presence_affect" in via_query
     soul_service.stop()
 
 

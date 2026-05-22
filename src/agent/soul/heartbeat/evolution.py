@@ -11,7 +11,7 @@
 - Memory：聚类、遗忘、记忆存储与按主题回查
 - Persona buffer：主题元数据 + 漂移调度时间
 - Persona self_concept：仅 run_monthly_drift 演化（build/rebuild 为初始化/管理）
-- Drive.affect：快变情绪（非 self_concept）
+- Presence.affect：快变情绪（非 self_concept）
 """
 
 from __future__ import annotations

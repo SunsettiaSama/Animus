@@ -1,10 +1,10 @@
-from .apply import TransitionResult, apply_drive_transition, apply_transition
-from .edges import DRIVE_EDGES, match_drive_edge
+from .apply import TransitionResult, apply_presence_transition, apply_transition
+from .edges import PRESENCE_EDGES, match_presence_edge
 
 __all__ = [
-    "DRIVE_EDGES",
+    "PRESENCE_EDGES",
     "TransitionResult",
-    "apply_drive_transition",
+    "apply_presence_transition",
     "apply_transition",
-    "match_drive_edge",
+    "match_presence_edge",
 ]

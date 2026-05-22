@@ -18,7 +18,7 @@ from .checklist import ChecklistItem, ChecklistRegistry, default_checklist
 from .evolution_capture import EvolutionBeat, EvolutionCapture
 
 logger = logging.getLogger(__name__)
-_DRIVE_SCAN_EXTERNAL_ACTION = "scan_external_opportunity"
+_PRESENCE_SCAN_EXTERNAL_ACTION = "scan_external_opportunity"
 
 _HEAVY_ITEM_KEYS: frozenset[tuple[str, str]] = frozenset({
     (SoulDomain.memory.value, MemoryAction.WANDER),
@@ -143,7 +143,7 @@ class HeartbeatOrchestrator:
 
         if item.domain == SoulDomain.memory.value and item.action == MemoryAction.WANDER:
             return self._run_wander(item)
-        if item.domain == "drive" and item.action == _DRIVE_SCAN_EXTERNAL_ACTION:
+        if item.domain == "presence" and item.action == _PRESENCE_SCAN_EXTERNAL_ACTION:
             return self._run_scan_external(item)
         if item.domain == SoulDomain.life.value and item.action == LifeAction.PLAN_LANDMARK:
             return self._run_plan_landmark(item)

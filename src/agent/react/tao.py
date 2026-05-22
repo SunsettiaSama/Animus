@@ -1064,10 +1064,10 @@ class TaoLoop:
             self._medium_term._entries.clear()
 
     def clear_persona(self) -> None:
-        """清空 self_concept、体验 buffer 与 Drive.affect（管理操作，非漂移）。"""
+        """清空 self_concept、体验 buffer 与 Presence.affect（管理操作，非漂移）。"""
         if self._soul is not None:
             self._soul.persona.service.reset_self_concept()
-            self._soul.drive.reset_affect()
+            self._soul.presence_svc.reset_affect()
             return
         if self._persona is None:
             raise RuntimeError("Persona not enabled.")

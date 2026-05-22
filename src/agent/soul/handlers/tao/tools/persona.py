@@ -12,12 +12,12 @@ class SoulPersonaArgs(BaseModel):
 
 
 class SoulPersonaAction(BaseAction):
-    """经 Soul 接口读取 profile、self_concept 与 Drive.affect。"""
+    """经 Soul 接口读取 profile、self_concept 与 Presence.affect。"""
 
     name: str = "soul_persona"
     description: str = (
         "读取 Agent 当前人格：静态 profile、自我叙事 self_concept、"
-        "Drive 附属情绪状态 drive_affect。无参数。"
+        "当下态附属情绪状态 presence_affect。无参数。"
     )
     args_model: ClassVar[type[BaseModel]] = SoulPersonaArgs
 
@@ -29,7 +29,7 @@ class SoulPersonaAction(BaseAction):
         snap = self.soul.query_persona()
         profile = snap.get("profile") or {}
         concept = snap.get("self_concept") or {}
-        affect = snap.get("drive_affect") or {}
+        affect = snap.get("presence_affect") or {}
         parts = [
             "【静态画像】",
             f"名称：{profile.get('name', '')}",

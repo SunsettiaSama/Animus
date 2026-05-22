@@ -9,7 +9,8 @@ from agent.posture.fsm import (
     apply_dialogue_transition,
     apply_transition,
 )
-from agent.soul.drive import DriveContext, DriveEvent, DriveState, apply_transition as apply_drive
+from agent.soul.presence import PresenceContext, PresenceEvent, PresenceState, apply_transition as apply_presence
+from agent.soul.presence.fsm import BehaviorState
 
 
 def test_apply_dialogue_transition_user_text_from_idle():
@@ -29,34 +30,34 @@ def test_apply_transition_user_text_from_idle():
     assert result.after.dialogue.line_open is True
 
 
-def test_drive_user_text_from_idle_sets_required():
-    state = DriveState()
-    result = apply_drive(
+def test_presence_user_text_from_idle_sets_required():
+    state = PresenceState()
+    result = apply_presence(
         state,
-        DriveEvent.user_text("tao"),
-        DriveContext(line_open=False),
+        PresenceEvent.user_text("tao"),
+        PresenceContext(line_open=False),
     )
-    assert result.after.expectation == Expectation.required
+    assert result.after.behavior.expectation == Expectation.required
 
 
-def test_drive_user_text_ambiguous_to_clarify():
-    state = DriveState()
-    result = apply_drive(
+def test_presence_user_text_ambiguous_to_clarify():
+    state = PresenceState()
+    result = apply_presence(
         state,
-        DriveEvent.user_text("tao", ambiguous=True),
-        DriveContext(line_open=True),
+        PresenceEvent.user_text("tao", ambiguous=True),
+        PresenceContext(line_open=True),
     )
-    assert result.after.expectation == Expectation.clarify
+    assert result.after.behavior.expectation == Expectation.clarify
 
 
-def test_drive_clarify_resolved():
-    state = DriveState(expectation=Expectation.clarify)
-    result = apply_drive(
+def test_presence_clarify_resolved():
+    state = PresenceState(behavior=BehaviorState(expectation=Expectation.clarify))
+    result = apply_presence(
         state,
-        DriveEvent.clarify_resolved("tao"),
-        DriveContext(),
+        PresenceEvent.clarify_resolved("tao"),
+        PresenceContext(),
     )
-    assert result.after.expectation == Expectation.required
+    assert result.after.behavior.expectation == Expectation.required
 
 
 def test_apply_transition_proactive_open():

@@ -1,22 +1,24 @@
 """
-本地 DAG 端到端冒烟：infra LLMHandle + agent.flow DagOrchestrator（真实 LLM）。
+本地端到端冒烟脚本（真实 LLM / 可选 infra）。
 
-默认启用 **SandboxManager**（文件/HTTP/Python 受限），与 WebUI 中带沙箱的 TaoLoop 行为一致。
-SubAgentRunner.run_sync 当前未传 sandbox，因此在测试内对 TaoLoop.__init__ 做一次性注入。
+模式
+----
+  full / single     DagOrchestrator + 可选 Sandbox（默认 full）
+  persona-drift     Persona 月度 self_concept 漂移演示（10 条记忆 + 画像 → 演化前后对比）
 
 用法：
   python test.py <llm.yaml> [选项]
 
-  --mode full         全量 DAG 执行（默认）
-  --mode single       最小单元：Planner 产出计划 → 仅执行第一个节点
-  --goal "..."        目标文本
-  --no-sandbox        不创建沙箱
-  --sandbox-root DIR  沙箱工作区根目录
-  --flow-log LEVEL    verbose / normal（默认）/ silent
+  --mode full|single|persona-drift
+  --goal "..."        目标文本（DAG 模式）
+  --no-sandbox        不创建沙箱（DAG 模式）
+  --no-infra          persona-drift：跳过 BGE/Qdrant，聚类退化为 focus 分桶
+  --persona-dir DIR   persona-drift 工作目录（默认 .react/test_persona_drift）
+  --flow-log LEVEL    verbose / normal / silent（DAG 模式）
 
 示例：
+  python test.py config\\llm_core\\config.yaml --mode persona-drift
   python test.py config\\llm_core\\config.yaml --mode single --goal "把 2025-05-01 是星期几写入 out.txt"
-  python test.py config\\llm_core\\config.yaml --flow-log verbose
 """
 
 from __future__ import annotations
@@ -57,6 +59,7 @@ def _install_sandbox_tao_loop(sandbox_mgr: object) -> Callable[[], None]:
         reply_target=None,
         notify_fn=None,
         comm_rate_cfg=None,
+        **kwargs,
     ):
         if sandbox is None:
             sandbox = sandbox_mgr
@@ -73,6 +76,7 @@ def _install_sandbox_tao_loop(sandbox_mgr: object) -> Callable[[], None]:
             reply_target,
             notify_fn,
             comm_rate_cfg,
+            **kwargs,
         )
 
     TaoLoop.__init__ = _wrapped
@@ -153,9 +157,9 @@ def _parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--mode",
-        choices=("full", "single"),
+        choices=("full", "single", "persona-drift"),
         default="full",
-        help="full=全量 DAG（默认），single=最小单元 planner→单节点执行",
+        help="full|single=DAG；persona-drift=Persona 月度漂移演示",
     )
     ap.add_argument(
         "--goal",
@@ -163,6 +167,13 @@ def _parse_args() -> argparse.Namespace:
         help="任务目标文本",
     )
     ap.add_argument("--no-sandbox", action="store_true")
+    ap.add_argument("--no-infra", action="store_true", help="persona-drift：不用 BGE/Qdrant")
+    ap.add_argument(
+        "--persona-dir",
+        type=str,
+        default="",
+        help="persona-drift 数据目录（默认 .react/test_persona_drift）",
+    )
     ap.add_argument("--sandbox-root", type=str, default="")
     ap.add_argument("--sandbox-config", type=str, default="")
     ap.add_argument(
@@ -330,6 +341,364 @@ async def _run_single(ns: argparse.Namespace, llm_yaml: str, llm_call: Callable)
     print(f"\n[single] answer:\n{answer}")
 
 
+# ── mode=persona-drift：真实 Persona 月度演化 ─────────────────────────────────
+
+def _log_section(title: str) -> None:
+    line = "=" * 72
+    print(f"\n{line}\n{title}\n{line}")
+
+
+def _log_sub(title: str) -> None:
+    print(f"\n--- {title} ---")
+
+
+def _print_profile(profile) -> None:
+    print(profile.render())
+
+
+def _print_self_concept(concept, *, label: str = "") -> None:
+    if label:
+        print(f"[{label}]")
+    print(f"叙事 ({concept.updated_at}):")
+    print(concept.narrative.strip() or "（空）")
+    print("信念:")
+    if not concept.beliefs:
+        print("  （无）")
+        return
+    for b in concept.beliefs:
+        print(f"  · [{b.strength.value}] {b.content}")
+
+
+def _print_delta(delta) -> None:
+    print(f"  narrative : {delta.narrative[:200]!r}" if delta.narrative else "  narrative : （不变）")
+    print(f"  adds      : {delta.adds}")
+    print(f"  upgrades  : {delta.upgrades}")
+    print(f"  removes   : {delta.removes}")
+
+
+class _LoggingLLM:
+    """包装 BaseLLM，打印每次蒸馏调用的摘要。"""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self._n = 0
+
+    def generate_messages(self, messages, **kwargs) -> str:
+        self._n += 1
+        sys_msg = str(getattr(messages[0], "content", ""))[:60] if messages else ""
+        user_msg = str(getattr(messages[-1], "content", "")) if messages else ""
+        preview = user_msg.replace("\n", " ")[:120]
+        print(f"\n  [LLM #{self._n}] system={sys_msg!r} … user≈{preview!r}")
+        raw = self._inner.generate_messages(messages, **kwargs)
+        shown = raw.strip().replace("\n", " ")[:280]
+        print(f"  [LLM #{self._n}] response≈{shown!r}")
+        return raw
+
+
+class _InMemoryDriftPort:
+    """模拟 Memory.list_drift_units，供漂移回查 raw units。"""
+
+    def __init__(self, units: list) -> None:
+        self._units = {u.id: u for u in units}
+
+    def list_drift_units(self, *, month: str, anchor_unit_ids=None, limit: int = 120):
+        anchors = [uid for uid in (anchor_unit_ids or []) if uid]
+        seen: set[str] = set()
+        out: list = []
+        for uid in anchors:
+            unit = self._units.get(uid)
+            if unit is None or unit.id in seen:
+                continue
+            seen.add(unit.id)
+            out.append(unit)
+        if len(out) < limit:
+            for unit in self._units.values():
+                if unit.id in seen:
+                    continue
+                if unit.created_at.strftime("%Y-%m") != month:
+                    continue
+                seen.add(unit.id)
+                out.append(unit)
+                if len(out) >= limit:
+                    break
+        return out[:limit]
+
+
+def _seed_persona_workspace(persona_dir: Path) -> tuple[list, list[dict]]:
+    """写入 profile / self_concept，并构造 10 条本月 memory units + buffer 元数据。"""
+    from datetime import datetime, timezone
+
+    from agent.soul.memory.unit import FactualMemory, Valence
+    from agent.soul.persona.profile.profile import PersonaProfile
+    from agent.soul.persona.self_concept.concept import Belief, BeliefStrength, SelfConcept
+    from agent.soul.persona.self_concept.store import SelfConceptStore
+    from agent.soul.persona.profile.store import ProfileStore
+
+    persona_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    month = now.strftime("%Y-%m")
+
+    profile = PersonaProfile(
+        name="林知遥",
+        background_facts=[
+            "在一家产品团队做后端开发，常参与跨组评审",
+            "习惯把复杂问题拆成可验证的小步骤",
+        ],
+        core_traits=["谨慎", "负责", "内省", "慢热"],
+        interpersonal_style="先听再表态，倾向书面确认关键结论",
+        emotional_expressiveness="表面克制，私下会反复回想对话细节",
+        values=["可靠交付", "诚实沟通", "尊重边界"],
+        ethical_stances=["不替他人做未经确认的承诺"],
+        cognitive_style="结构化、偏保守验证",
+        reasoning_pattern="先找反例，再收敛到可执行方案",
+        core_motivation="成为团队里‘让人放心’的技术搭档",
+        avoidance_pattern="回避当众被追问细节却答不上来",
+        stress_response="短期加工作量，长期会沉默并自我怀疑",
+        boundaries=["非工作时间不承接临时大改需求"],
+        built=True,
+        built_at="demo-seed-v1",
+    )
+    ProfileStore(str(persona_dir)).save_profile(profile)
+
+    concept = SelfConcept(
+        narrative=(
+            "我把自己看作一个需要时间热身、但一旦进入状态就能稳定交付的人。"
+            "我重视承诺，也因此在协作前常会多确认一步。"
+        ),
+        beliefs=[
+            Belief(
+                content="我擅长把复杂问题拆成可验证的小步骤",
+                strength=BeliefStrength.established,
+                source="build",
+            ),
+            Belief(
+                content="我在跨组沟通前容易犹豫",
+                strength=BeliefStrength.emerging,
+                source="build",
+            ),
+        ],
+    )
+    SelfConceptStore(str(persona_dir)).save(concept)
+
+    event_specs = [
+        ("evt-01", "跨组评审", "产品临时改需求，我在评审里当场指出风险，会议气氛变僵", "焦虑", Valence.negative, 0.72),
+        ("evt-02", "跨组评审", "会后同事私信说我的提醒有价值，但希望语气更柔和", "释然", Valence.mixed, 0.58),
+        ("evt-03", "跨组评审", "我改用书面列出风险清单再开会，对方接受度明显提高", "踏实", Valence.positive, 0.65),
+        ("evt-04", "跨组评审", "又一次评审前我反复改 PPT，担心被追问细节", "紧张", Valence.negative, 0.55),
+        ("evt-05", "项目延期", "核心接口延期两天，我主动加班补齐联调窗口", "压力", Valence.negative, 0.68),
+        ("evt-06", "项目延期", "leader 说‘先保上线’，我内心觉得测试覆盖不足", "矛盾", Valence.mixed, 0.61),
+        ("evt-07", "项目延期", "上线后小故障被快速修复，我松了口气但也更警惕", "警觉", Valence.neutral, 0.52),
+        ("evt-08", "边界拒绝", "非工作时间收到大改需求，我明确拒绝并提议周一处理", "坚定", Valence.positive, 0.70),
+        ("evt-09", "边界拒绝", "对方表示理解，我第一次没有为拒绝而内疚", "轻松", Valence.positive, 0.63),
+        ("evt-10", "边界拒绝", "我复盘后发现‘提前写清边界’比事后解释更省力", "领悟", Valence.positive, 0.66),
+    ]
+
+    units: list[FactualMemory] = []
+    for uid, focus, fact, emotion, valence, intensity in event_specs:
+        unit = FactualMemory(
+            id=uid,
+            focus=focus,
+            fact=fact,
+            perception=f"我注意到：{fact}",
+            emotion=emotion,
+            emotion_intensity=intensity,
+            valence=valence,
+            base_activation=max(0.35, intensity),
+            life_event_id=uid,
+        )
+        unit.created_at = now
+        units.append(unit)
+
+    cluster_payloads = [
+        {
+            "theme": "跨组评审中的表达与确认",
+            "tick_id": "wander-tick-1",
+            "unit_ids": ["evt-01", "evt-02", "evt-03", "evt-04"],
+            "mass": 2.4,
+            "persona_score": 0.78,
+        },
+        {
+            "theme": "项目延期与交付压力",
+            "tick_id": "wander-tick-2",
+            "unit_ids": ["evt-05", "evt-06", "evt-07"],
+            "mass": 1.9,
+            "persona_score": 0.71,
+        },
+        {
+            "theme": "非工作时间的边界",
+            "tick_id": "wander-tick-3",
+            "unit_ids": ["evt-08", "evt-09", "evt-10"],
+            "mass": 2.0,
+            "persona_score": 0.74,
+        },
+    ]
+    return units, cluster_payloads
+
+
+def _run_persona_drift(ns: argparse.Namespace, llm_yaml: str) -> None:
+    from dataclasses import replace
+
+    from config.agent.persona_config import PersonaConfig
+    from config.llm_core.config import LLMConfig
+    from config.soul.memory.infra_config import SoulMemoryInfraConfig
+    from infra.llm import LLM
+    from infra.memory import MemoryInfraService
+
+    from agent.soul.persona.buffer import (
+        cluster_memory_units,
+        current_month,
+        DriftDistillWriter,
+    )
+    from agent.soul.persona.manager import PersonaManager
+    from agent.soul.persona.self_concept.concept import SelfConcept
+
+    persona_dir = Path(ns.persona_dir).resolve() if ns.persona_dir.strip() else (ROOT / ".react" / "test_persona_drift")
+    target_month = current_month()
+
+    _log_section("Persona 月度漂移演示 — 初始化")
+    print(f"persona_dir = {persona_dir}")
+    print(f"target_month = {target_month}")
+    print(f"llm_yaml    = {llm_yaml}")
+
+    units, cluster_payloads = _seed_persona_workspace(persona_dir)
+    print(f"已种子化：profile + self_concept + {len(units)} 条 memory units + {len(cluster_payloads)} 条 buffer 信号")
+
+    lc = LLMConfig.from_yaml(llm_yaml)
+    core = LLM(lc)
+    llm = _LoggingLLM(core)
+
+    infra_cfg = SoulMemoryInfraConfig.load_default()
+    if ns.no_infra:
+        infra_cfg = replace(infra_cfg, enabled=False)
+        print("\n[infra] 已禁用（--no-infra），聚类将使用 focus 分桶")
+        embedder = None
+    else:
+        print("\n[infra] 启用 MemoryInfraService（BGE + Qdrant）…")
+        infra = MemoryInfraService.build(infra_cfg)
+        infra.warm_up()
+        embedder = infra.retriever_embedder()
+        print(f"[infra] embedder={'OK' if embedder is not None else 'NONE'}")
+
+    persona_cfg = PersonaConfig(
+        enabled=True,
+        persona_dir=str(persona_dir),
+        evolution_enabled=False,
+    )
+    manager = PersonaManager(persona_cfg, llm=llm)
+    memory_port = _InMemoryDriftPort(units)
+    manager.set_memory_port(memory_port)
+    manager.set_embedder(embedder)
+
+    _log_section("演化前 — 静态画像（Profile）")
+    _print_profile(manager.profile)
+
+    concept_before = SelfConcept.from_dict(manager.self_concept.to_dict())
+    _log_section("演化前 — 慢变自我（SelfConcept）")
+    _print_self_concept(concept_before, label="BEFORE")
+
+    _log_section("Step 1 · Buffer 采集（模拟 heartbeat wander → persona_clusters）")
+    buf_result = manager.record_cluster_signals(cluster_payloads)
+    print(f"record_cluster_signals → applied={buf_result['applied']} pending={buf_result['buffer']['pending']}")
+    for sig in manager.buffer.pending():
+        print(f"  · theme={sig.theme!r} units={sig.unit_ids}")
+
+    _log_section("Step 2 · Memory 回查 raw units")
+    anchor_ids: list[str] = []
+    for sig in manager.buffer.pending_for_month(target_month):
+        anchor_ids.extend(sig.unit_ids)
+    anchor_ids = list(dict.fromkeys(anchor_ids))
+    drift_units = memory_port.list_drift_units(
+        month=target_month,
+        anchor_unit_ids=anchor_ids,
+        limit=120,
+    )
+    print(f"list_drift_units → {len(drift_units)} units（anchors={len(anchor_ids)}）")
+    for u in drift_units:
+        print(f"  [{u.id}] {u.focus} | {u.fact[:48]}… | 情绪={u.emotion}({u.emotion_intensity:.2f})")
+
+    _log_section("Step 3 · Embedding 聚类")
+    clusters = cluster_memory_units(drift_units, embedder)
+    print(f"clusters = {len(clusters)}")
+    for i, cl in enumerate(clusters, start=1):
+        print(f"\n  簇 #{i} theme={cl.theme!r} size={len(cl.units)} cohesion={cl.cohesion:.3f}")
+        for line in cl.lines(max_lines=4):
+            print(f"    - {line}")
+
+    _log_section("Step 4 · 分簇蒸馏（DriftDistillWriter.distill_cluster）")
+    writer = DriftDistillWriter(llm)
+    cluster_drafts = []
+    for cl in clusters:
+        draft = writer.distill_cluster(cl, manager.profile, manager.self_concept)
+        cluster_drafts.append(draft)
+        print(f"\n  簇「{draft.theme}」insight:")
+        print(f"    {draft.insight or '（空）'}")
+        if draft.adds:
+            print(f"    adds={draft.adds}")
+        if draft.upgrades:
+            print(f"    upgrades={draft.upgrades}")
+
+    _log_section("Step 5 · 向上合并（reduce_drafts）")
+    month_draft = writer.reduce_drafts(cluster_drafts, month=target_month)
+    print(f"month={month_draft.month}")
+    print(f"month_insight:\n  {month_draft.insight or '（空）'}")
+
+    _log_section("Step 6 · 对照画像修订（revise_against_portrait）")
+    delta = writer.revise_against_portrait(manager.profile, manager.self_concept, month_draft)
+    print("SelfConceptDelta:")
+    _print_delta(delta)
+
+    if delta.is_empty():
+        print("\n[结果] delta 为空，跳过 apply。")
+        return
+
+    _log_section("Step 7 · 写回 self_concept（apply_delta + mark_consolidated）")
+    apply_result = manager.apply_self_concept_delta(delta)
+    pending_ids = [s.id for s in manager.buffer.pending_for_month(target_month)]
+    marked = manager.buffer.mark_consolidated(pending_ids)
+    from agent.soul.persona.buffer.store import ExperienceBufferStore
+
+    manager._buffer_store.save(manager.buffer)
+    manager._buffer_meta = manager._buffer_store.touch_drift_run(target_month)
+
+    print(f"apply → {apply_result}")
+    print(f"buffer mark_consolidated → {marked} signals")
+
+    _log_section("演化后 — SelfConcept 对比")
+    concept_after = manager.self_concept
+    _print_self_concept(concept_after, label="AFTER")
+
+    _log_sub("叙事 diff")
+    if concept_before.narrative.strip() != concept_after.narrative.strip():
+        print("  BEFORE:", concept_before.narrative.strip())
+        print("  AFTER :", concept_after.narrative.strip())
+    else:
+        print("  （叙事未变）")
+
+    _log_sub("信念 diff")
+    before_map = {b.content: b.strength.value for b in concept_before.beliefs}
+    after_map = {b.content: b.strength.value for b in concept_after.beliefs}
+    added = [c for c in after_map if c not in before_map]
+    removed = [c for c in before_map if c not in after_map]
+    changed = [
+        c for c in before_map
+        if c in after_map and before_map[c] != after_map[c]
+    ]
+    if added:
+        print("  新增:", added)
+    if removed:
+        print("  移除:", removed)
+    if changed:
+        for c in changed:
+            print(f"  升级/降级: {before_map[c]} → {after_map[c]}  |  {c}")
+    if not added and not removed and not changed:
+        print("  （信念列表无结构变化）")
+
+    _log_section("完成")
+    print(f"portrait_revision = {manager.portrait_revision()}")
+    print(f"buffer pending    = {manager.buffer.summary()['pending']}")
+    print(f"数据目录          = {persona_dir}")
+
+
 # ── 入口 ─────────────────────────────────────────────────────────────────────
 
 def _run() -> None:
@@ -357,7 +726,9 @@ def _run() -> None:
         sys.stderr.write("YAML 中需配置 model\n")
         raise SystemExit(2)
 
-    sandbox_mgr, restore_tao = _setup_sandbox(ns)
+    sandbox_mgr, restore_tao = (None, None)
+    if ns.mode in ("full", "single"):
+        sandbox_mgr, restore_tao = _setup_sandbox(ns)
 
     core = LLM(lc)
     handle = LLMHandle(core)
@@ -371,7 +742,9 @@ def _run() -> None:
         )
 
     try:
-        if ns.mode == "single":
+        if ns.mode == "persona-drift":
+            _run_persona_drift(ns, llm_yaml)
+        elif ns.mode == "single":
             asyncio.run(_run_single(ns, llm_yaml, llm_call))
         else:
             asyncio.run(_run_full(ns, llm_yaml, llm_call))

@@ -10,22 +10,22 @@ from ..share_desire import (
     OUTBOUND_THRESHOLD_MODERATE,
     ShareDesire,
 )
-from .request import DriveOutboundRequest
+from .request import PresenceOutboundRequest
 
 
 @dataclass
-class DriveGateConfig:
+class PresenceGateConfig:
     """软阈值门控：按分享意愿分层决定是否 outbound。"""
 
     moderate_threshold: float = OUTBOUND_THRESHOLD_MODERATE
     eager_threshold: float = OUTBOUND_THRESHOLD_EAGER
 
 
-class DriveGate:
+class PresenceGate:
     """限值门控：捕获结束后按 share_desire 软分层检查是否突破。"""
 
-    def __init__(self, config: DriveGateConfig | None = None) -> None:
-        self._config = config or DriveGateConfig()
+    def __init__(self, config: PresenceGateConfig | None = None) -> None:
+        self._config = config or PresenceGateConfig()
 
     @property
     def moderate_threshold(self) -> float:
@@ -46,15 +46,17 @@ class DriveGate:
         self,
         result: CaptureResult,
         buffer: ShareBuffer | None = None,
-    ) -> DriveOutboundRequest | None:
+    ) -> PresenceOutboundRequest | None:
         state = result.after
-        if state.impulse_level < self._config.moderate_threshold:
+        behavior = state.behavior
+        motivation = state.motivation
+        if behavior.impulse_level < self._config.moderate_threshold:
             return None
         share_buffer = buffer or ShareBuffer()
         package = fold_share_buffer(share_buffer.entries, state)
         if not package.summary.strip():
             return None
-        if state.expectation in (
+        if behavior.expectation in (
             Expectation.required,
             Expectation.deferred,
             Expectation.clarify,
@@ -62,16 +64,16 @@ class DriveGate:
             return None
         share_desire = max(
             package.peak_share_desire,
-            state.share_desire,
-            self._share_desire_from_impulse(state.impulse_level),
+            motivation.share_desire,
+            self._share_desire_from_impulse(behavior.impulse_level),
         )
-        return DriveOutboundRequest(
+        return PresenceOutboundRequest(
             session_id=result.session_id,
             reason=package.summary,
-            impulse_level=state.impulse_level,
+            impulse_level=behavior.impulse_level,
             share_desire=share_desire,
             expectation=Expectation.required,
             package=package,
-            source=state.impulse_source,
+            source=behavior.impulse_source,
             wait_reply=True,
         )

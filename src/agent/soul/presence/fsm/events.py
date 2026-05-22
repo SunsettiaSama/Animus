@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
-class DriveEventKind(str, Enum):
+class PresenceEventKind(str, Enum):
     user_text = "user_text"
     agent_utterance = "agent_utterance"
     agent_deferred = "agent_deferred"
@@ -17,8 +17,8 @@ class DriveEventKind(str, Enum):
 
 
 @dataclass(frozen=True)
-class DriveEvent:
-    kind: DriveEventKind
+class PresenceEvent:
+    kind: PresenceEventKind
     session_id: str
     payload: dict = field(default_factory=dict)
 
@@ -29,9 +29,9 @@ class DriveEvent:
         ambiguous: bool = False,
         resolves_clarify: bool = False,
         proactive_intent_id: str = "",
-    ) -> DriveEvent:
-        return DriveEvent(
-            DriveEventKind.user_text,
+    ) -> PresenceEvent:
+        return PresenceEvent(
+            PresenceEventKind.user_text,
             session_id,
             {
                 "ambiguous": ambiguous,
@@ -47,9 +47,9 @@ class DriveEvent:
         has_question: bool = False,
         final: bool = False,
         notify_only: bool = False,
-    ) -> DriveEvent:
-        return DriveEvent(
-            DriveEventKind.agent_utterance,
+    ) -> PresenceEvent:
+        return PresenceEvent(
+            PresenceEventKind.agent_utterance,
             session_id,
             {
                 "has_question": has_question,
@@ -59,45 +59,45 @@ class DriveEvent:
         )
 
     @staticmethod
-    def agent_deferred(session_id: str) -> DriveEvent:
-        return DriveEvent(DriveEventKind.agent_deferred, session_id)
+    def agent_deferred(session_id: str) -> PresenceEvent:
+        return PresenceEvent(PresenceEventKind.agent_deferred, session_id)
 
     @staticmethod
-    def scene_enter(session_id: str) -> DriveEvent:
-        return DriveEvent(DriveEventKind.scene_enter, session_id)
+    def scene_enter(session_id: str) -> PresenceEvent:
+        return PresenceEvent(PresenceEventKind.scene_enter, session_id)
 
     @staticmethod
     def proactive_open(
         session_id: str,
         *,
         wait_reply: bool = True,
-    ) -> DriveEvent:
-        return DriveEvent(
-            DriveEventKind.proactive_open,
+    ) -> PresenceEvent:
+        return PresenceEvent(
+            PresenceEventKind.proactive_open,
             session_id,
             {"wait_reply": wait_reply},
         )
 
     @staticmethod
-    def proactive_delivered(session_id: str) -> DriveEvent:
-        return DriveEvent(DriveEventKind.proactive_delivered, session_id)
+    def proactive_delivered(session_id: str) -> PresenceEvent:
+        return PresenceEvent(PresenceEventKind.proactive_delivered, session_id)
 
     @staticmethod
-    def ambiguity_detected(session_id: str, reason: str = "") -> DriveEvent:
-        return DriveEvent(
-            DriveEventKind.ambiguity_detected,
+    def ambiguity_detected(session_id: str, reason: str = "") -> PresenceEvent:
+        return PresenceEvent(
+            PresenceEventKind.ambiguity_detected,
             session_id,
             {"reason": reason},
         )
 
     @staticmethod
-    def clarify_resolved(session_id: str) -> DriveEvent:
-        return DriveEvent(DriveEventKind.clarify_resolved, session_id)
+    def clarify_resolved(session_id: str) -> PresenceEvent:
+        return PresenceEvent(PresenceEventKind.clarify_resolved, session_id)
 
     @staticmethod
-    def close(session_id: str, reason: str = "") -> DriveEvent:
-        return DriveEvent(
-            DriveEventKind.close,
+    def close(session_id: str, reason: str = "") -> PresenceEvent:
+        return PresenceEvent(
+            PresenceEventKind.close,
             session_id,
             {"reason": reason},
         )

@@ -15,22 +15,22 @@ from agent.interaction.core.semantic import InteractionCloseReason, SemanticInte
 from agent.interaction.core.segments import InteractionDirection
 from agent.interaction.kinds import InteractionModalityKind
 from agent.posture import InteractionEvent, InteractionPosture
-from agent.soul.drive import DriveContext, DriveEvent, DriveLayer
+from agent.soul.presence import PresenceContext, PresenceEvent, PresenceLayer
 
 
 class DialogueKernel:
-    """对话模态内核：SemanticInteraction + posture 结构态 + Soul 驱动期待。"""
+    """对话模态内核：SemanticInteraction + posture 结构态 + Soul 当下态期待。"""
 
     def __init__(
         self,
         continuity: ContinuityJudge | None = None,
         posture: InteractionPosture | None = None,
-        drive: DriveLayer | None = None,
+        presence: PresenceLayer | None = None,
         on_closed: Callable[[InteractionClosedEvent], None] | None = None,
     ) -> None:
         self._continuity = continuity or StackedContinuityJudge()
         self._posture = posture or InteractionPosture()
-        self._drive = drive or DriveLayer()
+        self._presence = presence or PresenceLayer()
         self._on_closed = on_closed
         self._active: dict[str, SemanticInteraction] = {}
 
@@ -39,8 +39,8 @@ class DialogueKernel:
         return self._posture
 
     @property
-    def drive(self) -> DriveLayer:
-        return self._drive
+    def presence(self) -> PresenceLayer:
+        return self._presence
 
     def active(self, session_id: str) -> SemanticInteraction | None:
         item = self._active.get(session_id)
@@ -75,7 +75,7 @@ class DialogueKernel:
             channel=channel,
             modality=InteractionModalityKind.dialogue.value,
         )
-        self._drive.bind(session_id, expectation=expectation)
+        self._presence.bind(session_id, expectation=expectation)
         self._sync_interaction_from_layers(interaction, session_id)
         return interaction
 
@@ -97,7 +97,7 @@ class DialogueKernel:
                 admitted=admitted,
             )
         )
-        self._dispatch_drive(DriveEvent.scene_enter(session_id))
+        self._dispatch_presence(PresenceEvent.scene_enter(session_id))
         self._sync_interaction_from_layers(interaction, session_id)
         return interaction
 
@@ -147,7 +147,7 @@ class DialogueKernel:
             interaction = active or self.open(session_id, channel=channel)
         interaction.append_user(text)
         posture_snap = self._posture.snapshot(session_id)
-        drive_ctx = DriveContext(
+        presence_ctx = PresenceContext(
             line_open=posture_snap.line_open,
             proactive_intent_id=posture_snap.proactive_intent_id,
         )
@@ -156,13 +156,13 @@ class DialogueKernel:
                 session_id, text, ambiguous=ambiguous
             )
         )
-        self._drive.dispatch(
-            DriveEvent.user_text(
+        self._presence.dispatch(
+            PresenceEvent.user_text(
                 session_id,
                 ambiguous=ambiguous,
                 proactive_intent_id=posture_snap.proactive_intent_id,
             ),
-            context=drive_ctx,
+            context=presence_ctx,
         )
         self._sync_interaction_from_layers(interaction, session_id)
         return interaction
@@ -179,8 +179,8 @@ class DialogueKernel:
         self._posture.dispatch(
             InteractionEvent.close(session_id, reason=reason.value)
         )
-        self._dispatch_drive(
-            DriveEvent.close(session_id, reason=reason.value)
+        self._dispatch_presence(
+            PresenceEvent.close(session_id, reason=reason.value)
         )
         if self._on_closed is not None:
             self._on_closed(InteractionClosedEvent(interaction=interaction))
@@ -188,51 +188,51 @@ class DialogueKernel:
 
     def dispatch_posture(self, event: InteractionEvent) -> None:
         self._posture.dispatch(event)
-        drive_event = self._map_posture_event_to_drive(event)
-        if drive_event is not None:
-            self._dispatch_drive(drive_event)
+        presence_event = self._map_posture_event_to_presence(event)
+        if presence_event is not None:
+            self._dispatch_presence(presence_event)
         session_id = event.session_id
         interaction = self._active.get(session_id)
         if interaction is not None and interaction.is_open:
             self._sync_interaction_from_layers(interaction, session_id)
 
-    def _map_posture_event_to_drive(
+    def _map_posture_event_to_presence(
         self,
         event: InteractionEvent,
-    ) -> DriveEvent | None:
+    ) -> PresenceEvent | None:
         sid = event.session_id
         p = event.payload
         kind = event.kind.value
         if kind == "agent_utterance":
-            return DriveEvent.agent_utterance(
+            return PresenceEvent.agent_utterance(
                 sid,
                 has_question=bool(p.get("has_question")),
                 final=bool(p.get("final")),
                 notify_only=bool(p.get("notify_only")),
             )
         if kind == "agent_deferred":
-            return DriveEvent.agent_deferred(sid)
+            return PresenceEvent.agent_deferred(sid)
         if kind == "proactive_open":
-            return DriveEvent.proactive_open(
+            return PresenceEvent.proactive_open(
                 sid,
                 wait_reply=bool(p.get("wait_reply", True)),
             )
         if kind == "proactive_delivered":
-            return DriveEvent.proactive_delivered(sid)
+            return PresenceEvent.proactive_delivered(sid)
         if kind == "ambiguity_detected":
-            return DriveEvent.ambiguity_detected(
+            return PresenceEvent.ambiguity_detected(
                 sid,
                 reason=str(p.get("reason", "")),
             )
         if kind == "clarify_resolved":
-            return DriveEvent.clarify_resolved(sid)
+            return PresenceEvent.clarify_resolved(sid)
         return None
 
-    def _dispatch_drive(self, event: DriveEvent) -> None:
+    def _dispatch_presence(self, event: PresenceEvent) -> None:
         snap = self._posture.snapshot(event.session_id)
-        self._drive.dispatch(
+        self._presence.dispatch(
             event,
-            context=DriveContext(
+            context=PresenceContext(
                 line_open=snap.line_open,
                 proactive_intent_id=snap.proactive_intent_id,
             ),
@@ -244,9 +244,9 @@ class DialogueKernel:
         session_id: str,
     ) -> None:
         snap = self._posture.snapshot(session_id)
-        drive_snap = self._drive.snapshot(session_id)
-        interaction.expectation = drive_snap.expectation
-        interaction.context.expectation = drive_snap.expectation
+        presence_snap = self._presence.snapshot(session_id)
+        interaction.expectation = presence_snap.expectation
+        interaction.context.expectation = presence_snap.expectation
         interaction.context.in_scene = snap.in_scene
         interaction.context.proactive_intent_id = snap.proactive_intent_id
         if snap.channel:

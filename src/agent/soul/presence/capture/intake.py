@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..fsm.events import DriveEvent
-from ..fsm.state import DriveContext, DriveState
+from ..fsm.events import PresenceEvent
+from ..fsm.state import PresenceContext, PresenceState
 from ..transition import TransitionResult, apply_transition
-from .evolution import drive_event_from_capture
+from .evolution import presence_event_from_capture
 from .events import BOUNDARY_KINDS, EVOLUTION_KINDS, CaptureEvent, CaptureKind
 from .impulse import apply_evolution_impulse
 
@@ -14,20 +14,20 @@ from .impulse import apply_evolution_impulse
 class CaptureResult:
     session_id: str
     event: CaptureEvent
-    before: DriveState
-    after: DriveState
+    before: PresenceState
+    after: PresenceState
     notes: list[str] = field(default_factory=list)
     boundary: bool = False
 
 
-class DriveCapture:
+class PresenceCapture:
     """事件捕获：顶层注入走 transition；内部演化累积冲动。"""
 
     def ingest(
         self,
-        state: DriveState,
+        state: PresenceState,
         event: CaptureEvent,
-        context: DriveContext,
+        context: PresenceContext,
     ) -> CaptureResult:
         before = state.copy()
         notes: list[str] = []
@@ -53,8 +53,8 @@ class DriveCapture:
                 notes=notes,
             )
 
-        drive_event = drive_event_from_capture(event)
-        transition: TransitionResult = apply_transition(state, drive_event, context)
+        presence_event = presence_event_from_capture(event)
+        transition: TransitionResult = apply_transition(state, presence_event, context)
         notes.extend(transition.notes)
 
         return CaptureResult(
@@ -68,10 +68,10 @@ class DriveCapture:
 
     def inject_boundary(
         self,
-        state: DriveState,
-        event: DriveEvent,
-        context: DriveContext,
+        state: PresenceState,
+        event: PresenceEvent,
+        context: PresenceContext,
     ) -> CaptureResult:
-        from .evolution import capture_event_from_drive
+        from .evolution import capture_event_from_presence
 
-        return self.ingest(state, capture_event_from_drive(event), context)
+        return self.ingest(state, capture_event_from_presence(event), context)

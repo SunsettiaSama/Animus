@@ -38,11 +38,11 @@ def test_scene_enter_while_idle():
     assert r.after.line_open is True
 
 
-def test_dialogue_kernel_syncs_drive_expectation():
+def test_dialogue_kernel_syncs_presence_expectation():
     from agent.interaction.dialogue import DialogueKernel
-    from agent.soul.drive import DriveLayer, Expectation
+    from agent.soul.presence import PresenceLayer, Expectation
 
-    drive = DriveLayer()
-    k = DialogueKernel(drive=drive)
+    presence_svc = PresenceLayer()
+    k = DialogueKernel(presence=presence_svc)
     k.on_user_text("tao", "你好")
-    assert k.drive.snapshot("tao").expectation == Expectation.required
+    assert k.presence.snapshot("tao").expectation == Expectation.required

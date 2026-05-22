@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..fsm.state import DriveState
+from ..fsm.state import PresenceState
 from ..share_desire import (
     ShareDesire,
     max_share_desire,
@@ -33,7 +33,7 @@ def evolution_hint(event: CaptureEvent) -> str:
     return str(payload.get("hint", "")).strip()
 
 
-def apply_evolution_impulse(state: DriveState, event: CaptureEvent) -> str:
+def apply_evolution_impulse(state: PresenceState, event: CaptureEvent) -> str:
     """Soul 内部演化 → 按 share_desire 软分层累积冲动。"""
     desire = parse_share_desire(
         event.payload.get("share_desire"),
@@ -42,9 +42,11 @@ def apply_evolution_impulse(state: DriveState, event: CaptureEvent) -> str:
     weight = share_desire_weight(desire)
     source = str(event.payload.get("source", event.kind.value))
     hint = evolution_hint(event)
-    state.impulse_level = min(1.0, state.impulse_level + max(0.0, weight))
-    state.share_desire = max_share_desire(state.share_desire, desire)
-    state.impulse_source = source
+    behavior = state.behavior
+    motivation = state.motivation
+    behavior.impulse_level = min(1.0, behavior.impulse_level + max(0.0, weight))
+    motivation.share_desire = max_share_desire(motivation.share_desire, desire)
+    behavior.impulse_source = source
     if hint:
-        state.impulse_reason = hint
+        behavior.impulse_reason = hint
     return f"evolution captured: {event.kind.value} share={desire.value}"

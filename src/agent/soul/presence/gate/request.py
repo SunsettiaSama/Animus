@@ -8,7 +8,7 @@ from ..share_desire import ShareDesire
 
 
 @dataclass(frozen=True)
-class DriveOutboundRequest:
+class PresenceOutboundRequest:
     """冲动突破限值后，Soul 向顶层发起的交互请求。"""
 
     session_id: str

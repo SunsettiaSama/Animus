@@ -1,13 +1,13 @@
 """
-heartbeat/bridge.py — 心跳层 Memory / Drive / Persona / Life 接口规范
+heartbeat/bridge.py — 心跳层 Memory / Presence / Persona / Life 接口规范
 ====================================================================
 
 心跳 wander tick
 ----------------
-1. SoulService 组装 PersonaSnapshot（Drive.affect + self_concept 检索偏置）
+1. SoulService 组装 PersonaSnapshot（Presence.affect + self_concept 检索偏置）
 2. MemoryService.tick(snapshot) → wander / ruminate / persona_clusters
 3. buffer_candidates → Persona buffer 元数据（**不**触发 self_concept 漂移）
-4. EmotionalSignal → Drive.affect（快变情绪，**不**是 self_concept 漂移）
+4. EmotionalSignal → Presence.affect（快变情绪，**不**是 self_concept 漂移）
 5. LifeHeartbeatPort.receive_experience（可选）
 
 唯一 self_concept 漂移
@@ -33,7 +33,7 @@ from agent.soul.memory.unit import Valence
 class PersonaSnapshot:
     """Persona → Memory 方向：心跳时人格层暴露的当前状态快照。
 
-    由 SoulService 组装（Drive.affect + self_concept 检索偏置），
+    由 SoulService 组装（Presence.affect + self_concept 检索偏置），
     作为 wander() 的偏置参数传入 MemoryHeartbeatPort.tick()。
 
     字段
@@ -62,7 +62,7 @@ class PersonaSnapshot:
 
 @dataclass
 class EmotionalSignal:
-    """Memory → Drive 方向：本次心跳记忆浮现的情绪信号（快变，非 self_concept 漂移）。"""
+    """Memory → Presence 方向：本次心跳记忆浮现的情绪信号（快变，非 self_concept 漂移）。"""
     dominant_emotion: str = ""
     dominant_valence: Valence = Valence.neutral
     intensity: float = 0.0
@@ -160,9 +160,9 @@ class MemoryLifecycleHeartbeatPort(Protocol):
 # ═══════════════════════════════════════════════════════════════════════════
 
 # def tick(self) -> None:
-#     snapshot = build_persona_snapshot_from_drive_and_self_concept()
+#     snapshot = build_persona_snapshot_from_presence_and_self_concept()
 #     result = memory_port.tick(snapshot)
-#     drive.receive_heartbeat_signal(result.signal)
+#     presence.receive_heartbeat_signal(result.signal)
 #     persona.record_cluster_signals(result.buffer_candidates)
 #     life_port.receive_experience(result)
 #     # self_concept 漂移仅由 checklist RUN_MONTHLY_DRIFT 触发

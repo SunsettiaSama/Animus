@@ -1,4 +1,4 @@
-from .request import DriveOutboundRequest
-from .threshold import DriveGate, DriveGateConfig
+from .request import PresenceOutboundRequest
+from .threshold import PresenceGate, PresenceGateConfig
 
-__all__ = ["DriveGate", "DriveGateConfig", "DriveOutboundRequest"]
+__all__ = ["PresenceGate", "PresenceGateConfig", "PresenceOutboundRequest"]

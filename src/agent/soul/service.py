@@ -16,13 +16,13 @@ from agent.soul.access import is_read_api_action
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
 from agent.soul.heartbeat.evolution import new_heartbeat_tick_id
 from agent.soul.heartbeat.orchestrator import HeartbeatOrchestrator
-from agent.soul.drive import (
+from agent.soul.presence import (
     CaptureEvent,
-    DriveContext,
-    DriveEvent,
-    DriveIngestResult,
-    DriveOutboundRequest,
-    DriveService,
+    PresenceContext,
+    PresenceEvent,
+    PresenceIngestResult,
+    PresenceOutboundRequest,
+    PresenceService,
     Expectation,
 )
 from agent.soul.workers import SoulWorkers
@@ -97,8 +97,8 @@ class SoulService:
         self._heartbeat: Any = None
         self._orchestrator: HeartbeatOrchestrator | None = None
         self._workers = SoulWorkers()
-        self._drive_service: DriveService | None = None
-        self._drive_outbound_handlers: list[Any] = []
+        self._presence_service: PresenceService | None = None
+        self._presence_outbound_handlers: list[Any] = []
         self._story_world_context_supplier: StoryWorldContextSupplier | None = None
         self._external_opportunity_supplier: ExternalOpportunitySupplier | None = None
 
@@ -147,18 +147,18 @@ class SoulService:
         return self._workers
 
     @property
-    def drive(self) -> DriveService:
-        self._ensure_drive_service()
-        return self._drive_service
+    def presence(self) -> PresenceService:
+        self._ensure_presence_service()
+        return self._presence_service
 
-    def register_drive_outbound_handler(
+    def register_presence_outbound_handler(
         self,
         handler: Any,
     ) -> None:
         """注册顶层回调：冲动突破限值后发起交互请求。"""
-        self._drive_outbound_handlers.append(handler)
-        self._ensure_drive_service()
-        self._drive_service.set_outbound_handler(self._emit_drive_outbound)
+        self._presence_outbound_handlers.append(handler)
+        self._ensure_presence_service()
+        self._presence_service.set_outbound_handler(self._emit_presence_outbound)
 
     def set_story_world_context_supplier(
         self,
@@ -176,27 +176,27 @@ class SoulService:
         """注入外界时机探测接口（供 heartbeat 定期扫描）。"""
         self._external_opportunity_supplier = supplier
 
-    def ingest_drive_event(
+    def ingest_presence_event(
         self,
-        event: DriveEvent,
+        event: PresenceEvent,
         *,
         line_open: bool = False,
         proactive_intent_id: str = "",
-    ) -> DriveIngestResult:
+    ) -> PresenceIngestResult:
         """顶层边界事件注入（capture → transition → gate）。"""
         self._require_running()
-        return self.drive.ingest(
+        return self.presence.ingest(
             event,
-            context=DriveContext(
+            context=PresenceContext(
                 line_open=line_open,
                 proactive_intent_id=proactive_intent_id,
             ),
         )
 
-    def capture_drive_evolution(self, event: CaptureEvent) -> DriveIngestResult:
+    def capture_presence_evolution(self, event: CaptureEvent) -> PresenceIngestResult:
         """Soul 内部演化捕获（capture → 冲动累积 → gate → 顶层请求）。"""
         self._require_running()
-        return self.drive.capture_evolution(event)
+        return self.presence.capture_evolution(event)
 
     def start(self) -> None:
         if self._state == "running":
@@ -297,7 +297,7 @@ class SoulService:
     def run_wander(
         self, drift_intensity_floor: float | None = None
     ) -> tuple[MemoryHeartbeatResult, list[dict]]:
-        """跨域 wander：memory tick → drive.affect → life。"""
+        """跨域 wander：memory tick → presence.affect → life。"""
         from agent.soul.heartbeat.bridge import PersonaSnapshot
 
         self._require_running()
@@ -307,10 +307,10 @@ class SoulService:
             else self._cfg.wander_drift_intensity_floor
         )
         tid = new_heartbeat_tick_id()
-        drive_snap = self.drive.snapshot("tao")
+        presence_snap = self.presence.snapshot("tao")
         persona_snap = self.persona.service.snapshot()
         snap = PersonaSnapshot(
-            emotional_state=drive_snap.state.affect.texture or "",
+            emotional_state=presence_snap.state.affect.texture or "",
             attention_keywords=list(persona_snap.get("attention_keywords") or [])[:20],
             tick_id=tid,
         )
@@ -322,7 +322,7 @@ class SoulService:
         if result.signal.tick_id == "":
             result.signal.tick_id = tid
 
-        self.drive.receive_heartbeat_signal(
+        self.presence.receive_heartbeat_signal(
             result.signal,
             session_id="tao",
             intensity_floor=floor,
@@ -351,7 +351,7 @@ class SoulService:
         if supplier is None:
             return {"checked": False, "reason": "no supplier", "triggered": False}
 
-        snap = self.drive.snapshot(session_id)
+        snap = self.presence.snapshot(session_id)
         opportune = bool(supplier.is_opportune(
             session_id=session_id,
             impulse_level=snap.impulse_level,
@@ -360,7 +360,7 @@ class SoulService:
         if not opportune:
             return {"checked": True, "opportune": False, "triggered": False}
 
-        outbound = self.drive.flush_accumulated(
+        outbound = self.presence.flush_accumulated(
             session_id=session_id,
             source="external_opportunity_scan",
             wait_reply=True,
@@ -425,13 +425,13 @@ class SoulService:
     # ── 对外查询接口（HTTP / 外部集成）────────────────────────────────────────
 
     def query_persona(self) -> dict[str, Any]:
-        """只读 Persona 快照 + Drive.affect。"""
+        """只读 Persona 快照 + Presence.affect。"""
         snap = self.dispatch(SoulRequest(
             domain=SoulDomain.persona,
             action=PersonaAction.GET_SNAPSHOT,
         ))
-        self._ensure_drive_service()
-        snap["drive_affect"] = self.drive.snapshot("tao").state.affect.to_dict()
+        self._ensure_presence_service()
+        snap["presence_affect"] = self.presence.snapshot("tao").state.affect.to_dict()
         return snap
 
     def record_persona_interaction(
@@ -441,12 +441,12 @@ class SoulService:
         *,
         medium_term_context: str = "",
     ) -> dict[str, Any]:
-        """兼容接口：轮级 persona 演化已移除，快变状态见 Drive.affect。"""
+        """兼容接口：轮级 persona 演化已移除，快变状态见 Presence.affect。"""
         _ = (question, answer, medium_term_context)
         return {
             "ok": True,
             "applied": False,
-            "reason": "persona turn evolution removed; use Drive.affect",
+            "reason": "persona turn evolution removed; use Presence.affect",
         }
 
     def reload_persona_profile(self) -> dict[str, Any]:
@@ -556,7 +556,7 @@ class SoulService:
 
     def _ensure_life_handler(self) -> LifeHandler:
         if self._life_handler is None:
-            self._ensure_drive_service()
+            self._ensure_presence_service()
             self._life_handler = LifeHandler(
                 life_dir=self._life_dir,
                 llm_service=self._llm_service,
@@ -568,16 +568,16 @@ class SoulService:
             )
         return self._life_handler
 
-    def _ensure_drive_service(self) -> DriveService:
-        if self._drive_service is None:
-            self._drive_service = DriveService(
+    def _ensure_presence_service(self) -> PresenceService:
+        if self._presence_service is None:
+            self._presence_service = PresenceService(
                 life_dir=self._life_dir,
-                on_outbound_request=self._emit_drive_outbound,
+                on_outbound_request=self._emit_presence_outbound,
             )
-        return self._drive_service
+        return self._presence_service
 
-    def _emit_drive_outbound(self, request: DriveOutboundRequest) -> None:
-        for handler in self._drive_outbound_handlers:
+    def _emit_presence_outbound(self, request: PresenceOutboundRequest) -> None:
+        for handler in self._presence_outbound_handlers:
             handler(request)
 
     def _record_persona_cluster_signals(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
