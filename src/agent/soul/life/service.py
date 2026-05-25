@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable
 
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
@@ -8,7 +7,6 @@ from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
 from agent.soul.workers import DomainWorker
 
 from .anchor import RealityAnchorLayer
-from .experience.unit import ExperienceActionKind
 from .virtual import VirtualLayer
 
 
@@ -24,7 +22,8 @@ class LifeService(DomainWorker):
         self._anchor = anchor
         self._virtual = virtual
         self._pending_landmark_fills: set[str] = set()
-        self._landmark_lock = threading.Lock()
+        self._landmark_lock = __import__("threading").Lock()
+        self._experience_tick: Callable[[], object] | None = None
 
     @property
     def anchor(self) -> RealityAnchorLayer:
@@ -33,6 +32,9 @@ class LifeService(DomainWorker):
     @property
     def virtual(self) -> VirtualLayer:
         return self._virtual
+
+    def set_experience_tick(self, tick: Callable[[], object] | None) -> None:
+        self._experience_tick = tick
 
     def start(self, **kwargs) -> None:
         if self._thread and self._thread.is_alive():
@@ -50,7 +52,8 @@ class LifeService(DomainWorker):
 
     def trigger_due_landmarks(self) -> dict:
         due = self._virtual.due_landmarks()
-        self.enqueue(lambda: self._anchor.builder.orchestrator.tick())
+        if self._experience_tick is not None:
+            self.enqueue(self._experience_tick)
         for lm in due:
             self._enqueue_landmark_fill(lm.id)
         return {
@@ -92,50 +95,6 @@ class LifeService(DomainWorker):
 
     def set_surprise_generator(self, generator) -> None:
         self._virtual.set_surprise_generator(generator)
-
-    def enqueue_user_turn(
-        self,
-        session_id: str,
-        user_text: str,
-        agent_reply: str,
-        salience: float = 0.3,
-        emotion_label: str = "",
-        valence_delta: float = 0.0,
-        arousal_delta: float = 0.0,
-        activated_memory_ids: list[str] | None = None,
-        proactive_intent_id: str = "",
-    ) -> None:
-        self.enqueue(lambda: self._anchor.record_user_turn(
-            session_id=session_id,
-            user_text=user_text,
-            agent_reply=agent_reply,
-            salience=salience,
-            emotion_label=emotion_label,
-            valence_delta=valence_delta,
-            arousal_delta=arousal_delta,
-            activated_memory_ids=activated_memory_ids,
-            proactive_intent_id=proactive_intent_id,
-        ))
-
-    def enqueue_story_beat(
-        self,
-        narrative_hint: str,
-        emotion_label: str = "",
-        valence_delta: float = 0.0,
-        arousal_delta: float = 0.0,
-        salience: float = 0.0,
-        action_kind: ExperienceActionKind = ExperienceActionKind.reasoning,
-        virtual_ctx=None,
-    ) -> None:
-        self.enqueue(lambda: self._virtual.record_story_beat(
-            narrative_hint=narrative_hint,
-            emotion_label=emotion_label,
-            valence_delta=valence_delta,
-            arousal_delta=arousal_delta,
-            salience=salience,
-            action_kind=action_kind,
-            virtual_ctx=virtual_ctx,
-        ))
 
     def _enqueue_landmark_fill(self, landmark_id: str) -> None:
         with self._landmark_lock:

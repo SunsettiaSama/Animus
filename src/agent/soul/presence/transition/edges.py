@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..expectation import Expectation
+from .expectation import Expectation
+from .interaction import PresenceInteraction
 from ..fsm.events import PresenceEvent, PresenceEventKind
-from ..fsm.state import PresenceContext, PresenceState
+from ..fsm.state import PresenceContext
 
-Guard = Callable[[PresenceState, PresenceContext, dict], bool]
-Mutate = Callable[[PresenceState, PresenceState, PresenceContext, dict], None]
+Guard = Callable[[PresenceInteraction, PresenceContext, dict], bool]
+Mutate = Callable[[PresenceInteraction, PresenceInteraction, PresenceContext, dict], None]
 
 
 @dataclass(frozen=True)
@@ -28,96 +29,96 @@ def _payload_flag(payload: dict, key: str) -> bool:
 
 def _mutate_expectation(value: Expectation) -> Mutate:
     def _run(
-        after: PresenceState,
-        _before: PresenceState,
+        after: PresenceInteraction,
+        _before: PresenceInteraction,
         _ctx: PresenceContext,
         _payload: dict,
     ) -> None:
-        after.behavior.expectation = value
+        after.expectation = value
 
     return _run
 
 
 def _mutate_user_text_closed_required(
-    after: PresenceState,
-    _before: PresenceState,
+    after: PresenceInteraction,
+    _before: PresenceInteraction,
     _ctx: PresenceContext,
     _payload: dict,
 ) -> None:
-    after.behavior.expectation = Expectation.required
+    after.expectation = Expectation.required
 
 
 def _mutate_user_text_closed_clarify(
-    after: PresenceState,
-    _before: PresenceState,
+    after: PresenceInteraction,
+    _before: PresenceInteraction,
     _ctx: PresenceContext,
     _payload: dict,
 ) -> None:
-    after.behavior.expectation = Expectation.clarify
+    after.expectation = Expectation.clarify
 
 
 def _mutate_agent_utterance(
-    after: PresenceState,
-    _before: PresenceState,
+    after: PresenceInteraction,
+    _before: PresenceInteraction,
     _ctx: PresenceContext,
     payload: dict,
 ) -> None:
     if _payload_flag(payload, "notify_only"):
-        after.behavior.expectation = Expectation.optional
+        after.expectation = Expectation.optional
     elif _payload_flag(payload, "has_question"):
-        after.behavior.expectation = Expectation.required
+        after.expectation = Expectation.required
     elif _payload_flag(payload, "final"):
-        after.behavior.expectation = Expectation.none
+        after.expectation = Expectation.none
     else:
-        after.behavior.expectation = Expectation.deferred
+        after.expectation = Expectation.deferred
 
 
 def _mutate_agent_deferred(
-    after: PresenceState,
-    _before: PresenceState,
+    after: PresenceInteraction,
+    _before: PresenceInteraction,
     _ctx: PresenceContext,
     _payload: dict,
 ) -> None:
-    after.behavior.expectation = Expectation.deferred
+    after.expectation = Expectation.deferred
 
 
 def _mutate_proactive_open(
-    after: PresenceState,
-    _before: PresenceState,
+    after: PresenceInteraction,
+    _before: PresenceInteraction,
     _ctx: PresenceContext,
     payload: dict,
 ) -> None:
     wait = bool(payload.get("wait_reply", True))
-    after.behavior.expectation = Expectation.required if wait else Expectation.optional
+    after.expectation = Expectation.required if wait else Expectation.optional
 
 
 def _mutate_proactive_delivered(
-    after: PresenceState,
-    _before: PresenceState,
+    after: PresenceInteraction,
+    _before: PresenceInteraction,
     _ctx: PresenceContext,
     payload: dict,
 ) -> None:
     wait = bool(payload.get("wait_reply", True))
-    after.behavior.expectation = Expectation.required if wait else Expectation.optional
+    after.expectation = Expectation.required if wait else Expectation.optional
 
 
 def _mutate_ambiguity_detected(
-    after: PresenceState,
-    _before: PresenceState,
+    after: PresenceInteraction,
+    _before: PresenceInteraction,
     _ctx: PresenceContext,
     _payload: dict,
 ) -> None:
-    after.behavior.expectation = Expectation.clarify
+    after.expectation = Expectation.clarify
 
 
 def _mutate_scene_enter(
-    after: PresenceState,
-    before: PresenceState,
+    after: PresenceInteraction,
+    before: PresenceInteraction,
     _ctx: PresenceContext,
     _payload: dict,
 ) -> None:
-    if before.behavior.expectation == Expectation.none:
-        after.behavior.expectation = Expectation.deferred
+    if before.expectation == Expectation.none:
+        after.expectation = Expectation.deferred
 
 
 PRESENCE_EDGES: tuple[PresenceEdge, ...] = (
@@ -228,7 +229,7 @@ PRESENCE_EDGES: tuple[PresenceEdge, ...] = (
 
 def _edge_matches(
     edge: PresenceEdge,
-    before: PresenceState,
+    before: PresenceInteraction,
     context: PresenceContext,
     event: PresenceEvent,
 ) -> bool:
@@ -236,7 +237,7 @@ def _edge_matches(
         return False
     if edge.line_open is not None and context.line_open != edge.line_open:
         return False
-    if edge.expectation is not None and before.behavior.expectation != edge.expectation:
+    if edge.expectation is not None and before.expectation != edge.expectation:
         return False
     if edge.guard is not None and not edge.guard(before, context, event.payload):
         return False
@@ -244,7 +245,7 @@ def _edge_matches(
 
 
 def match_presence_edge(
-    before: PresenceState,
+    before: PresenceInteraction,
     context: PresenceContext,
     event: PresenceEvent,
 ) -> PresenceEdge | None:

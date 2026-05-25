@@ -65,8 +65,9 @@ class LifeHandler:
             return engine.fabricate(**payload)
 
         if action == LifeAction.RECORD_TURN:
-            manager.record_turn(**payload)
-            return None
+            raise RuntimeError(
+                "record_turn 已迁移至 SoulService.record_dialogue_turn / presence/experience"
+            )
 
         if action == LifeAction.ADD_LANDMARK:
             return manager.add_landmark(**payload)

@@ -14,6 +14,7 @@ class SoulDomain(str, Enum):
     life = "life"
     memory = "memory"
     persona = "persona"
+    speak = "speak"
 
 
 @dataclass(frozen=True)

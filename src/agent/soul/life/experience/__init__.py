@@ -1,36 +1,34 @@
-from .builder import ExperienceBuilder
-from .collapser import ExperienceCollapser, NullCollapser
-from .log import ExperienceLog
-from .unit import (
+from agent.soul.presence.experience.life import ExperienceBuilder, LifeExperiencePipeline
+from agent.soul.presence.experience import (
+    AnchorUnitContext,
+    COLLISION_SOURCES,
     ExperienceAction,
     ExperienceActionKind,
+    ExperienceCollapser,
     ExperienceFeeling,
+    ExperienceLog,
+    ExperienceOrchestrator,
     ExperienceSituation,
+    ExperienceSource,
     ExperienceUnit,
-)
-from .sources import (
-    COLLISION_SOURCES,
+    InteractionDirection,
+    MemoryIngestPort,
+    NullCollapser,
     REALITY_SOURCES,
     VIRTUAL_SOURCES,
-    ExperienceSource,
+    VirtualUnitContext,
+    VirtualUnitTrigger,
     is_collision_source,
     is_reality_source,
     is_virtual_source,
-)
-from .virtual_codec import (
-    VirtualUnitContext,
-    VirtualUnitTrigger,
-    read_virtual_context,
-    stamp_virtual_context,
-)
-from .anchor_codec import (
-    AnchorUnitContext,
-    InteractionDirection,
     read_anchor_context,
+    read_virtual_context,
     stamp_anchor_context,
+    stamp_virtual_context,
 )
 
 __all__ = [
+    "LifeExperiencePipeline",
     "ExperienceBuilder",
     "ExperienceCollapser",
     "NullCollapser",
@@ -40,6 +38,8 @@ __all__ = [
     "ExperienceSituation",
     "ExperienceUnit",
     "ExperienceLog",
+    "ExperienceOrchestrator",
+    "MemoryIngestPort",
     "ExperienceSource",
     "REALITY_SOURCES",
     "VIRTUAL_SOURCES",

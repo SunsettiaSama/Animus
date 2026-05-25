@@ -1,6 +1,6 @@
 """虚拟层 ↔ 编排器 接口约定（re-export）。"""
 
-from ..experience.virtual_codec import (
+from agent.soul.presence.experience.virtual_codec import (
     VirtualUnitContext,
     VirtualUnitTrigger,
     read_virtual_context,

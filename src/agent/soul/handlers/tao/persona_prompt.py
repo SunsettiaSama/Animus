@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent.react.prompt.block import PromptBlock
-from agent.soul.presence.block import PresenceAffectBlock
+from agent.soul.presence.block import PresenceBlock
 from agent.soul.persona.profile.block import ProfileBlock
 from agent.soul.persona.profile.profile import PersonaProfile
 from agent.soul.persona.self_concept.block import SelfConceptBlock
@@ -38,10 +38,17 @@ def blocks_from_soul_query(
     snap = soul.query_persona()
     blocks = blocks_from_persona_snapshot(snap, max_profile_chars=max_profile_chars)
     affect = snap.get("presence_affect") or {}
-    if affect:
-        from agent.soul.presence.affect import AffectState
+    presence_raw = snap.get("presence") or {}
+    if presence_raw:
+        from agent.soul.presence.fsm.state import PresenceState
 
-        state = AffectState.from_dict(affect)
+        state = PresenceState.from_dict(presence_raw)
         if not state.is_empty():
-            blocks.append(PresenceAffectBlock(state, max_chars=max_affect_chars))
+            blocks.append(PresenceBlock(state, max_chars=max_affect_chars))
+    elif affect:
+        from agent.soul.presence.fsm.affect import AffectState
+
+        state = PresenceState(affect=AffectState.from_dict(affect))
+        if not state.is_empty():
+            blocks.append(PresenceBlock(state, max_chars=max_affect_chars))
     return blocks

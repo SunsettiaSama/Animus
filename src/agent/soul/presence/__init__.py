@@ -1,73 +1,83 @@
-from .capture import (
-    BOUNDARY_KINDS,
-    CaptureEvent,
-    CaptureKind,
-    CaptureResult,
-    PresenceCapture,
-    EVOLUTION_KINDS,
-    ShareBuffer,
-    ShareBufferEntry,
-    ShareFoldedPackage,
-    apply_evolution_impulse,
-    capture_event_from_presence,
-    capture_event_from_wander,
-    presence_event_from_capture,
-    enqueue_share_event,
-    fold_share_buffer,
-)
-from .affect import AffectAnchor, AffectState, EmotionalAnchor
-from .block import PresenceAffectBlock
+from .interface import CaptureEvent, SpeakRequest
+from .block import PresenceAffectBlock, PresenceBlock
 from .expectation import Expectation
-from .store import PresenceStateStore
-from .fsm import PresenceContext, PresenceEvent, PresenceEventKind, PresenceState
-from .gate import PresenceGate, PresenceGateConfig, PresenceOutboundRequest
-from .share_desire import ShareDesire, share_desire_weight
+from .fsm import (
+    ExpectationState,
+    PresenceContext,
+    PresenceEvent,
+    PresenceEventKind,
+    PresenceState,
+    PROACTIVE_OPEN_THRESHOLD,
+    REPLY_URGE_THRESHOLD,
+)
+from .fsm.affect import AffectState
 from .service import (
     PresenceIngestResult,
     PresenceLayer,
     PresenceService,
     PresenceSnapshot,
     PresenceTransitionResult,
+    capture_event_from_presence,
+    capture_event_from_wander,
 )
-from .transition import PRESENCE_EDGES, TransitionResult, apply_presence_transition, apply_transition, match_presence_edge
+from .interface import PresenceInterface, PresenceTriggerResult
+from .share_desire import ShareDesire, share_desire_weight
+from .store import PresenceStateStore, StoredPresenceSession
+from .transition import (
+    IncidentIngestResult,
+    IncidentKind,
+    LifeIncident,
+    PresenceTransitionEngine,
+    PresenceTransitionOutcome,
+    PresenceTrigger,
+    PresenceTriggerKind,
+)
+from .experience import (
+    DialogueExperiencePipeline,
+    PresenceExperiencePipeline,
+)
+
+# 兼容旧名
+from .interface import SpeakInterface, SpeakInterfaceConfig
+
+PresenceGate = SpeakInterface
+PresenceGateConfig = SpeakInterfaceConfig
+PresenceOutboundRequest = SpeakRequest
 
 __all__ = [
-    "BOUNDARY_KINDS",
+    "AffectState",
     "CaptureEvent",
-    "CaptureKind",
-    "CaptureResult",
-    "PRESENCE_EDGES",
-    "PresenceCapture",
+    "Expectation",
+    "ExpectationState",
+    "IncidentIngestResult",
+    "IncidentKind",
+    "LifeIncident",
+    "DialogueExperiencePipeline",
+    "PresenceExperiencePipeline",
     "PresenceContext",
     "PresenceEvent",
     "PresenceEventKind",
-    "PresenceGate",
-    "PresenceGateConfig",
     "PresenceIngestResult",
+    "PresenceInterface",
     "PresenceLayer",
-    "PresenceOutboundRequest",
     "PresenceService",
     "PresenceSnapshot",
     "PresenceState",
     "PresenceTransitionResult",
-    "EVOLUTION_KINDS",
-    "AffectAnchor",
-    "AffectState",
+    "PresenceTransitionEngine",
+    "PresenceTransitionOutcome",
+    "PresenceTrigger",
+    "PresenceTriggerKind",
+    "PresenceTriggerResult",
+    "PROACTIVE_OPEN_THRESHOLD",
+    "REPLY_URGE_THRESHOLD",
     "PresenceAffectBlock",
+    "PresenceBlock",
     "PresenceStateStore",
-    "EmotionalAnchor",
-    "Expectation",
-    "ShareBuffer",
-    "ShareBufferEntry",
-    "ShareFoldedPackage",
+    "SpeakRequest",
+    "StoredPresenceSession",
     "ShareDesire",
     "share_desire_weight",
-    "TransitionResult",
-    "apply_presence_transition",
-    "apply_evolution_impulse",
-    "apply_transition",
     "capture_event_from_presence",
     "capture_event_from_wander",
-    "presence_event_from_capture",
-    "match_presence_edge",
 ]

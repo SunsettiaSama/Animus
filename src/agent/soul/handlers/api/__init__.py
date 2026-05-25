@@ -1,4 +1,4 @@
-from .actions import LifeAction, MemoryAction, PersonaAction
+from .actions import LifeAction, MemoryAction, PersonaAction, SpeakAction
 from .life import LifeHandler
 from .memory import MemoryHandler
 from .persona import PersonaHandler
@@ -10,4 +10,5 @@ __all__ = [
     "MemoryHandler",
     "PersonaAction",
     "PersonaHandler",
+    "SpeakAction",
 ]

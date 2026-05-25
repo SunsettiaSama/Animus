@@ -1,0 +1,11 @@
+class SpeakAction:
+    OPEN_SESSION = "open_session"
+    RECORD_DIALOGUE = "record_dialogue"
+    CLOSE_SESSION = "close_session"
+    OPEN_OUTBOUND = "open_outbound"
+    INGEST_QUESTION = "ingest_question"
+    DELIVER = "deliver"
+    DRIVE_SNAPSHOT = "drive_snapshot"
+    EVALUATE_DRIVE = "evaluate_drive"
+    WORKING_MEMORY = "working_memory"
+    DIALOGUE_STATE = "dialogue_state"

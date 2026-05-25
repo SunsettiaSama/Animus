@@ -34,3 +34,6 @@ class PersonaAction:
     REBUILD_PROFILE = "rebuild_profile"
     GET_BUFFER = "get_buffer"
     RUN_MONTHLY_DRIFT = "run_monthly_drift"
+
+
+from agent.soul.speak.actions import SpeakAction  # noqa: E402

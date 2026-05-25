@@ -7,6 +7,7 @@ from .experience import (
     ExperienceLog,
     ExperienceSituation,
     ExperienceUnit,
+    LifeExperiencePipeline,
     NullCollapser,
 )
 from .orchestrator import ExperienceOrchestrator, MemoryIngestPort
@@ -54,6 +55,7 @@ __all__ = [
     "ExperienceSituation",
     "ExperienceLog",
     "ExperienceBuilder",
+    "LifeExperiencePipeline",
     "ExperienceCollapser",
     "NullCollapser",
     "ExperienceOrchestrator",

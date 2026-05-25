@@ -1,26 +1,42 @@
 from .events import PresenceEvent, PresenceEventKind
 from .state import PresenceContext, PresenceState, PRESENCE_DIMENSIONS
-from .affect import AffectAnchor, AffectState, EmotionalAnchor
-from .behavior import BehaviorState
+from .affect import AffectState
 from .cognition import CognitionState
-from .environment import EnvironmentState
-from .motivation import MotivationState
+from .expectation import (
+    ExpectationScanMode,
+    ExpectationScanResult,
+    ExpectationState,
+    PROACTIVE_OPEN_THRESHOLD,
+    REPLY_URGE_THRESHOLD,
+    ShareFoldedPackage,
+    ShareIntent,
+    ShareIntentQueue,
+    enqueue_capture_event,
+    fold_share_queue,
+    scan_expectation_thresholds,
+)
+from .perception import PerceptionState
 from .somatic import SomaticState
-from .temporality import TemporalityState
 
 __all__ = [
-    "AffectAnchor",
     "AffectState",
-    "BehaviorState",
     "CognitionState",
-    "EmotionalAnchor",
-    "EnvironmentState",
-    "MotivationState",
+    "ExpectationScanMode",
+    "ExpectationScanResult",
+    "ExpectationState",
+    "PerceptionState",
     "PresenceContext",
     "PresenceEvent",
     "PresenceEventKind",
     "PresenceState",
     "PRESENCE_DIMENSIONS",
+    "PROACTIVE_OPEN_THRESHOLD",
+    "REPLY_URGE_THRESHOLD",
+    "ShareFoldedPackage",
+    "ShareIntent",
+    "ShareIntentQueue",
+    "enqueue_capture_event",
+    "fold_share_queue",
+    "scan_expectation_thresholds",
     "SomaticState",
-    "TemporalityState",
 ]

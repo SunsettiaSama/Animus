@@ -7,8 +7,7 @@ from infra.llm import BaseLLM
 
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
 
-from ..experience.builder import ExperienceBuilder
-from ..experience.unit import ExperienceActionKind, ExperienceUnit
+from ..experience import ExperienceBuilder, ExperienceActionKind, ExperienceUnit
 from ..narrative_context import (
     NarrativeContextSupplier,
     NarrativePurpose,
@@ -35,7 +34,7 @@ class VirtualLayer:
 
     def __init__(
         self,
-        builder: ExperienceBuilder,
+        builder: ExperienceBuilder | None,
         life_dir: str,
         llm: BaseLLM | None = None,
         chronicle: VirtualChronicleStore | None = None,
@@ -62,7 +61,12 @@ class VirtualLayer:
 
     @property
     def builder(self) -> ExperienceBuilder:
+        if self._builder is None:
+            raise RuntimeError("VirtualLayer builder not attached — wire presence/experience first")
         return self._builder
+
+    def set_builder(self, builder: ExperienceBuilder) -> None:
+        self._builder = builder
 
     @property
     def chronicle(self) -> VirtualChronicleStore:

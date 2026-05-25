@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from ..fsm.events import PresenceEvent, PresenceEventKind
 from ..fsm.state import PresenceContext, PresenceState
+from .interaction import PresenceInteraction
 from .edges import match_presence_edge
 
 
@@ -11,17 +12,28 @@ from .edges import match_presence_edge
 class TransitionResult:
     session_id: str
     event: PresenceEvent
-    before: PresenceState
-    after: PresenceState
+    state_before: PresenceState
+    state_after: PresenceState
+    interaction_before: PresenceInteraction
+    interaction_after: PresenceInteraction
     notes: list[str] = field(default_factory=list)
+
+    @property
+    def before(self) -> PresenceState:
+        return self.state_before
+
+    @property
+    def after(self) -> PresenceState:
+        return self.state_after
 
 
 def _apply_expectation_edge(
     state: PresenceState,
+    interaction: PresenceInteraction,
     context: PresenceContext,
     event: PresenceEvent,
 ) -> list[str]:
-    before = state.copy()
+    before = interaction.copy()
     notes: list[str] = []
 
     edge = match_presence_edge(before, context, event)
@@ -29,10 +41,10 @@ def _apply_expectation_edge(
         notes.append(f"presence: no edge for {event.kind.value}")
         return notes
 
-    after = state.copy()
+    after = interaction.copy()
     if edge.mutate is not None:
         edge.mutate(after, before, context, event.payload)
-    state.behavior.expectation = after.behavior.expectation
+    interaction.expectation = after.expectation
 
     if event.kind == PresenceEventKind.agent_utterance:
         p = event.payload
@@ -52,25 +64,29 @@ def _apply_expectation_edge(
 
 def apply_transition(
     state: PresenceState,
+    interaction: PresenceInteraction,
     event: PresenceEvent,
     context: PresenceContext,
 ) -> TransitionResult:
     """纯 FSM 期待转移（由 capture 在边界事件注入时调用）。"""
-    before = state.copy()
+    state_before = state.copy()
+    interaction_before = interaction.copy()
     notes: list[str] = []
     kind = event.kind
 
     if kind == PresenceEventKind.close:
-        state.reset()
+        interaction.reset()
         notes.append(f"presence reset via {kind.value}")
     else:
-        notes.extend(_apply_expectation_edge(state, context, event))
+        notes.extend(_apply_expectation_edge(state, interaction, context, event))
 
     return TransitionResult(
         session_id=event.session_id,
         event=event,
-        before=before,
-        after=state.copy(),
+        state_before=state_before,
+        state_after=state.copy(),
+        interaction_before=interaction_before,
+        interaction_after=interaction.copy(),
         notes=notes,
     )
 

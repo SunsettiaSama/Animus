@@ -2,91 +2,87 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..expectation import Expectation
-from ..share_desire import ShareDesire
 from .affect import AffectState
-from .behavior import BehaviorState
 from .cognition import CognitionState
-from .environment import EnvironmentState
-from .motivation import MotivationState
+from .expectation import ExpectationState
+from .perception import PerceptionState
 from .somatic import SomaticState
-from .temporality import TemporalityState
 
 PRESENCE_DIMENSIONS: tuple[str, ...] = (
-    "somatic",
     "affect",
+    "somatic",
     "cognition",
-    "behavior",
-    "environment",
-    "motivation",
-    "temporality",
+    "perception",
+    "expectation",
+)
+
+_PRESENCE_LABELS: tuple[tuple[str, str], ...] = (
+    ("affect", "情感"),
+    ("somatic", "身体"),
+    ("cognition", "认知"),
+    ("perception", "感知"),
+    ("expectation", "期待"),
 )
 
 
 @dataclass
 class PresenceState:
-    """当下态 FSM 完整状态：七个维度子状态为唯一字段入口。"""
+    """当下态 FSM：四段第一人称自叙 + 对用户的期待驱动。"""
 
-    somatic: SomaticState = field(default_factory=SomaticState)
     affect: AffectState = field(default_factory=AffectState)
+    somatic: SomaticState = field(default_factory=SomaticState)
     cognition: CognitionState = field(default_factory=CognitionState)
-    behavior: BehaviorState = field(default_factory=BehaviorState)
-    environment: EnvironmentState = field(default_factory=EnvironmentState)
-    motivation: MotivationState = field(default_factory=MotivationState)
-    temporality: TemporalityState = field(default_factory=TemporalityState)
+    perception: PerceptionState = field(default_factory=PerceptionState)
+    expectation: ExpectationState = field(default_factory=ExpectationState)
 
     def copy(self) -> PresenceState:
         return PresenceState(
-            somatic=self.somatic.copy(),
             affect=self.affect.copy(),
+            somatic=self.somatic.copy(),
             cognition=self.cognition.copy(),
-            behavior=self.behavior.copy(),
-            environment=self.environment.copy(),
-            motivation=self.motivation.copy(),
-            temporality=self.temporality.copy(),
+            perception=self.perception.copy(),
+            expectation=self.expectation.copy(),
         )
-
-    def reset(self) -> None:
-        """重置对话行为层与动机层中的瞬时交互字段。"""
-        self.behavior.expectation = Expectation.none
-        self.behavior.impulse_level = 0.0
-        self.behavior.impulse_reason = ""
-        self.behavior.impulse_source = ""
-        self.motivation.share_desire = ShareDesire.none
 
     def reset_affect(self) -> None:
         self.affect = AffectState()
 
-    def discharge_impulse(self, amount: float) -> None:
-        self.behavior.impulse_level = max(0.0, self.behavior.impulse_level - amount)
+    def render(self) -> str:
+        lines: list[str] = []
+        for key, label in _PRESENCE_LABELS:
+            text = getattr(self, key).render()
+            if text:
+                lines.append(f"**{label}** {text}")
+        return "\n".join(lines)
+
+    def is_empty(self) -> bool:
+        narrative_empty = not any(
+            getattr(self, key).render()
+            for key, _ in _PRESENCE_LABELS
+            if key != "expectation"
+        )
+        return narrative_empty and self.expectation.is_empty()
 
     def to_dict(self) -> dict:
         return {
-            "somatic": self.somatic.to_dict(),
             "affect": self.affect.to_dict(),
+            "somatic": self.somatic.to_dict(),
             "cognition": self.cognition.to_dict(),
-            "behavior": self.behavior.to_dict(),
-            "environment": self.environment.to_dict(),
-            "motivation": self.motivation.to_dict(),
-            "temporality": self.temporality.to_dict(),
+            "perception": self.perception.to_dict(),
+            "expectation": self.expectation.to_dict(),
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> PresenceState:
-        if "behavior" in d or "motivation" in d or "somatic" in d:
-            return cls(
-                somatic=SomaticState.from_dict(d.get("somatic") or {}),
-                affect=AffectState.from_dict(d.get("affect") or {}),
-                cognition=CognitionState.from_dict(d.get("cognition") or {}),
-                behavior=BehaviorState.from_dict(d.get("behavior") or {}),
-                environment=EnvironmentState.from_dict(d.get("environment") or {}),
-                motivation=MotivationState.from_dict(d.get("motivation") or {}),
-                temporality=TemporalityState.from_dict(d.get("temporality") or {}),
-            )
+        perception_raw = d.get("perception")
+        if perception_raw is None and d.get("environment"):
+            perception_raw = d.get("environment")
         return cls(
-            behavior=BehaviorState.from_dict(d),
-            motivation=MotivationState.from_dict(d),
             affect=AffectState.from_dict(d.get("affect") or {}),
+            somatic=SomaticState.from_dict(d.get("somatic") or {}),
+            cognition=CognitionState.from_dict(d.get("cognition") or {}),
+            perception=PerceptionState.from_dict(perception_raw or {}),
+            expectation=ExpectationState.from_dict(d.get("expectation") or {}),
         )
 
 

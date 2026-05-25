@@ -116,7 +116,13 @@ class SubAgentRunner:
                 })
             if isinstance(event, FinishEvent):
                 answer = event.answer
-        tao.post_process()
+        from agent.soul.presence.experience.dialogue import commit_turn_and_post_process
+
+        commit_turn_and_post_process(
+            soul=soul,
+            tao=tao,
+            session_id="tao",
+        )
 
         return {
             "answer": answer,

@@ -95,17 +95,33 @@ class ConvLoop:
     def stream(self, question: str) -> Generator[TaoEvent, None, None]:
         return self._tao.stream(question)
 
-    def post_process(self) -> None:
-        """Delegate to :meth:`TaoLoop.post_process`.
+    def post_process(self, session_id: str = "tao") -> None:
+        """Tao 上下文 commit + presence dialogue 记账。"""
+        from agent.soul.presence.experience.dialogue import commit_turn_and_post_process
 
-        Runs commit, persona evolution, history update, and static prompt cache
-        rebuild.  Call this in a background thread after the ``FinishEvent``
-        has been delivered to the client.
-        """
-        self._tao.post_process()
+        commit_turn_and_post_process(
+            soul=getattr(self._tao, "_soul", None),
+            tao=self._tao,
+            session_id=session_id,
+        )
 
-    def reset(self) -> None:
+    def reset(self, session_id: str = "tao") -> None:
+        from agent.soul.presence.experience.dialogue import close_dialogue_session
+
+        close_dialogue_session(
+            soul=getattr(self._tao, "_soul", None),
+            session_id=session_id,
+        )
         self._tao.reset()
+
+    def close(self, session_id: str = "tao") -> None:
+        from agent.soul.presence.experience.dialogue import close_dialogue_session
+
+        close_dialogue_session(
+            soul=getattr(self._tao, "_soul", None),
+            session_id=session_id,
+        )
+        self._tao.close()
 
     def preload_with_recall(self) -> None:
         self._tao.preload_with_recall()

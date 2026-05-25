@@ -58,10 +58,24 @@ class HeartbeatModule:
         with self._lock:
             self._force_tick = False
 
-        if not self._in_active_hours():
-            result = HeartbeatTickResult(outcome="skip", reason="outside active hours")
+    def tick(self) -> HeartbeatTickResult:
+        t0 = time.monotonic()
+
+        with self._lock:
+            self._force_tick = False
+
+        in_active = self._in_active_hours()
+        if self._soul is not None and self._soul.is_running:
+            if not in_active:
+                if self._soul.presence.is_awake():
+                    self._soul.run_presence_sleep()
+            elif not self._soul.presence.is_awake():
+                self._soul.run_presence_wake()
+
+        if not in_active:
+            result = HeartbeatTickResult(outcome="skip", reason="outside active hours (sleeping)")
             self._tick_log.append(result)
-            logger.debug("[Heartbeat] skip — outside active hours")
+            logger.debug("[Heartbeat] skip — outside active hours (sleeping)")
             return result
 
         if self._soul is None or not self._soul.is_running:
@@ -105,6 +119,10 @@ class HeartbeatModule:
 
     def stop_evolution_worker(self) -> None:
         self._evolution_worker.stop()
+
+    @property
+    def config(self) -> HeartbeatConfig:
+        return self._cfg
 
     @property
     def orchestrator(self) -> HeartbeatOrchestrator:

@@ -2,14 +2,20 @@ from __future__ import annotations
 
 from enum import Enum
 
+from config.soul.presence.config import (
+    OUTBOUND_THRESHOLD_EAGER,
+    OUTBOUND_THRESHOLD_MODERATE,
+    share_desire_weights,
+)
+
 
 class ShareDesire(str, Enum):
     """Agent 对一次 Soul 演化的分享意愿（软阈值分层）。"""
 
-    none = "none"           # 不想分享
-    mild = "mild"           # 有点想分享
-    moderate = "moderate"   # 比较想分享
-    eager = "eager"         # 现在就想分享
+    none = "none"
+    mild = "mild"
+    moderate = "moderate"
+    eager = "eager"
 
 
 SHARE_DESIRE_ORDER: dict[ShareDesire, int] = {
@@ -19,15 +25,18 @@ SHARE_DESIRE_ORDER: dict[ShareDesire, int] = {
     ShareDesire.eager: 3,
 }
 
-SHARE_DESIRE_WEIGHT: dict[ShareDesire, float] = {
-    ShareDesire.none: 0.0,
-    ShareDesire.mild: 0.15,
-    ShareDesire.moderate: 0.35,
-    ShareDesire.eager: 0.65,
-}
 
-OUTBOUND_THRESHOLD_MODERATE = 0.35
-OUTBOUND_THRESHOLD_EAGER = 0.65
+def _build_share_desire_weight() -> dict[ShareDesire, float]:
+    raw = share_desire_weights()
+    return {
+        ShareDesire.none: raw["none"],
+        ShareDesire.mild: raw["mild"],
+        ShareDesire.moderate: raw["moderate"],
+        ShareDesire.eager: raw["eager"],
+    }
+
+
+SHARE_DESIRE_WEIGHT: dict[ShareDesire, float] = _build_share_desire_weight()
 
 
 def parse_share_desire(
@@ -58,9 +67,9 @@ def max_share_desire(a: ShareDesire, b: ShareDesire) -> ShareDesire:
 def share_desire_from_intensity(intensity: float) -> ShareDesire:
     if intensity <= 0.0:
         return ShareDesire.none
-    if intensity < 0.35:
+    if intensity < OUTBOUND_THRESHOLD_MODERATE:
         return ShareDesire.mild
-    if intensity < 0.65:
+    if intensity < OUTBOUND_THRESHOLD_EAGER:
         return ShareDesire.moderate
     return ShareDesire.eager
 

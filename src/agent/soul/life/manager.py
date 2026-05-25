@@ -9,8 +9,8 @@ from agent.soul.life.life_bridge import LifeContextInput
 from .anchor import AnchorLayer, RealityAnchorLayer, ProactiveOutboundIntent, ProactiveOutboundPort
 from .virtual import VirtualLayer
 from .profile import LifeProfile, LifeProfileStore
-from .experience import ExperienceBuilder, ExperienceLog
-from .orchestrator import ExperienceOrchestrator, MemoryIngestPort
+from .experience import ExperienceBuilder, LifeExperiencePipeline
+from agent.soul.presence.experience.dialogue import DialogueExperiencePipeline
 from .anchor.chronicle import AnchorChronicleStore
 from .virtual.chronicle import VirtualChronicleStore
 from .narrative_context import NarrativeContextSupplier, StoryWorldContextSupplier
@@ -20,44 +20,60 @@ from .service import LifeService
 
 
 class LifeManager:
-    """Life 模块统一入口：现实锚点层 + 虚拟层 + 共享体验编排栈。"""
+    """Life 模块统一入口：虚拟叙事层 + 锚点 chronicle；生活体验由 life/experience 维护。"""
 
     def __init__(
         self,
         life_dir: str,
         llm: BaseLLM | None = None,
-        memory_port: MemoryIngestPort | None = None,
     ) -> None:
-        self._exp_log = ExperienceLog(life_dir)
+        self._life_dir = life_dir
         self._virtual_chronicle = VirtualChronicleStore(life_dir)
         anchor_chronicle = AnchorChronicleStore(life_dir)
-        self._orchestrator = ExperienceOrchestrator(
-            log=self._exp_log,
-            memory_port=memory_port,
-            anchor_chronicle=anchor_chronicle,
-            virtual_chronicle=self._virtual_chronicle,
-        )
-        self._builder = ExperienceBuilder(orchestrator=self._orchestrator)
         self._anchor = AnchorLayer(
             life_dir=life_dir,
-            orchestrator=self._orchestrator,
-            builder=self._builder,
             chronicle=anchor_chronicle,
         )
-
+        self._experience: LifeExperiencePipeline | None = None
+        self._dialogue_experience: DialogueExperiencePipeline | None = None
+        self._builder: ExperienceBuilder | None = None
         self._virtual = VirtualLayer(
-            self._builder,
-            life_dir,
+            builder=None,
+            life_dir=life_dir,
             llm=llm,
             chronicle=self._virtual_chronicle,
         )
-        if self._virtual.narrative is not None:
-            self._orchestrator.set_collapser(self._virtual.narrative)
 
         self._life_service = LifeService(anchor=self._anchor, virtual=self._virtual)
 
         self._profile_store = LifeProfileStore(life_dir)
         self._profile: LifeProfile = LifeProfile()
+
+    def attach_life_experience(self, pipeline: LifeExperiencePipeline) -> None:
+        self._experience = pipeline
+        self._builder = pipeline.builder
+        self._virtual.set_builder(pipeline.builder)
+        if self._virtual.narrative is not None:
+            pipeline.set_collapser(self._virtual.narrative)
+        self._life_service.set_experience_tick(pipeline.tick)
+
+    def attach_dialogue_experience(self, pipeline: DialogueExperiencePipeline) -> None:
+        self._dialogue_experience = pipeline
+
+    def attach_experience_pipeline(
+        self,
+        life: LifeExperiencePipeline,
+        *,
+        dialogue: DialogueExperiencePipeline | None = None,
+    ) -> None:
+        """挂载生活体验；可选同时挂载对话体验（出站 open_outbound）。"""
+        self.attach_life_experience(life)
+        if dialogue is not None:
+            self.attach_dialogue_experience(dialogue)
+
+    @property
+    def experience(self) -> LifeExperiencePipeline | None:
+        return self._experience
 
     @property
     def worker(self) -> LifeService:
@@ -119,21 +135,20 @@ class LifeManager:
         self._virtual.set_filler(filler)
         self._life_service.set_filler(filler)
 
-    def set_collapser(self, collapser) -> None:
-        self._orchestrator.set_collapser(collapser)
-
     def set_surprise_generator(self, generator) -> None:
         self._virtual.set_surprise_generator(generator)
         self._life_service.set_surprise_generator(generator)
 
     def set_narrative_engine(self, engine: NarrativeEngine) -> None:
         self._virtual.set_narrative_engine(engine)
-        self._orchestrator.set_collapser(engine)
+        if self._experience is not None and engine is not None:
+            self._experience.set_collapser(engine)
         self._life_service.set_filler(engine)
         self._life_service.set_surprise_generator(engine)
 
-    def set_memory_port(self, memory_port: MemoryIngestPort) -> None:
-        self._orchestrator._memory_port = memory_port
+    def set_memory_port(self, port) -> None:
+        if self._experience is not None:
+            self._experience.set_memory_port(port)
 
     def set_narrative_context_supplier(
         self, supplier: NarrativeContextSupplier | None
@@ -185,30 +200,6 @@ class LifeManager:
     def format_dialogue_digest(self, days: int = 1) -> str:
         return self._anchor.chronicle.format_dialogue_digest(days=days)
 
-    def record_turn(
-        self,
-        question: str,
-        answer: str,
-        session_id: str = "tao",
-        salience: float = 0.3,
-    ) -> None:
-        self._life_service.enqueue_user_turn(
-            session_id=session_id,
-            user_text=question,
-            agent_reply=answer,
-            salience=salience,
-        )
-
-    def close_interaction(self, session_id: str = "tao") -> None:
-        self._life_service.enqueue(
-            lambda: self._anchor.close_interaction(session_id)
-        )
-
-    def close_idle_interactions(self) -> None:
-        self._life_service.enqueue(
-            lambda: self._anchor.close_idle_interactions()
-        )
-
     def record_scheduler_digest_from_heartbeat(self, tasks_text: str) -> None:
         self._life_service.enqueue_scheduler_digest(tasks_text)
 
@@ -220,12 +211,19 @@ class LifeManager:
         session_id: str = "tao",
         salience: float = 0.4,
     ) -> str:
-        return self._anchor.submit_proactive_outbound(
+        intent_id = self._anchor.submit_proactive_outbound(
             message,
             reason=reason,
             session_id=session_id,
             salience=salience,
         )
+        if self._dialogue_experience is not None:
+            self._dialogue_experience.open_outbound(
+                session_id,
+                message,
+                proactive_intent_id=intent_id,
+            )
+        return intent_id
 
     def pending_proactive_outbounds(self) -> list[ProactiveOutboundIntent]:
         return self._anchor.pending_proactive_outbounds()
@@ -267,5 +265,6 @@ class LifeManager:
         return [e.to_dict() for e in entries]
 
     def hot_experiences(self, *, hours: int | None = None) -> list[dict]:
-        units = self._exp_log.recent(hours=hours)
-        return [u.to_dict() for u in units]
+        if self._experience is None:
+            return []
+        return self._experience.hot_experiences(hours=hours)

@@ -30,3 +30,11 @@ class ExternalOpportunitySupplier(Protocol):
         impulse_level: float,
         expectation: str,
     ) -> bool: ...
+
+
+class EmbeddingPort(Protocol):
+    """顶层 embedding 服务最小接口。"""
+
+    def embed(self, text: str) -> list[float]: ...
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]: ...

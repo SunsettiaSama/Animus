@@ -174,7 +174,13 @@ class PlannerAgent(AgentBase):
                 tao.reset()
                 continue
 
-            tao.post_process()
+            from agent.soul.presence.experience.dialogue import commit_turn_and_post_process
+
+            commit_turn_and_post_process(
+                soul=getattr(tao, "_soul", None),
+                tao=tao,
+                session_id="tao",
+            )
             return doc
 
         raise RuntimeError("Planner exhausted retries without producing a valid plan")

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from config.soul.config import SoulConfig
 from agent.soul.handlers.api.actions import LifeAction, MemoryAction, PersonaAction
+from agent.soul.presence.actions import PresenceAction
 from agent.soul.request import SoulChannel, SoulDomain, SoulRequest
 
 if TYPE_CHECKING:
@@ -18,7 +19,7 @@ from .checklist import ChecklistItem, ChecklistRegistry, default_checklist
 from .evolution_capture import EvolutionBeat, EvolutionCapture
 
 logger = logging.getLogger(__name__)
-_PRESENCE_SCAN_EXTERNAL_ACTION = "scan_external_opportunity"
+_PRESENCE_SCAN_EXTERNAL_ACTION = PresenceAction.SCAN_EXTERNAL
 
 _HEAVY_ITEM_KEYS: frozenset[tuple[str, str]] = frozenset({
     (SoulDomain.memory.value, MemoryAction.WANDER),
@@ -143,8 +144,14 @@ class HeartbeatOrchestrator:
 
         if item.domain == SoulDomain.memory.value and item.action == MemoryAction.WANDER:
             return self._run_wander(item)
+        if item.domain == "presence" and item.action == PresenceAction.WAKE_UP:
+            return self._run_presence_wake(item)
+        if item.domain == "presence" and item.action == PresenceAction.SLEEP:
+            return self._run_presence_sleep(item)
         if item.domain == "presence" and item.action == _PRESENCE_SCAN_EXTERNAL_ACTION:
             return self._run_scan_external(item)
+        if item.domain == "presence" and item.action == PresenceAction.SCAN_EXPECTATION:
+            return self._run_scan_expectation(item)
         if item.domain == SoulDomain.life.value and item.action == LifeAction.PLAN_LANDMARK:
             return self._run_plan_landmark(item)
         if item.domain == SoulDomain.life.value and item.action == LifeAction.TRIGGER_LANDMARKS:
@@ -185,15 +192,16 @@ class HeartbeatOrchestrator:
         if detail.get("planned"):
             subjective_event = dict(detail.get("subjective_event", {}))
             if subjective_event.get("hint"):
-                capture_report = EvolutionCapture.after_landmark_filled(
+                capture_report = EvolutionCapture.after_landmark_planned(
                     self._soul,
-                    self._beats_from_dicts([subjective_event]),
+                    subjective_event,
                 )
         if capture_report is not None:
             detail = {
                 **detail,
                 "capture_events": len(capture_report.events),
                 "capture_outbound": capture_report.outbound_count,
+                "incident_fsm_updates": capture_report.incident_count,
             }
         return ChecklistRunResult(
             item.id,
@@ -228,6 +236,7 @@ class HeartbeatOrchestrator:
                 "buffer_signals": len(result.buffer_candidates),
                 "capture_events": len(capture_report.events),
                 "capture_outbound": capture_report.outbound_count,
+                "rumination_fsm": capture_report.rumination_count,
             },
         )
 
@@ -246,6 +255,7 @@ class HeartbeatOrchestrator:
                 "filled": len(fills),
                 "capture_events": len(capture_report.events),
                 "capture_outbound": capture_report.outbound_count,
+                "incident_fsm_updates": capture_report.incident_count,
             },
         )
 
@@ -267,7 +277,19 @@ class HeartbeatOrchestrator:
                 **detail,
                 "capture_events": len(capture_report.events),
                 "capture_outbound": capture_report.outbound_count,
+                "incident_fsm_updates": capture_report.incident_count,
             }
+        return ChecklistRunResult(
+            item.id,
+            item.domain,
+            item.action,
+            True,
+            detail=detail,
+        )
+
+    def _run_scan_expectation(self, item: ChecklistItem) -> ChecklistRunResult:
+        session_id = str(item.payload.get("session_id", "tao"))
+        detail = self._soul.run_expectation_scan(session_id=session_id)
         return ChecklistRunResult(
             item.id,
             item.domain,
@@ -284,6 +306,28 @@ class HeartbeatOrchestrator:
             item.domain,
             item.action,
             True,
+            detail=detail,
+        )
+
+    def _run_presence_wake(self, item: ChecklistItem) -> ChecklistRunResult:
+        session_id = str(item.payload.get("session_id", "tao"))
+        detail = self._soul.run_presence_wake(session_id=session_id)
+        return ChecklistRunResult(
+            item.id,
+            item.domain,
+            item.action,
+            bool(detail.get("ok")),
+            detail=detail,
+        )
+
+    def _run_presence_sleep(self, item: ChecklistItem) -> ChecklistRunResult:
+        session_id = str(item.payload.get("session_id", "tao"))
+        detail = self._soul.run_presence_sleep(session_id=session_id)
+        return ChecklistRunResult(
+            item.id,
+            item.domain,
+            item.action,
+            bool(detail.get("ok")),
             detail=detail,
         )
 

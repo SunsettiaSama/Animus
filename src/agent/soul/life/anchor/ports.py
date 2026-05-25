@@ -1,6 +1,6 @@
 """锚点层 ↔ 编排器 接口约定（re-export）。"""
 
-from ..experience.anchor_codec import (
+from agent.soul.presence.experience.anchor_codec import (
     AnchorUnitContext,
     InteractionDirection,
     read_anchor_context,

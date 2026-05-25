@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .handlers.api.actions import LifeAction, MemoryAction, PersonaAction
+from .handlers.api.actions import LifeAction, MemoryAction, PersonaAction, SpeakAction
 from .request import SoulDomain
 
 # API 通道只读 action：idle / running 均可；其余 action 须 running。
@@ -19,6 +19,10 @@ READ_API_ACTIONS: frozenset[tuple[str, str]] = frozenset({
     (SoulDomain.life.value, LifeAction.LOAD_PROFILE),
     (SoulDomain.life.value, LifeAction.STATUS),
     (SoulDomain.life.value, LifeAction.COUNT_LANDMARKS_SINCE),
+    (SoulDomain.speak.value, SpeakAction.DRIVE_SNAPSHOT),
+    (SoulDomain.speak.value, SpeakAction.EVALUATE_DRIVE),
+    (SoulDomain.speak.value, SpeakAction.WORKING_MEMORY),
+    (SoulDomain.speak.value, SpeakAction.DIALOGUE_STATE),
 })
 
 

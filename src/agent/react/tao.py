@@ -147,7 +147,6 @@ class _PendingFinish:
     answer: str
     processor: MemoryProcessor
     persona_blocks: list[PromptBlock] | None
-    life_session_id: str = "tao"
 
 
 # ── TaoLoop ───────────────────────────────────────────────────────────────────
@@ -183,7 +182,6 @@ class TaoLoop:
             TraceStore(cfg.trace) if cfg.trace.enabled else None
         )
         self._persona: PersonaService | None = None
-        self._life_session_id: str = "tao"
 
         # Soul 子系统 — 可注入已有 SoulService，或在 persona 启用时自建
         self._soul: SoulService | None = soul_service
@@ -468,15 +466,9 @@ class TaoLoop:
             LLMHandle(LLM(cfg.repair_llm)) if cfg.repair_llm is not None else self._llm
         )
 
-    def set_life_interaction_session(self, session_id: str) -> None:
-        """绑定 Anchor 内化层的会话 id（与 AgentSession.session_id 对齐）。"""
-        sid = (session_id or "").strip()
-        if sid:
-            self._life_session_id = sid
-
-    def _finalize_life_interaction(self) -> None:
-        if self._life is not None:
-            self._life.close_interaction(self._life_session_id)
+    def peek_pending_finish(self) -> _PendingFinish | None:
+        """供 presence dialogue 在 post_process 前读取本轮 Q/A。"""
+        return self._pending_finish
 
     @staticmethod
     def _trunc(text: str, limit: int) -> str:
@@ -838,7 +830,6 @@ class TaoLoop:
                     answer=answer,
                     processor=processor,
                     persona_blocks=persona_blocks,
-                    life_session_id=self._life_session_id,
                 )
                 yield FinishEvent(answer=answer)
                 _obs.emit(_SessionEvent(
@@ -993,14 +984,6 @@ class TaoLoop:
 
         pf.processor.commit(pf.question, pf.answer)
 
-        # ── 长期记忆：仅经 Life 体验链显著性擢升 → Memory.ingest_experience ────
-        if self._life is not None:
-            self._life.record_turn(
-                pf.question,
-                pf.answer,
-                session_id=pf.life_session_id,
-            )
-
         self._timeline.append("conversation", {
             "q": pf.question[:300],
             "a": pf.answer[:500],
@@ -1020,7 +1003,6 @@ class TaoLoop:
         """旧接口保留，现为空操作。长期记忆通过 soul_memory_search 工具主动触发。"""
 
     def close(self) -> None:
-        self._finalize_life_interaction()
         if self._soul is not None:
             self._soul.stop()
 
@@ -1038,7 +1020,6 @@ class TaoLoop:
         self._stop_event.clear()
 
     def reset(self) -> None:
-        self._finalize_life_interaction()
         self._manager.clear_history()
         self._static_cache = None
         self._pending_finish = None
@@ -1074,10 +1055,15 @@ class TaoLoop:
         self._persona.reset_self_concept()
 
     def run(self, question: str) -> str:
+        from agent.soul.presence.experience.dialogue import commit_turn_and_post_process
+
         for event in self.stream(question):
             if isinstance(event, FinishEvent):
-                self.post_process()
-                self._finalize_life_interaction()
+                commit_turn_and_post_process(
+                    soul=self._soul,
+                    tao=self,
+                    session_id="tao",
+                )
                 return event.answer
             if isinstance(event, MaxStepsEvent):
                 raise RuntimeError(

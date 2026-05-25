@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from config.soul.config import SoulConfig
 from agent.soul.handlers.api.actions import LifeAction, MemoryAction, PersonaAction
+from agent.soul.presence.actions import PresenceAction
 
 from .item import ChecklistItem, ChecklistTrigger
 
@@ -56,9 +57,24 @@ def default_checklist(cfg: SoulConfig | None = None) -> list[ChecklistItem]:
             interval_sec=c.memory_forget_interval_sec,
         ),
         ChecklistItem(
+            id="presence-wake-up",
+            domain="presence",
+            action=PresenceAction.WAKE_UP,
+            trigger=ChecklistTrigger.daily,
+            daily_at=c.presence_wake_at,
+        ),
+        ChecklistItem(
+            id="presence-expectation-scan",
+            domain="presence",
+            action=PresenceAction.SCAN_EXPECTATION,
+            trigger=ChecklistTrigger.interval,
+            interval_sec=300.0,
+            payload={"session_id": "tao"},
+        ),
+        ChecklistItem(
             id="presence-external-scan",
             domain="presence",
-            action="scan_external_opportunity",
+            action=PresenceAction.SCAN_EXTERNAL,
             trigger=ChecklistTrigger.interval,
             interval_sec=900.0,
             payload={"session_id": "tao"},

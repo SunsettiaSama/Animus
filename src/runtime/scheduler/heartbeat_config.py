@@ -8,7 +8,7 @@ class HeartbeatConfig:
     interval:                int   = 300
     check_interval_sec:      int   = 300
     flush_interval_sec:      int   = 21600
-    active_hours_start:      str   = "07:00"
+    active_hours_start:      str   = "08:00"
     active_hours_end:        str   = "22:00"
     active_timezone:         str   = "Asia/Shanghai"
     webhook_secret:          str   = ""
@@ -31,7 +31,7 @@ class HeartbeatConfig:
             interval=_interval,
             check_interval_sec=_check,
             flush_interval_sec=int(d.get("flush_interval_sec", 21600)),
-            active_hours_start=d.get("active_hours_start", "07:00"),
+            active_hours_start=d.get("active_hours_start", "08:00"),
             active_hours_end=d.get("active_hours_end", "22:00"),
             active_timezone=d.get("active_timezone", "Asia/Shanghai"),
             webhook_secret=d.get("webhook_secret", ""),

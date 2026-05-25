@@ -29,7 +29,8 @@ class SoulPersonaAction(BaseAction):
         snap = self.soul.query_persona()
         profile = snap.get("profile") or {}
         concept = snap.get("self_concept") or {}
-        affect = snap.get("presence_affect") or {}
+        presence = snap.get("presence") or {}
+        affect = snap.get("presence_affect") or presence.get("affect") or {}
         parts = [
             "【静态画像】",
             f"名称：{profile.get('name', '')}",
@@ -47,17 +48,16 @@ class SoulPersonaAction(BaseAction):
             parts.append("【信念】")
             for b in beliefs[:6]:
                 parts.append(f"- [{b.get('strength', '')}] {b.get('content', '')}")
-        texture = (affect.get("texture") or "").strip()
-        if texture:
-            parts += ["", "【驱动情绪质感】", texture]
-        anchors = affect.get("anchors") or []
-        if anchors:
-            parts.append("")
-            parts.append("【近期情绪锚点】")
-            for a in anchors[-5:]:
-                parts.append(
-                    f"- [{str(a.get('ts', ''))[:10]}] {a.get('event', '')} → {a.get('felt', '')}"
-                )
+        if presence:
+            from agent.soul.presence.fsm.state import PresenceState
+
+            rendered = PresenceState.from_dict(presence).render()
+            if rendered:
+                parts += ["", "【当下状态】", rendered]
+        else:
+            affect_line = (affect.get("narrative") or affect.get("texture") or "").strip()
+            if affect_line:
+                parts += ["", "【当下情感】", affect_line]
         kws = snap.get("attention_keywords") or []
         if kws:
             parts += ["", "【检索偏置关键词】", ", ".join(kws[:12])]

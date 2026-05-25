@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.soul.life.experience.unit import (
+from agent.soul.presence.experience.unit import (
     ExperienceAction,
     ExperienceActionKind,
     ExperienceFeeling,

@@ -31,7 +31,7 @@ def test_share_buffer_queues_mild_events():
 
 def test_gate_flushes_folded_package_to_top():
     requests = []
-    presence_svc = PresenceService(on_outbound_request=requests.append)
+    presence_svc = PresenceService(on_speak_request=requests.append)
     for hint in ("慢慢想说", "还有一件事", "第三件"):
         presence_svc.capture_evolution(
             CaptureEvent.story_beat(
@@ -55,7 +55,7 @@ def test_gate_flushes_folded_package_to_top():
 
 def test_eager_event_emits_single_entry_package():
     requests = []
-    presence_svc = PresenceService(on_outbound_request=requests.append)
+    presence_svc = PresenceService(on_speak_request=requests.append)
     presence_svc.capture_evolution(
         CaptureEvent.wander(
             "tao",

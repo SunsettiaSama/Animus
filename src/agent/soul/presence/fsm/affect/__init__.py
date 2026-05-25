@@ -1,3 +1,3 @@
-from .state import AffectAnchor, AffectState, EmotionalAnchor
+from .state import AffectState
 
-__all__ = ["AffectAnchor", "AffectState", "EmotionalAnchor"]
+__all__ = ["AffectState"]
