@@ -20,16 +20,12 @@ Soul 子系统在 ReAct 推理环之外承载 **持久记忆单元（Redis/MySQL
 ```
 src/agent/soul/
 ├── presence/
-│   ├── fsm/           # 当下态四维度 FSM
-│   │   ├── affect/        # 情感
-│   │   ├── somatic/       # 生理状态
-│   │   ├── cognition/       # 认知（working_memory / thinking 自叙）
-│   │   └── perception/    # 对环境的感知
-│   ├── fsm/init/      # 起床 / 休眠（PresenceWakeEngine）
-│   ├── interaction.py # 对话交互态（期待 / 冲动，非 FSM 维度）
-│   ├── capture/       # 事件捕获：顶层注入 + Soul 内部演化
-│   ├── transition/    # 纯期待 FSM 转移
-│   └── gate/          # 限值 → SoulService → 顶层请求
+│   ├── fsm/           # 当下态五维 FSM（affect / somatic / cognition / perception / expectation）
+│   ├── interface/     # ingress（trigger/capture/boundary）+ egress（Speak 门控 / ReAct）
+│   ├── transition/    # 状态转移（dialogue / incident / rumination / wake / sleep / boundary）
+│   └── service.py     # PresenceService：当下态 + 会话持久化
+├── life/
+│   └── experience/    # 体验编排（LifeExperienceStack、dialogue/life pipeline、memory 擢升）
 ├── memory/
 ├── heartbeat/
 ├── life/

@@ -1055,7 +1055,7 @@ class TaoLoop:
         self._persona.reset_self_concept()
 
     def run(self, question: str) -> str:
-        from agent.soul.presence.experience.dialogue import commit_turn_and_post_process
+        from agent.soul.life.experience.dialogue import commit_turn_and_post_process
 
         for event in self.stream(question):
             if isinstance(event, FinishEvent):

@@ -1,7 +1,10 @@
-from .interface import CaptureEvent, SpeakRequest
-from .block import PresenceAffectBlock, PresenceBlock
+from .discharge import ImpulseDischarge
+from .narrative import compose_self_narrative
+from .state_block import PresenceStateBlock, PresenceStateBlockKind
 from .expectation import Expectation
-from .fsm import (
+from .gateway import PresenceGateway
+from .gateway_result import GatewayResult, PresenceTriggerResult
+from .state import (
     ExpectationState,
     PresenceContext,
     PresenceEvent,
@@ -10,74 +13,52 @@ from .fsm import (
     PROACTIVE_OPEN_THRESHOLD,
     REPLY_URGE_THRESHOLD,
 )
-from .fsm.affect import AffectState
+from .state.static import AffectState
 from .service import (
     PresenceIngestResult,
-    PresenceLayer,
     PresenceService,
     PresenceSnapshot,
     PresenceTransitionResult,
-    capture_event_from_presence,
-    capture_event_from_wander,
 )
-from .interface import PresenceInterface, PresenceTriggerResult
-from .share_desire import ShareDesire, share_desire_weight
+from .share_desire import ShareDesire, StaticStatePatch, share_desire_weight
 from .store import PresenceStateStore, StoredPresenceSession
 from .transition import (
-    IncidentIngestResult,
-    IncidentKind,
-    LifeIncident,
-    PresenceTransitionEngine,
     PresenceTransitionOutcome,
+    PresenceTransitionRouter,
     PresenceTrigger,
     PresenceTriggerKind,
+    TransitionHandler,
 )
-from .experience import (
-    DialogueExperiencePipeline,
-    PresenceExperiencePipeline,
-)
-
-# 兼容旧名
-from .interface import SpeakInterface, SpeakInterfaceConfig
-
-PresenceGate = SpeakInterface
-PresenceGateConfig = SpeakInterfaceConfig
-PresenceOutboundRequest = SpeakRequest
 
 __all__ = [
     "AffectState",
-    "CaptureEvent",
     "Expectation",
     "ExpectationState",
-    "IncidentIngestResult",
-    "IncidentKind",
-    "LifeIncident",
-    "DialogueExperiencePipeline",
-    "PresenceExperiencePipeline",
+    "GatewayResult",
+    "ImpulseDischarge",
+    "PresenceStateBlock",
+    "PresenceStateBlockKind",
+    "compose_self_narrative",
     "PresenceContext",
     "PresenceEvent",
     "PresenceEventKind",
+    "PresenceGateway",
     "PresenceIngestResult",
-    "PresenceInterface",
-    "PresenceLayer",
     "PresenceService",
     "PresenceSnapshot",
     "PresenceState",
     "PresenceTransitionResult",
-    "PresenceTransitionEngine",
     "PresenceTransitionOutcome",
+    "PresenceTransitionRouter",
     "PresenceTrigger",
     "PresenceTriggerKind",
     "PresenceTriggerResult",
     "PROACTIVE_OPEN_THRESHOLD",
     "REPLY_URGE_THRESHOLD",
-    "PresenceAffectBlock",
-    "PresenceBlock",
     "PresenceStateStore",
-    "SpeakRequest",
     "StoredPresenceSession",
     "ShareDesire",
+    "StaticStatePatch",
+    "TransitionHandler",
     "share_desire_weight",
-    "capture_event_from_presence",
-    "capture_event_from_wander",
 ]

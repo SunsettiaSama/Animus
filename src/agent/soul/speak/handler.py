@@ -3,25 +3,52 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from agent.soul.handlers.api._llm import resolve_module_llm
+from infra.llm import BaseLLM
+
 from .actions import SpeakAction
 from .chunk import SpeakFeelingChunk, SpeakSubjectiveChunk
 from .service import SpeakService
 
 if TYPE_CHECKING:
+    from agent.soul.ports import LLMServicePort
     from agent.soul.service import SoulService
 
 __all__ = ["SpeakAction", "SpeakHandler"]
 
 
 class SpeakHandler:
-    """Speak API Handler：会话记账 + presence/experience 穿透。"""
+    """Speak API Handler：会话记账 + presence/experience 穿透 + LLM 生成。"""
 
-    def __init__(self, soul: SoulService) -> None:
+    DEFAULT_AUX_NAME = "speak"
+
+    def __init__(
+        self,
+        soul: SoulService,
+        *,
+        llm_service: LLMServicePort | None = None,
+        llm_aux_name: str = DEFAULT_AUX_NAME,
+        primary_llm: BaseLLM | None = None,
+    ) -> None:
         self._soul = soul
+        self._llm_service = llm_service
+        self._llm_aux_name = llm_aux_name
+        self._primary_llm = primary_llm
+
+    def resolve_llm(self) -> BaseLLM | None:
+        return resolve_module_llm(
+            self._llm_service,
+            self._llm_aux_name,
+            self._primary_llm,
+        )
 
     @property
     def api(self) -> SpeakService:
-        return self._soul._ensure_speak_service()
+        service = self._soul._ensure_speak_service()
+        llm = self.resolve_llm()
+        if llm is not None and service.llm_engine.llm is None:
+            service.llm_engine.set_llm(llm)
+        return service
 
     def handle(self, action: str, payload: dict[str, Any]) -> Any:
         if action == SpeakAction.OPEN_SESSION:
@@ -41,6 +68,15 @@ class SpeakHandler:
 
         if action == SpeakAction.DELIVER:
             return self._deliver(payload)
+
+        if action == SpeakAction.GENERATE:
+            return self._generate(payload)
+
+        if action == SpeakAction.GENERATE_STREAM:
+            return self._generate_stream(payload)
+
+        if action == SpeakAction.RUN_TURN:
+            return self._run_turn(payload)
 
         if action == SpeakAction.DRIVE_SNAPSHOT:
             snap = self.api.drive_snapshot(payload["session_id"])
@@ -174,6 +210,63 @@ class SpeakHandler:
             "session_id": session_id,
             "text": answer.text,
             "final": answer.final,
+            "notes": list(result.notes),
+        }
+
+    def _generate(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = payload.get("session_id", "tao")
+        text = str(payload.get("text", ""))
+        system = str(payload.get("system", ""))
+        context = str(payload.get("context", ""))
+        result = self.api.generate(session_id, text, system=system, context=context)
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "text": result.text,
+        }
+
+    def _generate_stream(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = payload.get("session_id", "tao")
+        text = str(payload.get("text", ""))
+        system = str(payload.get("system", ""))
+        context = str(payload.get("context", ""))
+        result = self.api.generate_stream(session_id, text, system=system, context=context)
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "text": result.text,
+            "chunks": list(result.chunks),
+        }
+
+    def _run_turn(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = payload.get("session_id", "tao")
+        text = str(payload.get("text", payload.get("user_text", "")))
+        stream = bool(payload.get("stream", False))
+        mode = str(payload.get("mode", "inbound"))
+        result = self.api.run_turn(
+            session_id,
+            text,
+            stream=stream,
+            mode="proactive" if mode == "proactive" else "inbound",
+        )
+        return {
+            "ok": True,
+            "session_id": result.session_id,
+            "answer": result.answer,
+            "output": result.output.to_dict() if result.output else {},
+            "session_state": result.meta.get("session_state", "finish"),
+            "anchor_request": result.meta.get("anchor_request"),
+            "recorded": result.recorded,
+            "bundle": result.bundle.summary_for_log(),
+            "events": [
+                {
+                    "kind": event.kind,
+                    "text": event.text,
+                    "final": event.final,
+                    "meta": dict(event.meta),
+                }
+                for event in result.stream_events
+            ],
             "notes": list(result.notes),
         }
 

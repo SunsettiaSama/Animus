@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from agent.soul.presence.transition.incident import IncidentKind, LifeIncident
-from agent.soul.presence.transition.rumination import RuminationSignal
+from agent.soul.life.experience.incident import IncidentKind, LifeIncident
 
 if TYPE_CHECKING:
     from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
@@ -32,7 +31,7 @@ class EvolutionCaptureReport:
 
 
 class EvolutionCapture:
-    """心跳统一编排：life 事件 → presence service（FSM 看法 + 可选 speak 冲动）。"""
+    """心跳统一编排：life 事件 → life experience（presence 不再做演化 capture）。"""
 
     @staticmethod
     def _require_running(soul: SoulService) -> bool:
@@ -61,33 +60,17 @@ class EvolutionCapture:
         *,
         session_id: str = "tao",
     ) -> bool:
-        if not EvolutionCapture._require_running(soul):
-            return False
-        rumination = RuminationSignal.from_heartbeat_result(result, session_id=session_id)
-        if rumination is None:
-            return False
-        ingest = soul.ingest_presence_rumination(rumination)
-        return ingest.applied
+        _ = soul
+        _ = result
+        _ = session_id
+        return False
 
     @staticmethod
     def emit_evolution(soul: SoulService, beat: EvolutionBeat, *, session_id: str = "tao") -> bool:
-        """演化冲动路径（interface），仍经 service 注入。"""
-        if not EvolutionCapture._require_running(soul):
-            return False
-        if not beat.hint.strip():
-            return False
-        event = soul.presence_evolution_event(
-            session_id=session_id,
-            hint=beat.hint,
-            salience=beat.salience,
-            trigger=beat.trigger or beat.source,
-            share_desire=beat.share_desire or None,
-            emotion_text=beat.emotion_text,
-            emotion_intensity=beat.emotion_intensity,
-            emotion_strength=beat.emotion_strength,
-        )
-        result = soul.capture_presence_evolution(event)
-        return result.speak_request is not None
+        _ = soul
+        _ = beat
+        _ = session_id
+        return False
 
     @staticmethod
     def after_wander(
@@ -97,15 +80,14 @@ class EvolutionCapture:
         *,
         session_id: str = "tao",
     ) -> EvolutionCaptureReport:
+        _ = soul
+        _ = result
+        _ = session_id
         report = EvolutionCaptureReport()
-        if RuminationSignal.from_heartbeat_result(result, session_id=session_id) is not None:
-            report.rumination_count = 1
         for beat in story_beats:
             if not beat.hint.strip():
                 continue
             report.events.append({"hint": beat.hint, "source": "story_beat"})
-            if EvolutionCapture.emit_evolution(soul, beat, session_id=session_id):
-                report.outbound_count += 1
         return report
 
     @staticmethod
@@ -126,14 +108,6 @@ class EvolutionCapture:
             session_id=session_id,
         ):
             report.incident_count += 1
-        beat = EvolutionBeat(
-            hint=str(event.get("hint", "")),
-            salience=float(event.get("salience", 0.35)),
-            trigger="landmark_planned",
-            share_desire=str(event.get("share_desire", "")),
-        )
-        if EvolutionCapture.emit_evolution(soul, beat, session_id=session_id):
-            report.outbound_count += 1
         return report
 
     @staticmethod
@@ -174,8 +148,6 @@ class EvolutionCapture:
                 session_id=session_id,
             ):
                 report.incident_count += 1
-            if EvolutionCapture.emit_evolution(soul, beat, session_id=session_id):
-                report.outbound_count += 1
         return report
 
     @staticmethod
@@ -207,15 +179,4 @@ class EvolutionCapture:
             session_id=session_id,
         ):
             report.incident_count += 1
-        beat = EvolutionBeat(
-            hint=hint,
-            salience=salience,
-            trigger="surprise",
-            share_desire="eager",
-            emotion_text=emotion_text,
-            emotion_intensity=emotion_intensity,
-            emotion_strength=emotion_strength,
-        )
-        if EvolutionCapture.emit_evolution(soul, beat, session_id=session_id):
-            report.outbound_count += 1
         return report

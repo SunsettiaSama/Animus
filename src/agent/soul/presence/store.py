@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .fsm.state import PresenceState
+from .state import PresenceState
 from .share_desire import ShareDesire
 from .transition import PresenceInteraction
 

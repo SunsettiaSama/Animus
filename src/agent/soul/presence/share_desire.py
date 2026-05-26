@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 
 from config.soul.presence.config import (
@@ -82,3 +83,13 @@ def share_desire_from_impulse(impulse_level: float) -> ShareDesire:
     if impulse_level >= SHARE_DESIRE_WEIGHT[ShareDesire.mild]:
         return ShareDesire.mild
     return ShareDesire.none
+
+
+@dataclass
+class StaticStatePatch:
+    """静态 narrative 显式写入（boundary/scan 不得使用）。"""
+
+    affect: str | None = None
+    somatic: str | None = None
+    thinking: str | None = None
+    perception: str | None = None

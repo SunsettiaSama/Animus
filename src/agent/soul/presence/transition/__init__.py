@@ -1,72 +1,40 @@
-"""状态转移：期待 FSM、FSM 初始化（起床/休眠）、用户-agent 会话刷新、边界事件 ingest。"""
-
-from .apply import TransitionResult, apply_presence_transition, apply_transition
-from .engine import PresenceTransitionEngine, PresenceTransitionOutcome
+from .dynamic.boundary import (
+    TransitionResult,
+    apply_boundary_transition,
+    apply_presence_transition,
+    apply_transition,
+)
+from .dynamic.edges import PRESENCE_EDGES, match_presence_edge
+from .router import (
+    LifeSyncTransitionResult,
+    PresenceTransitionOutcome,
+    PresenceTransitionRouter,
+)
 from .trigger import PresenceTrigger, PresenceTriggerKind
-from .dialogue import (
-    DIALOGUE_FSM_REFRESH_EVERY_K,
-    DialogueBlock,
-    DialogueExperience,
-    DialogueFsmRefresher,
-    DialogueObserveResult,
-    DialogueRefreshResult,
-    DialogueSessionTransition,
-)
-from .incident import (
-    IncidentFsmRefresher,
-    IncidentIngestResult,
-    IncidentKind,
-    IncidentTransition,
-    LifeIncident,
-)
-from .rumination import (
-    RuminationFsmRefresher,
-    RuminationIngestResult,
-    RuminationSignal,
-    RuminationTransition,
-)
-from .edges import PRESENCE_EDGES, match_presence_edge
 from .expectation import Expectation
-from .init import (
-    PresenceWakeEngine,
-    SleepResult,
-    WakeContext,
-    WakeResult,
-    apply_sleep,
-)
+from .static.lifecycle import SleepResult, WakeContext, WakeResult, apply_sleep, apply_wake
 from .interaction import PresenceInteraction
+from .ports import TransitionHandler, TransitionNotes
 
 __all__ = [
-    "DIALOGUE_FSM_REFRESH_EVERY_K",
     "PRESENCE_EDGES",
-    "PresenceTransitionEngine",
+    "LifeSyncTransitionResult",
     "PresenceTransitionOutcome",
+    "PresenceTransitionRouter",
     "PresenceTrigger",
     "PresenceTriggerKind",
-    "DialogueBlock",
-    "DialogueExperience",
-    "DialogueFsmRefresher",
-    "DialogueObserveResult",
-    "DialogueRefreshResult",
-    "DialogueSessionTransition",
-    "IncidentFsmRefresher",
-    "IncidentIngestResult",
-    "IncidentKind",
-    "IncidentTransition",
-    "LifeIncident",
-    "RuminationFsmRefresher",
-    "RuminationIngestResult",
-    "RuminationSignal",
-    "RuminationTransition",
     "Expectation",
     "PresenceInteraction",
-    "PresenceWakeEngine",
     "SleepResult",
+    "TransitionHandler",
+    "TransitionNotes",
     "TransitionResult",
     "WakeContext",
     "WakeResult",
+    "apply_boundary_transition",
     "apply_presence_transition",
     "apply_sleep",
     "apply_transition",
+    "apply_wake",
     "match_presence_edge",
 ]

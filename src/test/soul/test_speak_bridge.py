@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.soul.presence.experience.pipeline import PresenceExperiencePipeline
+from agent.soul.life.experience import LifeExperienceStack
 from agent.soul.presence.service import PresenceService
 from agent.soul.speak.bridge import SpeakDialogueBridge
 from agent.soul.speak.chunk import SpeakFeelingChunk, SpeakTurnChunk, resolve_feeling
@@ -9,7 +9,7 @@ from agent.soul.speak.chunk import SpeakFeelingChunk, SpeakTurnChunk, resolve_fe
 def test_speak_bridge_records_via_experience_pipeline(tmp_path):
     life_dir = str(tmp_path)
     presence = PresenceService(life_dir=life_dir)
-    pipeline = PresenceExperiencePipeline(life_dir=life_dir)
+    pipeline = LifeExperienceStack(life_dir=life_dir)
     recorded: list[dict] = []
 
     bridge = SpeakDialogueBridge(
@@ -44,13 +44,15 @@ def test_speak_bridge_records_via_experience_pipeline(tmp_path):
         salience=0.7,
         emotion_label="专注",
     )
-    assert presence._dialogue_transition.block_count("tao") == 1
+    from agent.soul.presence.transition import Expectation
+
+    assert presence.snapshot("tao").expectation == Expectation.none
 
 
 def test_pipeline_close_dialogue_ingests_interaction_unit(tmp_path):
     life_dir = str(tmp_path)
     presence = PresenceService(life_dir=life_dir)
-    pipeline = PresenceExperiencePipeline(life_dir=life_dir)
+    pipeline = LifeExperienceStack(life_dir=life_dir)
 
     pipeline.dialogue.record_dialogue_turn(
         presence,
@@ -66,6 +68,16 @@ def test_pipeline_close_dialogue_ingests_interaction_unit(tmp_path):
         agent_text="好的",
         salience=0.5,
         emotion_label="专注",
+    )
+    from agent.soul.presence.share_desire import StaticStatePatch
+
+    presence.patch_static(
+        "tao",
+        StaticStatePatch(
+            affect="专注",
+            perception="用户在聊架构",
+            thinking="我在组织回答",
+        ),
     )
     unit = pipeline.dialogue.close_dialogue(presence, "tao")
     assert unit is not None

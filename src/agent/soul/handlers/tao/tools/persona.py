@@ -49,7 +49,7 @@ class SoulPersonaAction(BaseAction):
             for b in beliefs[:6]:
                 parts.append(f"- [{b.get('strength', '')}] {b.get('content', '')}")
         if presence:
-            from agent.soul.presence.fsm.state import PresenceState
+            from agent.soul.presence.state import PresenceState
 
             rendered = PresenceState.from_dict(presence).render()
             if rendered:

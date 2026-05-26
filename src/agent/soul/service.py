@@ -16,24 +16,19 @@ from agent.soul.access import is_read_api_action
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
 from agent.soul.heartbeat.evolution import new_heartbeat_tick_id
 from agent.soul.heartbeat.orchestrator import HeartbeatOrchestrator
+from agent.soul.life.experience.incident import IncidentIngestResult, LifeIncident
 from agent.soul.presence import (
-    CaptureEvent,
-    IncidentIngestResult,
-    LifeIncident,
+    Expectation,
+    ImpulseDischarge,
     PresenceContext,
     PresenceEvent,
     PresenceIngestResult,
-    PresenceTrigger,
-    SpeakRequest,
     PresenceService,
-    Expectation,
+    PresenceTrigger,
 )
-from agent.soul.presence.transition import (
-    PresenceWakeEngine,
-    RuminationIngestResult,
-    RuminationSignal,
-    WakeContext,
-)
+from agent.soul.presence.state.dynamic.expectation.scanner import ExpectationScanPayload
+from agent.soul.speak.outbound import SpeakRequest
+from agent.soul.presence.transition import WakeContext
 from agent.soul.handlers.api._llm import resolve_module_llm
 from agent.soul.workers import SoulWorkers
 
@@ -44,12 +39,10 @@ from .handlers.api.persona import PersonaHandler
 from .handlers.tao.backend import AgentServiceTaoBackend
 from .handlers.tao.handler import BaseTaoHandler
 from .handlers.tao.persona import TaoPersonaHandler
-from .ports import EmbeddingPort, LLMServicePort
+from .ports import EmbeddingPort, ListEmbeddingAdapter, LLMServicePort
 from .request import SoulChannel, SoulDomain, SoulRequest
 from .speak.handler import SpeakHandler
-from .presence.interface.egress.react import LightweightReactEngine, PresenceReactOutbound
-from .presence.interface.egress.react.ports import ListEmbeddingAdapter
-from config.soul.presence.interface_config import InterfaceReactConfig
+from .speak.outbound_delivery import SpeakPresenceOutbound
 
 if TYPE_CHECKING:
     from agent.soul.life.narrative_context import StoryWorldContextSupplier
@@ -109,10 +102,8 @@ class SoulService:
         self._memory_handler: MemoryHandler | None = None
         self._life_handler: LifeHandler | None = None
         self._speak_handler: SpeakHandler | None = None
-        self._react_engine: LightweightReactEngine | None = None
-        self._react_outbound: PresenceReactOutbound | None = None
+        self._speak_outbound: SpeakPresenceOutbound | None = None
         self._embedding_port: EmbeddingPort | None = None
-        self._interface_react_cfg: InterfaceReactConfig | None = None
         self._heartbeat: Any = None
         self._orchestrator: HeartbeatOrchestrator | None = None
         self._workers = SoulWorkers()
@@ -243,11 +234,51 @@ class SoulService:
             payload={"session_id": session_id},
         ))
 
+    def speak_turn(
+        self,
+        user_text: str,
+        *,
+        session_id: str = "tao",
+        stream: bool = False,
+        mode: str = "inbound",
+    ) -> dict[str, Any]:
+        """Speak 顶层门面：字块组装 → LLM → 流式推送 → 记账。"""
+        return self.dispatch(SoulRequest(
+            domain=SoulDomain.speak,
+            action=SpeakAction.RUN_TURN,
+            payload={
+                "session_id": session_id,
+                "text": user_text,
+                "stream": stream,
+                "mode": mode,
+            },
+        ))
+
+    def speak_generate(
+        self,
+        user_text: str,
+        *,
+        session_id: str = "tao",
+        system: str = "",
+        context: str = "",
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        """Speak LLM 直调（不经完整 compose 时可传 system/context）。"""
+        action = SpeakAction.GENERATE_STREAM if stream else SpeakAction.GENERATE
+        return self.dispatch(SoulRequest(
+            domain=SoulDomain.speak,
+            action=action,
+            payload={
+                "session_id": session_id,
+                "text": user_text,
+                "system": system,
+                "context": context,
+            },
+        ))
+
     def set_embedding_port(self, port: EmbeddingPort | None) -> None:
-        """注入顶层 embedding 服务（interface react 会话上下文检索）。"""
+        """注入顶层 embedding 服务。"""
         self._embedding_port = port
-        if self._react_engine is not None:
-            self._react_engine.executor.context_retriever.set_embedder(port)
 
     def resolve_embedding_port(self) -> EmbeddingPort | None:
         if self._embedding_port is not None:
@@ -259,38 +290,12 @@ class SoulService:
             return None
         return ListEmbeddingAdapter(backend)
 
-    def run_presence_react_step(
-        self,
-        session_id: str,
-        step: dict[str, Any],
-    ) -> dict[str, Any]:
-        """轻量 ReAct：解析 step 中追加 action 字段并执行。"""
-        self._require_running()
-        result = self._ensure_react_engine().run_step(session_id, step)
-        return result.to_dict()
-
-    def run_presence_react_chain(
-        self,
-        session_id: str,
-        steps: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """轻量 ReAct 链式执行（受 max_steps 限制）。"""
-        self._require_running()
-        result = self._ensure_react_engine().run_chain(session_id, steps)
-        return result.to_dict()
-
-    @property
-    def interface_react(self) -> LightweightReactEngine:
-        return self._ensure_react_engine()
-
     def register_presence_outbound_handler(
         self,
         handler: Any,
     ) -> None:
-        """注册顶层回调：冲动突破限值后发起交互请求。"""
+        """注册 speak 出站回调（由 SoulService 在扫描/放电后触发）。"""
         self._presence_outbound_handlers.append(handler)
-        self._ensure_presence_service()
-        self._presence_service.set_speak_handler(self._emit_presence_speak)
 
     def set_story_world_context_supplier(
         self,
@@ -317,18 +322,143 @@ class SoulService:
     ) -> PresenceIngestResult:
         """边界事件注入（经 presence.interface）。"""
         self._require_running()
-        return self.presence.interface.boundary(
+        result = self.presence.interface.boundary(
             event,
             context=PresenceContext(
                 line_open=line_open,
                 proactive_intent_id=proactive_intent_id,
             ),
         )
+        if result.impulse_discharge is not None:
+            self._emit_presence_speak(
+                self._speak_request_from_discharge(
+                    result.impulse_discharge,
+                    session_id=event.session_id,
+                )
+            )
+        return result
+
+    def run_presence_sync_cycle(
+        self,
+        session_id: str = "tao",
+        *,
+        hot_hours: float | None = 2,
+        rumination_meta: dict[str, str] | None = None,
+        boundary_event: PresenceEvent | None = None,
+        line_open: bool = False,
+        proactive_intent_id: str = "",
+        scan: bool = True,
+        speak_if_ready: bool = True,
+        sync_life: bool = True,
+        wait: bool = False,
+    ) -> dict[str, Any]:
+        """一次调度：life 当下体验 → static/dynamic 转移 → 可选边界/反刍 → 扫描 → speak → 在线叙述。"""
+        self._require_running()
+        self._ensure_experience_pipeline()
+
+        def _cycle() -> dict[str, Any]:
+            detail: dict[str, Any] = {
+                "ok": True,
+                "session_id": session_id,
+                "life_sync": None,
+                "rumination_sync": None,
+                "boundary": None,
+                "scan": None,
+            }
+            if sync_life:
+                detail["life_sync"] = self.presence.pull_and_sync_from_life(
+                    self.experience.log,
+                    session_id,
+                    hours=hot_hours,
+                )
+            if rumination_meta:
+                from agent.soul.life.experience.presence_supply import rumination_presence_bundle
+
+                bundle = rumination_presence_bundle(
+                    session_id=session_id,
+                    hint=str(rumination_meta.get("rumination_hint", rumination_meta.get("hint", ""))),
+                    narration=str(rumination_meta.get("thinking", rumination_meta.get("narration", ""))),
+                    salience=float(rumination_meta.get("salience", 0.35)),
+                    wants_to_share=str(rumination_meta.get("wants_to_share", "")).lower() in {"1", "true", "yes"},
+                    share_topic=str(rumination_meta.get("share_topic", "")),
+                )
+                detail["rumination_sync"] = self.presence.sync_life_bundle(bundle)
+            if boundary_event is not None:
+                ing = self.presence.interface.boundary(
+                    boundary_event,
+                    context=PresenceContext(
+                        line_open=line_open,
+                        proactive_intent_id=proactive_intent_id,
+                    ),
+                )
+                boundary_detail: dict[str, Any] = {
+                    "notes": list(ing.notes),
+                    "impulse_discharge": ing.impulse_discharge is not None,
+                }
+                if ing.impulse_discharge is not None:
+                    self._emit_presence_speak(
+                        self._speak_request_from_discharge(
+                            ing.impulse_discharge,
+                            session_id=session_id,
+                        )
+                    )
+                detail["boundary"] = boundary_detail
+            if scan:
+                detail["scan"] = self._run_expectation_scan_on_presence(
+                    session_id, speak_if_ready=speak_if_ready,
+                )
+            detail["presence_narrative"] = self.presence_self_narrative(session_id)
+            return detail
+
+        if wait:
+            return self._workers.presence.submit(_cycle).result()
+        self._workers.presence.submit(_cycle)
+        return {"accepted": True, "session_id": session_id}
+
+    def presence_self_narrative(self, session_id: str = "tao") -> str:
+        """当下自我叙述（由 PresenceService 现场折叠）。"""
+        self._ensure_presence_service()
+        return self.presence.compose_self_narrative(session_id)
+
+    def initiate_presence_conversation(
+        self,
+        session_id: str = "tao",
+        *,
+        source: str = "initiate_conversation",
+        wait_reply: bool = True,
+    ) -> dict[str, Any]:
+        """将当下自我叙述 + 分享队列一并交给 speak 发起回话。"""
+        self._require_running()
+
+        def _run() -> dict[str, Any]:
+            discharge = self.presence.discharge_accumulated(
+                session_id=session_id,
+                source=source,
+                wait_reply=wait_reply,
+                expectation=Expectation.required,
+                require_saturated=False,
+            )
+            if discharge is None:
+                return {
+                    "ok": False,
+                    "session_id": session_id,
+                    "reason": "nothing to share",
+                }
+            request = self._speak_request_from_discharge(discharge, session_id=session_id)
+            speak_result = self._emit_presence_speak(request)
+            return {
+                "ok": True,
+                "session_id": session_id,
+                "speak": speak_result,
+                "presence_narrative": request.presence_narrative,
+            }
+
+        return self._workers.presence.submit(_run).result()
 
     def ingest_presence_incident(self, incident: LifeIncident) -> IncidentIngestResult:
         """Life 事件 → presence interface trigger + experience 注入 memory。"""
         self._require_running()
-        from agent.soul.presence.experience.sources import ExperienceSource
+        from agent.soul.life.experience.sources import ExperienceSource
 
         source = ExperienceSource.narrative.value
         if incident.kind.value == "surprise":
@@ -340,43 +470,6 @@ class SoulService:
             salience=incident.salience,
             source=source,
         )
-
-    def ingest_presence_rumination(self, rumination: RuminationSignal) -> RuminationIngestResult:
-        """记忆反刍 → presence.interface trigger。"""
-        self._require_running()
-        result = self.presence.interface.trigger(PresenceTrigger.rumination(rumination))
-        if result.outcome.rumination is None:
-            raise RuntimeError("rumination trigger did not produce RuminationIngestResult")
-        return result.outcome.rumination
-
-    def presence_evolution_event(
-        self,
-        session_id: str,
-        *,
-        hint: str,
-        salience: float = 0.4,
-        trigger: str = "",
-        share_desire: str | None = None,
-        emotion_text: str = "",
-        emotion_intensity: float = 0.0,
-        emotion_strength: str = "",
-    ) -> CaptureEvent:
-        """构造演化事件（经 service 统一出口）。"""
-        return self.presence.build_story_beat_event(
-            session_id,
-            hint=hint,
-            salience=salience,
-            trigger=trigger,
-            share_desire=share_desire,
-            emotion_text=emotion_text,
-            emotion_intensity=emotion_intensity,
-            emotion_strength=emotion_strength,
-        )
-
-    def capture_presence_evolution(self, event: CaptureEvent) -> PresenceIngestResult:
-        """Soul 内部演化捕获（interface.capture → 冲动累积 → gate → 顶层请求）。"""
-        self._require_running()
-        return self.presence.interface.capture(event)
 
     def start(self) -> None:
         if self._state == "running":
@@ -506,17 +599,11 @@ class SoulService:
         if result.signal.tick_id == "":
             result.signal.tick_id = tid
 
-        rumination = RuminationSignal.from_heartbeat_result(result, session_id="tao")
-        rumination_applied = False
-        if rumination is not None:
-            rumination_result = self.ingest_presence_rumination(rumination)
-            rumination_applied = rumination_result.applied
-        if not rumination_applied:
-            self.presence.receive_heartbeat_signal(
-                result.signal,
-                session_id="tao",
-                intensity_floor=floor,
-            )
+        self.presence.receive_heartbeat_signal(
+            result.signal,
+            session_id="tao",
+            intensity_floor=floor,
+        )
         self._record_persona_cluster_signals(result.buffer_candidates)
         story_beats = self._workers.life.submit(
             lambda: self.life.api.apply_wander_experience(result)
@@ -550,18 +637,49 @@ class SoulService:
         if not opportune:
             return {"checked": True, "opportune": False, "triggered": False}
 
-        outbound = self.presence.flush_accumulated(
+        discharge = self.presence.discharge_accumulated(
             session_id=session_id,
             source="external_opportunity_scan",
             wait_reply=True,
             expectation=Expectation.required,
         )
+        triggered = discharge is not None
+        if discharge is not None:
+            self._emit_presence_speak(
+                self._speak_request_from_discharge(discharge, session_id=session_id)
+            )
         return {
             "checked": True,
             "opportune": True,
-            "triggered": outbound is not None,
+            "triggered": triggered,
             "session_id": session_id,
         }
+
+    def run_expectation_scan(self, session_id: str = "tao") -> dict[str, Any]:
+        """期待扫描：presence 更新状态，Soul 层决定是否 speak。"""
+        self._require_running()
+        return self._workers.presence.submit(
+            lambda: self._run_expectation_scan_on_presence(session_id, speak_if_ready=True)
+        ).result()
+
+    def _run_expectation_scan_on_presence(
+        self,
+        session_id: str,
+        *,
+        speak_if_ready: bool,
+    ) -> dict[str, Any]:
+        scan = self.presence.scan_expectation(session_id)
+        detail: dict[str, Any] = {
+            "session_id": scan.session_id,
+            "triggered": scan.triggered,
+            "mode": scan.mode.value,
+            "notes": list(scan.notes),
+        }
+        if speak_if_ready and scan.triggered and scan.payload is not None:
+            request = self._speak_request_from_scan(scan.payload, session_id=session_id)
+            self._emit_presence_speak(request)
+            detail["speak_source"] = request.source
+        return detail
 
     def run_presence_wake(self, session_id: str = "tao", *, force: bool = False) -> dict[str, Any]:
         """起床：Presence FSM 四维度自叙初始化（演化入口）。"""
@@ -661,31 +779,22 @@ class SoulService:
 
     # ── 对外查询接口（HTTP / 外部集成）────────────────────────────────────────
 
-    def query_persona(self) -> dict[str, Any]:
-        """只读 Persona 快照 + Presence.affect。"""
-        snap = self.dispatch(SoulRequest(
+    def query_persona(self, *, session_id: str = "tao") -> dict[str, Any]:
+        """只读 Persona 快照 + Presence 在线自我叙述（外部请求可直出）。"""
+        snap = self.get_persona_snapshot(session_id=session_id)
+        self._ensure_presence_service()
+        snap["presence"] = self.presence.snapshot(session_id).state.to_dict()
+        snap["presence_affect"] = snap["presence"]["affect"]
+        snap["presence_self_narrative"] = self.presence_self_narrative(session_id)
+        return snap
+
+    def get_persona_snapshot(self, *, session_id: str = "tao") -> dict[str, Any]:
+        """Speak compose 用：仅 persona 稳定层 + self_concept（不含 presence）。"""
+        _ = session_id
+        return self.dispatch(SoulRequest(
             domain=SoulDomain.persona,
             action=PersonaAction.GET_SNAPSHOT,
         ))
-        self._ensure_presence_service()
-        snap["presence"] = self.presence.snapshot("tao").state.to_dict()
-        snap["presence_affect"] = snap["presence"]["affect"]
-        return snap
-
-    def record_persona_interaction(
-        self,
-        question: str,
-        answer: str,
-        *,
-        medium_term_context: str = "",
-    ) -> dict[str, Any]:
-        """兼容接口：轮级 persona 演化已移除，快变状态见 Presence.affect。"""
-        _ = (question, answer, medium_term_context)
-        return {
-            "ok": True,
-            "applied": False,
-            "reason": "persona turn evolution removed; use Presence.affect",
-        }
 
     def reload_persona_profile(self) -> dict[str, Any]:
         """热加载 persona_dir 下的 profile / built_profile / self_concept。"""
@@ -808,17 +917,22 @@ class SoulService:
 
     def _ensure_speak_handler(self) -> SpeakHandler:
         if self._speak_handler is None:
-            self._speak_handler = SpeakHandler(self)
+            self._speak_handler = SpeakHandler(
+                self,
+                llm_service=self._llm_service,
+                llm_aux_name=self._cfg.speak_llm_aux_name,
+                primary_llm=self._primary_llm,
+            )
         return self._speak_handler
 
     def _ensure_experience_pipeline(self):
         if self._experience_pipeline is None:
-            from agent.soul.presence.experience import PresenceExperiencePipeline
+            from agent.soul.life.experience import LifeExperienceStack
 
             self._ensure_presence_service()
             self._ensure_life_handler()
             life = self.life.api
-            self._experience_pipeline = PresenceExperiencePipeline(
+            self._experience_pipeline = LifeExperienceStack(
                 life_dir=self._life_dir,
                 anchor_chronicle=life.anchor.chronicle,
                 virtual_chronicle=life.virtual.chronicle,
@@ -833,6 +947,7 @@ class SoulService:
     def _ensure_speak_service(self):
         if self._speak_service is None:
             from agent.soul.speak import SpeakService
+            from agent.soul.speak.llm.engine import SpeakLLMEngine
 
             self._ensure_experience_pipeline()
 
@@ -840,8 +955,8 @@ class SoulService:
                 self._experience_pipeline.dialogue.record_dialogue_turn(
                     self.presence,
                     session_id=kwargs["session_id"],
-                    user_text=kwargs["question"],
-                    agent_text=kwargs["answer"],
+                    user_text=kwargs.get("user_text", kwargs.get("question", "")),
+                    agent_text=kwargs.get("agent_text", kwargs.get("answer", "")),
                     salience=kwargs.get("salience", 0.3),
                     emotion_label=kwargs.get("emotion_label", ""),
                     valence_delta=kwargs.get("valence_delta", 0.0),
@@ -850,9 +965,31 @@ class SoulService:
                     proactive_intent_id=kwargs.get("proactive_intent_id", ""),
                 )
 
+            def _touch_dialogue(session_id: str) -> None:
+                state = self._experience_pipeline.dialogue.state(session_id)
+                if state is not None:
+                    state.touch()
+
+            flush_mode = self._cfg.speak_stream_flush_mode
+            if flush_mode not in {"segment", "token_batch"}:
+                flush_mode = "segment"
+
             self._speak_service = SpeakService(
                 presence=self._presence_service,
+                persona=self,
                 record_turn=_record_dialogue_turn,
+                llm_engine=SpeakLLMEngine(
+                    resolve_module_llm(
+                        self._llm_service,
+                        self._cfg.speak_llm_aux_name,
+                        self._primary_llm,
+                    )
+                ),
+                flush_mode=flush_mode,  # type: ignore[arg-type]
+                share_threshold=self._cfg.speak_share_proactive_threshold,
+                session_idle_sec=self._cfg.speak_session_idle_sec,
+                lifecycle=self,
+                touch_dialogue=_touch_dialogue,
             )
         return self._speak_service
 
@@ -866,61 +1003,77 @@ class SoulService:
                 self._cfg.presence_llm_aux_name,
                 self._primary_llm,
             )
-            from agent.soul.presence.transition import (
-                DialogueFsmRefresher,
-                DialogueSessionTransition,
-                IncidentFsmRefresher,
-                IncidentTransition,
-                PresenceWakeEngine,
-                RuminationFsmRefresher,
-                RuminationTransition,
-            )
-
+            _ = llm
             self._presence_service = PresenceService(
                 life_dir=self._life_dir,
-                on_speak_request=self._emit_presence_speak,
-                wake_engine=PresenceWakeEngine(llm),
-                dialogue_transition=DialogueSessionTransition(
-                    refresher=DialogueFsmRefresher(llm),
-                ),
-                incident_transition=IncidentTransition(
-                    refresher=IncidentFsmRefresher(llm),
-                ),
-                rumination_transition=RuminationTransition(
-                    refresher=RuminationFsmRefresher(llm),
-                ),
                 timezone=tz,
             )
         return self._presence_service
 
-    def _emit_presence_speak(self, request: SpeakRequest) -> None:
-        self._ensure_react_outbound().handle(request)
+    def _speak_request_from_discharge(
+        self,
+        discharge: ImpulseDischarge,
+        *,
+        session_id: str | None = None,
+    ) -> SpeakRequest:
+        sid = session_id or discharge.session_id
+        narrative = self.presence_self_narrative(sid)
+        reason = discharge.reason
+        if narrative and narrative not in reason:
+            reason = f"{reason}\n\n【当下】\n{narrative}" if reason else narrative
+        return SpeakRequest(
+            session_id=sid,
+            reason=reason,
+            impulse_level=discharge.impulse_level,
+            share_desire=discharge.share_desire,
+            expectation=discharge.expectation,
+            package=discharge.package,
+            source=discharge.source,
+            wait_reply=discharge.wait_reply,
+            presence_narrative=narrative,
+        )
+
+    def _speak_request_from_scan(
+        self,
+        payload: ExpectationScanPayload,
+        *,
+        session_id: str,
+    ) -> SpeakRequest:
+        narrative = self.presence_self_narrative(session_id)
+        reason = payload.reason
+        if narrative and narrative not in reason:
+            reason = f"{reason}\n\n【当下】\n{narrative}" if reason else narrative
+        return SpeakRequest(
+            session_id=session_id,
+            reason=reason,
+            impulse_level=payload.impulse_level,
+            share_desire=payload.share_desire,
+            expectation=payload.expectation,
+            package=payload.package,
+            source=payload.source,
+            wait_reply=payload.wait_reply,
+            presence_narrative=narrative,
+        )
+
+    def _emit_presence_speak(self, request: SpeakRequest) -> dict[str, Any]:
+        result = self._ensure_speak_outbound().handle(request)
         for handler in self._presence_outbound_handlers:
             handler(request)
+        return result
 
-    def _ensure_react_engine(self) -> LightweightReactEngine:
-        if self._react_engine is None:
-            cfg = self._interface_react_cfg or InterfaceReactConfig.default()
-            self._react_engine = LightweightReactEngine(
-                self,
-                cfg=cfg,
-            )
-            embedder = self.resolve_embedding_port()
-            if embedder is not None:
-                self._react_engine.executor.context_retriever.set_embedder(embedder)
-        return self._react_engine
-
-    def _ensure_react_outbound(self) -> PresenceReactOutbound:
-        if self._react_outbound is None:
-            self._react_outbound = PresenceReactOutbound(self)
-        return self._react_outbound
+    def _ensure_speak_outbound(self) -> SpeakPresenceOutbound:
+        if self._speak_outbound is None:
+            self._speak_outbound = SpeakPresenceOutbound(self)
+        return self._speak_outbound
 
     def _presence_dialogue_overlay_supplier(self, session_id: str):
         from agent.soul.life.anchor.internalization.overlay import InteractionExperienceOverlay
+        from agent.soul.life.experience.dialogue.experience import build_dialogue_experience
 
-        experience = self.presence.finalize_dialogue_experience(session_id)
-        if experience is None:
+        snap = self.presence.snapshot(session_id)
+        if snap.state.is_empty():
             return None
+        experience = build_dialogue_experience(snap.state)
         return InteractionExperienceOverlay(
             perception=experience.perception,
             narration=experience.narration,

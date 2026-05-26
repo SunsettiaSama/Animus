@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...fsm.state import PresenceState
+from ...state import PresenceState
 from ..interaction import PresenceInteraction
 from .result import SleepResult
 

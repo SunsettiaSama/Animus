@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+from agent.soul.speak.compose.share_queue import ShareQueueComposer
+from agent.soul.speak.llm.engine import SpeakLLMEngine
+from agent.soul.speak.parse import parse_agent_output
+from agent.soul.speak.stream.segmenter import split_sentences
+from agent.soul.presence.share_desire import ShareDesire
+from agent.soul.presence.state.dynamic.expectation.queue import ShareIntent, ShareIntentQueue
+
+
+class _StreamLLM:
+    def generate_messages(self, messages):
+        return "你好，我在。"
+
+    def stream_generate_messages(self, messages):
+        for piece in ["你", "好", "，", "我在。"]:
+            yield piece
+
+
+def test_speak_llm_engine_generate_and_stream():
+    engine = SpeakLLMEngine(_StreamLLM())
+    sync = engine.generate("hello", system="sys")
+    assert sync.text == "你好，我在。"
+
+    streamed = engine.generate_stream("hello", system="sys")
+    assert streamed.text == "你好，我在。"
+    assert streamed.chunks == ["你", "好", "，", "我在。"]
+
+
+def test_share_queue_detects_desire_without_threshold():
+    snap = MagicMock()
+    snap.state.expectation.toward_user = 0.2
+    snap.state.expectation.to_dict.return_value = {
+        "share_queue": ShareIntentQueue(
+            items=[ShareIntent(topic="架构进展", share_desire=ShareDesire.moderate)],
+        ).to_dict(),
+    }
+    snap.interaction.impulse_reason = ""
+    snap.interaction.share_desire = ShareDesire.moderate
+    snap.interaction.impulse_level = 0.1
+
+    result = ShareQueueComposer(proactive_threshold=0.65).evaluate(snap)
+    assert result.should_speak is False
+    assert "架构" in result.summary
+
+
+def test_share_queue_reaches_proactive_threshold():
+    snap = MagicMock()
+    snap.state.expectation.toward_user = 0.7
+    snap.state.expectation.to_dict.return_value = {
+        "share_queue": ShareIntentQueue(
+            items=[ShareIntent(topic="架构进展", share_desire=ShareDesire.eager, salience=0.8)],
+        ).to_dict(),
+    }
+    snap.interaction.impulse_reason = ""
+    snap.interaction.share_desire = ShareDesire.eager
+    snap.interaction.impulse_level = 0.4
+
+    result = ShareQueueComposer(proactive_threshold=0.65).evaluate(snap)
+    assert result.should_speak is True
+    assert "架构" in result.summary
+
+
+def test_tag_parse_and_segmenter():
+    parsed = parse_agent_output("[action:微笑][speak:你好呀。]")
+    assert parsed.actions == ("微笑",)
+    assert parsed.speak == "你好呀。"
+
+    segments = split_sentences("第一句。第二句！第三句?", min_chars=2)
+    assert len(segments) >= 2
+
+
+def test_speak_service_run_turn_records_dialogue():
+    recorded: list[dict] = []
+
+    class _LLM:
+        def generate_messages(self, messages):
+            return "你好，我在这里。"
+
+        def stream_generate_messages(self, messages):
+            yield from "你好，我在这里。"
+
+    soul = MagicMock()
+    soul.get_persona_snapshot.return_value = {
+        "profile": {"name": "A"},
+        "self_concept": {},
+    }
+    presence = MagicMock()
+    snap = MagicMock()
+    snap.state.affect.render.return_value = ""
+    snap.state.somatic.render.return_value = ""
+    snap.state.cognition.render.return_value = ""
+    snap.state.perception.render.return_value = ""
+    snap.state.expectation.toward_user = 0.0
+    snap.state.expectation.to_dict.return_value = {"share_queue": {"items": []}}
+    snap.interaction.impulse_reason = ""
+    snap.interaction.share_desire = ShareDesire.none
+    snap.interaction.impulse_level = 0.0
+    presence.snapshot.return_value = snap
+
+    from agent.soul.speak.compose import SpeakPromptComposer
+    from agent.soul.speak.llm.engine import SpeakLLMEngine
+    from agent.soul.speak.service import SpeakService
+
+    service = SpeakService(
+        persona=soul,
+        presence=presence,
+        llm_engine=SpeakLLMEngine(_LLM()),
+        composer=SpeakPromptComposer(soul, presence),
+        record_turn=lambda **kwargs: recorded.append(kwargs),
+        lifecycle=None,
+    )
+    result = service.run_turn("tao", "你好")
+    assert result.answer
+    assert result.recorded is True
+    assert recorded
+    assert recorded[0]["user_text"] == "你好"

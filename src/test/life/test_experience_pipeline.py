@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from agent.soul.presence.experience.log import ExperienceLog
+from agent.soul.life.experience import LifeExperienceStack
+from agent.soul.life.experience.log import ExperienceLog
 from agent.soul.life.orchestrator import ExperienceOrchestrator
-from agent.soul.presence.experience.pipeline import PresenceExperiencePipeline
 from agent.soul.presence.service import PresenceService
-from agent.soul.presence.transition.incident.event import LifeIncident
+from agent.soul.life.experience.incident import LifeIncident
 
 
 def test_pipeline_ingest_life_incident_updates_hot_storage(tmp_path):
     life_dir = str(tmp_path)
     presence = PresenceService(life_dir=life_dir)
-    pipeline = PresenceExperiencePipeline(life_dir=life_dir)
+    pipeline = LifeExperienceStack(life_dir=life_dir)
 
     result = pipeline.life.ingest_life_incident(
         presence,

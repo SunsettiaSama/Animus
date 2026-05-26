@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from agent.react.tao import TaoLoop, _PendingFinish
-from agent.soul.presence.experience.dialogue import (
+from agent.soul.life.experience.dialogue import (
     close_dialogue_session,
     commit_turn_and_post_process,
     record_pending_turn,

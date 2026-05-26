@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from .injected import SpeakInjectedContext
+from .reply_style import SpeakReplyStyle
+from .system import SpeakSystemPrompt, SpeakTurnMode
+
+__all__ = ["SpeakPromptBundle", "SpeakTurnMode"]
+
+
+@dataclass
+class SpeakPromptBundle:
+    """Speak 一轮 prompt：外部注入 + 系统提示词，向上层传递。"""
+
+    session_id: str
+    mode: SpeakTurnMode = "inbound"
+    injected: SpeakInjectedContext = field(default_factory=SpeakInjectedContext)
+    system: SpeakSystemPrompt = field(default_factory=SpeakSystemPrompt)
+    wants_share: bool = False
+    share_summary: str = ""
+    reply_style: SpeakReplyStyle = field(default_factory=SpeakReplyStyle)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def persona_traits(self) -> str:
+        return self.injected.persona_traits
+
+    @property
+    def self_concept(self) -> str:
+        return self.injected.self_concept
+
+    @property
+    def presence_static(self) -> str:
+        return self.injected.presence_static
+
+    @property
+    def user_text(self) -> str:
+        return self.injected.user_text
+
+    def build_system(self) -> str:
+        parts: list[str] = []
+        role = self.system.role.strip()
+        if role:
+            parts.append(role)
+        for block in (
+            self.injected.persona_traits,
+            self.injected.self_concept,
+            self.injected.presence_static,
+        ):
+            text = block.strip()
+            if text:
+                parts.append(text)
+        share = self.system.share.strip()
+        if share:
+            parts.append(share)
+        output_format = self.system.output_format.strip()
+        if output_format:
+            parts.append(output_format)
+        return "\n\n".join(parts)
+
+    def summary_for_log(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "mode": self.mode,
+            "wants_share": self.wants_share,
+            "share_summary": self.share_summary,
+            "persona_traits_chars": len(self.persona_traits),
+            "self_concept_chars": len(self.self_concept),
+            "presence_static_chars": len(self.presence_static),
+            "system_chars": len(self.build_system()),
+            "user_chars": len(self.user_text),
+            "notes": list(self.notes),
+        }

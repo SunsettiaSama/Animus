@@ -1,13 +1,24 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from agent.soul.heartbeat.bridge import EmotionalSignal, MemoryHeartbeatResult
 
-from .fsm import (
+from .discharge import ImpulseDischarge
+from .gateway_result import GatewayResult
+from .gateway import PresenceGateway
+from .narrative import compose_self_narrative
+from .state_block import PresenceStateBlock
+from .share_desire import (
+    OUTBOUND_THRESHOLD_MODERATE,
+    ShareDesire,
+    StaticStatePatch,
+    max_share_desire,
+)
+from .state import (
     ExpectationScanMode,
     ExpectationScanResult,
     PresenceContext,
@@ -17,57 +28,24 @@ from .fsm import (
     fold_share_queue,
     scan_expectation_thresholds,
 )
-from .interface import (
-    CaptureEvent,
-    CaptureKind,
-    PresenceInterface,
-    PresenceTriggerResult,
-    SpeakInterface,
-    SpeakInterfaceConfig,
-    SpeakRequest,
-    ShareFoldedPackage,
-)
-from .share_desire import ShareDesire, max_share_desire
 from .store import PresenceStateStore, StoredPresenceSession
 from .transition import (
-    DialogueExperience,
-    DialogueFsmRefresher,
-    DialogueObserveResult,
-    DialogueSessionTransition,
-    IncidentFsmRefresher,
-    IncidentIngestResult,
-    IncidentKind,
-    IncidentTransition,
-    LifeIncident,
-    PresenceTransitionEngine,
+    PresenceTransitionRouter,
     PresenceTrigger,
-    RuminationFsmRefresher,
-    RuminationIngestResult,
-    RuminationSignal,
-    RuminationTransition,
     Expectation,
     PresenceInteraction,
-    PresenceWakeEngine,
     SleepResult,
     WakeContext,
     WakeResult,
 )
+from .transition.ports import TransitionHandler
+from .transition.trigger import PresenceTriggerKind
 
-def capture_event_from_presence(event: PresenceEvent) -> CaptureEvent:
-    return CaptureEvent(
-        kind=CaptureKind(event.kind.value),
-        session_id=event.session_id,
-        payload=dict(event.payload),
-    )
+if TYPE_CHECKING:
+    from agent.soul.life.anchor.presence_bundle import PresenceExperienceBundle
+    from agent.soul.life.experience.log import ExperienceLog
 
-
-def capture_event_from_wander(
-    _result: object,
-    *,
-    session_id: str = "tao",
-) -> CaptureEvent | None:
-    _ = session_id
-    return None
+PresenceTriggerResult = GatewayResult
 
 
 @dataclass
@@ -126,58 +104,29 @@ class PresenceSnapshot:
 class PresenceIngestResult:
     before: PresenceSnapshot
     after: PresenceSnapshot
-    event: CaptureEvent | PresenceEvent
+    event: PresenceEvent
     notes: list[str] = field(default_factory=list)
-    speak_request: SpeakRequest | None = None
     boundary: bool = False
     buffered_share_count: int = 0
-
-    @property
-    def outbound_request(self) -> SpeakRequest | None:
-        return self.speak_request
+    impulse_discharge: ImpulseDischarge | None = None
 
 
 PresenceTransitionResult = PresenceIngestResult
 
 
 class PresenceService:
-    """Soul 当下态：transition（状态转移）+ interface（对外 speak 接口）。"""
+    """Soul 当下态：仅维护 state + transition + gateway 入站。"""
 
     def __init__(
         self,
         *,
         life_dir: str = "",
-        on_speak_request: Callable[[SpeakRequest], None] | None = None,
-        on_outbound_request: Callable[[SpeakRequest], None] | None = None,
-        interface_config: SpeakInterfaceConfig | None = None,
-        wake_engine: PresenceWakeEngine | None = None,
-        transition_engine: PresenceTransitionEngine | None = None,
-        dialogue_transition: DialogueSessionTransition | None = None,
-        dialogue_refresher: DialogueFsmRefresher | None = None,
-        incident_transition: IncidentTransition | None = None,
-        incident_refresher: IncidentFsmRefresher | None = None,
-        rumination_transition: RuminationTransition | None = None,
-        rumination_refresher: RuminationFsmRefresher | None = None,
+        transition_router: PresenceTransitionRouter | None = None,
         timezone: str = "Asia/Shanghai",
     ) -> None:
         self._life_dir = life_dir
         self._timezone = timezone
-        if transition_engine is not None:
-            self._transition_engine = transition_engine
-        else:
-            self._transition_engine = PresenceTransitionEngine.from_refreshers(
-                dialogue_transition=dialogue_transition,
-                dialogue_refresher=dialogue_refresher,
-                incident_transition=incident_transition,
-                incident_refresher=incident_refresher,
-                rumination_transition=rumination_transition,
-                rumination_refresher=rumination_refresher,
-                wake_engine=wake_engine,
-            )
-        self._wake_engine = self._transition_engine.wake_engine
-        self._dialogue_transition = self._transition_engine.dialogue
-        self._incident_transition = self._transition_engine.incident
-        self._rumination_transition = self._transition_engine.rumination
+        self._transition_router = transition_router or PresenceTransitionRouter()
         self._store = PresenceStateStore(life_dir) if life_dir else None
         self._sessions: dict[str, PresenceSession] = {}
         if self._store is not None:
@@ -189,12 +138,8 @@ class PresenceService:
                     awake=stored.awake,
                     last_wake_date=stored.last_wake_date,
                 )
-        self._egress = SpeakInterface(interface_config)
-        self._interface = self._egress
-        self._on_speak_request = on_speak_request or on_outbound_request
-        self.ingress = PresenceInterface(self)
-        self.interface = self.ingress
-        self.egress = self._egress
+        self.gateway = PresenceGateway(self)
+        self.interface = self.gateway
 
     def snapshot(self, session_id: str) -> PresenceSnapshot:
         session = self._session(session_id)
@@ -204,20 +149,81 @@ class PresenceService:
             interaction=session.interaction.copy(),
         )
 
+    def compose_self_narrative(self, session_id: str = "tao") -> str:
+        session = self._session(session_id)
+        return compose_self_narrative(session.state, session.interaction)
+
+    def sync_life_bundle(self, bundle: PresenceExperienceBundle) -> dict[str, list[str]]:
+        """life 字段包 → static + dynamic 双链路转移（经顶层 router）。"""
+        result = self.trigger(PresenceTrigger.life_sync(bundle))
+        self._persist(bundle.session_id)
+        sync = result.outcome.life_sync
+        return {
+            "static_notes": list(sync.static_notes) if sync else [],
+            "dynamic_notes": list(sync.dynamic_notes) if sync else [],
+            "notes": list(result.notes),
+        }
+
+    def pull_and_sync_from_life(
+        self,
+        log: ExperienceLog,
+        session_id: str = "tao",
+        *,
+        hours: float | None = 2,
+        tail: int = 12,
+    ) -> dict[str, object]:
+        from agent.soul.life.experience.presence_supply import supply_presence_bundle_from_life
+
+        bundle = supply_presence_bundle_from_life(
+            log, session_id, hours=hours, tail=tail,
+        )
+        if bundle is None:
+            return {"applied": False, "reason": "no hot experience", "session_id": session_id}
+        sync = self.sync_life_bundle(bundle)
+        return {
+            "applied": True,
+            "session_id": session_id,
+            "bundle_source": bundle.source,
+            **sync,
+        }
+
+    def apply_state_block(self, block: PresenceStateBlock) -> list[str]:
+        """外部体验/反刍块 → 统一 life_sync 双链路。"""
+        from agent.soul.life.experience.presence_supply import presence_bundle_from_state_block
+
+        sync = self.sync_life_bundle(presence_bundle_from_state_block(block))
+        return list(sync.get("notes", []))
+
     def share_queue_size(self, session_id: str) -> int:
         return len(self._session(session_id).state.expectation.share_queue)
 
-    def share_buffer_size(self, session_id: str) -> int:
-        """兼容别名 → share_queue_size。"""
-        return self.share_queue_size(session_id)
+    def register_transition(
+        self,
+        kind: PresenceTriggerKind,
+        handler: TransitionHandler,
+    ) -> None:
+        self._transition_router.register(kind, handler)
 
-    def set_wake_engine(self, engine: PresenceWakeEngine | None) -> None:
-        self._transition_engine.wake_engine = engine or PresenceWakeEngine()
-        self._wake_engine = self._transition_engine.wake_engine
+    def patch_static(self, session_id: str, patch: StaticStatePatch) -> PresenceSnapshot:
+        session = self._session(session_id)
+        if patch.affect is not None:
+            session.state.affect.narrative = patch.affect
+        if patch.somatic is not None:
+            session.state.somatic.narrative = patch.somatic
+        if patch.thinking is not None:
+            session.state.cognition.thinking = patch.thinking
+        if patch.perception is not None:
+            session.state.perception.narrative = patch.perception
+        self._persist(session_id)
+        return self.snapshot(session_id)
 
-    def trigger(self, trigger: PresenceTrigger) -> PresenceTriggerResult:
-        """兼容入口 → interface.trigger。"""
-        return self.interface.trigger(trigger)
+    def set_working_memory(self, session_id: str, text: str) -> None:
+        session = self._session(session_id)
+        session.state.cognition.working_memory = text
+        self._persist(session_id)
+
+    def trigger(self, trigger: PresenceTrigger) -> GatewayResult:
+        return self.gateway.trigger(trigger)
 
     def set_timezone(self, timezone: str) -> None:
         self._timezone = timezone
@@ -273,73 +279,6 @@ class PresenceService:
         session.state.reset_affect()
         self._persist(session_id)
 
-    def observe_dialogue_turn(
-        self,
-        session_id: str,
-        *,
-        user_text: str,
-        agent_text: str,
-    ) -> DialogueObserveResult:
-        """记录一轮对话块；按 k 块刷新 FSM，维护连续体验（不逐轮硬写 FSM）。"""
-        result = self.trigger(
-            PresenceTrigger.dialogue(
-                session_id,
-                user_text=user_text,
-                agent_text=agent_text,
-            ),
-        )
-        if result.outcome.dialogue is None:
-            raise RuntimeError("dialogue trigger did not produce DialogueObserveResult")
-        return result.outcome.dialogue
-
-    def finalize_dialogue_experience(self, session_id: str) -> DialogueExperience | None:
-        """会话闭合：导出 Presence 连续体验并重置对话 tracker。"""
-        session = self._session(session_id)
-        experience = self._dialogue_transition.finalize(
-            session.state,
-            session_id=session_id,
-        )
-        if experience is not None:
-            self._persist(session_id)
-        return experience
-
-    def build_story_beat_event(
-        self,
-        session_id: str,
-        *,
-        hint: str,
-        salience: float = 0.4,
-        trigger: str = "",
-        share_desire: str | None = None,
-        emotion_text: str = "",
-        emotion_intensity: float = 0.0,
-        emotion_strength: str = "",
-    ) -> CaptureEvent:
-        return CaptureEvent.story_beat(
-            session_id,
-            hint=hint,
-            salience=salience,
-            trigger=trigger,
-            share_desire=share_desire,
-            emotion_text=emotion_text,
-            emotion_intensity=emotion_intensity,
-            emotion_strength=emotion_strength,
-        )
-
-    def ingest_incident(self, incident: LifeIncident) -> IncidentIngestResult:
-        """Life 事件注入 → transition/incident 刷新 FSM。"""
-        result = self.trigger(PresenceTrigger.incident(incident))
-        if result.outcome.incident is None:
-            raise RuntimeError("incident trigger did not produce IncidentIngestResult")
-        return result.outcome.incident
-
-    def ingest_rumination(self, rumination: RuminationSignal) -> RuminationIngestResult:
-        """记忆反刍注入 → transition/rumination 刷新 FSM。"""
-        result = self.trigger(PresenceTrigger.rumination(rumination))
-        if result.outcome.rumination is None:
-            raise RuntimeError("rumination trigger did not produce RuminationIngestResult")
-        return result.outcome.rumination
-
     def inject_boundary_event(
         self,
         event: PresenceEvent,
@@ -372,19 +311,7 @@ class PresenceService:
         *,
         context: PresenceContext | None = None,
     ) -> PresenceIngestResult:
-        return self.interface.boundary(event, context=context)
-
-    def capture_evolution(self, event: CaptureEvent) -> PresenceIngestResult:
-        return self.interface.capture(event)
-
-    def capture_wander(
-        self,
-        _result: MemoryHeartbeatResult,
-        *,
-        session_id: str = "tao",
-    ) -> PresenceIngestResult | None:
-        _ = session_id
-        return None
+        return self.gateway.boundary(event, context=context)
 
     def dispatch(
         self,
@@ -399,41 +326,39 @@ class PresenceService:
         result: MemoryHeartbeatResult,
         *,
         session_id: str = "tao",
-    ) -> PresenceIngestResult | None:
-        return self.capture_wander(result, session_id=session_id)
-
-    def set_speak_handler(
-        self,
-        handler: Callable[[SpeakRequest], None] | None,
-    ) -> None:
-        self._on_speak_request = handler
-
-    set_outbound_handler = set_speak_handler
+    ) -> bool:
+        return self.receive_heartbeat_signal(
+            result.signal,
+            session_id=session_id,
+        )
 
     @property
     def moderate_threshold(self) -> float:
-        return self._interface.moderate_threshold
+        return OUTBOUND_THRESHOLD_MODERATE
 
-    def flush_accumulated(
+    def discharge_accumulated(
         self,
         session_id: str = "tao",
         *,
         source: str = "manual_flush",
         wait_reply: bool = True,
         expectation: Expectation = Expectation.required,
-    ) -> SpeakRequest | None:
+        require_saturated: bool = True,
+    ) -> ImpulseDischarge | None:
         session = self._session(session_id)
-        return self._flush_session_accumulated(
+        return self._discharge_session_accumulated(
             session_id=session_id,
             session=session,
             source=source,
             wait_reply=wait_reply,
             expectation=expectation,
-            require_saturated=True,
+            require_saturated=require_saturated,
         )
 
-    def scan_expectation_drives(self, session_id: str = "tao") -> ExpectationScanResult:
-        """扫描 FSM 期待驱动：超阈值则 proactive 开聊或对话内追加。"""
+    flush_accumulated = discharge_accumulated
+
+    def scan_expectation(self, session_id: str = "tao") -> ExpectationScanResult:
+        """扫描 FSM 期待驱动并应用状态侧效应（不触发 speak）。"""
         session = self._session(session_id)
         line_open = session.interaction.expectation != Expectation.none
         scan = scan_expectation_thresholds(
@@ -442,7 +367,7 @@ class PresenceService:
             interaction=session.interaction,
             line_open=line_open,
         )
-        if not scan.triggered or scan.speak_request is None:
+        if not scan.triggered or scan.payload is None:
             return scan
 
         if scan.mode == ExpectationScanMode.append_message:
@@ -454,9 +379,6 @@ class PresenceService:
         session.interaction.impulse_reason = ""
         session.interaction.impulse_source = ""
         session.interaction.share_desire = ShareDesire.none
-
-        if self._on_speak_request is not None:
-            self._on_speak_request(scan.speak_request)
         self._persist(session_id)
         return scan
 
@@ -467,17 +389,16 @@ class PresenceService:
             session.interaction.expectation != Expectation.none and exp.wants_multi_reply()
         ):
             return None
-        return self.scan_expectation_drives(session_id)
+        return self.scan_expectation(session_id)
+
+    scan_expectation_drives = scan_expectation
 
     def _session(self, session_id: str) -> PresenceSession:
         if session_id not in self._sessions:
             self._sessions[session_id] = PresenceSession(session_id=session_id)
         return self._sessions[session_id]
 
-    def _fold_or_none(
-        self,
-        session: PresenceSession,
-    ) -> ShareFoldedPackage | None:
+    def _fold_or_none(self, session: PresenceSession):
         package = fold_share_queue(
             session.state.expectation.share_queue,
             session.interaction,
@@ -486,7 +407,7 @@ class PresenceService:
             return None
         return package
 
-    def _flush_session_accumulated(
+    def _discharge_session_accumulated(
         self,
         *,
         session_id: str,
@@ -495,15 +416,15 @@ class PresenceService:
         wait_reply: bool,
         expectation: Expectation,
         require_saturated: bool,
-    ) -> SpeakRequest | None:
+    ) -> ImpulseDischarge | None:
         interaction = session.interaction
-        if require_saturated and interaction.impulse_level < self._interface.moderate_threshold:
+        if require_saturated and interaction.impulse_level < self.moderate_threshold:
             return None
         package = self._fold_or_none(session)
         if package is None:
             return None
         share_desire = max_share_desire(package.peak_share_desire, interaction.share_desire)
-        request = SpeakRequest(
+        discharge = ImpulseDischarge(
             session_id=session_id,
             reason=package.summary,
             impulse_level=interaction.impulse_level,
@@ -518,10 +439,8 @@ class PresenceService:
         interaction.impulse_source = ""
         interaction.share_desire = ShareDesire.none
         session.state.expectation.share_queue.drain()
-        if self._on_speak_request is not None:
-            self._on_speak_request(request)
         self._persist(session_id)
-        return request
+        return discharge
 
     def _persist(self, session_id: str) -> None:
         if self._store is None:
@@ -540,6 +459,3 @@ class PresenceService:
 
     def _today(self) -> str:
         return datetime.now(ZoneInfo(self._timezone)).date().isoformat()
-
-
-PresenceLayer = PresenceService

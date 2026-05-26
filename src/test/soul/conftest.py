@@ -15,6 +15,7 @@ class _MockLLM:
     """最小 LLM 桩：返回 JSON 字符串，避免 MagicMock 污染 regex/json 解析。"""
 
     _DEFAULT_JSON = '{"intention":"rest","context":""}'
+    _CHAT_REPLY = "你好，我在这里。"
 
     def invoke(self, *args, **kwargs):
         return MagicMock(content=self._DEFAULT_JSON)
@@ -23,7 +24,14 @@ class _MockLLM:
         yield MagicMock(content="{}")
 
     def generate_messages(self, messages, **kwargs) -> str:
+        if any("你好" in str(getattr(m, "content", "")) for m in messages):
+            return self._CHAT_REPLY
         return self._DEFAULT_JSON
+
+    def stream_generate_messages(self, messages, **kwargs):
+        text = self.generate_messages(messages, **kwargs)
+        for ch in text:
+            yield ch
 
 
 @pytest.fixture

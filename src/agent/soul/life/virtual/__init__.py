@@ -20,7 +20,7 @@ from .chronicle import (
     VirtualChronicleStore,
     virtual_entry_from_unit,
 )
-from .ports import (
+from agent.soul.life.experience.virtual_codec import (
     VirtualUnitContext,
     VirtualUnitTrigger,
     read_virtual_context,

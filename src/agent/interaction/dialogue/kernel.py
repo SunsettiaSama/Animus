@@ -15,7 +15,7 @@ from agent.interaction.core.semantic import InteractionCloseReason, SemanticInte
 from agent.interaction.core.segments import InteractionDirection
 from agent.interaction.kinds import InteractionModalityKind
 from agent.posture import InteractionEvent, InteractionPosture
-from agent.soul.presence import PresenceContext, PresenceEvent, PresenceLayer
+from agent.soul.presence import PresenceContext, PresenceEvent, PresenceService
 
 
 class DialogueKernel:
@@ -25,12 +25,12 @@ class DialogueKernel:
         self,
         continuity: ContinuityJudge | None = None,
         posture: InteractionPosture | None = None,
-        presence: PresenceLayer | None = None,
+        presence: PresenceService | None = None,
         on_closed: Callable[[InteractionClosedEvent], None] | None = None,
     ) -> None:
         self._continuity = continuity or StackedContinuityJudge()
         self._posture = posture or InteractionPosture()
-        self._presence = presence or PresenceLayer()
+        self._presence = presence or PresenceService()
         self._on_closed = on_closed
         self._active: dict[str, SemanticInteraction] = {}
 
@@ -39,7 +39,7 @@ class DialogueKernel:
         return self._posture
 
     @property
-    def presence(self) -> PresenceLayer:
+    def presence(self) -> PresenceService:
         return self._presence
 
     def active(self, session_id: str) -> SemanticInteraction | None:

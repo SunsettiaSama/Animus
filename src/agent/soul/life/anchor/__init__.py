@@ -13,7 +13,7 @@ from .outbound import (
     ProactiveOutboundIntent,
     ProactiveOutboundPort,
 )
-from .ports import (
+from agent.soul.life.experience.anchor_codec import (
     AnchorUnitContext,
     InteractionDirection,
     read_anchor_context,

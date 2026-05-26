@@ -97,7 +97,7 @@ class ConvLoop:
 
     def post_process(self, session_id: str = "tao") -> None:
         """Tao 上下文 commit + presence dialogue 记账。"""
-        from agent.soul.presence.experience.dialogue import commit_turn_and_post_process
+        from agent.soul.life.experience.dialogue import commit_turn_and_post_process
 
         commit_turn_and_post_process(
             soul=getattr(self._tao, "_soul", None),
@@ -106,7 +106,7 @@ class ConvLoop:
         )
 
     def reset(self, session_id: str = "tao") -> None:
-        from agent.soul.presence.experience.dialogue import close_dialogue_session
+        from agent.soul.life.experience.dialogue import close_dialogue_session
 
         close_dialogue_session(
             soul=getattr(self._tao, "_soul", None),
@@ -115,7 +115,7 @@ class ConvLoop:
         self._tao.reset()
 
     def close(self, session_id: str = "tao") -> None:
-        from agent.soul.presence.experience.dialogue import close_dialogue_session
+        from agent.soul.life.experience.dialogue import close_dialogue_session
 
         close_dialogue_session(
             soul=getattr(self._tao, "_soul", None),

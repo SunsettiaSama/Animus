@@ -71,9 +71,9 @@ class PersonaService:
         self._manager.reset_self_concept()
 
     def reload_profile(self) -> dict[str, Any]:
-        return self._manager.reload_profile_legacy()
+        return self._manager.reload_profile()
 
     def rebuild_profile(self, *, preserve_self_concept: bool = False) -> dict[str, Any]:
-        return self._manager.rebuild_profile_legacy(
+        return self._manager.rebuild_profile(
             preserve_self_concept=preserve_self_concept,
         )

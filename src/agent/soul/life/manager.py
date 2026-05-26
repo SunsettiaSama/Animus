@@ -9,8 +9,11 @@ from agent.soul.life.life_bridge import LifeContextInput
 from .anchor import AnchorLayer, RealityAnchorLayer, ProactiveOutboundIntent, ProactiveOutboundPort
 from .virtual import VirtualLayer
 from .profile import LifeProfile, LifeProfileStore
-from .experience import ExperienceBuilder, LifeExperiencePipeline
-from agent.soul.presence.experience.dialogue import DialogueExperiencePipeline
+from .experience import (
+    DialogueExperiencePipeline,
+    ExperienceBuilder,
+    LifeExperiencePipeline,
+)
 from .anchor.chronicle import AnchorChronicleStore
 from .virtual.chronicle import VirtualChronicleStore
 from .narrative_context import NarrativeContextSupplier, StoryWorldContextSupplier

@@ -64,12 +64,6 @@ class MemorySearchRequest(BaseModel):
     w_activation: float = 0.4
 
 
-class PersonaInteractRequest(BaseModel):
-    question: str = Field(..., min_length=1)
-    answer: str = Field(..., min_length=1)
-    medium_term_context: str = ""
-
-
 @router.get("/api/soul/config")
 def get_soul_config():
     from config.soul.config import SoulConfig
@@ -102,20 +96,6 @@ def get_persona_snapshot():
     if err is not None:
         return err
     return soul.query_persona()
-
-
-@router.post("/api/soul/persona/interact")
-def post_persona_interact(req: PersonaInteractRequest):
-    soul, err = _soul_or_400()
-    if err is not None:
-        return err
-    if not soul.is_running:
-        soul.start()
-    return soul.record_persona_interaction(
-        req.question,
-        req.answer,
-        medium_term_context=req.medium_term_context,
-    )
 
 
 @router.post("/api/soul/memory/search")

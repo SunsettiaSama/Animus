@@ -1,47 +1,38 @@
 from __future__ import annotations
 
-import json
-
-from agent.soul.presence.fsm.events import PresenceEvent
+from agent.soul.presence.state import PresenceEvent
 from agent.soul.presence.service import PresenceService
 from agent.soul.presence.transition import (
-    IncidentFsmRefresher,
-    LifeIncident,
     PresenceTrigger,
     PresenceTriggerKind,
-    PresenceTransitionEngine,
+    PresenceTransitionRouter,
+    TransitionHandler,
+    TransitionNotes,
 )
 
 
-class _IncidentLLM:
-    def generate_messages(self, messages, **kwargs) -> str:
-        return json.dumps(
-            {
-                "affect": "统一 trigger 刷新成功。",
-                "somatic": "身体微微一紧。",
-                "working_memory": "记住了这次事件。",
-                "thinking": "我在回味它意味着什么。",
-                "perception": "生活像被轻轻推了一下。",
-            },
-            ensure_ascii=False,
-        )
+class _StaticHandler:
+    def apply(self, *, session_id, state, interaction, payload) -> TransitionNotes:
+        _ = session_id
+        _ = interaction
+        _ = payload
+        state.affect.narrative = "injected static"
+        return TransitionNotes(applied=True, notes=["static handler"])
 
 
-def test_presence_trigger_routes_incident(tmp_path):
-    engine = PresenceTransitionEngine.from_refreshers(
-        incident_refresher=IncidentFsmRefresher(_IncidentLLM()),
+def test_presence_trigger_registry_injection(tmp_path):
+    router = PresenceTransitionRouter()
+    router.register(PresenceTriggerKind.inject, _StaticHandler())
+    svc = PresenceService(life_dir=str(tmp_path), transition_router=router)
+    trigger = PresenceTrigger(
+        kind=PresenceTriggerKind.inject,
+        session_id="tao",
+        payload={},
     )
-    svc = PresenceService(life_dir=str(tmp_path), transition_engine=engine)
-    incident = LifeIncident.surprise("tao", hint="路边突然下雨")
-    trigger = PresenceTrigger.incident(incident)
-
-    assert trigger.kind == PresenceTriggerKind.incident
-    assert trigger.label == "surprise"
 
     result = svc.interface.trigger(trigger)
     assert result.applied is True
-    assert result.outcome.incident is not None
-    assert "统一 trigger" in svc.snapshot("tao").state.affect.narrative
+    assert "injected static" in svc.snapshot("tao").state.affect.narrative
 
 
 def test_presence_trigger_boundary_delegates_to_ingest():

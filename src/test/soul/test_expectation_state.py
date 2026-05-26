@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from agent.soul.presence.fsm.expectation import (
+from agent.soul.presence.state import (
     PROACTIVE_OPEN_THRESHOLD,
     REPLY_URGE_THRESHOLD,
     ExpectationState,
+    PresenceState,
 )
-from agent.soul.presence.fsm.state import PresenceState
-from agent.soul.presence.interface.shared.events import CaptureEvent, CaptureKind
-from agent.soul.presence.interface.ingress import apply_evolution_impulse
 from agent.soul.presence.transition.interaction import PresenceInteraction
 
 
@@ -39,15 +37,3 @@ def test_presence_state_persists_expectation():
     assert restored.expectation.reply_urge == 0.35
 
 
-def test_evolution_impulse_syncs_fsm_expectation():
-    state = PresenceState()
-    interaction = PresenceInteraction()
-    event = CaptureEvent(
-        kind=CaptureKind.story_beat,
-        session_id="tao",
-        payload={"hint": "路边下雨", "salience": 0.7, "share_desire": "eager"},
-    )
-    apply_evolution_impulse(interaction, event, state=state)
-    assert state.expectation.toward_user > 0.0
-    assert state.expectation.reply_urge > 0.0
-    assert state.expectation.at_proactive_threshold() is True

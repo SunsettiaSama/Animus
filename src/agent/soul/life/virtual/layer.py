@@ -20,7 +20,7 @@ from .journal.item import Landmark, LandmarkStatus
 from .journal.journal import LifeJournal
 from .journal.store import JournalStore
 from .narrative import NarrativeEngine
-from .ports import VirtualUnitContext, VirtualUnitTrigger
+from agent.soul.life.experience.virtual_codec import VirtualUnitContext, VirtualUnitTrigger
 from .surprise.generator import NullSurpriseGenerator, SurpriseGenerator
 from .surprise.launcher import SurpriseLauncher
 

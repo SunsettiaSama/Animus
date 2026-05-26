@@ -36,9 +36,6 @@ def test_start_stop_lifecycle(soul_service):
 def test_running_write_and_life_reads(soul_service):
     soul_service.start()
 
-    result = soul_service.record_persona_interaction("你好", "你好呀")
-    assert result.get("applied") is False
-    assert "Presence" in str(result.get("reason", ""))
     chronicle = soul_service.query_life_chronicle(days=1, tail=10)
     hot = soul_service.query_life_hot()
     memory = soul_service.search_memory(mode="recent", top_k=3)

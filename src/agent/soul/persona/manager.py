@@ -230,14 +230,10 @@ class PersonaManager:
         profile_tag = self._profile.built_at or f"raw:{self._profile.name}"
         return f"{profile_tag}|{self._self_concept.updated_at}"
 
-    def reload_profile_legacy(self) -> dict:
+    def reload_profile(self) -> dict:
         if self._worker is not None:
             return self._worker.submit(self._reload_profile_impl).result()
         return self._reload_profile_impl()
-
-    def reload_profile(self) -> dict:
-        """.. deprecated:: 请经 ``PersonaService.reload_profile``。"""
-        return self.reload_profile_legacy()
 
     def _reload_profile_impl(self) -> dict:
         self._raw_profile = self._profile_store.load_profile()
@@ -255,7 +251,7 @@ class PersonaManager:
             "portrait_revision": self.portrait_revision(),
         }
 
-    def rebuild_profile_legacy(self, *, preserve_self_concept: bool = False) -> dict:
+    def rebuild_profile(self, *, preserve_self_concept: bool = False) -> dict:
         if self._worker is not None:
             return self._worker.submit(
                 lambda: self._rebuild_profile_impl(
@@ -263,10 +259,6 @@ class PersonaManager:
                 )
             ).result()
         return self._rebuild_profile_impl(preserve_self_concept=preserve_self_concept)
-
-    def rebuild_profile(self, *, preserve_self_concept: bool = False) -> dict:
-        """.. deprecated:: 请经 ``PersonaService.rebuild_profile``。"""
-        return self.rebuild_profile_legacy(preserve_self_concept=preserve_self_concept)
 
     def _rebuild_profile_impl(self, *, preserve_self_concept: bool) -> dict:
         if self._llm is None:

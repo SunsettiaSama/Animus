@@ -40,9 +40,9 @@ def test_scene_enter_while_idle():
 
 def test_dialogue_kernel_syncs_presence_expectation():
     from agent.interaction.dialogue import DialogueKernel
-    from agent.soul.presence import PresenceLayer, Expectation
+    from agent.soul.presence import PresenceService, Expectation
 
-    presence_svc = PresenceLayer()
+    presence_svc = PresenceService()
     k = DialogueKernel(presence=presence_svc)
     k.on_user_text("tao", "你好")
     assert k.presence.snapshot("tao").expectation == Expectation.required

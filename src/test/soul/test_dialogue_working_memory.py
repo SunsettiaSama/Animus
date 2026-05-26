@@ -6,12 +6,12 @@ from config.soul.presence.config import (
     DIALOGUE_WORKING_MEMORY_MAX_CHUNKS,
     DIALOGUE_WORKING_MEMORY_WINDOW_SEC,
 )
-from agent.soul.presence.experience.dialogue import (
+from agent.soul.life.experience import LifeExperienceStack
+from agent.soul.life.experience.dialogue import (
     DialogueState,
     DialogueWorkingMemory,
 )
-from agent.soul.presence.experience.dialogue.session import render_session_transcript
-from agent.soul.presence.experience.pipeline import PresenceExperiencePipeline
+from agent.soul.life.experience.dialogue.session import render_session_transcript
 from agent.soul.presence.service import PresenceService
 
 
@@ -71,7 +71,7 @@ def test_dialogue_state_records_turn_as_one_chunk():
 def test_pipeline_syncs_working_memory_to_presence_cognition(tmp_path):
     life_dir = str(tmp_path)
     presence = PresenceService(life_dir=life_dir)
-    pipeline = PresenceExperiencePipeline(life_dir=life_dir)
+    pipeline = LifeExperienceStack(life_dir=life_dir)
 
     pipeline.dialogue.record_dialogue_turn(
         presence,
@@ -111,26 +111,10 @@ def test_session_keeps_all_turns_while_working_memory_truncates():
     assert "q5" in transcript
 
 
-def test_fsm_refresh_preserves_verbatim_working_memory():
-    from agent.soul.presence.fsm.state import PresenceState
-    from agent.soul.presence.transition.dialogue.block import DialogueBlock
-    from agent.soul.presence.transition.dialogue.refresh import DialogueFsmRefresher
-
-    state = PresenceState()
-    state.cognition.working_memory = "用户：保留原文\n我：不蒸馏"
-    refresher = DialogueFsmRefresher(llm=None)
-    refresher.refresh(
-        state,
-        session_id="tao",
-        blocks=[DialogueBlock(user_text="新问", agent_text="新答")],
-    )
-    assert state.cognition.working_memory == "用户：保留原文\n我：不蒸馏"
-
-
 def test_close_uses_full_transcript_as_memory_fuel(tmp_path):
     life_dir = str(tmp_path)
     presence = PresenceService(life_dir=life_dir)
-    pipeline = PresenceExperiencePipeline(life_dir=life_dir)
+    pipeline = LifeExperienceStack(life_dir=life_dir)
 
     for index in range(3):
         pipeline.dialogue.record_dialogue_turn(
@@ -140,6 +124,12 @@ def test_close_uses_full_transcript_as_memory_fuel(tmp_path):
             agent_text=f"a{index}",
             now=_ts(index),
         )
+    from agent.soul.presence.share_desire import StaticStatePatch
+
+    presence.patch_static(
+        "tao",
+        StaticStatePatch(affect="专注", perception="对话进行中"),
+    )
     unit = pipeline.dialogue.close_dialogue(presence, "tao")
     assert unit is not None
     assert "q0" in unit.situation.perception
@@ -148,7 +138,7 @@ def test_close_uses_full_transcript_as_memory_fuel(tmp_path):
 
 
 def test_pipeline_exposes_dialogue_state(tmp_path):
-    pipeline = PresenceExperiencePipeline(life_dir=str(tmp_path))
+    pipeline = LifeExperienceStack(life_dir=str(tmp_path))
     presence = PresenceService(life_dir=str(tmp_path))
     pipeline.dialogue.record_dialogue_turn(
         presence,

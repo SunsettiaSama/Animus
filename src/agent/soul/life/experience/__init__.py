@@ -1,45 +1,54 @@
-from agent.soul.presence.experience.life import ExperienceBuilder, LifeExperiencePipeline
-from agent.soul.presence.experience import (
-    AnchorUnitContext,
-    COLLISION_SOURCES,
+from .builder import ExperienceBuilder
+from .collapser import ExperienceCollapser, NullCollapser
+from .log import ExperienceLog
+from .orchestrator import ExperienceOrchestrator, MemoryIngestPort
+from .stack import LifeExperienceStack
+from .unit import (
     ExperienceAction,
     ExperienceActionKind,
-    ExperienceCollapser,
     ExperienceFeeling,
-    ExperienceLog,
-    ExperienceOrchestrator,
     ExperienceSituation,
-    ExperienceSource,
     ExperienceUnit,
-    InteractionDirection,
-    MemoryIngestPort,
-    NullCollapser,
+)
+from .sources import (
+    COLLISION_SOURCES,
     REALITY_SOURCES,
     VIRTUAL_SOURCES,
-    VirtualUnitContext,
-    VirtualUnitTrigger,
+    ExperienceSource,
     is_collision_source,
     is_reality_source,
     is_virtual_source,
-    read_anchor_context,
+)
+from .virtual_codec import (
+    VirtualUnitContext,
+    VirtualUnitTrigger,
     read_virtual_context,
-    stamp_anchor_context,
     stamp_virtual_context,
 )
+from .anchor_codec import (
+    AnchorUnitContext,
+    InteractionDirection,
+    read_anchor_context,
+    stamp_anchor_context,
+)
+from .dialogue import DialogueExperiencePipeline
+from .pipeline import LifeExperiencePipeline
 
 __all__ = [
+    "LifeExperienceStack",
+    "DialogueExperiencePipeline",
     "LifeExperiencePipeline",
     "ExperienceBuilder",
     "ExperienceCollapser",
     "NullCollapser",
+    "ExperienceOrchestrator",
+    "MemoryIngestPort",
     "ExperienceAction",
     "ExperienceActionKind",
     "ExperienceFeeling",
     "ExperienceSituation",
     "ExperienceUnit",
     "ExperienceLog",
-    "ExperienceOrchestrator",
-    "MemoryIngestPort",
     "ExperienceSource",
     "REALITY_SOURCES",
     "VIRTUAL_SOURCES",

@@ -1,3 +1,3 @@
-from .transition.expectation import Expectation
+from .state.dynamic.kind import Expectation
 
 __all__ = ["Expectation"]
