@@ -293,7 +293,7 @@ class AgentService:
     def set_soul_service(self, soul: Any) -> None:
         """运行时注入 SoulService（如 WebUI 在 TaoLoop 初始化后接线）。"""
         self._soul_service = soul
-        soul.wire_agent_service(self)
+        soul.bind_scheduler_engine(self._engine)
         if self._state == "running" and not soul.is_running:
             soul.start()
         self._heartbeat.set_soul_service(soul)

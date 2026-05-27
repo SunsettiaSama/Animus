@@ -28,6 +28,11 @@ export const PATHS = {
     tools:   '/api/react/tools',
     notify:  '/api/react/notify',
   },
+  speak: {
+    status: '/api/speak/status',
+    reset:  '/api/speak/reset',
+    run:    '/ws/speak/run',
+  },
   memory: {
     get:         '/api/memory',
     save:        '/api/memory/save',
@@ -36,6 +41,19 @@ export const PATHS = {
     clearPersona:'/api/react/persona/clear',
   },
   persona:   { get: '/api/persona', save: '/api/persona/save' },
+  soul: {
+    config:           '/api/soul/config',
+    configSave:       '/api/soul/config/save',
+    status:           '/api/soul/status',
+    readiness:        '/api/soul/readiness',
+    persona:          '/api/soul/persona',
+    personaRebuild:   '/api/soul/persona/rebuild',
+    personaReload:    '/api/soul/persona/reload',
+    memoryConfig:     '/api/soul/memory/config',
+    memoryConfigSave: '/api/soul/memory/config/save',
+    memoryInfra:      '/api/soul/memory/infra',
+    memoryInfraSave:  '/api/soul/memory/infra/save',
+  },
   scheduler: {
     tasks:          '/api/scheduler/tasks',
     task:           id => `/api/scheduler/tasks/${id}`,

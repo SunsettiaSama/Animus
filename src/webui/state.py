@@ -58,6 +58,7 @@ class AppState:
 
     # While /ws/react/run is active: fan-out Flow/plan dicts to these asyncio queues
     reactive_ws_flow_queues: list[Any] = field(default_factory=list)
+    plan_subscribers: list[Any] = field(default_factory=list)
 
     def attach_reactive_ws_flow_queue(self, q: asyncio.Queue) -> Callable[[], None]:
         self.reactive_ws_flow_queues.append(q)

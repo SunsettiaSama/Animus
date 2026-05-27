@@ -1,18 +1,10 @@
-from config.soul.presence.config import (
-    DIALOGUE_WORKING_MEMORY_MAX_CHUNKS,
-    DIALOGUE_WORKING_MEMORY_WINDOW_SEC,
-)
+from .coordinator import close_dialogue_session, record_dialogue_turn
 from .pipeline import DialogueExperiencePipeline
 from .session import DialogueSession, DialogueTurn, render_session_transcript, unit_from_dialogue_session
 from .state import DialogueState
 from .working_memory import (
     DialogueMemoryChunk,
     DialogueWorkingMemory,
-)
-from .coordinator import (
-    close_dialogue_session,
-    commit_turn_and_post_process,
-    record_pending_turn,
 )
 
 __all__ = [
@@ -27,6 +19,10 @@ __all__ = [
     "DialogueWorkingMemory",
     "unit_from_dialogue_session",
     "close_dialogue_session",
-    "commit_turn_and_post_process",
-    "record_pending_turn",
+    "record_dialogue_turn",
 ]
+
+from config.soul.presence.config import (
+    DIALOGUE_WORKING_MEMORY_MAX_CHUNKS,
+    DIALOGUE_WORKING_MEMORY_WINDOW_SEC,
+)

@@ -67,10 +67,10 @@ class SubAgentRunner:
 
         tool_descriptions = tool_manager.primary_descriptions(resolved_tools)
         if soul is not None:
-            from agent.soul.handlers.tao.tools import merge_profile_soul_tool_descriptions
+            from agent.adapters.soul_tao.tools import merge_profile_soul_tool_descriptions
             merge_profile_soul_tool_descriptions(profile.tools, tool_descriptions)
             if not profile.tools:
-                from agent.soul.handlers.tao.tools import soul_tool_descriptions
+                from agent.adapters.soul_tao.tools import soul_tool_descriptions
                 tool_descriptions.update(soul_tool_descriptions())
         category_summary = tool_manager.category_summary()
 
@@ -116,7 +116,7 @@ class SubAgentRunner:
                 })
             if isinstance(event, FinishEvent):
                 answer = event.answer
-        from agent.soul.life.experience.dialogue import commit_turn_and_post_process
+        from agent.adapters.soul_dialogue import commit_turn_and_post_process
 
         commit_turn_and_post_process(
             soul=soul,

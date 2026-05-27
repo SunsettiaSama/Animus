@@ -49,8 +49,14 @@ export const S = {
   /** True when ReAct backend is ready. */
   reactReady:  false,
 
-  /** Active conversation mode: 'react' | 'plan' | 'chat'. */
-  convMode:    'react',
+  /** True when Soul Speak backend is ready. */
+  speakReady:  false,
+
+  /** True when Soul backend is running. */
+  soulReady:   false,
+
+  /** Active conversation mode: 'speak' | 'react' | 'plan' | 'chat'. */
+  convMode:    'speak',
 
   /** Active persona name, or null. */
   personaName: null,

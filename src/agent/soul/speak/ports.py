@@ -2,32 +2,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
+from .io.inbound.ports import SpeakInboundPort
+from .io.outbound.ports import SpeakOrchestratorPort, SpeakOutboundPort
+from .io.outbound.stream.ports import SpeakStreamPort
+
 if TYPE_CHECKING:
-    from .chunk import SpeakTurnChunk
-    from .compose.bundle import SpeakPromptBundle
     from .drive import SpeakDriveResult, SpeakDriveSnapshot
     from .llm.engine import SpeakLLMEngine, SpeakLLMResult
-    from .outbound import SpeakRequest
-    from .stream.events import SpeakStreamEvent
-    from .unit import SpeakAnswer, SpeakExchange
-
-
-class SpeakInboundPort(Protocol):
-    """接收外界话语（用户 → Soul）。"""
-
-    def on_user_text(self, session_id: str, text: str) -> SpeakExchange: ...
-
-
-class SpeakOutboundPort(Protocol):
-    """向外界说话（Soul → 用户）。"""
-
-    def deliver(
-        self,
-        session_id: str,
-        text: str,
-        *,
-        final: bool = True,
-    ) -> SpeakAnswer: ...
 
 
 class SpeakDrivePort(Protocol):
@@ -50,12 +31,6 @@ class SpeakLLMPort(Protocol):
     ) -> SpeakLLMResult: ...
 
 
-class SpeakStreamPort(Protocol):
-    """Speak 流式出站订阅口。"""
-
-    def emit(self, session_id: str, event: SpeakStreamEvent) -> None: ...
-
-
 class SpeakToolPort(Protocol):
     """Speak 可选语义任务工具口。"""
 
@@ -67,16 +42,12 @@ class SpeakToolPort(Protocol):
     ) -> dict[str, Any]: ...
 
 
-class SpeakOrchestratorPort(Protocol):
-    """Speak 顶层编排口。"""
-
-    def run_turn(
-        self,
-        session_id: str,
-        user_text: str,
-        *,
-        stream: bool = False,
-        mode: str = "inbound",
-    ) -> dict[str, Any]: ...
-
-    def handle_proactive(self, request: SpeakRequest) -> dict[str, Any]: ...
+__all__ = [
+    "SpeakDrivePort",
+    "SpeakInboundPort",
+    "SpeakLLMPort",
+    "SpeakOrchestratorPort",
+    "SpeakOutboundPort",
+    "SpeakStreamPort",
+    "SpeakToolPort",
+]

@@ -2,9 +2,16 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from agent.soul.speak.compose import SpeakInjectedContext, SpeakPromptComposer, SpeakSystemPrompt
-from agent.soul.speak.compose.share_queue import evaluate_share_prompt
 from agent.soul.presence.share_desire import ShareDesire
+from agent.soul.speak.compose import (
+    ShareDesireComposer,
+    SpeakInjectedContext,
+    SpeakPersonaInjected,
+    SpeakPromptComposer,
+    SpeakStatusInjected,
+    SpeakSystemPrompt,
+    collect_share_state,
+)
 from agent.soul.presence.state.dynamic.expectation.queue import ShareIntent, ShareIntentQueue
 
 
@@ -38,12 +45,14 @@ def test_compose_persona_and_presence_fields_separated():
     system = bundle.build_system()
 
     assert isinstance(bundle.injected, SpeakInjectedContext)
+    assert isinstance(bundle.injected.persona, SpeakPersonaInjected)
+    assert isinstance(bundle.injected.status, SpeakStatusInjected)
     assert isinstance(bundle.system, SpeakSystemPrompt)
     assert "【人物画像】小A" in system
     assert "【自我认知】" in system
-    assert "【当下态·静态】" in system
+    assert "【当下态·状态】" in system
     assert "情感：平静" in system
-    assert "你有想要分享的内容" not in system
+    assert "【分享意愿】" not in system
     assert "presence_self_narrative" not in system
 
 
@@ -69,17 +78,18 @@ def test_compose_injects_share_desire_and_summary():
     system = bundle.build_system()
 
     assert bundle.wants_share is True
-    assert "你有想要分享的内容。" in system
+    assert "【分享意愿】" in system
     assert "分享摘要：" in system
     assert "架构进展" in system
+    assert "[0]" in system
 
 
-def test_evaluate_share_prompt_without_queue():
+def test_collect_share_state_without_queue():
     snap = MagicMock()
     snap.state.expectation.to_dict.return_value = {"share_queue": {"items": []}}
     snap.interaction.impulse_reason = ""
     snap.interaction.share_desire = ShareDesire.none
 
-    hint = evaluate_share_prompt(snap)
-    assert hint.wants_share is False
-    assert hint.summary == ""
+    state = collect_share_state(snap)
+    assert state.wants_share is False
+    assert state.summary == ""

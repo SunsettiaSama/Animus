@@ -1,20 +1,20 @@
-from .actions import SpeakAction
-from .bridge import SpeakDialogueBridge
-from .chunk import (
-    ResolvedFeeling,
-    SpeakFeelingChunk,
-    SpeakSubjectiveChunk,
-    SpeakTurnChunk,
-    resolve_feeling,
-    resolve_subjective,
-)
-from .compose import SpeakPromptBundle, SpeakPromptComposer, SpeakReplyStyle
+from .compose import SpeakPromptBundle, SpeakPromptComposer, SpeakReplyStyle, SpeakContextDistiller
 from .compose.system import SpeakOutputFormat
 from .drive import SpeakDriveBridge, SpeakDriveResult, SpeakDriveSnapshot
-from .handler import SpeakHandler
+from .io import (
+    SpeakAction,
+    SpeakAnswer,
+    SpeakDeliverResult,
+    SpeakDialogueBridge,
+    SpeakExchange,
+    SpeakIngestResult,
+    SpeakOutboundRouter,
+    SpeakPresenceOutbound,
+    SpeakQuestion,
+    SpeakRequest,
+)
+from .io.handler import SpeakHandler
 from .llm import SpeakLLMEngine, SpeakLLMResult
-from .parse import SPEAK_PARSE_FIELDS, SpeakAgentOutput, parse_agent_output
-from .outbound_delivery import SpeakPresenceOutbound
 from .ports import (
     SpeakDrivePort,
     SpeakInboundPort,
@@ -24,11 +24,25 @@ from .ports import (
     SpeakStreamPort,
     SpeakToolPort,
 )
-from .service import SpeakDeliverResult, SpeakIngestResult, SpeakService, SpeakTurnResult
-from .session import SpeakSessionRegistry, TopicShiftSemanticBoundary
-from .stream import SpeakStreamEvent, SpeakStreamPipeline
+from .service import SpeakService, SpeakTurnResult
+from .session import (
+    ResolvedFeeling,
+    SpeakFeelingChunk,
+    SpeakSessionRegistry,
+    SpeakSubjectiveChunk,
+    SpeakTurnChunk,
+    TopicShiftSemanticBoundary,
+    resolve_feeling,
+    resolve_subjective,
+)
+from .io.outbound.stream import (
+    SPEAK_PARSE_FIELDS,
+    SpeakAgentOutput,
+    SpeakStreamEvent,
+    SpeakStreamPipeline,
+    parse_agent_output,
+)
 from .tools.anchor import build_anchor_request
-from .unit import SpeakAnswer, SpeakExchange, SpeakQuestion
 
 __all__ = [
     "ResolvedFeeling",
@@ -36,6 +50,7 @@ __all__ = [
     "SpeakAgentOutput",
     "SpeakAnswer",
     "SpeakDialogueBridge",
+    "SpeakContextDistiller",
     "SpeakDeliverResult",
     "SpeakDriveBridge",
     "SpeakDrivePort",
@@ -48,16 +63,17 @@ __all__ = [
     "SpeakIngestResult",
     "SpeakLLMEngine",
     "SpeakLLMPort",
-    "SpeakLLMResult",
     "SpeakOrchestratorPort",
     "SPEAK_PARSE_FIELDS",
     "SpeakOutboundPort",
+    "SpeakOutboundRouter",
     "SpeakOutputFormat",
     "SpeakPresenceOutbound",
     "SpeakPromptBundle",
     "SpeakPromptComposer",
     "SpeakQuestion",
     "SpeakReplyStyle",
+    "SpeakRequest",
     "SpeakService",
     "SpeakSessionRegistry",
     "SpeakStreamEvent",

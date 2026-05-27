@@ -18,9 +18,9 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
 
     # ── Init ──────────────────────────────────────────────────────────────────
 
-    @router.post("/api/react/init")
-    @router.post("/api/react/reinit")
-    def react_init(req: ReactInitRequest) -> dict | JSONResponse:
+    @router.post("/api/react/init", response_model=None)
+    @router.post("/api/react/reinit", response_model=None)
+    def react_init(req: ReactInitRequest):
         state = get_state()
         if state.llm_service is None or state.llm_service.handle is None:
             return JSONResponse(status_code=400, content={"error": "LLM not initialized."})
@@ -58,8 +58,8 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
 
     # ── Restore / Reset ───────────────────────────────────────────────────────
 
-    @router.post("/api/react/restore")
-    def react_restore(req: RestoreRequest) -> dict | JSONResponse:
+    @router.post("/api/react/restore", response_model=None)
+    def react_restore(req: RestoreRequest):
         state = get_state()
         bridge = WebUIBridge(state)
         session = bridge.get_session()
@@ -68,8 +68,8 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
         session.restore(req.messages)
         return {"status": "ok", "turn_count": session.conv_loop.turn_count}
 
-    @router.post("/api/react/reset")
-    def react_reset() -> dict | JSONResponse:
+    @router.post("/api/react/reset", response_model=None)
+    def react_reset():
         state = get_state()
         session = WebUIBridge(state).get_session()
         if session is None:
@@ -90,8 +90,8 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
 
     # ── Memory / Persona ──────────────────────────────────────────────────────
 
-    @router.post("/api/react/memory/clear")
-    def react_memory_clear() -> dict | JSONResponse:
+    @router.post("/api/react/memory/clear", response_model=None)
+    def react_memory_clear():
         state = get_state()
         session = WebUIBridge(state).get_session()
         if session is None:
@@ -99,8 +99,8 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
         session.conv_loop.clear_persistent_memory()
         return {"status": "ok", "message": "所有记忆已清空。"}
 
-    @router.post("/api/react/persona/clear")
-    def react_persona_clear() -> dict | JSONResponse:
+    @router.post("/api/react/persona/clear", response_model=None)
+    def react_persona_clear():
         state = get_state()
         session = WebUIBridge(state).get_session()
         if session is None:
@@ -171,8 +171,8 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
 
     # ── SSE run（HTTP fallback，flush 模式）────────────────────────────────────
 
-    @router.post("/api/react/run")
-    def react_run(req: ReactRunRequest) -> StreamingResponse | JSONResponse:
+    @router.post("/api/react/run", response_model=None)
+    def react_run(req: ReactRunRequest):
         state = get_state()
         session = WebUIBridge(state).get_session()
         if session is None:

@@ -26,15 +26,19 @@ class SpeakPromptBundle:
 
     @property
     def persona_traits(self) -> str:
-        return self.injected.persona_traits
+        return self.injected.persona.traits
 
     @property
     def self_concept(self) -> str:
-        return self.injected.self_concept
+        return self.injected.persona.self_concept
 
     @property
     def presence_static(self) -> str:
-        return self.injected.presence_static
+        return self.injected.status.presence
+
+    @property
+    def dialogue_compressed(self) -> str:
+        return self.injected.status.dialogue_compressed
 
     @property
     def user_text(self) -> str:
@@ -45,14 +49,8 @@ class SpeakPromptBundle:
         role = self.system.role.strip()
         if role:
             parts.append(role)
-        for block in (
-            self.injected.persona_traits,
-            self.injected.self_concept,
-            self.injected.presence_static,
-        ):
-            text = block.strip()
-            if text:
-                parts.append(text)
+        for block in self.injected.render_system_blocks():
+            parts.append(block)
         share = self.system.share.strip()
         if share:
             parts.append(share)
@@ -69,7 +67,8 @@ class SpeakPromptBundle:
             "share_summary": self.share_summary,
             "persona_traits_chars": len(self.persona_traits),
             "self_concept_chars": len(self.self_concept),
-            "presence_static_chars": len(self.presence_static),
+            "status_presence_chars": len(self.injected.status.presence),
+            "status_dialogue_compressed_chars": len(self.dialogue_compressed),
             "system_chars": len(self.build_system()),
             "user_chars": len(self.user_text),
             "notes": list(self.notes),

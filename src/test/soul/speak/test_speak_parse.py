@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from agent.soul.speak.compose.system.output_format import SpeakOutputFormat
-from agent.soul.speak.parse import SPEAK_PARSE_FIELDS, parse_agent_output
-from agent.soul.speak.protocol.tags import SPEAK_TAG_NAMES
-from agent.soul.speak.stream.pipeline import SpeakStreamPipeline
+from agent.soul.speak.io.outbound.stream import SPEAK_PARSE_FIELDS, parse_agent_output
+from agent.soul.speak.io.outbound.stream.pipeline import SpeakStreamPipeline
 from agent.soul.speak.tools.anchor import build_anchor_request
 
 
@@ -15,14 +14,21 @@ def test_speak_parse_fields():
 
 def test_compose_output_format_uses_protocol_tags():
     prompt = SpeakOutputFormat().render_prompt()
-    for tag in SPEAK_TAG_NAMES:
+    for tag in ("think", "speak", "action", "state"):
         assert f"[{tag}:" in prompt
+    assert "[anchor:" not in prompt
+    assert "现实扰动" not in prompt
+    assert "[observe:" not in prompt
+    assert "不是每轮都必须说话" in prompt
+    assert "share" in prompt
+    assert "必填" in prompt
 
 
-def test_build_anchor_request_is_placeholder():
+def test_build_anchor_request_disabled_until_tool_layer():
     req = build_anchor_request("search_knowledge")
     assert req["implemented"] is False
     assert req["tool"] == "search_knowledge"
+    assert "工具处理层" in req["reason"]
 
 
 def test_parse_core_tags_alternating():
@@ -77,6 +83,13 @@ def test_parse_append_state():
     assert parsed.speak == "再说一句。"
 
 
+def test_parse_share_state():
+    raw = "[think:想分享][state:share]"
+    parsed = parse_agent_output(raw)
+    assert parsed.session_state == "share"
+    assert parsed.thought == "想分享"
+
+
 def test_stream_flush_aligns_with_tags():
     raw = (
         "[think:嗯]"
@@ -98,3 +111,12 @@ def test_stream_append_not_final():
     finish = events[-1]
     assert finish.kind == "finish"
     assert finish.final is False
+
+
+def test_stream_share_not_final():
+    raw = "[think:准备分享][state:share]"
+    events = list(SpeakStreamPipeline().emit_parsed_output("tao", raw))
+    finish = events[-1]
+    assert finish.kind == "finish"
+    assert finish.final is False
+    assert finish.meta["session_state"] == "share"

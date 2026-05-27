@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from .context import SpeakInjectedContext
-from .render import render_persona_traits, render_presence_static, render_self_concept_full
+from .persona import collect_persona_injected
+from agent.soul.speak.io.inbound.compose import collect_status_injected
 
 
 def collect_injected(
@@ -9,23 +10,24 @@ def collect_injected(
     persona_snap: dict,
     presence_snap,
     user_text: str,
+    dialogue_compressed: str = "",
     max_profile_chars: int = 1200,
     max_concept_chars: int = 800,
     max_presence_chars: int = 600,
+    status_store=None,
 ) -> SpeakInjectedContext:
-    """从 persona / presence 快照收集外部注入上下文。"""
+    """分别采集人格层与状态层，再组装为 Speak 外部注入上下文。"""
     return SpeakInjectedContext(
-        persona_traits=render_persona_traits(
-            persona_snap,
-            max_chars=max_profile_chars,
+        persona=collect_persona_injected(
+            persona_snap=persona_snap,
+            max_profile_chars=max_profile_chars,
+            max_concept_chars=max_concept_chars,
         ),
-        self_concept=render_self_concept_full(
-            persona_snap,
-            max_chars=max_concept_chars,
-        ),
-        presence_static=render_presence_static(
-            presence_snap.state,
-            max_chars=max_presence_chars,
+        status=collect_status_injected(
+            presence_snap=presence_snap,
+            dialogue_compressed=dialogue_compressed,
+            max_presence_chars=max_presence_chars,
+            status_store=status_store,
         ),
         user_text=user_text.strip(),
     )

@@ -25,9 +25,9 @@ export async function syncConvLoopFromMessages(msgs) {
   await http.post(PATHS.react.restore, { messages: wire });
 }
 
-/** 新会话：清空服务端对话状态（对齐 UI）。 */
+/** 新会话：清空服务端 Speak 对话状态（对齐 UI）。 */
 export async function resetServerConvLoop() {
-  await http.post(PATHS.react.reset, {}).catch(() => {});
+  await import('./modules/speak.js').then(m => m.resetSession()).catch(() => {});
 }
 
 // ── Callbacks (wired by main.js) ──────────────────────────────────────────────
@@ -65,7 +65,7 @@ export async function saveConversation() {
   await http.post(PATHS.history.item(convId), {
     id:         convId,
     title,
-    mode:       S.convMode ?? 'react',
+    mode:       S.convMode ?? 'speak',
     messages:   _messages,
     created_at: S._createdAt ?? now,
     updated_at: now,
@@ -81,7 +81,7 @@ export async function loadConversation(convId) {
   const data = await http.get(PATHS.history.item(convId));
   set('convId',    data.id);
   set('convTitle', data.title);
-  set('convMode',  data.mode ?? 'react');
+  set('convMode',  data.mode ?? 'speak');
   _messages = data.messages ?? [];
   if (S.reactReady) {
     await syncConvLoopFromMessages(_messages).catch(() => {});

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from agent.soul.speak.session.semantic import TopicShiftSemanticBoundary
-from agent.soul.speak.chunk import SpeakTurnChunk
+from agent.soul.speak.session.lifecycle.hold.semantic import TopicShiftSemanticBoundary
+from agent.soul.speak.session import SpeakTurnChunk
 
 
 def test_semantic_boundary_detects_explicit_marker():

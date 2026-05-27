@@ -57,11 +57,16 @@ src/
 │   ├── profile.py           # SubAgentConfig + SubAgentProfile（子 Agent 能力描述）
 │   ├── runner.py            # SubAgentRunner（子 Agent 同步执行器）
 │   ├── result.py            # AgentResult dataclass
-│   ├── soul/                # Soul 子系统（Redis/MySQL 记忆、心跳、生命叙事、人格镜像）
+│   ├── soul/                # Soul 子系统（记忆、心跳、生命、人格、当下态、对话编排）
+│   │   ├── service.py       #   SoulService 门面
+│   │   ├── handlers/        #   api + tao 双通道 handler
+│   │   ├── workers/         #   SoulWorkers 后台域任务
 │   │   ├── memory/          #   MemoryService / STM-LTM / Retriever / Writers
-│   │   ├── heartbeat/       #   心跳调度与重构触发
-│   │   ├── life/            #   LifeManager / 日终回顾
-│   │   └── persona/         #   Soul 侧人格块（画像 / 偏好 / 情绪）
+│   │   ├── heartbeat/       #   HeartbeatModule + HeartbeatOrchestrator
+│   │   ├── life/            #   LifeManager / LifeExperienceStack / virtual + anchor
+│   │   ├── persona/         #   PersonaManager / buffer / self_concept
+│   │   ├── presence/        #   PresenceService / FSM + expectation
+│   │   └── speak/           #   SpeakService / compose / io / session
 │   ├── react/               # ReAct 核心（TaoLoop / ConvLoop / 工具 / Prompt）
 │   │   ├── loop.py          #   ConvLoop
 │   │   ├── tao.py           #   TaoLoop
@@ -96,9 +101,11 @@ src/
 | `agent/react/context` | ✅ | `MemoryProcessor` + `RecentHistoryMemory`：会话 Step 轨迹 + 中期 JSONL；长期不经 Prompt 自动注入 |
 | `agent/soul/memory`（向量 / 里程碑） | ✅ | `LongTermMemory` / `MilestoneMemory`（`agent/soul/memory`）；仅通过 **`memory_recall`** 注入上下文（启用且未仅用 Soul 时可暴露 legacy 后端）|
 | `agent/soul/memory`（MemoryService） | ✅ | Redis STM + MySQL LTM、`FlushEngine`、`Retriever`；**`cfg.db`** 启用时 `ingest_turn` 异步写入 |
-| `agent/soul/persona` | ✅ | `PersonaManager`（画像 / 技能 / 自省 + 偏好 + 情绪）；源码在 `agent/soul/persona`，`TaoLoop` 直接引用 |
-| `agent/soul/life` | ✅ | `LifeManager`：账本 + 叙事事件 + 体验擢升、`LifeProfile` / 日度综合；心跳与 Tao 钩子驱动 |
-| `agent/soul/heartbeat` | ✅ | `HeartbeatModule` + `TaskRunner`，与 `SchedulerEngine` 协议对接；可选 `HeartbeatCoreService` 注入邮箱 |
+| `agent/soul/persona` | ✅ | `PersonaManager`（profile / buffer / self_concept）；源码 `agent/soul/persona` |
+| `agent/soul/life` | ✅ | `LifeManager` + `LifeExperienceStack`；virtual / anchor 双层 chronicle |
+| `agent/soul/presence` | ✅ | `PresenceService`：静态 FSM + 期待 / 冲动 / 分享；与 life/speak 双向绑定 |
+| `agent/soul/speak` | ✅ | `SpeakService`：compose → LLM → stream → 体验记账；session 打断队列 |
+| `agent/soul/heartbeat` | ✅ | `HeartbeatModule` + `HeartbeatOrchestrator` + `TaskRunner`；与 `SchedulerEngine` 协议对接 |
 | `runtime/scheduler` | ✅ | `SchedulerEngine` / `TemporalClock` / `TaskStore`；配置 `SchedulerConfig` + `HeartbeatConfig` |
 | `agent/service` | ✅ | `AgentService`：常驻调度 + 心跳组装与生命周期 |
 | `agent/session` | ✅ | `SessionManager`：多会话并发、单会话 FIFO |
@@ -218,16 +225,18 @@ python src/run.py --port 8080
 |---|---|
 | [infra/llm/README.md](./infra/llm/README.md) | LLM 抽象层（本地 + OpenAI，`backend` 字段路由）|
 | [agent/README.md](./agent/README.md) | 子 Agent 委派层（SubAgentConfig / SubAgentRunner / DelegateTaskSkill）|
-| [agent/soul/README.md](./agent/soul/README.md) | Soul 子系统总索引（记忆 / 心跳 / 生命 / 人格）|
+| [agent/soul/README.md](./agent/soul/README.md) | Soul 子系统总索引（memory / heartbeat / life / persona / presence / speak）|
+| [agent/soul/speak/README.md](./agent/soul/speak/README.md) | `SpeakService`：compose / io / session / drive |
+| [agent/soul/presence/README.md](./agent/soul/presence/README.md) | `PresenceService`：当下态 FSM + 期待 / 冲动 |
 | [agent/soul/memory/README.md](./agent/soul/memory/README.md) | Soul `MemoryService`：STM/LTM、写入器、检索与冲刷 |
 | [agent/react/README.md](./agent/react/README.md) | TaoLoop / ConvLoop、与 Soul / 调度 / Flow 的接线说明 |
 | [agent/react/context/README.md](./agent/react/context/README.md) | 会话上下文：`MemoryProcessor`、`RecentHistoryMemory` |
 | [agent/react/action/README.md](./agent/react/action/README.md) | 工具与 Skill（含 `run_flow` / `flow_*`）|
 | [agent/react/prompt/README.md](./agent/react/prompt/README.md) | Prompt 组装与解析 |
 | [agent/react/persona/README.md](./agent/react/persona/README.md) | 重定向：`PersonaManager` 详见 [agent/soul/persona/README.md](./agent/soul/persona/README.md) |
-| [agent/soul/persona/README.md](./agent/soul/persona/README.md) | 人格演化（画像 / 偏好 / 情绪），源码 `agent/soul/persona` |
-| [agent/soul/heartbeat/README.md](./agent/soul/heartbeat/README.md) | 心跳模块与调度执行器对接 |
-| [agent/soul/life/README.md](./agent/soul/life/README.md) | LifeManager、`LifeService` 体验栈、`LifeProfile` / 日终综合 |
+| [agent/soul/persona/README.md](./agent/soul/persona/README.md) | 人格演化（profile / buffer / self_concept），源码 `agent/soul/persona` |
+| [agent/soul/heartbeat/README.md](./agent/soul/heartbeat/README.md) | HeartbeatModule + HeartbeatOrchestrator 与调度对接 |
+| [agent/soul/life/README.md](./agent/soul/life/README.md) | LifeManager、`LifeExperienceStack`、virtual / anchor 层 |
 | [runtime/README.md](./runtime/README.md) | `runtime.scheduler`：SchedulerEngine、TemporalClock |
 | [agent/service/README.md](./agent/service/README.md) | AgentService 常驻封装 |
 | [agent/session/README.md](./agent/session/README.md) | SessionManager 多会话模型 |

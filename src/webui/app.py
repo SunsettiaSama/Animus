@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from agent.adapters.fastapi_react import create_react_router
 from agent.adapters.fastapi_chat import create_chat_router
-from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe, soul
+from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe, soul, speak
 from routers.infra import router as infra_router
 from state import get_state
 
@@ -56,6 +56,7 @@ for _r in [
     benchmark.router,
     probe.router,
     soul.router,
+    speak.router,
 ]:
     app.include_router(_r)
 

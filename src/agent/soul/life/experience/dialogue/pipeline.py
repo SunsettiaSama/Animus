@@ -22,6 +22,17 @@ class DialogueExperiencePipeline:
     ) -> None:
         self._orchestrator = orchestrator
         self._states: dict[str, DialogueState] = {}
+        self._presence: PresenceService | None = None
+
+    def bind_presence(self, presence: PresenceService) -> None:
+        self._presence = presence
+
+    def _resolve_presence(self, presence: PresenceService | None) -> PresenceService:
+        if presence is not None:
+            return presence
+        if self._presence is None:
+            raise RuntimeError("DialogueExperiencePipeline 未 bind_presence")
+        return self._presence
 
     @property
     def orchestrator(self) -> ExperienceOrchestrator:
@@ -65,7 +76,7 @@ class DialogueExperiencePipeline:
 
     def record_dialogue_turn(
         self,
-        presence: PresenceService,
+        presence: PresenceService | None,
         *,
         session_id: str,
         user_text: str,
@@ -81,9 +92,10 @@ class DialogueExperiencePipeline:
         from agent.soul.presence.state import PresenceEvent
 
         item = self._ensure_state(session_id)
+        pres = self._resolve_presence(presence)
 
-        presence.ingest(PresenceEvent.user_text(session_id))
-        presence.ingest(PresenceEvent.agent_utterance(session_id, final=True))
+        pres.ingest(PresenceEvent.user_text(session_id))
+        pres.ingest(PresenceEvent.agent_utterance(session_id, final=True))
 
         item.record_turn(
             user_text=user_text,
@@ -96,23 +108,24 @@ class DialogueExperiencePipeline:
             proactive_intent_id=proactive_intent_id,
             now=now,
         )
-        self._sync_working_memory(presence, session_id, item, now=now)
+        self._sync_working_memory(pres, session_id, item, now=now)
 
     def close_dialogue(
         self,
-        presence: PresenceService,
+        presence: PresenceService | None,
         session_id: str,
     ) -> ExperienceUnit | None:
         from agent.soul.life.experience.dialogue.experience import build_dialogue_experience
 
+        pres = self._resolve_presence(presence)
         item = self._states.pop(session_id, None)
         if item is None or not item.session.turns:
             return None
 
         item.reset_working_memory()
-        self._sync_working_memory(presence, session_id, item)
+        self._sync_working_memory(pres, session_id, item)
 
-        snap = presence.snapshot(session_id)
+        snap = pres.snapshot(session_id)
         if snap.state.is_empty():
             return None
 

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from agent.soul.speak.outbound import SpeakRequest
-from agent.soul.speak.outbound_delivery import SpeakPresenceOutbound
+from agent.soul.speak.io.outbound import SpeakPresenceOutbound, SpeakRequest
 from agent.soul.presence.state import ShareFoldedPackage
 from agent.soul.presence.share_desire import ShareDesire
 from agent.soul.presence.transition.expectation import Expectation

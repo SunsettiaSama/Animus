@@ -48,6 +48,17 @@ class LifeExperiencePipeline:
             self._orchestrator = orchestrator
             self._log = log
         self._builder = ExperienceBuilder(orchestrator=self._orchestrator)
+        self._presence: PresenceService | None = None
+
+    def bind_presence(self, presence: PresenceService) -> None:
+        self._presence = presence
+
+    def _resolve_presence(self, presence: PresenceService | None) -> PresenceService:
+        if presence is not None:
+            return presence
+        if self._presence is None:
+            raise RuntimeError("LifeExperiencePipeline 未 bind_presence")
+        return self._presence
 
     @property
     def orchestrator(self) -> ExperienceOrchestrator:
@@ -78,14 +89,15 @@ class LifeExperiencePipeline:
 
     def ingest_life_incident(
         self,
-        presence: PresenceService,
+        presence: PresenceService | None,
         incident: LifeIncident,
         *,
         fallback_narration: str = "",
         salience: float = 0.4,
         source: str = ExperienceSource.narrative.value,
     ) -> IncidentIngestResult:
-        snap = presence.snapshot(incident.session_id)
+        pres = self._resolve_presence(presence)
+        snap = pres.snapshot(incident.session_id)
         perception = snap.state.perception.narrative.strip()
         narration = snap.state.cognition.thinking.strip() or snap.state.affect.narrative.strip()
         if not narration:

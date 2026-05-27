@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Literal
 
-from ..share_queue import SharePromptHint
+from ..share import ShareComposeState
+from ..share.prompt import render_share_system_prompt
 from .prompt import SpeakSystemPrompt
 
 SpeakTurnMode = Literal["inbound", "proactive"]
@@ -17,25 +18,23 @@ _ROLE_PROACTIVE = (
 )
 
 
-def render_share_prompt(share_hint: SharePromptHint) -> str:
-    if not share_hint.wants_share:
-        return ""
-    lines = ["你有想要分享的内容。"]
-    summary = share_hint.summary.strip()
-    if summary:
-        lines.append(f"分享摘要：{summary}")
-    return "\n".join(lines)
+def render_share_prompt(share_state: ShareComposeState) -> str:
+    return render_share_system_prompt(share_state)
 
 
 def build_system_prompt(
     *,
     mode: SpeakTurnMode = "inbound",
-    share_hint: SharePromptHint,
+    share_state: ShareComposeState | None = None,
+    share_prompt: str = "",
     output_format: str,
 ) -> SpeakSystemPrompt:
     role = _ROLE_PROACTIVE if mode == "proactive" else _ROLE_INBOUND
+    share = share_prompt.strip()
+    if not share and share_state is not None:
+        share = render_share_system_prompt(share_state)
     return SpeakSystemPrompt(
         role=role,
-        share=render_share_prompt(share_hint),
+        share=share,
         output_format=output_format,
     )

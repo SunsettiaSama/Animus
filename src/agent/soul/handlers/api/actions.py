@@ -36,4 +36,4 @@ class PersonaAction:
     RUN_MONTHLY_DRIFT = "run_monthly_drift"
 
 
-from agent.soul.speak.actions import SpeakAction  # noqa: E402
+from agent.soul.speak.io.actions import SpeakAction  # noqa: E402

@@ -236,7 +236,7 @@ class TaoLoop:
 
         effective_descriptions = dict(tool_descriptions)
         if self._soul is not None:
-            from agent.soul.handlers.tao.tools import register_soul_tools
+            from agent.adapters.soul_tao.tools import register_soul_tools
             register_soul_tools(self._executor, self._soul, effective_descriptions)
 
         # Inject scratchpad tools (always active; stateful, session-scoped).
@@ -554,7 +554,7 @@ class TaoLoop:
 
         persona_blocks: list[PromptBlock] | None = None
         if self._soul is not None:
-            from agent.soul.handlers.tao.persona_prompt import blocks_from_soul_query
+            from agent.adapters.soul_tao.persona_prompt import blocks_from_soul_query
 
             persona_blocks = blocks_from_soul_query(
                 self._soul,
@@ -1055,7 +1055,7 @@ class TaoLoop:
         self._persona.reset_self_concept()
 
     def run(self, question: str) -> str:
-        from agent.soul.life.experience.dialogue import commit_turn_and_post_process
+        from agent.adapters.soul_dialogue import commit_turn_and_post_process
 
         for event in self.stream(question):
             if isinstance(event, FinishEvent):

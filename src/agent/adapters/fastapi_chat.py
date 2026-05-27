@@ -42,8 +42,8 @@ def create_chat_router(get_state: Callable[[], Any]) -> APIRouter:
 
     # ── Reset ─────────────────────────────────────────────────────────────────
 
-    @router.post("/api/chat/reset")
-    def chat_reset() -> dict | JSONResponse:
+    @router.post("/api/chat/reset", response_model=None)
+    def chat_reset():
         state = get_state()
         session = _get_chat(state)
         if session is None:
@@ -53,8 +53,8 @@ def create_chat_router(get_state: Callable[[], Any]) -> APIRouter:
 
     # ── System prompt ─────────────────────────────────────────────────────────
 
-    @router.post("/api/chat/system-prompt")
-    def chat_set_system_prompt(body: dict) -> dict | JSONResponse:
+    @router.post("/api/chat/system-prompt", response_model=None)
+    def chat_set_system_prompt(body: dict):
         state = get_state()
         session = _get_chat(state)
         if session is None:

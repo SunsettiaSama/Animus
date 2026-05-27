@@ -79,6 +79,13 @@ class ShareIntentQueue:
             peak = max_share_desire(peak, item.share_desire)
         return peak
 
+    def pop_most_wanted(self) -> ShareIntent | None:
+        """弹出当前最想分享的一条（按 salience 最高）。"""
+        if not self.items:
+            return None
+        best_index = max(range(len(self.items)), key=lambda i: self.items[i].salience)
+        return self.items.pop(best_index)
+
     def is_empty(self) -> bool:
         return not self.items
 

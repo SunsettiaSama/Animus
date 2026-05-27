@@ -84,14 +84,3 @@ def test_life_chronicle_matches_dispatch(soul_service):
     assert via_query == via_dispatch
     soul_service.stop()
 
-
-def test_tao_channel_requires_running(soul_service):
-    from agent.soul.handlers.tao.actions import TaoPersonaAction
-
-    with pytest.raises(RuntimeError, match="未运行"):
-        soul_service.dispatch(SoulRequest(
-            domain=SoulDomain.persona,
-            action=TaoPersonaAction.RUN,
-            channel=SoulChannel.tao,
-            payload={"instruction": "test", "profile_name": "default"},
-        ))

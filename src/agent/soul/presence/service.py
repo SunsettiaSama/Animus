@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -44,6 +44,7 @@ from .transition.trigger import PresenceTriggerKind
 if TYPE_CHECKING:
     from agent.soul.life.anchor.presence_bundle import PresenceExperienceBundle
     from agent.soul.life.experience.log import ExperienceLog
+    from agent.soul.life.experience.stack import LifeExperienceStack
 
 PresenceTriggerResult = GatewayResult
 
@@ -113,6 +114,8 @@ class PresenceIngestResult:
 
 PresenceTransitionResult = PresenceIngestResult
 
+PresenceStatusUpdateListener = Callable[["PresenceSnapshot"], None]
+
 
 class PresenceService:
     """Soul 当下态：仅维护 state + transition + gateway 入站。"""
@@ -129,6 +132,8 @@ class PresenceService:
         self._transition_router = transition_router or PresenceTransitionRouter()
         self._store = PresenceStateStore(life_dir) if life_dir else None
         self._sessions: dict[str, PresenceSession] = {}
+        self._status_update_listeners: list[PresenceStatusUpdateListener] = []
+        self._life_experience: LifeExperienceStack | None = None
         if self._store is not None:
             for sid, stored in self._store.load_sessions().items():
                 self._sessions[sid] = PresenceSession(
@@ -140,6 +145,37 @@ class PresenceService:
                 )
         self.gateway = PresenceGateway(self)
         self.interface = self.gateway
+
+    def register_status_update_listener(
+        self,
+        listener: PresenceStatusUpdateListener,
+    ) -> None:
+        """注册状态更新通知（service 层推送给 speak 等下游）。"""
+        self._status_update_listeners.append(listener)
+
+    def bind_life_experience(self, stack: LifeExperienceStack) -> None:
+        """Presence ↔ Life 双向绑定：pull_and_sync 从 stack.log 读取热体验。"""
+        self._life_experience = stack
+
+    @property
+    def life_experience(self) -> LifeExperienceStack | None:
+        return self._life_experience
+
+    def sync_from_life(
+        self,
+        session_id: str = "tao",
+        *,
+        hot_hours: float | None = 2,
+        tail: int = 12,
+    ) -> dict[str, object]:
+        if self._life_experience is None:
+            raise RuntimeError("PresenceService 未 bind_life_experience")
+        return self.pull_and_sync_from_life(
+            self._life_experience.log,
+            session_id,
+            hours=hot_hours,
+            tail=tail,
+        )
 
     def snapshot(self, session_id: str) -> PresenceSnapshot:
         session = self._session(session_id)
@@ -196,6 +232,21 @@ class PresenceService:
 
     def share_queue_size(self, session_id: str) -> int:
         return len(self._session(session_id).state.expectation.share_queue)
+
+    def pop_share_intent(self, session_id: str):
+        """弹出最想分享的一条并持久化（供 speak state:share 交接）。"""
+        session = self._session(session_id)
+        intent = session.state.expectation.share_queue.pop_most_wanted()
+        if intent is None:
+            return None
+        self._persist(session_id)
+        snap = self.snapshot(session_id)
+        self._notify_status_update(snap)
+        return intent
+
+    def _notify_status_update(self, snap: PresenceSnapshot) -> None:
+        for listener in self._status_update_listeners:
+            listener(snap)
 
     def register_transition(
         self,
@@ -443,19 +494,26 @@ class PresenceService:
         return discharge
 
     def _persist(self, session_id: str) -> None:
-        if self._store is None:
+        if self._store is not None:
+            self._store.save_sessions(
+                {
+                    sid: StoredPresenceSession(
+                        state=sess.state,
+                        interaction=sess.interaction,
+                        awake=sess.awake,
+                        last_wake_date=sess.last_wake_date,
+                    )
+                    for sid, sess in self._sessions.items()
+                }
+            )
+        self._emit_status_update(session_id)
+
+    def _emit_status_update(self, session_id: str) -> None:
+        if not self._status_update_listeners:
             return
-        self._store.save_sessions(
-            {
-                sid: StoredPresenceSession(
-                    state=sess.state,
-                    interaction=sess.interaction,
-                    awake=sess.awake,
-                    last_wake_date=sess.last_wake_date,
-                )
-                for sid, sess in self._sessions.items()
-            }
-        )
+        snap = self.snapshot(session_id)
+        for listener in self._status_update_listeners:
+            listener(snap)
 
     def _today(self) -> str:
         return datetime.now(ZoneInfo(self._timezone)).date().isoformat()

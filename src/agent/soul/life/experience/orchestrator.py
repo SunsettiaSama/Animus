@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol
 
@@ -63,6 +64,7 @@ class ExperienceOrchestrator:
         self._collapser = collapser
         self._collision_window_sec = collision_window_min * 60
         self._memory_ingested_ids: set[str] = set()
+        self._after_ingest: Callable[[ExperienceUnit], None] | None = None
 
     @property
     def anchor_chronicle(self) -> AnchorChroniclePort | None:
@@ -81,6 +83,9 @@ class ExperienceOrchestrator:
 
     def set_collapser(self, collapser: ExperienceCollapser | None) -> None:
         self._collapser = collapser
+
+    def set_after_ingest(self, handler: Callable[[ExperienceUnit], None] | None) -> None:
+        self._after_ingest = handler
 
     def _stamp_presence_bundle_on_unit(self, unit: ExperienceUnit) -> None:
         if unit.source in ("narrative", "surprise"):
@@ -101,6 +106,7 @@ class ExperienceOrchestrator:
             return
 
         self._finalize_single(unit)
+        self._notify_after_ingest(unit)
 
     def tick(self) -> list[ExperienceUnit]:
         hot = self._log.recent()
@@ -183,6 +189,10 @@ class ExperienceOrchestrator:
         self._write_collision_chronicle(collision_unit, merged_text, has_user=has_user)
         if collision_unit.is_salient(self._memory_ingest_threshold):
             self._promote_to_memory(collision_unit)
+
+    def _notify_after_ingest(self, unit: ExperienceUnit) -> None:
+        if self._after_ingest is not None:
+            self._after_ingest(unit)
 
     def _finalize_single(self, unit: ExperienceUnit) -> None:
         self._route_chronicle(unit)

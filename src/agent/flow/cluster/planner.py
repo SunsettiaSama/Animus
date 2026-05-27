@@ -174,7 +174,7 @@ class PlannerAgent(AgentBase):
                 tao.reset()
                 continue
 
-            from agent.soul.life.experience.dialogue import commit_turn_and_post_process
+            from agent.adapters.soul_dialogue import commit_turn_and_post_process
 
             commit_turn_and_post_process(
                 soul=getattr(tao, "_soul", None),

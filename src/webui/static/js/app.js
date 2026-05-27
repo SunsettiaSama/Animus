@@ -18,6 +18,8 @@ import * as settings                from './settings.js';
 // Feature modules
 import * as llmMod                  from './modules/llm.js';
 import * as reactMod                from './modules/react.js';
+import * as speakMod                from './modules/speak.js';
+import * as soulMod                 from './modules/soul.js';
 import * as memoryMod               from './modules/memory.js';
 import * as personaMod              from './modules/persona.js';
 import * as schedulerMod            from './modules/scheduler.js';
@@ -54,7 +56,7 @@ regWorkspace({ voiceMod, knowledgeMod });
 
 const _toast = text => bus.emit('toast', text);
 
-[llmMod, reactMod, memoryMod, personaMod, schedulerMod,
+[llmMod, reactMod, speakMod, soulMod, memoryMod, personaMod, schedulerMod,
  voiceMod, infraMod, benchMod, botMod, knowledgeMod].forEach(m => {
   m.setCallbacks?.({ onToast: _toast });
 });
@@ -62,7 +64,8 @@ const _toast = text => bus.emit('toast', text);
 reactMod.setCallbacks({
   onToast:        _toast,
   onReady:        () => {
-    updateReactBadge();
+    soulMod.fetchReadiness().then(() => updateReactBadge()).catch(() => {});
+    speakMod.fetchStatus().then(() => updateReactBadge()).catch(() => {});
     if (S.convId && historyMod.getMessages().length > 0) {
       historyMod.syncConvLoopFromMessages(historyMod.getMessages()).catch(() => {});
     }
@@ -71,9 +74,23 @@ reactMod.setCallbacks({
   onStatusUpdate: () => {},
 });
 
+speakMod.setCallbacks({
+  onToast:        _toast,
+  onReady:        () => updateReactBadge(),
+  onStatusUpdate: () => updateReactBadge(),
+});
+
+soulMod.setCallbacks({
+  onToast:        _toast,
+  onStatusUpdate: () => updateReactBadge(),
+});
+
 personaMod.setCallbacks({
   onToast:        _toast,
-  onPersonaLoad:  name => setAgentAvatar(name ? name.charAt(0) : '⚡'),
+  onPersonaLoad:  data => {
+    const name = data?.profile?.name;
+    if (name) setAgentAvatar(name.charAt(0));
+  },
 });
 
 historyMod.setCallbacks({
@@ -209,7 +226,7 @@ function _bind() {
   on('btn-modal-save',        'click', () => settings.saveCurrentTab());
   on('btn-modal-close',       'click', () => settings.close());
   on('btn-modal-close-x',     'click', () => settings.close());
-  ['model','memory','persona','voice','sandbox','bot','scheduler'].forEach(tab => {
+  ['model','memory','persona','soul','voice','sandbox','bot','scheduler'].forEach(tab => {
     on(`snav-btn-${tab}`, 'click', () => settings.setTab(tab));
   });
   on('s-tools-enabled', 'change', settings.onToggleTools);
@@ -290,6 +307,7 @@ async function boot() {
   const reactStatus = await reactMod.fetchStatus().catch(() => null);
   if (reactStatus?.status === 'ready') {
     set('reactReady', true);
+    await speakMod.fetchStatus().catch(() => {});
     if (S.convId && historyMod.getMessages().length > 0) {
       historyMod.syncConvLoopFromMessages(historyMod.getMessages()).catch(() => {});
     }
@@ -300,6 +318,7 @@ async function boot() {
         set('reactReady', true);
         updateReactBadge();
         bus.emit('toast', 'ReAct ready');
+        speakMod.fetchStatus().then(() => updateReactBadge()).catch(() => {});
         if (S.convId && historyMod.getMessages().length > 0) {
           historyMod.syncConvLoopFromMessages(historyMod.getMessages()).catch(() => {});
         }
@@ -307,10 +326,25 @@ async function boot() {
       .catch(() => {});
   }
 
+  await speakMod.fetchStatus().catch(() => {});
+  await soulMod.fetchReadiness().catch(() => {});
   updateReactBadge();
   personaMod.loadConfig().then(p => {
-    if (p?.enabled && p.name) setAgentAvatar(p.name.charAt(0));
+    if (p?.enabled && p.profile?.name) setAgentAvatar(p.profile.name.charAt(0));
   }).catch(() => {});
+
+  document.getElementById('mc-persona-body')?.addEventListener('soul:reinit', async () => {
+    const settings = await import('./settings.js');
+    settings.open('persona');
+    const tab = await import('./settings/tabs/persona.js');
+    await tab.save();
+    await reactMod.init({});
+  });
+  document.getElementById('mc-persona-body')?.addEventListener('soul:build', async () => {
+    await soulMod.rebuildPersona(false).catch(e => showToast(e.message));
+    await personaMod.updateWorkstationCard();
+  });
+
   loadWorkstation();
 
   void botMod.updateWorkstationCard();

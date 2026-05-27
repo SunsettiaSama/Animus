@@ -27,7 +27,7 @@ from agent.soul.presence import (
     PresenceTrigger,
 )
 from agent.soul.presence.state.dynamic.expectation.scanner import ExpectationScanPayload
-from agent.soul.speak.outbound import SpeakRequest
+from agent.soul.speak.io import SpeakRequest
 from agent.soul.presence.transition import WakeContext
 from agent.soul.handlers.api._llm import resolve_module_llm
 from agent.soul.workers import SoulWorkers
@@ -36,34 +36,32 @@ from .handlers.api.actions import LifeAction, MemoryAction, PersonaAction, Speak
 from .handlers.api.life import LifeHandler
 from .handlers.api.memory import MemoryHandler
 from .handlers.api.persona import PersonaHandler
-from .handlers.tao.backend import AgentServiceTaoBackend
-from .handlers.tao.handler import BaseTaoHandler
-from .handlers.tao.persona import TaoPersonaHandler
 from .ports import EmbeddingPort, ListEmbeddingAdapter, LLMServicePort
-from .request import SoulChannel, SoulDomain, SoulRequest
-from .speak.handler import SpeakHandler
-from .speak.outbound_delivery import SpeakPresenceOutbound
+from .request import SoulDomain, SoulRequest
+from .speak.io import SpeakOutboundRouter
+from .speak.io.handler import SpeakHandler
 
 if TYPE_CHECKING:
     from agent.soul.life.narrative_context import StoryWorldContextSupplier
     from agent.soul.ports import ExternalOpportunitySupplier
+    from agent.soul.speak.io.outbound.stream import SpeakStreamPort
 
 logger = logging.getLogger(__name__)
 
 
 class SoulService:
-    """Soul 子系统顶层入口：配置集中、api/tao 双路径、start/stop 生命周期。
+    """Soul 子系统顶层入口：配置集中、API 命令总线、start/stop 生命周期。
 
     对外语义
     --------
     - ``dispatch(SoulRequest)``：统一命令总线（heartbeat / 内部编排 / 可替代 query_*）
-    - ``query_*`` / ``search_memory`` / ``record_*``：HTTP/Tao 工具的语义化薄封装，内部走 dispatch
+    - ``query_*`` / ``search_memory`` / ``record_*``：HTTP 语义化薄封装，内部走 dispatch
 
     生命周期
     --------
     - ``stopped``：拒绝一切访问
     - ``idle`` / ``running``：只读 API action（见 ``access.READ_API_ACTIONS``）可 dispatch
-    - ``running``：写入、演化、Tao 通道 action 可 dispatch
+    - ``running``：写入与演化 action 可 dispatch
     """
 
     def __init__(
@@ -77,7 +75,6 @@ class SoulService:
         cfg: SoulConfig | None = None,
         memory_cfg: MemoryServiceConfig | None = None,
         memory_infra: MemoryInfraService | None = None,
-        tao_handler: BaseTaoHandler | None = None,
     ) -> None:
         self._cfg = cfg or SoulConfig.load_default()
         self._memory_cfg = memory_cfg or MemoryServiceConfig.load_default()
@@ -93,16 +90,11 @@ class SoulService:
         self._llm_service = llm_service
         self._primary_llm = primary_llm
 
-        self._tao_handler = tao_handler or BaseTaoHandler(
-            llm_cfg_path=self._cfg.tao_llm_cfg_path,
-            soul=self,
-        )
         self._persona_handler: PersonaHandler | None = None
-        self._persona_tao_handler: TaoPersonaHandler | None = None
         self._memory_handler: MemoryHandler | None = None
         self._life_handler: LifeHandler | None = None
         self._speak_handler: SpeakHandler | None = None
-        self._speak_outbound: SpeakPresenceOutbound | None = None
+        self._speak_outbound_router: SpeakOutboundRouter | None = None
         self._embedding_port: EmbeddingPort | None = None
         self._heartbeat: Any = None
         self._orchestrator: HeartbeatOrchestrator | None = None
@@ -110,7 +102,6 @@ class SoulService:
         self._presence_service: PresenceService | None = None
         self._experience_pipeline: Any = None
         self._speak_service: Any = None
-        self._presence_outbound_handlers: list[Any] = []
         self._story_world_context_supplier: StoryWorldContextSupplier | None = None
         self._external_opportunity_supplier: ExternalOpportunitySupplier | None = None
 
@@ -139,20 +130,12 @@ class SoulService:
         return self._ensure_persona_handler()
 
     @property
-    def persona_tao(self) -> TaoPersonaHandler:
-        return self._ensure_persona_tao_handler()
-
-    @property
     def memory(self) -> MemoryHandler:
         return self._ensure_memory_handler()
 
     @property
     def life(self) -> LifeHandler:
         return self._ensure_life_handler()
-
-    @property
-    def tao(self) -> BaseTaoHandler:
-        return self._tao_handler
 
     @property
     def workers(self) -> SoulWorkers:
@@ -182,13 +165,62 @@ class SoulService:
     def speak(self) -> SpeakHandler:
         return self._ensure_speak_handler()
 
-    def start_dialogue_session(self, session_id: str = "tao") -> dict[str, Any]:
-        """打开对话会话（→ dispatch OPEN_SESSION）。"""
-        return self.dispatch(SoulRequest(
-            domain=SoulDomain.speak,
-            action=SpeakAction.OPEN_SESSION,
-            payload={"session_id": session_id},
-        ))
+    @property
+    def speak_outbound(self) -> SpeakOutboundRouter:
+        return self._ensure_speak_outbound_router()
+
+    def bind_speak_stream_port(self, port: SpeakStreamPort | None) -> None:
+        """挂载 Speak 流式出站 port。"""
+        self.speak_outbound.bind_stream(port)
+
+    def deliver_speak_text(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        final: bool = True,
+    ) -> dict[str, Any]:
+        """Speak 文本出站（→ DELIVER）。"""
+        return self.speak_outbound.deliver_text(session_id, text, final=final)
+
+    def start_dialogue_session(
+        self,
+        session_id: str = "tao",
+        *,
+        trigger: str = "user_message",
+    ) -> dict[str, Any]:
+        """打开 dialogue 体验会话（Speak lifecycle 直连，不经 dispatch）。"""
+        self._require_running()
+        self._ensure_experience_pipeline()
+        state = self.experience.dialogue.open_session(session_id)
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "trigger": trigger,
+            "turn_count": len(state.session.turns),
+        }
+
+    def open_proactive_outbound(
+        self,
+        session_id: str,
+        message: str,
+        *,
+        proactive_intent_id: str = "",
+    ) -> dict[str, Any]:
+        """标记 proactive outbound，期待用户回复（Speak lifecycle 直连）。"""
+        self._require_running()
+        self._ensure_experience_pipeline()
+        self.experience.dialogue.open_outbound(
+            session_id,
+            message,
+            proactive_intent_id=proactive_intent_id,
+        )
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "message": message,
+            "proactive_intent_id": proactive_intent_id,
+        }
 
     def record_dialogue_turn(
         self,
@@ -227,12 +259,20 @@ class SoulService:
         ))
 
     def close_dialogue_interaction(self, session_id: str = "tao") -> dict[str, Any]:
-        """会话闭合：presence 长体验 → ExperienceUnit → memory。"""
-        return self.dispatch(SoulRequest(
-            domain=SoulDomain.speak,
-            action=SpeakAction.CLOSE_SESSION,
-            payload={"session_id": session_id},
-        ))
+        """会话闭合：life ↔ presence 经 experience stack 直连。"""
+        self._require_running()
+        self._ensure_experience_pipeline()
+        unit = self.experience.close_dialogue(session_id)
+        if unit is None:
+            return {"ok": True, "session_id": session_id, "ingested": False}
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "ingested": True,
+            "source": unit.source,
+            "turn_index": unit.situation.turn_index,
+            "experience_id": unit.id,
+        }
 
     def speak_turn(
         self,
@@ -294,8 +334,8 @@ class SoulService:
         self,
         handler: Any,
     ) -> None:
-        """注册 speak 出站回调（由 SoulService 在扫描/放电后触发）。"""
-        self._presence_outbound_handlers.append(handler)
+        """注册 speak 出站回调（presence 主动 speak 完成后触发）。"""
+        self.speak_outbound.register_after_presence(handler)
 
     def set_story_world_context_supplier(
         self,
@@ -342,47 +382,23 @@ class SoulService:
         self,
         session_id: str = "tao",
         *,
-        hot_hours: float | None = 2,
-        rumination_meta: dict[str, str] | None = None,
         boundary_event: PresenceEvent | None = None,
         line_open: bool = False,
         proactive_intent_id: str = "",
         scan: bool = True,
         speak_if_ready: bool = True,
-        sync_life: bool = True,
         wait: bool = False,
     ) -> dict[str, Any]:
-        """一次调度：life 当下体验 → static/dynamic 转移 → 可选边界/反刍 → 扫描 → speak → 在线叙述。"""
+        """Presence 域调度（边界/扫描/speak）；life→presence 同步由 LifeExperienceStack 直连。"""
         self._require_running()
-        self._ensure_experience_pipeline()
 
         def _cycle() -> dict[str, Any]:
             detail: dict[str, Any] = {
                 "ok": True,
                 "session_id": session_id,
-                "life_sync": None,
-                "rumination_sync": None,
                 "boundary": None,
                 "scan": None,
             }
-            if sync_life:
-                detail["life_sync"] = self.presence.pull_and_sync_from_life(
-                    self.experience.log,
-                    session_id,
-                    hours=hot_hours,
-                )
-            if rumination_meta:
-                from agent.soul.life.experience.presence_supply import rumination_presence_bundle
-
-                bundle = rumination_presence_bundle(
-                    session_id=session_id,
-                    hint=str(rumination_meta.get("rumination_hint", rumination_meta.get("hint", ""))),
-                    narration=str(rumination_meta.get("thinking", rumination_meta.get("narration", ""))),
-                    salience=float(rumination_meta.get("salience", 0.35)),
-                    wants_to_share=str(rumination_meta.get("wants_to_share", "")).lower() in {"1", "true", "yes"},
-                    share_topic=str(rumination_meta.get("share_topic", "")),
-                )
-                detail["rumination_sync"] = self.presence.sync_life_bundle(bundle)
             if boundary_event is not None:
                 ing = self.presence.interface.boundary(
                     boundary_event,
@@ -456,20 +472,10 @@ class SoulService:
         return self._workers.presence.submit(_run).result()
 
     def ingest_presence_incident(self, incident: LifeIncident) -> IncidentIngestResult:
-        """Life 事件 → presence interface trigger + experience 注入 memory。"""
+        """Life 事件 → experience unit（presence 同步由 stack 直连触发）。"""
         self._require_running()
-        from agent.soul.life.experience.sources import ExperienceSource
-
-        source = ExperienceSource.narrative.value
-        if incident.kind.value == "surprise":
-            source = ExperienceSource.surprise.value
-        return self.life_experience.ingest_life_incident(
-            self.presence,
-            incident,
-            fallback_narration=incident.hint,
-            salience=incident.salience,
-            source=source,
-        )
+        self._ensure_experience_pipeline()
+        return self.experience.ingest_incident(incident, salience=incident.salience)
 
     def start(self) -> None:
         if self._state == "running":
@@ -481,9 +487,9 @@ class SoulService:
         self.memory.api.init_infra()
         self._ensure_life_handler()
         self._ensure_persona_handler()
-        self._ensure_persona_tao_handler()
         self._wire_workers()
         self._workers.start_all()
+        self._ensure_speak_service().start()
 
         self.life.api.load_profile()
         if self._heartbeat is not None:
@@ -496,6 +502,8 @@ class SoulService:
             return
         if self._heartbeat is not None:
             self._heartbeat.stop_evolution_worker()
+        if self._speak_service is not None:
+            self._speak_service.stop()
         self._workers.stop_all()
         self._orchestrator = None
         self._heartbeat = None
@@ -531,26 +539,14 @@ class SoulService:
             "evolution_worker": evolution_status,
         }
 
-    def set_tao_handler(self, handler: BaseTaoHandler) -> None:
-        self._tao_handler = handler
-        if self._persona_tao_handler is not None:
-            self._persona_tao_handler.set_tao_handler(handler)
-
-    def wire_agent_service(self, agent_service) -> None:
-        """将 Base Tao 后端切换到 AgentService（与调度器共用 Tao 运行时）。"""
-        self._tao_handler.set_backend(AgentServiceTaoBackend(agent_service))
-        engine = getattr(agent_service, "engine", None)
-        if engine is not None:
-            self._tao_handler.set_scheduler_engine(engine)
+    def bind_scheduler_engine(self, engine) -> None:
+        """绑定 runtime 调度引擎（HeartbeatOrchestrator checklist 使用）。"""
         if self._orchestrator is not None:
             self._orchestrator.set_scheduler_engine(engine)
 
     def dispatch(self, request: SoulRequest) -> Any:
         if self._state == "stopped":
             raise RuntimeError(f"SoulService 已停止（state={self._state!r}）")
-        if request.channel == SoulChannel.tao:
-            self._require_running()
-            return self.dispatch_tao(request)
         return self.dispatch_api(request)
 
     def dispatch_api(self, request: SoulRequest) -> Any:
@@ -564,12 +560,6 @@ class SoulService:
         if request.domain == SoulDomain.speak:
             return self.speak.handle(request.action, request.payload)
         raise ValueError(f"unknown soul api domain: {request.domain!r}")
-
-    def dispatch_tao(self, request: SoulRequest) -> Any:
-        self._require_running()
-        if request.domain == SoulDomain.persona:
-            return self.persona_tao.handle(request.action, request.payload)
-        raise ValueError(f"unknown soul tao domain: {request.domain!r}")
 
     def run_wander(
         self, drift_intensity_floor: float | None = None
@@ -880,14 +870,6 @@ class SoulService:
             )
         return self._persona_handler
 
-    def _ensure_persona_tao_handler(self) -> TaoPersonaHandler:
-        if self._persona_tao_handler is None:
-            self._persona_tao_handler = TaoPersonaHandler(
-                tao_handler=self._tao_handler,
-                persona_api=self._ensure_persona_handler(),
-            )
-        return self._persona_tao_handler
-
     def _ensure_memory_handler(self) -> MemoryHandler:
         if self._memory_handler is None:
             self._memory_handler = MemoryHandler(
@@ -942,6 +924,7 @@ class SoulService:
                 self._experience_pipeline.life,
                 dialogue=self._experience_pipeline.dialogue,
             )
+            self._experience_pipeline.bind_presence(self._presence_service)
         return self._experience_pipeline
 
     def _ensure_speak_service(self):
@@ -952,8 +935,7 @@ class SoulService:
             self._ensure_experience_pipeline()
 
             def _record_dialogue_turn(**kwargs) -> None:
-                self._experience_pipeline.dialogue.record_dialogue_turn(
-                    self.presence,
+                self._experience_pipeline.record_dialogue_turn(
                     session_id=kwargs["session_id"],
                     user_text=kwargs.get("user_text", kwargs.get("question", "")),
                     agent_text=kwargs.get("agent_text", kwargs.get("answer", "")),
@@ -988,10 +970,31 @@ class SoulService:
                 flush_mode=flush_mode,  # type: ignore[arg-type]
                 share_threshold=self._cfg.speak_share_proactive_threshold,
                 session_idle_sec=self._cfg.speak_session_idle_sec,
+                semantic_distance_threshold=self._cfg.speak_session_semantic_distance_threshold,
+                embedder=self.resolve_embedding_port(),
+                context_distill_chunk_size=self._cfg.speak_context_distill_chunk_size,
                 lifecycle=self,
                 touch_dialogue=_touch_dialogue,
             )
+            from agent.soul.speak.io.inbound.memory import RecallRequest, RecallResult
+
+            def _recall_for_speak(request: RecallRequest) -> RecallResult:
+                payload = self.recall_memory(
+                    request.query,
+                    top_k=request.top_k,
+                )
+                return RecallResult(
+                    ok=True,
+                    query=request.query,
+                    text=str(payload.get("text", "")),
+                )
+
+            self._speak_service.attach_memory_recall(_recall_for_speak)
         return self._speak_service
+
+    def _relay_presence_status_to_speak(self, snap) -> None:
+        if self._speak_service is not None:
+            self._speak_service.on_presence_status_update(snap)
 
     def _ensure_presence_service(self) -> PresenceService:
         if self._presence_service is None:
@@ -1007,6 +1010,9 @@ class SoulService:
             self._presence_service = PresenceService(
                 life_dir=self._life_dir,
                 timezone=tz,
+            )
+            self._presence_service.register_status_update_listener(
+                self._relay_presence_status_to_speak,
             )
         return self._presence_service
 
@@ -1056,15 +1062,12 @@ class SoulService:
         )
 
     def _emit_presence_speak(self, request: SpeakRequest) -> dict[str, Any]:
-        result = self._ensure_speak_outbound().handle(request)
-        for handler in self._presence_outbound_handlers:
-            handler(request)
-        return result
+        return self.speak_outbound.emit_presence(request)
 
-    def _ensure_speak_outbound(self) -> SpeakPresenceOutbound:
-        if self._speak_outbound is None:
-            self._speak_outbound = SpeakPresenceOutbound(self)
-        return self._speak_outbound
+    def _ensure_speak_outbound_router(self) -> SpeakOutboundRouter:
+        if self._speak_outbound_router is None:
+            self._speak_outbound_router = SpeakOutboundRouter(self)
+        return self._speak_outbound_router
 
     def _presence_dialogue_overlay_supplier(self, session_id: str):
         from agent.soul.life.anchor.internalization.overlay import InteractionExperienceOverlay
@@ -1089,17 +1092,12 @@ class SoulService:
         ).result()
 
     def _wire_workers(self) -> None:
-        from agent.soul.narrative_context_bridge import SoulNarrativeContextSupplier
-
         self._workers.register_life(self.life.api.worker)
         self.memory.set_worker(self._workers.memory)
         self.persona.set_worker(self._workers.persona)
         self.persona.set_memory_port(self.memory.api)
         self.persona.set_embedder(self.memory.api.drift_embedder())
         self.life.api.set_memory_port(self.memory.api)
-        self.life.api.set_narrative_context_supplier(
-            SoulNarrativeContextSupplier(self)
-        )
         self.life.api.set_story_world_context_supplier(
             self._story_world_context_supplier
         )

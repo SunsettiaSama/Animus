@@ -1,7 +1,6 @@
 from .buffer import ExperienceBuffer
 from .clustering import DriftClusterConfig, DriftUnitCluster, EmbedderBackend, cluster_memory_units
 from .consolidation import (
-    ConsolidationTaoDecomposer,
     DriftWritePlan,
     MemoryDriftUnitPort,
     MonthlyDriftResult,
@@ -17,7 +16,6 @@ __all__ = [
     "BufferState",
     "ClusterDraft",
     "ClusterSignal",
-    "ConsolidationTaoDecomposer",
     "DriftClusterConfig",
     "DriftDistillWriter",
     "DriftUnitCluster",

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from agent.soul.speak.compose.share_queue import ShareQueueComposer
-from agent.soul.speak.llm.engine import SpeakLLMEngine
-from agent.soul.speak.parse import parse_agent_output
-from agent.soul.speak.stream.segmenter import split_sentences
 from agent.soul.presence.share_desire import ShareDesire
+from agent.soul.speak.compose.share import ShareDesireComposer
+from agent.soul.speak.llm.engine import SpeakLLMEngine
+from agent.soul.speak.io.outbound.stream import parse_agent_output
+from agent.soul.speak.io.outbound.stream.flush import split_sentences
 from agent.soul.presence.state.dynamic.expectation.queue import ShareIntent, ShareIntentQueue
 
 
@@ -29,7 +29,7 @@ def test_speak_llm_engine_generate_and_stream():
     assert streamed.chunks == ["你", "好", "，", "我在。"]
 
 
-def test_share_queue_detects_desire_without_threshold():
+def test_share_drive_detects_desire_without_threshold():
     snap = MagicMock()
     snap.state.expectation.toward_user = 0.2
     snap.state.expectation.to_dict.return_value = {
@@ -41,12 +41,12 @@ def test_share_queue_detects_desire_without_threshold():
     snap.interaction.share_desire = ShareDesire.moderate
     snap.interaction.impulse_level = 0.1
 
-    result = ShareQueueComposer(proactive_threshold=0.65).evaluate(snap)
+    result = ShareDesireComposer(proactive_threshold=0.65).evaluate_drive(snap)
     assert result.should_speak is False
     assert "架构" in result.summary
 
 
-def test_share_queue_reaches_proactive_threshold():
+def test_share_drive_reaches_proactive_threshold():
     snap = MagicMock()
     snap.state.expectation.toward_user = 0.7
     snap.state.expectation.to_dict.return_value = {
@@ -58,7 +58,7 @@ def test_share_queue_reaches_proactive_threshold():
     snap.interaction.share_desire = ShareDesire.eager
     snap.interaction.impulse_level = 0.4
 
-    result = ShareQueueComposer(proactive_threshold=0.65).evaluate(snap)
+    result = ShareDesireComposer(proactive_threshold=0.65).evaluate_drive(snap)
     assert result.should_speak is True
     assert "架构" in result.summary
 
@@ -101,7 +101,6 @@ def test_speak_service_run_turn_records_dialogue():
     presence.snapshot.return_value = snap
 
     from agent.soul.speak.compose import SpeakPromptComposer
-    from agent.soul.speak.llm.engine import SpeakLLMEngine
     from agent.soul.speak.service import SpeakService
 
     service = SpeakService(

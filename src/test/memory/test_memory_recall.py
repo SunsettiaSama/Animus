@@ -70,7 +70,7 @@ _pkg_stub("agent.react.action", REACT_DIR / "action")
 
 sys.path.insert(0, str(SRC))
 
-from agent.soul.handlers.tao.tools.memory_search import SoulMemorySearchAction
+from agent.adapters.soul_tao.tools.memory_search import SoulMemorySearchAction
 
 
 def make_soul(results=None):

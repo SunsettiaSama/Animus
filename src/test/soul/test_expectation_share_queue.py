@@ -26,6 +26,32 @@ def test_share_intent_queue_fold_summary():
     assert "另有 1 条" in queue.fold_summary()
 
 
+def test_share_intent_queue_pop_most_wanted():
+    queue = ShareIntentQueue()
+    queue.enqueue(ShareIntent(topic="低优先级", share_desire=ShareDesire.mild, salience=0.2))
+    queue.enqueue(ShareIntent(topic="最想分享", share_desire=ShareDesire.eager, salience=0.9))
+    popped = queue.pop_most_wanted()
+    assert popped is not None
+    assert popped.topic == "最想分享"
+    assert len(queue.items) == 1
+    assert queue.items[0].topic == "低优先级"
+
+
+def test_presence_pop_share_intent():
+    svc = PresenceService()
+    session = svc._session("tao")
+    session.state.expectation.share_queue.enqueue(
+        ShareIntent(topic="次要", share_desire=ShareDesire.mild, salience=0.1),
+    )
+    session.state.expectation.share_queue.enqueue(
+        ShareIntent(topic="优先", share_desire=ShareDesire.eager, salience=0.95),
+    )
+    intent = svc.pop_share_intent("tao")
+    assert intent is not None
+    assert intent.topic == "优先"
+    assert svc.share_queue_size("tao") == 1
+
+
 def test_apply_non_dialogue_share_refresh_queues_and_accumulates():
     exp = ExpectationState()
     interaction = PresenceInteraction()

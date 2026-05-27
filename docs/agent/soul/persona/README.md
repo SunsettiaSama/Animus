@@ -1,13 +1,18 @@
 # agent/soul/persona — 人格演化子系统
 
-实现代码位于 **`src/agent/soul/persona/`**。`TaoLoop` 通过 `from agent.soul.persona import PersonaManager` 挂载人格块与演化逻辑（配置仍为 `PersonaConfig`，目录仍默认指向 `.react/persona/`）。
+实现代码位于 **`src/agent/soul/persona/`**。`TaoLoop` 与 `SpeakService` 通过 `PersonaManager` / `PersonaService` 挂载画像与自我概念块。
 
-本模块是一套 **「摘要 → 写入 → 注入」** 循环演化引擎，使人格、技能与自我认知随对话积累而变化。
+本模块是 **「画像 + 体验 buffer + 慢变 self_concept」** 三层结构；快变情绪在 **`PresenceState.affect`**，不在 persona 域。
 
-**职责边界**
+---
 
-- **Persona**：身份演化——画像、风格、技能与自省文本。
-- **Memory（React 侧）**：对话事实记录与蒸馏；与本模块分工明确。
+## 职责边界
+
+| 域 | 职责 |
+|---|---|
+| **Persona** | 静态画像、体验聚类元数据、月度 self_concept 漂移 |
+| **Presence** | 快变情绪、当下自叙 FSM |
+| **Memory** | 对话事实记录与检索 |
 
 ---
 
@@ -15,28 +20,23 @@
 
 ```
 src/agent/soul/persona/
-├── __init__.py            ← 统一导出公共符号（含 PersonaManager）
-├── engine.py              ← EvolutionEngine — 顶层演化调度器
-├── manager.py             ← PersonaManager — 对外唯一入口（TaoLoop 使用）
-│
-├── profile/               ← 人格子模块（身份是什么）
-│   ├── profile.py         PersonaProfile
-│   ├── skills.py          Skill + SkillsLibrary
-│   ├── evolver.py         PersonaEvolver（LLM 增量）
-│   ├── block.py           ProfileBlock / SkillsBlock / ReflectionBlock
-│   └── store.py           ProfileStore
-│
-├── preference/            ← 偏好子模块（用户兴趣动态层）
-│   ├── entry.py           PreferenceEntry
-│   ├── recent.py          RecentPreference
-│   ├── store.py           PreferenceStore
-│   ├── block.py           PreferenceBlock
-│   └── updater.py         PreferenceUpdater
-│
-└── emotional/             ← 叙事情感层
-    ├── state.py           EmotionalAnchor + EmotionalState + EmotionalStateStore
-    ├── evolver.py         EmotionalStateEvolver
-    └── block.py           EmotionalStateBlock
+├── manager.py              # PersonaManager — TaoLoop / 内部主入口
+├── service.py              # PersonaService — Soul dispatch 包装
+├── builder.py              # ProfileBuilder（LLM 初始化画像）
+├── profile/                # 静态画像
+│   ├── profile.py          PersonaProfile
+│   ├── block.py            ProfileBlock
+│   └── store.py            ProfileStore → profile.json
+├── buffer/                 # 体验聚类 + 月度漂移调度
+│   ├── buffer.py           ExperienceBuffer
+│   ├── store.py            ExperienceBufferStore
+│   ├── clustering.py       主题聚类
+│   ├── consolidation.py
+│   └── drift_writer.py     MonthlyDriftUpdater
+└── self_concept/           # 慢变自我叙事
+    ├── concept.py          SelfConcept（信念分级 emerging → core）
+    ├── block.py            SelfConceptBlock
+    └── store.py            SelfConceptStore
 ```
 
 ---
@@ -46,40 +46,54 @@ src/agent/soul/persona/
 ```
 PersonaManager
        │
-       ├── profile/     → ProfileStore → profile.json / skills.json / reflection.txt
-       ├── preference/ → PreferenceStore → preference.json
-       └── emotional/  → EmotionalStateStore → emotional_state.json
+       ├── profile/       → ProfileStore → profile.json
+       ├── buffer/       → ExperienceBufferStore → buffer 状态
+       └── self_concept/ → SelfConceptStore → self_concept.json
 ```
 
-每轮对话结束后（`TaoLoop.post_process` 后台线程），在 `evolution_enabled` 且提供 LLM 时触发演化：`profile/skills`、`reflect`、`preference`、`emotional` 按各自间隔更新。
+- **profile**：静态身份描述，可经 `ProfileBuilder` LLM 初始化
+- **buffer**：从 memory drift units 聚类主题，驱动月度 self_concept 更新
+- **self_concept**：**仅**月度漂移写入；提供 `query_bias_keywords()` 供检索偏置
 
 ---
 
 ## Prompt 注入
 
-`PersonaManager.all_blocks()` 顺序产出：`ProfileBlock`、`SkillsBlock`、`ReflectionBlock`、`PreferenceBlock`、`EmotionalStateBlock`（取决于 `PersonaConfig` 开关）。
+`PersonaManager.all_blocks()` 顺序产出：
 
-**L3 检索偏置**：`bias_query(query)` 将近期偏好关键词附加到查询字符串。
+1. `ProfileBlock`
+2. `SelfConceptBlock`（非空时）
+
+Speak compose 层通过 `injected/persona/` 注入 persona 快照；Tao 通道经 `handlers/tao/blocks/` 注册块。
+
+**L3 检索偏置**：`bias_query(query)` 将 self_concept 关键词附加到查询字符串。
+
+---
+
+## PersonaAction（Soul dispatch）
+
+| Action | 说明 |
+|---|---|
+| `get_snapshot` | 完整 snapshot |
+| `get_buffer` | buffer 状态 |
+| `run_monthly_drift` | 月度 self_concept 漂移（重任务，orchestrator 异步） |
+| `rebuild_profile` / `reload_profile` | 画像重建 |
+| `portrait_revision` / `portrait_for_narrative` | 叙事用人像 |
+| `reset_self_concept` | 重置自我概念 |
 
 ---
 
 ## API 摘录
 
 ```python
-from agent.soul.persona import PersonaManager
+from agent.soul.persona import PersonaManager, PersonaService
 from config.agent.persona_config import PersonaConfig
 
 mgr = PersonaManager(cfg=PersonaConfig(enabled=True), llm=llm)
 mgr.all_blocks()
 mgr.bias_query(query)
-mgr.evolve(question, answer, steps)
+mgr.snapshot()
 ```
-
----
-
-## PersonaConfig
-
-字段定义见 `config/agent/persona_config.py`；`persona_dir` 通常由 `TaoConfig._propagate_dirs()` 填为 `.react/persona`。
 
 ---
 
@@ -88,12 +102,16 @@ mgr.evolve(question, answer, steps)
 ```
 .react/persona/
 ├── profile.json
-├── skills.json
-├── reflection.txt
-├── preference.json
-└── emotional_state.json
+├── self_concept.json
+└── buffer/                  # ExperienceBufferStore 状态文件
 ```
 
 ---
 
-历史文档路径 `docs/agent/react/persona/README.md` 保留为重定向；请以本文为准。
+## 相关文档
+
+- [presence/README.md](../presence/README.md)（快变 affect）
+- [memory/README.md](../memory/README.md)（drift units → buffer 聚类）
+- [speak/README.md](../speak/README.md)（compose persona 注入）
+
+历史文档 `docs/agent/react/persona/README.md` 保留为重定向。

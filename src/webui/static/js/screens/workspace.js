@@ -1,30 +1,21 @@
 /**
  * screens/workspace.js — Chat workspace screen logic.
  *
- * Responsibilities:
- *   - Send / abort handling.
- *   - ReAct streaming session lifecycle.
- *   - Mic recording.
- *   - TTS delegation.
- *   - New conversation.
- *   - History rebuild from saved messages.
- *   - Title update after first assistant reply.
- *   - Knowledge-base panel toggle.
+ * Main conversation uses Soul Speak streaming (/ws/speak/run).
+ * ReAct/Tao WS is no longer used for workspace chat.
  */
 
 import { S, setState, set }    from '../state.js';
-import { PATHS }               from '../api.js';
 import * as render              from '../render.js';
 import * as historyMod          from '../history.js';
 import * as streaming           from '../streaming.js';
+import * as speakMod            from '../modules/speak.js';
 import { goWorkspace }         from '../router.js';
-import { bus }                 from '../eventBus.js';
 import { showToast }           from '../shared/toast.js';
 
 let _voiceMod     = null;
 let _knowledgeMod = null;
 
-/** Inject module references needed by workspace (set from app.js). */
 export function registerModules({ voiceMod, knowledgeMod }) {
   _voiceMod     = voiceMod;
   _knowledgeMod = knowledgeMod;
@@ -34,15 +25,16 @@ export function registerModules({ voiceMod, knowledgeMod }) {
 
 export async function startNew() {
   streaming.abortCurrent();
-  await historyMod.resetServerConvLoop().catch(() => {});
+  await speakMod.resetSession().catch(() => {});
   set('convId', null);
   set('convTitle', 'New Conversation');
+  set('convMode', 'speak');
   historyMod.clearMessages();
   render.clearMsgs();
-  render.showEmptyState();
+  render.showEmptyState('speak');
   const tb = document.getElementById('tb-title');
   if (tb) tb.textContent = 'New Conversation';
-  _updateReactBadge();
+  _updateStatusBadge();
   goWorkspace();
   historyMod.renderSidebar();
   import('/static/js/modules/plan.js').then(m => m.initSubPanel()).catch(() => {});
@@ -50,13 +42,21 @@ export async function startNew() {
 
 // ── Topbar badge ──────────────────────────────────────────────────────────────
 
-export function updateReactBadge() { _updateReactBadge(); }
+export function updateReactBadge() { _updateStatusBadge(); }
 
-function _updateReactBadge() {
+function _updateStatusBadge() {
   const el = document.getElementById('tb-react-status');
   if (!el) return;
-  el.textContent = S.reactReady ? '⚡ Ready' : '⚡ Not ready';
-  el.style.color = S.reactReady ? 'var(--accent)' : 'var(--text3)';
+  if (S.speakReady) {
+    el.textContent = '💬 Speak Ready';
+    el.style.color = 'var(--accent)';
+  } else if (S.soulReady) {
+    el.textContent = '✨ Soul Running';
+    el.style.color = 'var(--accent)';
+  } else {
+    el.textContent = '💬 Not ready';
+    el.style.color = 'var(--text3)';
+  }
 }
 
 // ── Send / abort ──────────────────────────────────────────────────────────────
@@ -77,133 +77,57 @@ export async function handleSend() {
   import('/static/js/modules/plan.js').then(m => m.initSubPanel()).catch(() => {});
   render.appendUserMsg(question);
   historyMod.pushMessage({ role: 'user', content: question });
-  await _runReact(question);
+  await _runSpeak(question);
 }
 
-// ── ReAct streaming ───────────────────────────────────────────────────────────
+// ── Soul Speak streaming ──────────────────────────────────────────────────────
 
-async function _runReact(question) {
-  if (!S.reactReady) { showToast('ReAct not initialized'); return; }
+async function _runSpeak(question) {
+  if (!S.speakReady) {
+    showToast('Soul Speak 未就绪');
+    return;
+  }
 
   const genId = crypto.randomUUID();
   set('genId', genId);
   setState('streaming');
 
-  const _stepHistory = [];
-  let   _strip       = null;   // current live step strip (null = create on demand)
+  const streamCtrl = render.appendSpeakStream();
 
-  // <O> streaming state — detect the opening tag in raw chunks and start
-  // streaming into a bot bubble immediately rather than waiting for FinishEvent.
-  let _oBuf      = '';    // raw chunk accumulator (before/during <O> scan)
-  let _liveBub   = null;  // streaming bubble created once <O> is found
-  let _oStreaming = false; // true while inside <O>...</O>
+  const session = new streaming.SpeakSession(question, genId, {
+    onEvent: (kind, text, meta) => streamCtrl?.onEvent(kind, text, meta),
+    onFinish: payload => {
+      const answer = payload.answer ?? streamCtrl?.speakText ?? '';
+      const aborted = Boolean(payload.aborted);
+      streamCtrl?.finalize(answer, aborted);
 
-  const _getStrip  = () => { if (!_strip) _strip = render.appendStepStrip(); return _strip; };
-  const _dropStrip = () => { if (_strip) _strip.dismissLoading(); _strip = null; };
-
-  const session = new streaming.ReactSession(question, genId, {
-    onPromptPreview: msgs => _getStrip().showPrompt(msgs),
-    onStepStart:     i    => _getStrip().setStreaming(i),
-
-    onChunk: (index, chunk) => {
-      _oBuf += chunk;
-
-      if (!_liveBub) {
-        const oi = _oBuf.indexOf('<O>');
-        if (oi === -1) return;
-        _liveBub   = render.appendAssistantMsg();
-        _oStreaming = true;
-        _oBuf       = _oBuf.slice(oi + 3);
-      }
-
-      if (!_oStreaming) return;  // </O> already consumed
-
-      const ci = _oBuf.indexOf('</O>');
-      if (ci !== -1) {
-        if (ci > 0) _liveBub.append(_oBuf.slice(0, ci));
-        _oStreaming = false;
-        _oBuf       = '';
-      } else if (_oBuf.length > 4) {
-        // Keep last 4 chars buffered as lookahead for a split </O> boundary
-        _liveBub.append(_oBuf.slice(0, -4));
-        _oBuf = _oBuf.slice(-4);
-      }
-    },
-
-    onStep: step => {
-      _stepHistory.push(step);
-      const streamed = _liveBub;
-      if (streamed) {
-        streamed.finalize();
-        _liveBub    = null;
-        _oBuf       = '';
-        _oStreaming  = false;
-      }
-      _getStrip().addPill(step);
-      if (step.output && step.action !== 'finish') {
-        _dropStrip();
-        if (!streamed) {
-          const ob = render.appendAssistantMsg();
-          ob.append(step.output);
-          ob.finalize();
-        }
-      }
-    },
-
-    onRetry:           ()                   => {},   // L2/L3 repair runs transparently; no user-visible toast
-    onApprovalRequest: (reqId, tool, args) => _promptApproval(session, reqId, tool, args),
-    onSubStart:        ()                  => {},
-    onSubChunk:        ()                  => {},
-    onSubStep:         ()                  => {},
-    onSubFinish:       ()                  => {},
-    onSubError:        ()                  => {},
-    onMaxSteps:        n                   => showToast(`⚠ 已达最大步数限制（${n} 步）`),
-
-    onFinish: (answer, aborted) => {
-      const bubble = _liveBub;
-      _liveBub    = null;
-      _oBuf       = '';
-      _oStreaming  = false;
-      _dropStrip();
-
-      if (aborted) {
-        const ab = bubble || render.appendAssistantMsg();
-        ab.finalize(true);
-      } else if (bubble) {
-        bubble.finalize();
-        historyMod.pushMessage({ role: 'assistant', content: answer, steps: _stepHistory });
-        historyMod.saveConversation();
-        _updateTitle(answer);
-      } else if (answer) {
-        const ab = render.appendAssistantMsg();
-        ab.append(answer);
-        ab.finalize();
-        historyMod.pushMessage({ role: 'assistant', content: answer, steps: _stepHistory });
+      if (!aborted && answer) {
+        historyMod.pushMessage({
+          role: 'assistant',
+          content: answer,
+          speak_events: streamCtrl?.events ?? [],
+        });
         historyMod.saveConversation();
         _updateTitle(answer);
       }
       streaming.clearCurrent();
       setState('idle');
     },
-
     onError: e => {
-      showToast('ReAct error: ' + e.message);
-      _dropStrip();
+      showToast('Speak error: ' + e.message);
+      streamCtrl?.finalize('', true);
       streaming.clearCurrent();
       setState('idle');
     },
   });
+
   streaming.startSession(session);
   session.run().catch(e => {
     showToast('Connection error: ' + e.message);
+    streamCtrl?.finalize('', true);
     streaming.clearCurrent();
     setState('idle');
   });
-}
-
-function _promptApproval(session, reqId, tool, args) {
-  const ok = confirm(`Allow tool "${tool}"?\n\n${JSON.stringify(args, null, 2)}`);
-  session.respond(reqId, ok);
 }
 
 // ── History rebuild ───────────────────────────────────────────────────────────
@@ -214,23 +138,12 @@ export function rebuildFromHistory(messages) {
     if (m.role === 'user') {
       render.appendUserMsg(m.content);
     } else if (m.role === 'assistant') {
-      if (m.steps?.length) {
-        let strip = null;
-        m.steps.forEach(step => {
-          if (!strip) strip = render.appendStepStrip();
-          strip.addPill(step);
-          if (step.output && step.action !== 'finish') {
-            strip = null;
-            const ob = render.appendAssistantMsg();
-            ob.append(step.output);
-            ob.finalize();
-          }
+      if (m.speak_events?.length) {
+        const ctrl = render.appendSpeakStream();
+        m.speak_events.forEach(ev => {
+          ctrl.onEvent(ev.kind, ev.text ?? '', ev.meta ?? {});
         });
-        if (m.content) {
-          const ab = render.appendAssistantMsg();
-          ab.append(m.content);
-          ab.finalize();
-        }
+        ctrl.finalize(m.content);
       } else {
         const ctrl = render.appendAssistantMsg();
         ctrl.append(m.content);
@@ -277,7 +190,6 @@ export async function handleMicClick() {
 
 // ── TTS delegation ────────────────────────────────────────────────────────────
 
-/** Call once from app.js to attach the global TTS click handler. */
 export function initTTSHandler() {
   document.addEventListener('click', async e => {
     const btn = e.target.closest('.msg-tts-btn');
@@ -308,7 +220,6 @@ export function openKBPanel() {
 
 // ── Lifecycle listeners ───────────────────────────────────────────────────────
 
-/** Wire react:state window events → send button UI. */
 export function initLifecycleListeners() {
   window.addEventListener('react:state', e => {
     const { to } = e.detail;

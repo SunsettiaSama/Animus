@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from config.soul.presence.config import PROACTIVE_OPEN_THRESHOLD
 
-from .compose.share_queue import ShareQueueComposer
+from .compose.share import ShareDesireComposer
 
 if TYPE_CHECKING:
     from agent.soul.presence import PresenceService
@@ -48,13 +48,13 @@ class SpeakDriveBridge:
         self._presence = presence
         threshold = share_threshold if share_threshold is not None else PROACTIVE_OPEN_THRESHOLD
         self.share_threshold = threshold
-        self._share = ShareQueueComposer(proactive_threshold=threshold)
+        self._share = ShareDesireComposer(proactive_threshold=threshold)
 
     def snapshot(self, session_id: str) -> SpeakDriveSnapshot:
         if self._presence is None:
             return SpeakDriveSnapshot(session_id=session_id)
         snap = self._presence.snapshot(session_id)
-        share_eval = self._share.evaluate(snap)
+        share_eval = self._share.evaluate_drive(snap)
         interaction = snap.interaction
         return SpeakDriveSnapshot(
             session_id=session_id,
@@ -72,9 +72,9 @@ class SpeakDriveBridge:
             snap = self.snapshot(session_id)
             return SpeakDriveResult(snapshot=snap)
         snap = self._presence.snapshot(session_id)
-        share_eval = self._share.evaluate(snap)
+        share_eval = self._share.evaluate_drive(snap)
         drive_snap = self.snapshot(session_id)
-        should_speak = share_eval.should_share or float(snap.interaction.impulse_level) >= 0.35
+        should_speak = share_eval.should_speak or float(snap.interaction.impulse_level) >= 0.35
         speak_reason = share_eval.summary or snap.interaction.impulse_reason
         return SpeakDriveResult(
             snapshot=drive_snap,

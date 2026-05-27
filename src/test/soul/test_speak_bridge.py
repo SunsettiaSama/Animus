@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from agent.soul.life.experience import LifeExperienceStack
 from agent.soul.presence.service import PresenceService
-from agent.soul.speak.bridge import SpeakDialogueBridge
-from agent.soul.speak.chunk import SpeakFeelingChunk, SpeakTurnChunk, resolve_feeling
+from agent.soul.speak.io import SpeakDialogueBridge
+from agent.soul.speak.session import SpeakFeelingChunk, SpeakTurnChunk, resolve_feeling
 
 
 def test_speak_bridge_records_via_experience_pipeline(tmp_path):

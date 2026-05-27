@@ -53,6 +53,8 @@ export function showEmptyState(mode = 'chat') {
   const icon = mode === 'react' ? '⚡' : '💬';
   const text = mode === 'react'
     ? 'Ask me anything — I will reason step-by-step.'
+    : mode === 'speak'
+    ? 'Say something — Soul will respond in real time.'
     : 'Start a conversation.';
   const el = _msgsEl();
   if (!el) return;
@@ -986,5 +988,257 @@ export function appendStepStrip() {
         _streamingWrap = null;
       }
     },
+  };
+}
+
+// ── Speak stream (Soul tag-based streaming) ───────────────────────────────────
+
+const _SPEAK_TAG = {
+  thought: { tag: 'think', cls: 'speak-thought' },
+  action:  { tag: 'action', cls: 'speak-action' },
+  state:   { tag: 'state', cls: 'speak-state' },
+  observe: { tag: 'observe', cls: 'speak-observe' },
+  anchor:  { tag: 'anchor', cls: 'speak-anchor' },
+  chunk:   { tag: '…', cls: 'speak-chunk' },
+};
+
+function _shortSpeakText(text, max = 28) {
+  const s = String(text ?? '').trim().replace(/\s+/g, ' ');
+  if (!s) return '';
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+function _mkSpeakDetail(label, content, opts = {}) {
+  const d = document.createElement('div');
+  d.className = 'pill-detail hidden';
+  const row = document.createElement('div');
+  row.className = 'pd-row';
+  const lbl = document.createElement('div');
+  lbl.className = 'pd-lbl';
+  lbl.textContent = label;
+  const val = document.createElement('div');
+  val.className = 'pd-val';
+  const str = String(content ?? '').trim();
+  if (str) {
+    if (opts.markdown) renderMarkdown(val, str);
+    else val.textContent = str;
+  }
+  row.append(lbl, val);
+  d.appendChild(row);
+  return d;
+}
+
+/**
+ * Soul Speak 流式消息容器：meta pills（think/action/state/observe）+ 主 speak bubble。
+ */
+export function appendSpeakStream() {
+  const el = _msgsEl();
+  if (!el) return null;
+  el.querySelector('.empty-state')?.remove();
+
+  const div = document.createElement('div');
+  div.className = 'message assistant speak-msg';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-avatar';
+  avatar.textContent = _agentAvatar;
+
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+
+  const metaRow = document.createElement('div');
+  metaRow.className = 'speak-meta strip-pills';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble streaming hidden';
+
+  const timeEl = document.createElement('span');
+  timeEl.className = 'msg-time';
+  timeEl.textContent = _ts();
+
+  const ttsBtn = document.createElement('button');
+  ttsBtn.className = 'msg-tts-btn hidden';
+  ttsBtn.title = 'Play';
+  ttsBtn.innerHTML = `<span class="sound-wave"><b></b><b></b><b></b><b></b><b></b></span>`;
+
+  body.append(metaRow, bubble, timeEl, ttsBtn);
+  div.append(avatar, body);
+  el.appendChild(div);
+  scrollBottom();
+
+  let _speakText = '';
+  let _rafPending = false;
+  let _chunkPill = null;
+  let _events = [];
+
+  function _appendSpeak(chunk) {
+    if (!chunk) return;
+    bubble.classList.remove('hidden');
+    _speakText += chunk;
+    if (!_rafPending) {
+      _rafPending = true;
+      requestAnimationFrame(() => {
+        bubble.textContent = _speakText;
+        scrollBottom();
+        _rafPending = false;
+      });
+    }
+  }
+
+  function _ensureChunkPill() {
+    if (_chunkPill) return _chunkPill;
+    const wrap = document.createElement('div');
+    wrap.className = 'step-pill-wrap';
+    const pill = document.createElement('button');
+    pill.className = 'step-pill streaming speak-chunk';
+    pill.innerHTML =
+      `<span class="pill-step">think</span>` +
+      `<span class="pill-sep">·</span>` +
+      `<span class="pill-dots">···</span>`;
+    wrap.appendChild(pill);
+    metaRow.appendChild(wrap);
+    _chunkPill = { wrap, pill };
+    scrollBottom();
+    return _chunkPill;
+  }
+
+  function _finalizeChunkPill(label, text) {
+    if (!_chunkPill) return;
+    const { wrap, pill } = _chunkPill;
+    _chunkPill = null;
+    const cfg = _SPEAK_TAG.thought;
+    pill.className = `step-pill pill-done ${cfg.cls}`;
+    const short = _shortSpeakText(text);
+    pill.innerHTML =
+      `<span class="pill-step">${cfg.tag}</span>` +
+      `<span class="pill-sep">·</span>` +
+      `<span class="pill-label">${short || label}</span>` +
+      `<span class="pill-check">✓</span>`;
+    if (text && text.trim()) {
+      const detail = _mkSpeakDetail('THINK', text, { markdown: true });
+      wrap.appendChild(detail);
+      pill.addEventListener('click', () => {
+        detail.classList.toggle('hidden');
+        pill.classList.toggle('expanded');
+      });
+    }
+    scrollBottom();
+  }
+
+  function _addTagPill(kind, text, meta = {}) {
+    if (_chunkPill && kind === 'thought') {
+      _finalizeChunkPill('think', text);
+      _events.push({ kind, text, meta });
+      return;
+    }
+    if (_chunkPill) {
+      _chunkPill.wrap.remove();
+      _chunkPill = null;
+    }
+
+    const cfg = _SPEAK_TAG[kind] ?? { tag: kind, cls: '' };
+    const wrap = document.createElement('div');
+    wrap.className = 'step-pill-wrap';
+    const pill = document.createElement('button');
+    pill.className = `step-pill pill-done ${cfg.cls}`;
+
+    let label = cfg.tag;
+    let detailText = text;
+    if (kind === 'state') {
+      label = meta.session_state || text || 'state';
+      detailText = meta.session_state || text;
+    } else if (kind === 'action') {
+      label = _shortSpeakText(text) || 'action';
+    } else if (kind === 'observe') {
+      label = _shortSpeakText(text) || 'observe';
+    } else if (kind === 'thought') {
+      label = _shortSpeakText(text) || 'think';
+    }
+
+    pill.innerHTML =
+      `<span class="pill-step">${cfg.tag}</span>` +
+      `<span class="pill-sep">·</span>` +
+      `<span class="pill-label">${_esc(label)}</span>` +
+      `<span class="pill-check">✓</span>`;
+
+    if (detailText && String(detailText).trim()) {
+      const detail = _mkSpeakDetail(cfg.tag.toUpperCase(), detailText, {
+        markdown: kind === 'thought' || kind === 'observe',
+      });
+      wrap.appendChild(detail);
+      pill.addEventListener('click', () => {
+        detail.classList.toggle('hidden');
+        pill.classList.toggle('expanded');
+      });
+    }
+
+    wrap.appendChild(pill);
+    metaRow.appendChild(wrap);
+    _events.push({ kind, text, meta });
+    scrollBottom();
+  }
+
+  return {
+    el,
+    bubble,
+    onEvent(kind, text, meta = {}) {
+      switch (kind) {
+        case 'chunk':
+          _ensureChunkPill();
+          break;
+        case 'thought':
+          _addTagPill('thought', text, meta);
+          break;
+        case 'action':
+          _addTagPill('action', text, meta);
+          break;
+        case 'state':
+          _addTagPill('state', text, meta);
+          break;
+        case 'observe':
+          _addTagPill('observe', text, meta);
+          break;
+        case 'anchor':
+          _addTagPill('anchor', text, meta);
+          break;
+        case 'speak':
+        case 'segment':
+          if (_chunkPill) {
+            _chunkPill.wrap.remove();
+            _chunkPill = null;
+          }
+          _appendSpeak(text);
+          break;
+        case 'finish':
+          break;
+        case 'error':
+          _addTagPill('action', text || 'error', meta);
+          break;
+        default:
+          break;
+      }
+    },
+    finalize(answer, aborted = false) {
+      if (_chunkPill) {
+        _chunkPill.wrap.remove();
+        _chunkPill = null;
+      }
+      bubble.classList.remove('streaming', 'hidden');
+      const finalText = (answer || _speakText || '').trim();
+      if (aborted) {
+        bubble.innerHTML += '<br><span style="color:var(--text3);font-size:11px">⊘ aborted</span>';
+      } else if (finalText) {
+        _speakText = finalText;
+        renderMarkdown(bubble, finalText);
+        ttsBtn.classList.remove('hidden');
+        ttsBtn.dataset.text = finalText;
+      } else if (!_speakText) {
+        bubble.classList.add('hidden');
+      }
+      if (metaRow.childElementCount === 0) metaRow.classList.add('hidden');
+      scrollBottom();
+    },
+    get speakText() { return _speakText; },
+    get events() { return _events; },
   };
 }

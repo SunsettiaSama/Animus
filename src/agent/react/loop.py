@@ -97,7 +97,7 @@ class ConvLoop:
 
     def post_process(self, session_id: str = "tao") -> None:
         """Tao 上下文 commit + presence dialogue 记账。"""
-        from agent.soul.life.experience.dialogue import commit_turn_and_post_process
+        from agent.adapters.soul_dialogue import commit_turn_and_post_process
 
         commit_turn_and_post_process(
             soul=getattr(self._tao, "_soul", None),

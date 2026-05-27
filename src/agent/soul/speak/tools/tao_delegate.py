@@ -26,7 +26,7 @@ class TaoSpeakToolAdapter:
     ) -> dict[str, Any]:
         if self._tao_handler is None:
             raise RuntimeError("tao_delegate 未接线")
-        from agent.soul.handlers.tao.types import TaoRunRequest
+        from agent.adapters.soul_tao.types import TaoRunRequest
 
         result = self._tao_handler.run(TaoRunRequest(instruction=instruction))
         return {

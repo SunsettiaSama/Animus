@@ -27,6 +27,7 @@ class PersonaSaveRequest(BaseModel):
     reflection_enabled: bool = False
     reflect_interval: int = 3
     max_reflection_chars: int = 400
+    show_evolution_toast: bool = True
 
 
 def _load_persona_cfg_dict() -> dict:
@@ -35,6 +36,16 @@ def _load_persona_cfg_dict() -> dict:
         return {}
     with open(state.persona_cfg_file, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _profile_for_webui(profile) -> dict:
+    """WebUI 表单字段：background / traits / style。"""
+    data = profile.to_dict()
+    facts = data.get("background_facts") or []
+    data["background"] = facts[0] if len(facts) == 1 else "\n".join(facts)
+    data["traits"] = list(data.get("core_traits") or [])
+    data["style"] = data.get("cognitive_style") or ""
+    return data
 
 
 @router.get("/api/persona")
@@ -46,7 +57,7 @@ def get_persona():
     d       = _load_persona_cfg_dict()
     return {
         "enabled":              d.get("enabled", False),
-        "profile":              profile.to_dict(),
+        "profile":              _profile_for_webui(profile),
         "max_profile_chars":    d.get("max_profile_chars", 500),
         "evolution_enabled":    d.get("evolution_enabled", False),
         "evolve_interval":      d.get("evolve_interval", 1),
@@ -56,6 +67,7 @@ def get_persona():
         "reflection_enabled":   d.get("reflection_enabled", False),
         "reflect_interval":     d.get("reflect_interval", 3),
         "max_reflection_chars": d.get("max_reflection_chars", 400),
+        "show_evolution_toast": d.get("show_evolution_toast", True),
     }
 
 
@@ -66,13 +78,13 @@ def save_persona(req: PersonaSaveRequest):
     state = get_state()
     os.makedirs(state.persona_dir, exist_ok=True)
     store = ProfileStore(state.persona_dir)
-    store.save_profile(PersonaProfile(
-        name=req.name,
-        background=req.background,
-        traits=req.traits,
-        values=req.values,
-        style=req.style,
-    ))
+    store.save_profile(PersonaProfile.from_raw({
+        "name":       req.name,
+        "background": req.background,
+        "traits":     req.traits,
+        "values":     req.values,
+        "style":      req.style,
+    }))
     cfg_data = {
         "enabled":              req.enabled,
         "max_profile_chars":    req.max_profile_chars,
@@ -84,6 +96,7 @@ def save_persona(req: PersonaSaveRequest):
         "reflection_enabled":   req.reflection_enabled,
         "reflect_interval":     req.reflect_interval,
         "max_reflection_chars": req.max_reflection_chars,
+        "show_evolution_toast": req.show_evolution_toast,
     }
     with open(state.persona_cfg_file, "w", encoding="utf-8") as f:
         json.dump(cfg_data, f, ensure_ascii=False, indent=2)

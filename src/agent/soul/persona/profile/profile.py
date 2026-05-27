@@ -132,16 +132,29 @@ class PersonaProfile:
 
     @classmethod
     def from_dict(cls, d: dict) -> PersonaProfile:
-        """兼容旧版 profile.json（仅含 name/background/traits/values/style 的简单格式）。"""
+        """兼容 profile.json：新六层字段 + WebUI 旧字段 background/traits/style。"""
+        background_facts = d.get("background_facts")
+        if background_facts is None:
+            bg = d.get("background", "")
+            background_facts = [bg] if bg else []
+
+        core_traits = d.get("core_traits")
+        if core_traits is None:
+            core_traits = d.get("traits", [])
+
+        cognitive_style = d.get("cognitive_style", "")
+        if not cognitive_style:
+            cognitive_style = d.get("style", "")
+
         return cls(
             name=d.get("name", "Assistant"),
-            background_facts=d.get("background_facts", []),
-            core_traits=d.get("core_traits", []),
+            background_facts=background_facts,
+            core_traits=core_traits,
             interpersonal_style=d.get("interpersonal_style", ""),
             emotional_expressiveness=d.get("emotional_expressiveness", ""),
             values=d.get("values", []),
             ethical_stances=d.get("ethical_stances", []),
-            cognitive_style=d.get("cognitive_style", ""),
+            cognitive_style=cognitive_style,
             reasoning_pattern=d.get("reasoning_pattern", ""),
             core_motivation=d.get("core_motivation", ""),
             avoidance_pattern=d.get("avoidance_pattern", ""),

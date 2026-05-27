@@ -476,6 +476,20 @@
     @keyframes pulse-dots { 0%,100%{opacity:1}50%{opacity:.2} }
     .step-pill.streaming .pill-dots { animation: pulse-dots 1.2s ease-in-out infinite; letter-spacing: 1px; }
 
+    /* Soul Speak tag pills — reuse step-pill layout */
+    .speak-meta { margin-bottom: 4px; }
+    .speak-meta.hidden { display: none; }
+    .step-pill.speak-thought { background: #faf5ff; color: #6b21a8; }
+    .step-pill.speak-thought:hover { background: #f3e8ff; }
+    .step-pill.speak-action  { background: #fff7ed; color: #c2410c; }
+    .step-pill.speak-action:hover  { background: #ffedd5; }
+    .step-pill.speak-state   { background: #eff6ff; color: #1d4ed8; }
+    .step-pill.speak-state:hover   { background: #dbeafe; }
+    .step-pill.speak-observe { background: var(--bg3); color: var(--text2); }
+    .step-pill.speak-anchor  { background: #ecfdf5; color: #047857; }
+    .step-pill.speak-chunk.streaming { background: #faf5ff; color: #7e22ce; }
+    .message.speak-msg .msg-bubble { margin-top: 2px; }
+
     /* Expandable detail below a pill */
     .pill-detail {
       background: var(--bg3); border: 1px solid var(--border);
@@ -1424,7 +1438,31 @@
     }
     .mc-badge.on     { background: #dcfce7; color: #16a34a; }
     .mc-badge.off    { background: var(--bg3); color: var(--text3); }
+    .mc-badge.warn   { background: #fef3c7; color: #d97706; }
     .mc-badge.paused { background: #fef3c7; color: #d97706; }
+    .mc-actions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+    .mc-action-btn {
+      font-size: 10px; padding: 2px 6px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--bg2);
+      color: var(--text2); cursor: pointer;
+    }
+    .mc-action-btn:hover { background: var(--bg3); }
+
+    /* Soul readiness panel (Settings → Persona) */
+    .soul-init-panel { margin: 8px 0; }
+    .soul-readiness-summary {
+      display: flex; gap: 16px; font-size: 12px; color: var(--text2); margin-bottom: 8px;
+    }
+    .soul-checklist { display: flex; flex-direction: column; gap: 4px; }
+    .soul-check {
+      display: flex; align-items: baseline; gap: 6px; font-size: 11px;
+      padding: 4px 8px; border-radius: 6px; background: var(--bg2);
+    }
+    .soul-check.ok   { color: #166534; }
+    .soul-check.fail { color: #b91c1c; }
+    .soul-check.opt  { color: var(--text3); }
+    .soul-check-icon { font-weight: 700; min-width: 12px; }
+    .soul-check-hint { color: var(--text3); font-size: 10px; margin-left: auto; }
     .mc-body { flex: 1; font-size: 12.5px; color: var(--text2); line-height: 1.65; }
     .mc-row {
       display: flex;

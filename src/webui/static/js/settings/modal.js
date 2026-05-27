@@ -8,6 +8,7 @@
 import * as tabLlm     from './tabs/llm.js';
 import * as tabMemory  from './tabs/memory.js';
 import * as tabPersona from './tabs/persona.js';
+import * as tabSoul    from './tabs/soul.js';
 import * as tabVoice   from './tabs/voice.js';
 import * as tabSandbox from './tabs/sandbox.js';
 import * as tabBot     from './tabs/bot.js';
@@ -19,6 +20,7 @@ const _TABS = {
   model:     tabLlm,
   memory:    tabMemory,
   persona:   tabPersona,
+  soul:      tabSoul,
   voice:     tabVoice,
   sandbox:   tabSandbox,
   bot:       tabBot,

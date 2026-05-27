@@ -211,3 +211,81 @@ export function abortCurrent() {
 export function clearCurrent() {
   _current = null;
 }
+
+// ── Speak session（Soul 流式推送）────────────────────────────────────────────
+
+/**
+ * @param {string} question
+ * @param {string} genId
+ * @param {object} [opts]
+ * @param {Function} [opts.onEvent]   (kind, text, meta) => void
+ * @param {Function} [opts.onFinish]  (payload) => void
+ * @param {Function} [opts.onError]   (err: Error) => void
+ */
+export class SpeakSession extends BaseSession {
+  constructor(question, genId, opts = {}) {
+    super(PATHS.speak.run, genId);
+    this._question = question;
+    this._sessionId = opts.sessionId ?? 'webui';
+    this._onEvent = opts.onEvent ?? (() => {});
+    this._onFinish = opts.onFinish ?? (() => {});
+    this._onError = opts.onError ?? (() => {});
+    this._aborted = false;
+  }
+
+  async run() {
+    await this._open();
+    this._ws.send(JSON.stringify({
+      question: this._question,
+      gen_id: this._genId,
+      session_id: this._sessionId,
+    }));
+
+    try {
+      await new Promise((resolve, reject) => {
+        this._ws.onmessage = evt => {
+          let msg;
+          try {
+            msg = JSON.parse(evt.data);
+          } catch (e) {
+            reject(new Error(`Malformed WebSocket frame: ${e.message}`));
+            return;
+          }
+
+          if (msg.type === 'speak_event') {
+            this._onEvent(msg.kind, msg.text ?? '', msg.meta ?? {});
+            return;
+          }
+
+          if (msg.type === 'finish') {
+            this._aborted = Boolean(msg.aborted);
+            this._onFinish(msg);
+            resolve();
+            return;
+          }
+
+          if (msg.type === 'error') {
+            reject(new Error(msg.message ?? 'Speak error'));
+          }
+        };
+        this._ws.onerror = () => reject(new Error('WebSocket connection error'));
+        this._ws.onclose = e => {
+          if (e.wasClean || e.code === 1000 || e.code === 1005) {
+            resolve();
+          } else {
+            reject(new Error(`Connection dropped (code ${e.code})`));
+          }
+        };
+      });
+    } catch (e) {
+      this._onError(e);
+    }
+  }
+
+  abort() {
+    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+      this._aborted = true;
+      this._ws.send(JSON.stringify({ type: 'abort', gen_id: this._genId }));
+    }
+  }
+}
