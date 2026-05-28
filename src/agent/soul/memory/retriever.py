@@ -15,7 +15,7 @@ from agent.soul.memory.embed_text import (
 from agent.soul.memory.unit import MemoryTier, MemoryUnit, Valence
 
 if TYPE_CHECKING:
-    from agent.soul.memory.long_term.manager import LongTermMemoryManager
+    from agent.soul.memory.ports import GraphNodeStore
 
 
 # ── Backend protocols（解耦向量检索依赖）─────────────────────────────────────
@@ -159,7 +159,7 @@ class MemoryRetriever:
 
     def __init__(
         self,
-        store: LongTermMemoryManager,
+        store: GraphNodeStore,
         recent_half_life_days: float = 3.0,
         half_life_days: float = 30.0,
         embedder: EmbedderBackend | None = None,

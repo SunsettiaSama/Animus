@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 SpeakStreamKind = Literal[
     "chunk",
+    "tag",
     "thought",
     "speak",
     "action",

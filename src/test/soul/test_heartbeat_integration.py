@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+
+from agent.soul.heartbeat.console_log import configure_console_log
 from agent.soul.heartbeat.module import HeartbeatModule
 from runtime.scheduler.heartbeat_config import HeartbeatConfig
 
@@ -20,6 +23,25 @@ def test_bind_heartbeat_shares_orchestrator(soul_service, soul_temp_dir):
 
     soul_service.stop()
     assert soul_service.orchestrator is None
+
+
+def test_console_log_disabled_suppresses_stdout(caplog, soul_temp_dir, soul_service):
+    configure_console_log(True)
+    caplog.set_level(logging.DEBUG)
+    hb = HeartbeatModule(
+        cfg=HeartbeatConfig(
+            active_hours_start="",
+            active_hours_end="",
+            console_log_enabled=False,
+        ),
+        scheduler_dir=soul_temp_dir,
+        llm_cfg_path="config/llm_core/config.yaml",
+        soul_config=soul_service.config,
+    )
+    hb.set_soul_service(soul_service)
+    hb.tick()
+    assert not any("[Heartbeat]" in r.message for r in caplog.records)
+    configure_console_log(True)
 
 
 def test_tick_skips_when_soul_not_running(soul_service, soul_temp_dir):

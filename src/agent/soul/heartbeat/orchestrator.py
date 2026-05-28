@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from agent.soul.heartbeat.console_log import hb_debug
 from config.soul.config import SoulConfig
 from agent.soul.handlers.api.actions import LifeAction, MemoryAction, PersonaAction
 from agent.soul.presence.actions import PresenceAction
@@ -95,7 +96,8 @@ class HeartbeatOrchestrator:
                 if result.ok:
                     self._checklist.mark_run(item, now_mono, now_dt)
             results.append(result)
-            logger.debug(
+            hb_debug(
+                logger,
                 "[HeartbeatOrchestrator] %s/%s ok=%s async=%s",
                 item.domain,
                 item.action,

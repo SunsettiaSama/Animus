@@ -9,6 +9,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Callable
 
+from agent.soul.heartbeat.console_log import hb_error, hb_info
 from runtime.scheduler.config import SchedulerConfig
 from runtime.scheduler.store import TaskStore
 from runtime.scheduler.task import DeliveryMode, ScheduledTask, TaskStatus
@@ -207,7 +208,7 @@ class TaskRunner:
             try:
                 await asyncio.to_thread(_nfn, task, answer)
             except Exception as exc:
-                logger.error("[TaskRunner] notify_fn error for task %s: %s", task.id[:8], exc)
+                hb_error(logger, "[TaskRunner] notify_fn error for task %s: %s", task.id[:8], exc)
         elif effective_delivery == DeliveryMode.store_only and self._long_term is not None:
             _ltm = self._long_term
             _lock = self._ltm_lock
@@ -222,7 +223,7 @@ class TaskRunner:
             await asyncio.to_thread(_store_only)
 
     def _handle_failure(self, task: ScheduledTask, store: TaskStore, exc: BaseException) -> None:
-        logger.error("[TaskRunner] task %s (%s) failed: %s", task.id[:8], task.name, exc)
+        hb_error(logger, "[TaskRunner] task %s (%s) failed: %s", task.id[:8], task.name, exc)
         if task.retry_count < task.max_retries:
             next_run = datetime.now(timezone.utc) + timedelta(seconds=task.retry_delay_seconds)
             store.update(
@@ -231,7 +232,8 @@ class TaskRunner:
                 next_run_at=next_run.isoformat(),
                 retry_count=task.retry_count + 1,
             )
-            logger.info(
+            hb_info(
+                logger,
                 "[TaskRunner] task %s rescheduled (attempt %d/%d) at %s",
                 task.id[:8], task.retry_count + 1, task.max_retries, next_run.isoformat(),
             )

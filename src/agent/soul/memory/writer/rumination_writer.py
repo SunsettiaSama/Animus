@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agent.soul.memory.long_term.manager import LongTermMemoryManager
+from agent.soul.memory.ports import GraphNodeStore
 from agent.soul.memory.unit import MemoryTier, MemoryUnit, ReconstructiveMemory, Valence
 
 if TYPE_CHECKING:
@@ -86,7 +86,7 @@ class RuminationWriter:
     def __init__(
         self,
         llm: BaseLLM,
-        store: LongTermMemoryManager,
+        store: GraphNodeStore,
         on_written: Callable[[MemoryUnit], None] | None = None,
     ) -> None:
         self._llm = llm

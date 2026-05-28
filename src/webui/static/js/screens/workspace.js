@@ -143,7 +143,7 @@ export function rebuildFromHistory(messages) {
         m.speak_events.forEach(ev => {
           ctrl.onEvent(ev.kind, ev.text ?? '', ev.meta ?? {});
         });
-        ctrl.finalize(m.content);
+        ctrl.finalize(m.content, false);
       } else {
         const ctrl = render.appendAssistantMsg();
         ctrl.append(m.content);

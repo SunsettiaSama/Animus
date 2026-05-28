@@ -23,6 +23,9 @@ class HeartbeatConfig:
     inject_timezone:              str   = ""
     preflight_instruction:        str   = ""
 
+    # 主进程 stdout/stderr 是否输出 heartbeat 链路日志（tick_log.jsonl 不受影响）
+    console_log_enabled:          bool  = True
+
     @classmethod
     def from_dict(cls, d: dict) -> HeartbeatConfig:
         _check = int(d.get("check_interval_sec", d.get("interval", 300)))
@@ -43,6 +46,7 @@ class HeartbeatConfig:
             inject_window_end=d.get("inject_window_end", ""),
             inject_timezone=d.get("inject_timezone", ""),
             preflight_instruction=d.get("preflight_instruction", ""),
+            console_log_enabled=bool(d.get("console_log_enabled", True)),
         )
 
     def to_dict(self) -> dict:
@@ -62,4 +66,5 @@ class HeartbeatConfig:
             "inject_window_end":            self.inject_window_end,
             "inject_timezone":              self.inject_timezone,
             "preflight_instruction":        self.preflight_instruction,
+            "console_log_enabled":          self.console_log_enabled,
         }

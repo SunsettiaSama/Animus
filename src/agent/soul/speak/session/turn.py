@@ -28,6 +28,8 @@ class SessionTurnHost:
     outbound_stream: SpeakStreamChannel
     record_turn: Callable[[SpeakTurnChunk], Any]
     schedule_compose: Callable[[str], None]
+    on_memory_activation: Callable[[str, str, str], None] | None = None
+    resolve_interactor_id: Callable[[str], str] | None = None
     continue_share_handoff: Callable[..., tuple[str, list[SpeakStreamEvent], "SpeakAgentOutput"] | None] | None = None
     continue_recall_handoff: Callable[..., tuple[str, list[SpeakStreamEvent], "SpeakAgentOutput"] | None] | None = None
     compose_from_queue: Callable[..., SpeakPromptBundle | None] | None = None
@@ -132,6 +134,12 @@ def run_session_turn(
     manager.begin_push(session_id, user_text)
     partial_output = ""
     try:
+        interactor_id = session_id
+        if host.resolve_interactor_id is not None:
+            interactor_id = host.resolve_interactor_id(session_id)
+        if host.on_memory_activation is not None:
+            host.on_memory_activation(session_id, interactor_id, user_text)
+
         bundle = host.compose_bundle(session_id, user_text, mode=mode)
         all_events: list[SpeakStreamEvent] = []
         answer = ""

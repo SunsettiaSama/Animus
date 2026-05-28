@@ -40,6 +40,18 @@ class SpeakSessionRegistry:
         self._now_fn = now_fn or _utcnow
         self._on_temporal_expire = on_temporal_expire
         self._records: dict[str, SpeakSessionRecord] = {}
+        self._interactors: dict[str, str] = {}
+
+    def bind_interactor(self, session_id: str, interactor_id: str) -> None:
+        resolved = interactor_id.strip() or session_id.strip()
+        if resolved:
+            self._interactors[session_id] = resolved
+
+    def get_interactor(self, session_id: str) -> str:
+        bound = self._interactors.get(session_id, "").strip()
+        if bound:
+            return bound
+        return session_id.strip() or "default"
 
     @property
     def lifecycle(self) -> SessionLifecyclePort | None:

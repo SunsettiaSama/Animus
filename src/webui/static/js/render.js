@@ -1029,7 +1029,7 @@ function _mkSpeakDetail(label, content, opts = {}) {
 }
 
 /**
- * Soul Speak 流式消息容器：meta pills（think/action/state/observe）+ 主 speak bubble。
+ * Soul Speak 流式消息容器：按事件顺序逐条渲染，speak/action 各为独立 bubble。
  */
 export function appendSpeakStream() {
   const el = _msgsEl();
@@ -1046,11 +1046,8 @@ export function appendSpeakStream() {
   const body = document.createElement('div');
   body.className = 'msg-body';
 
-  const metaRow = document.createElement('div');
-  metaRow.className = 'speak-meta strip-pills';
-
-  const bubble = document.createElement('div');
-  bubble.className = 'msg-bubble streaming hidden';
+  const streamCol = document.createElement('div');
+  streamCol.className = 'speak-stream';
 
   const timeEl = document.createElement('span');
   timeEl.className = 'msg-time';
@@ -1061,28 +1058,95 @@ export function appendSpeakStream() {
   ttsBtn.title = 'Play';
   ttsBtn.innerHTML = `<span class="sound-wave"><b></b><b></b><b></b><b></b><b></b></span>`;
 
-  body.append(metaRow, bubble, timeEl, ttsBtn);
+  body.append(streamCol, timeEl, ttsBtn);
   div.append(avatar, body);
   el.appendChild(div);
   scrollBottom();
 
-  let _speakText = '';
-  let _rafPending = false;
+  let _speakParts = [];
   let _chunkPill = null;
   let _events = [];
+  let _lastBubble = null;
+  let _openBubble = null;
 
-  function _appendSpeak(chunk) {
-    if (!chunk) return;
-    bubble.classList.remove('hidden');
-    _speakText += chunk;
-    if (!_rafPending) {
-      _rafPending = true;
-      requestAnimationFrame(() => {
-        bubble.textContent = _speakText;
-        scrollBottom();
-        _rafPending = false;
-      });
+  function _clearChunkPill() {
+    if (!_chunkPill) return;
+    _chunkPill.wrap.remove();
+    _chunkPill = null;
+  }
+
+  function _ensureOpenBubble(kind) {
+    if (_openBubble && _openBubble.dataset.kind === kind) return _openBubble;
+    if (_lastBubble) _lastBubble.classList.remove('streaming');
+    const bubble = document.createElement('div');
+    bubble.className = kind === 'action'
+      ? 'msg-bubble speak-action-bubble streaming'
+      : 'msg-bubble speak-chunk-bubble streaming';
+    bubble.dataset.kind = kind;
+    streamCol.appendChild(bubble);
+    _lastBubble = bubble;
+    _openBubble = bubble;
+    scrollBottom();
+    return bubble;
+  }
+
+  function _finalizeOpenBubble(kind) {
+    if (!_openBubble || _openBubble.dataset.kind !== kind) return;
+    const text = _openBubble.textContent.trim();
+    _openBubble.classList.remove('streaming');
+    if (text) {
+      if (kind === 'speak') _speakParts.push(text);
+      _events.push({ kind, text, meta: {} });
+    } else {
+      _openBubble.remove();
+      if (_lastBubble === _openBubble) _lastBubble = null;
     }
+    _openBubble = null;
+  }
+
+  function _handleStreamChunk(kind, text, meta = {}) {
+    const phase = meta.phase;
+    if (phase === 'delta') {
+      const bubble = _ensureOpenBubble(kind);
+      bubble.textContent += text;
+      scrollBottom();
+      return;
+    }
+    if (phase === 'end') {
+      if (text) {
+        if (_openBubble && _openBubble.dataset.kind === kind) {
+          if (!_openBubble.textContent) _openBubble.textContent = text;
+        } else {
+          _appendChunkBubble(kind, text);
+          return;
+        }
+      }
+      _finalizeOpenBubble(kind);
+      scrollBottom();
+      return;
+    }
+    _appendChunkBubble(kind, text);
+  }
+
+  function _appendChunkBubble(kind, text) {
+    const chunk = String(text ?? '').trim();
+    if (!chunk) return;
+    _clearChunkPill();
+
+    if (_lastBubble) _lastBubble.classList.remove('streaming');
+
+    const bubble = document.createElement('div');
+    bubble.className = kind === 'action'
+      ? 'msg-bubble speak-action-bubble streaming'
+      : 'msg-bubble speak-chunk-bubble streaming';
+    bubble.textContent = chunk;
+    streamCol.appendChild(bubble);
+    _lastBubble = bubble;
+
+    const eventKind = kind === 'segment' ? 'speak' : kind;
+    if (eventKind === 'speak') _speakParts.push(chunk);
+    _events.push({ kind: eventKind, text: chunk, meta: {} });
+    scrollBottom();
   }
 
   function _ensureChunkPill() {
@@ -1096,7 +1160,7 @@ export function appendSpeakStream() {
       `<span class="pill-sep">·</span>` +
       `<span class="pill-dots">···</span>`;
     wrap.appendChild(pill);
-    metaRow.appendChild(wrap);
+    streamCol.appendChild(wrap);
     _chunkPill = { wrap, pill };
     scrollBottom();
     return _chunkPill;
@@ -1122,19 +1186,16 @@ export function appendSpeakStream() {
         pill.classList.toggle('expanded');
       });
     }
+    _events.push({ kind: 'thought', text, meta: {} });
     scrollBottom();
   }
 
   function _addTagPill(kind, text, meta = {}) {
     if (_chunkPill && kind === 'thought') {
       _finalizeChunkPill('think', text);
-      _events.push({ kind, text, meta });
       return;
     }
-    if (_chunkPill) {
-      _chunkPill.wrap.remove();
-      _chunkPill = null;
-    }
+    _clearChunkPill();
 
     const cfg = _SPEAK_TAG[kind] ?? { tag: kind, cls: '' };
     const wrap = document.createElement('div');
@@ -1147,8 +1208,6 @@ export function appendSpeakStream() {
     if (kind === 'state') {
       label = meta.session_state || text || 'state';
       detailText = meta.session_state || text;
-    } else if (kind === 'action') {
-      label = _shortSpeakText(text) || 'action';
     } else if (kind === 'observe') {
       label = _shortSpeakText(text) || 'observe';
     } else if (kind === 'thought') {
@@ -1173,16 +1232,23 @@ export function appendSpeakStream() {
     }
 
     wrap.appendChild(pill);
-    metaRow.appendChild(wrap);
+    streamCol.appendChild(wrap);
     _events.push({ kind, text, meta });
     scrollBottom();
   }
 
   return {
     el,
-    bubble,
     onEvent(kind, text, meta = {}) {
       switch (kind) {
+        case 'tag':
+          _clearChunkPill();
+          if (meta.tag === 'think') {
+            _ensureChunkPill();
+          } else if (meta.tag === 'speak' || meta.tag === 'action') {
+            _ensureOpenBubble(meta.tag);
+          }
+          break;
         case 'chunk':
           _ensureChunkPill();
           break;
@@ -1190,7 +1256,7 @@ export function appendSpeakStream() {
           _addTagPill('thought', text, meta);
           break;
         case 'action':
-          _addTagPill('action', text, meta);
+          _handleStreamChunk('action', text, meta);
           break;
         case 'state':
           _addTagPill('state', text, meta);
@@ -1203,42 +1269,40 @@ export function appendSpeakStream() {
           break;
         case 'speak':
         case 'segment':
-          if (_chunkPill) {
-            _chunkPill.wrap.remove();
-            _chunkPill = null;
-          }
-          _appendSpeak(text);
+          _handleStreamChunk('speak', text, meta);
           break;
         case 'finish':
           break;
         case 'error':
-          _addTagPill('action', text || 'error', meta);
+          _appendChunkBubble('action', text || 'error');
           break;
         default:
           break;
       }
     },
     finalize(answer, aborted = false) {
-      if (_chunkPill) {
-        _chunkPill.wrap.remove();
-        _chunkPill = null;
+      _clearChunkPill();
+      if (_openBubble) _finalizeOpenBubble(_openBubble.dataset.kind);
+      if (_lastBubble) _lastBubble.classList.remove('streaming');
+
+      const finalText = (_speakParts.join('') || String(answer ?? '')).trim();
+      if (!_speakParts.length && finalText && !aborted) {
+        _appendChunkBubble('speak', finalText);
+        if (_lastBubble) _lastBubble.classList.remove('streaming');
       }
-      bubble.classList.remove('streaming', 'hidden');
-      const finalText = (answer || _speakText || '').trim();
+
       if (aborted) {
-        bubble.innerHTML += '<br><span style="color:var(--text3);font-size:11px">⊘ aborted</span>';
+        const note = document.createElement('div');
+        note.className = 'speak-abort-note';
+        note.textContent = '⊘ aborted';
+        streamCol.appendChild(note);
       } else if (finalText) {
-        _speakText = finalText;
-        renderMarkdown(bubble, finalText);
         ttsBtn.classList.remove('hidden');
         ttsBtn.dataset.text = finalText;
-      } else if (!_speakText) {
-        bubble.classList.add('hidden');
       }
-      if (metaRow.childElementCount === 0) metaRow.classList.add('hidden');
       scrollBottom();
     },
-    get speakText() { return _speakText; },
+    get speakText() { return _speakParts.join(''); },
     get events() { return _events; },
   };
 }

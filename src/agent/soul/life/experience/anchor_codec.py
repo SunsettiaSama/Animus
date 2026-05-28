@@ -24,6 +24,7 @@ class AnchorUnitContext:
 
     direction: InteractionDirection
     session_id: str = "tao"
+    interactor_id: str = ""
     proactive_intent_id: str = ""
     interaction_id: str = ""
 
@@ -31,6 +32,7 @@ class AnchorUnitContext:
         return {
             "direction": self.direction.value,
             "session_id": self.session_id,
+            "interactor_id": self.interactor_id,
             "proactive_intent_id": self.proactive_intent_id,
             "interaction_id": self.interaction_id,
         }
@@ -40,6 +42,7 @@ class AnchorUnitContext:
         return cls(
             direction=InteractionDirection(d.get("direction", InteractionDirection.inbound.value)),
             session_id=str(d.get("session_id", "tao")),
+            interactor_id=str(d.get("interactor_id", "")),
             proactive_intent_id=str(d.get("proactive_intent_id", "")),
             interaction_id=str(d.get("interaction_id", "")),
         )

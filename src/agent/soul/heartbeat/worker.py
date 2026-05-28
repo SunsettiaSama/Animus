@@ -5,6 +5,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from .checklist import ChecklistItem
+from .console_log import hb_info
 
 if TYPE_CHECKING:
     from .orchestrator import HeartbeatOrchestrator
@@ -33,7 +34,7 @@ class SoulEvolutionWorker:
         t = threading.Thread(target=self._run, name="soul-evolution", daemon=True)
         t.start()
         self._thread = t
-        logger.info("[SoulEvolutionWorker] started")
+        hb_info(logger, "[SoulEvolutionWorker] started")
 
     def stop(self) -> None:
         self._stop.set()
@@ -44,7 +45,7 @@ class SoulEvolutionWorker:
         with self._lock:
             self._tasks.clear()
             self._pending_ids.clear()
-        logger.info("[SoulEvolutionWorker] stopped")
+        hb_info(logger, "[SoulEvolutionWorker] stopped")
 
     def status(self) -> dict:
         with self._lock:
@@ -79,13 +80,15 @@ class SoulEvolutionWorker:
                 self._run_one(item)
 
     def _run_one(self, item: ChecklistItem) -> None:
-        logger.info(
+        hb_info(
+            logger,
             "[SoulEvolutionWorker] execute %s/%s",
             item.domain,
             item.action,
         )
         result = self._orchestrator.execute_item(item)
-        logger.info(
+        hb_info(
+            logger,
             "[SoulEvolutionWorker] done %s/%s ok=%s",
             item.domain,
             item.action,

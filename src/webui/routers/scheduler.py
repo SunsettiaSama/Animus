@@ -347,6 +347,8 @@ def scheduler_config_set(req: SchedulerConfigPatch):
         for k, v in req.heartbeat.items():
             if hasattr(hb, k):
                 setattr(hb, k, type(getattr(hb, k))(v))
+        if eng.heartbeat is not None and hasattr(eng.heartbeat, "apply_console_log_config"):
+            eng.heartbeat.apply_console_log_config()
 
     # Comm rate limits
     if req.comm_notify_rpm is not None:

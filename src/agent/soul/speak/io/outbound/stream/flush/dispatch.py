@@ -7,6 +7,7 @@ from typing import Literal
 from .....tools.anchor import ANCHOR_ENABLED
 from ..events import SpeakStreamEvent
 from ..parse.tags import SpeakTagBlock
+from ..protocol.tags import FRONTEND_SUPPRESSED_TAGS
 from .segment import split_sentences
 
 SpeakFlushMode = Literal["segment", "token_batch"]
@@ -38,6 +39,8 @@ class SpeakTagFlushDispatcher:
         session_id: str,
         block: SpeakTagBlock,
     ) -> Iterator[SpeakStreamEvent]:
+        if block.kind in FRONTEND_SUPPRESSED_TAGS:
+            return
         kind = _STREAM_KIND_BY_TAG.get(block.kind)
         if kind is None:
             return

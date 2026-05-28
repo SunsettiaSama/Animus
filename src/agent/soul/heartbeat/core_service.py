@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agent.soul.heartbeat.console_log import hb_debug, hb_info, hb_warning
 from agent.soul.heartbeat.inject_mailbox import (
     HeartbeatInjectMailbox,
     get_heartbeat_mailbox,
@@ -84,7 +85,8 @@ class HeartbeatCoreService:
             daemon=True,
         )
         self._thread.start()
-        logger.info(
+        hb_info(
+            logger,
             "[HeartbeatCore] started — poll=%ds mode=%s",
             self._cfg.core_service_poll_interval_sec,
             self._cfg.inject_window_mode,
@@ -97,7 +99,7 @@ class HeartbeatCoreService:
             self._thread = None
         if self._register_global and get_heartbeat_mailbox() is self._mailbox:
             set_global_mailbox(None)
-        logger.info("[HeartbeatCore] stopped")
+        hb_info(logger, "[HeartbeatCore] stopped")
 
     def _run(self) -> None:
         interval = max(5, int(self._cfg.core_service_poll_interval_sec))
@@ -117,7 +119,7 @@ class HeartbeatCoreService:
         if not window_ok:
             with self._deferred_lock:
                 self._deferred = text
-            logger.debug("[HeartbeatCore] inject deferred — outside user inject window")
+            hb_debug(logger, "[HeartbeatCore] inject deferred — outside user inject window")
             return
         mode = (self._cfg.inject_window_mode or "user").strip().lower()
         if mode == "agent":
@@ -128,7 +130,7 @@ class HeartbeatCoreService:
             else:
                 with self._deferred_lock:
                     self._deferred = text
-                logger.debug("[HeartbeatCore] inject deferred — agent chose DEFER")
+                hb_debug(logger, "[HeartbeatCore] inject deferred — agent chose DEFER")
             return
         self._mailbox.offer(text)
         with self._deferred_lock:
@@ -148,7 +150,7 @@ class HeartbeatCoreService:
         self._mailbox.offer(pending)
         with self._deferred_lock:
             self._deferred = None
-        logger.debug("[HeartbeatCore] flushed deferred inject")
+        hb_debug(logger, "[HeartbeatCore] flushed deferred inject")
 
     def _within_inject_window(self) -> bool:
         start, end, tz = _effective_inject_window(self._cfg)
@@ -166,7 +168,7 @@ class HeartbeatCoreService:
         engine = self._heartbeat._scheduler_engine
         scheduler_cfg = self._heartbeat._scheduler_cfg
         if engine is None or scheduler_cfg is None:
-            logger.warning("[HeartbeatCore] preflight skipped — scheduler_engine not wired")
+            hb_warning(logger, "[HeartbeatCore] preflight skipped — scheduler_engine not wired")
             return
         from agent.profile import SubAgentProfile
         from agent.runner import SubAgentRunner

@@ -32,6 +32,7 @@ class DialogueSession:
     direction: InteractionDirection = InteractionDirection.inbound
     outbound_message: str = ""
     proactive_intent_id: str = ""
+    interactor_id: str = ""
     turns: list[DialogueTurn] = field(default_factory=list)
 
 
@@ -90,6 +91,7 @@ def unit_from_dialogue_session(
     stamp_anchor_context(unit, AnchorUnitContext(
         direction=session.direction,
         session_id=session.session_id,
+        interactor_id=session.interactor_id.strip() or session.session_id,
         proactive_intent_id=session.proactive_intent_id,
     ))
     return unit

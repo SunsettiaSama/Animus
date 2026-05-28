@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ...state import PresenceState
 from ..interaction import PresenceInteraction
@@ -20,8 +20,14 @@ class WakeResult:
     applied: bool = True
     source: str = ""
     reason: str = ""
-    narratives: dict[str, str] | None = None
-    notes: list[str] | None = None
+    narratives: dict[str, str] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.narratives is None:
+            self.narratives = {}
+        if self.notes is None:
+            self.notes = []
 
 
 @dataclass

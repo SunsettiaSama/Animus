@@ -98,6 +98,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._compose_runner = SpeakComposeRunner()
         self._inbound_compose = InboundComposeGateway(self._compose_runner)
         self._inbound_memory = InboundMemoryGateway()
+        self._on_memory_activation = None
         self._inbound = inbound
         self._outbound = outbound
         self._reply_style = reply_style or SpeakReplyStyle()
@@ -249,6 +250,12 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
 
     def attach_memory_recall(self, recall_fn) -> None:
         self._inbound_memory.attach_recall(recall_fn)
+
+    def attach_memory_activation(self, activation_fn) -> None:
+        self._on_memory_activation = activation_fn
+
+    def bind_interactor(self, session_id: str, interactor_id: str) -> None:
+        self._session_bridge.registry.bind_interactor(session_id, interactor_id)
 
     def _on_compose_prepare_request(self, request: ComposePrepareRequest) -> None:
         if self._composer is None:
@@ -622,6 +629,8 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             outbound_stream=self._outbound_stream,
             record_turn=self.record_turn,
             schedule_compose=lambda sid: self._schedule_compose_prepare(sid, mode=item.mode),
+            on_memory_activation=self._on_memory_activation,
+            resolve_interactor_id=lambda sid: self._session_bridge.registry.get_interactor(sid),
             continue_share_handoff=self._continue_share_handoff,
             continue_recall_handoff=self._continue_recall_handoff,
             compose_from_queue=self._compose_from_queue,

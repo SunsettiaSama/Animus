@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from runtime.scheduler.heartbeat_config import HeartbeatConfig
 from config.soul.config import SoulConfig
 from agent.soul.heartbeat.checklist import ChecklistRegistry, default_checklist
+from agent.soul.heartbeat.console_log import configure_console_log, hb_debug
 from agent.soul.heartbeat.orchestrator import HeartbeatOrchestrator
 from agent.soul.heartbeat.tick_log import HeartbeatTickLog, HeartbeatTickResult
 from agent.soul.heartbeat.worker import SoulEvolutionWorker
@@ -32,6 +33,7 @@ class HeartbeatModule:
         soul_config: SoulConfig | None = None,
     ) -> None:
         self._cfg = cfg
+        configure_console_log(cfg.console_log_enabled)
         self._soul_config = soul_config or SoulConfig.load_default()
         self._scheduler_dir = scheduler_dir
         self._llm_cfg_path = llm_cfg_path
@@ -58,12 +60,6 @@ class HeartbeatModule:
         with self._lock:
             self._force_tick = False
 
-    def tick(self) -> HeartbeatTickResult:
-        t0 = time.monotonic()
-
-        with self._lock:
-            self._force_tick = False
-
         in_active = self._in_active_hours()
         if self._soul is not None and self._soul.is_running:
             if not in_active:
@@ -75,13 +71,13 @@ class HeartbeatModule:
         if not in_active:
             result = HeartbeatTickResult(outcome="skip", reason="outside active hours (sleeping)")
             self._tick_log.append(result)
-            logger.debug("[Heartbeat] skip — outside active hours (sleeping)")
+            hb_debug(logger, "[Heartbeat] skip — outside active hours (sleeping)")
             return result
 
         if self._soul is None or not self._soul.is_running:
             result = HeartbeatTickResult(outcome="skip", reason="soul not running")
             self._tick_log.append(result)
-            logger.debug("[Heartbeat] skip — soul not running")
+            hb_debug(logger, "[Heartbeat] skip — soul not running")
             return result
 
         results = self._orchestrator.run_due()
@@ -96,8 +92,11 @@ class HeartbeatModule:
         reason = " ".join(parts)
         result = HeartbeatTickResult(outcome="ok", reason=reason, duration_ms=duration_ms)
         self._tick_log.append(result)
-        logger.debug("[Heartbeat] ok — %s (%dms)", reason or "idle", duration_ms)
+        hb_debug(logger, "[Heartbeat] ok — %s (%dms)", reason or "idle", duration_ms)
         return result
+
+    def apply_console_log_config(self) -> None:
+        configure_console_log(self._cfg.console_log_enabled)
 
     def set_soul_service(self, soul: SoulService | None) -> None:
         self._soul = soul

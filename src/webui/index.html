@@ -1430,6 +1430,13 @@
             <label>心跳间隔（秒，0 = 禁用）</label>
             <input id="s-hb-interval" type="number" min="0" step="60" value="1800" style="width:100px" />
           </div>
+          <div class="form-group">
+            <label class="toggle-label">
+              <input id="s-hb-console-log" type="checkbox" checked />
+              主进程控制台日志
+            </label>
+            <span class="toggle-desc">关闭后 heartbeat 链路不再向 stdout 打日志；Tick 历史文件仍记录。</span>
+          </div>
         </div>
 
         <!-- ── 活跃时段 ── -->

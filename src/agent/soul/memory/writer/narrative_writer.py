@@ -8,9 +8,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.soul.memory.unit import MemoryTier, NarrativeMemory, Valence
 
+from agent.soul.memory.ports import GraphNodeStore
+
 if TYPE_CHECKING:
     from infra.llm import BaseLLM
-    from agent.soul.memory.long_term.manager import LongTermMemoryManager
     from agent.soul.memory.unit import MemoryUnit
 
 
@@ -93,7 +94,7 @@ class NarrativeWriter:
     def __init__(
         self,
         llm: BaseLLM,
-        store: LongTermMemoryManager,
+        store: GraphNodeStore,
         on_written: Callable[[MemoryUnit], None] | None = None,
     ) -> None:
         self._llm = llm

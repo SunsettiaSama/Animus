@@ -7,6 +7,7 @@ from ....llm.engine import SpeakLLMEngine
 from .events import SpeakStreamEvent
 from .flush import SpeakFlushChannels, SpeakFlushMode
 from .parse import parse_agent_output
+from .parse.incremental import IncrementalTagStreamParser
 
 
 @dataclass
@@ -39,19 +40,51 @@ class SpeakStreamPipeline:
         system: str = "",
         context: str = "",
     ) -> Iterator[SpeakStreamEvent]:
-        channels = self._flush_channels()
         full_parts: list[str] = []
 
-        for token in engine.stream(user_text, system=system, context=context):
-            full_parts.append(token)
+        if self.flush_mode == "segment":
+            incremental = IncrementalTagStreamParser(
+                min_segment_chars=self.min_segment_chars,
+                emit_fn=self._emit,
+            )
+            for token in engine.stream(user_text, system=system, context=context):
+                full_parts.append(token)
+                yield from incremental.push(session_id, token)
+            yield from incremental.flush(session_id)
+        else:
+            channels = self._flush_channels()
+            for token in engine.stream(user_text, system=system, context=context):
+                full_parts.append(token)
+                if channels.token_batch is not None:
+                    yield from channels.token_batch.push(session_id, token)
             if channels.token_batch is not None:
-                yield from channels.token_batch.push(session_id, token)
-
-        if channels.token_batch is not None:
-            yield from channels.token_batch.drain(session_id)
+                yield from channels.token_batch.drain(session_id)
 
         full_text = "".join(full_parts).strip()
-        yield from self.emit_parsed_output(session_id, full_text, channels=channels)
+        yield from self.emit_finish_only(session_id, full_text)
+
+    def emit_finish_only(
+        self,
+        session_id: str,
+        text: str,
+    ) -> Iterator[SpeakStreamEvent]:
+        normalized = text.strip()
+        if not normalized:
+            finish = SpeakStreamEvent(kind="finish", text="", final=True)
+            self._emit(session_id, finish)
+            yield finish
+            return
+
+        parsed = parse_agent_output(normalized)
+        final = parsed.session_state not in ("append", "share", "recall")
+        finish = SpeakStreamEvent(
+            kind="finish",
+            text=parsed.speak,
+            final=final,
+            meta=parsed.to_dict(),
+        )
+        self._emit(session_id, finish)
+        yield finish
 
     def emit_parsed_output(
         self,

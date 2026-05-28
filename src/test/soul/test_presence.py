@@ -120,3 +120,12 @@ def test_presence_store_migrates_legacy_behavior(tmp_path: Path):
     assert "书房" in loaded.state.perception.narrative
     assert "雨声" in loaded.state.perception.narrative
     assert loaded.state.affect.narrative == "我感到calm"
+
+
+def test_wake_result_normalizes_none_narratives():
+    from agent.soul.presence.transition.static.lifecycle import WakeResult
+
+    result = WakeResult(session_id="tao", applied=True, narratives=None, notes=None)
+    assert result.narratives == {}
+    assert result.notes == []
+    assert dict(result.narratives) == {}

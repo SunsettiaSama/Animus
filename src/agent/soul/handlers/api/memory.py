@@ -125,4 +125,23 @@ class MemoryHandler:
                 "units": [unit_to_dict(u) for u in units],
             }
 
+        if action == MemoryAction.GET_ACTIVATION_SNAPSHOT:
+            snap = service.get_activation_snapshot(str(payload.get("session_id", "")))
+            if snap is None:
+                return {"session_id": payload.get("session_id", ""), "nodes": []}
+            return {
+                "session_id": snap.session_id,
+                "interactor_id": snap.interactor_id,
+                "cue_hash": snap.cue_hash,
+                "nodes": [
+                    {
+                        "unit_id": n.unit_id,
+                        "network": n.network.value,
+                        "score": n.score,
+                        "hop": n.hop,
+                    }
+                    for n in snap.nodes
+                ],
+            }
+
         raise ValueError(f"unknown memory action: {action!r}")

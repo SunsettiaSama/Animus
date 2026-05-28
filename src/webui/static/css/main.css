@@ -488,7 +488,29 @@
     .step-pill.speak-observe { background: var(--bg3); color: var(--text2); }
     .step-pill.speak-anchor  { background: #ecfdf5; color: #047857; }
     .step-pill.speak-chunk.streaming { background: #faf5ff; color: #7e22ce; }
-    .message.speak-msg .msg-bubble { margin-top: 2px; }
+
+    /* Soul Speak — ordered chunk bubbles (one event = one bubble) */
+    .speak-stream {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      width: 100%;
+    }
+    .message.speak-msg .msg-bubble.speak-chunk-bubble,
+    .message.speak-msg .msg-bubble.speak-action-bubble {
+      width: fit-content;
+      max-width: 100%;
+    }
+    .message.speak-msg .msg-bubble.speak-action-bubble {
+      background: #fff7ed;
+      color: #c2410c;
+      border-color: #fed7aa;
+    }
+    .speak-abort-note {
+      font-size: 11px;
+      color: var(--text3);
+      padding: 0 3px;
+    }
 
     /* Expandable detail below a pill */
     .pill-detail {

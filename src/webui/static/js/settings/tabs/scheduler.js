@@ -44,6 +44,7 @@ export async function load() {
     _si('s-hb-active-end',      hb.active_hours_end ?? '22:00');
     _si('s-hb-active-tz',       hb.active_timezone ?? 'Asia/Shanghai');
     _si('s-hb-webhook-secret',  hb.webhook_secret ?? '');
+    _sc('s-hb-console-log',     hb.console_log_enabled !== false);
 
     // ── Comm rate limits ──
     _si('s-comm-notify-rpm', cfg.comm_notify_rpm ?? 5);
@@ -170,6 +171,7 @@ export async function save() {
     active_hours_end:        _v('s-hb-active-end') || '22:00',
     active_timezone:         _v('s-hb-active-tz') || 'Asia/Shanghai',
     webhook_secret:          _v('s-hb-webhook-secret') || '',
+    console_log_enabled:     _c('s-hb-console-log'),
   };
 
   const body = {

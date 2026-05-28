@@ -681,7 +681,7 @@ class SoulService:
             "applied": result.applied,
             "source": result.source,
             "reason": result.reason,
-            "narratives": dict(result.narratives),
+            "narratives": dict(result.narratives or {}),
         }
 
     def run_presence_sleep(self, session_id: str = "tao") -> dict[str, Any]:
@@ -990,6 +990,15 @@ class SoulService:
                 )
 
             self._speak_service.attach_memory_recall(_recall_for_speak)
+
+            def _activate_for_speak(session_id: str, interactor_id: str, user_text: str) -> None:
+                self.memory.api.trigger_speak_activation(
+                    session_id=session_id,
+                    interactor_id=interactor_id,
+                    user_text=user_text,
+                )
+
+            self._speak_service.attach_memory_activation(_activate_for_speak)
         return self._speak_service
 
     def _relay_presence_status_to_speak(self, snap) -> None:

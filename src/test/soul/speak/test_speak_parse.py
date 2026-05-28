@@ -69,6 +69,31 @@ def test_parse_legacy_action_prefix():
     assert parsed.speak == "你好呀。"
 
 
+def test_parse_l2_bracket_tags_without_colon():
+    raw = (
+        "[action]从标本夹中抬起头，眨巴眨巴眼睛"
+        "[speak]啊，怎么会不记得呢！"
+        "[action]不好意思地挠挠后脑勺"
+        "[speak]来，坐下慢慢聊？"
+        "[state:finish]"
+    )
+    parsed = parse_agent_output(raw)
+    assert parsed.actions == (
+        "从标本夹中抬起头，眨巴眨巴眼睛",
+        "不好意思地挠挠后脑勺",
+    )
+    assert parsed.speak == "啊，怎么会不记得呢！来，坐下慢慢聊？"
+    assert parsed.session_state == "finish"
+    assert "[action]" not in parsed.speak
+
+
+def test_parse_l1_and_l2_mixed_in_one_turn():
+    raw = "[speak:标准格式][action]不应被当作L2"
+    parsed = parse_agent_output(raw)
+    assert parsed.speak == "标准格式"
+    assert parsed.actions == ("不应被当作L2",)
+
+
 def test_parse_plain_text_as_speak():
     raw = "只有正文。"
     parsed = parse_agent_output(raw)
@@ -100,7 +125,7 @@ def test_stream_flush_aligns_with_tags():
     pipeline = SpeakStreamPipeline()
     events = list(pipeline.emit_parsed_output("tao", raw))
     kinds = [event.kind for event in events]
-    assert kinds == ["thought", "action", "speak", "state", "finish"]
+    assert kinds == ["action", "speak", "state", "finish"]
     assert events[-1].final is True
     assert events[-1].meta["session_state"] == "finish"
 
@@ -120,3 +145,19 @@ def test_stream_share_not_final():
     assert finish.kind == "finish"
     assert finish.final is False
     assert finish.meta["session_state"] == "share"
+
+
+def test_stream_flush_l2_bracket_tags():
+    raw = (
+        "[think:想一下]"
+        "[action]微笑"
+        "[speak]你好。"
+        "[state:finish]"
+    )
+    events = list(SpeakStreamPipeline().emit_parsed_output("tao", raw))
+    kinds = [event.kind for event in events]
+    assert kinds == ["action", "speak", "state", "finish"]
+    action = next(event for event in events if event.kind == "action")
+    assert action.text == "微笑"
+    speak = next(event for event in events if event.kind == "speak")
+    assert speak.text == "你好。"
