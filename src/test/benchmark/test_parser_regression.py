@@ -1,5 +1,5 @@
 """
-Parser regression tests â€” exercised via ParserRegressionRunner.
+Parser regression tests â€?exercised via ParserRegressionRunner.
 
 Each test case locks in a specific parse_llm_output behaviour that was
 introduced or fixed.  Failures here indicate a parser regression.
@@ -31,7 +31,7 @@ def test_parser_case(case, benchmark_results: list) -> None:
         f"[{case.name}] parser case failed: {result.error}"
     )
     assert result.quality_score == 1.0, (
-        f"[{case.name}] quality_score={result.quality_score} â€” {result.error}"
+        f"[{case.name}] quality_score={result.quality_score} â€?{result.error}"
     )
 
 
@@ -51,7 +51,7 @@ def test_single_quote_json_parses_clean() -> None:
     result = parse_llm_output(raw)
     assert result.is_finish
     assert result.quality == ParseQuality.CLEAN, (
-        f"Expected CLEAN but got {result.quality} â€” ast.literal_eval fix may be broken"
+        f"Expected CLEAN but got {result.quality} â€?ast.literal_eval fix may be broken"
     )
     assert result.action_input.get("answer") == "42"
 

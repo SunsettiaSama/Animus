@@ -20,10 +20,12 @@ class MemoryAction:
     NARRATIVE_CONTINUITY = "narrative_continuity"
     WANDER = "wander"
     FORGET_SCAN = "forget_scan"
+    SLEEP = "sleep"
     FLUSH = "flush"
     FETCH_PERSONA_CLUSTER = "fetch_persona_cluster"
     LIST_DRIFT_UNITS = "list_drift_units"
     GET_ACTIVATION_SNAPSHOT = "get_activation_snapshot"
+    GET_POINT_EMERGENCE = "get_point_emergence"
 
 
 class PersonaAction:

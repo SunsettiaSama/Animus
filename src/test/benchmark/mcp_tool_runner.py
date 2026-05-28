@@ -1,5 +1,5 @@
 """
-MCPToolRunner â€” smoke-gate BenchmarkRunner that enumerates registered MCP tools
+MCPToolRunner â€?smoke-gate BenchmarkRunner that enumerates registered MCP tools
 and validates their schemas.
 
 If no MCP server is configured, the runner skips all cases gracefully and
@@ -72,7 +72,7 @@ class MCPToolRunner:
     """
     BenchmarkRunner that enumerates registered MCP tools and validates schemas.
 
-    Gate: smoke â€” validates tool schema structure only, no actual MCP server calls.
+    Gate: smoke â€?validates tool schema structure only, no actual MCP server calls.
     If no MCP server is configured, returns an empty list (no failures).
     """
 
@@ -96,4 +96,4 @@ class MCPToolRunner:
         registry = _load_mcp_registry()
         if hasattr(registry, "list_tools"):
             count = len(registry.list_tools())
-        return f"{count} MCP tool(s) â€” schema validation only"
+        return f"{count} MCP tool(s) â€?schema validation only"

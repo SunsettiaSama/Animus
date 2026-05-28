@@ -6,11 +6,13 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from runtime.scheduler.heartbeat_config import HeartbeatConfig
 from config.soul.config import SoulConfig
 from agent.soul.heartbeat.checklist import ChecklistRegistry, default_checklist
+from agent.soul.heartbeat.config import SoulHeartbeatConfig
 from agent.soul.heartbeat.console_log import configure_console_log, hb_debug
 from agent.soul.heartbeat.orchestrator import HeartbeatOrchestrator
+
+_MEMORY_SLEEP_ITEM_ID = "memory-sleep"
 from agent.soul.heartbeat.tick_log import HeartbeatTickLog, HeartbeatTickResult
 from agent.soul.heartbeat.worker import SoulEvolutionWorker
 
@@ -21,25 +23,21 @@ logger = logging.getLogger(__name__)
 
 
 class HeartbeatModule:
-    """Soul 心跳模块：唯一持有 HeartbeatOrchestrator；tick 触发 checklist，重任务异步演化。"""
+    """Soul 心跳模块：独立时间线，由 SoulService + HeartbeatCoreService 驱动。"""
 
     def __init__(
         self,
-        cfg: HeartbeatConfig,
-        scheduler_dir: str,
+        cfg: SoulHeartbeatConfig,
+        log_dir: str,
         llm_cfg_path: str,
-        scheduler_engine=None,
-        scheduler_cfg=None,
         soul_config: SoulConfig | None = None,
     ) -> None:
         self._cfg = cfg
         configure_console_log(cfg.console_log_enabled)
         self._soul_config = soul_config or SoulConfig.load_default()
-        self._scheduler_dir = scheduler_dir
+        self._log_dir = log_dir
         self._llm_cfg_path = llm_cfg_path
-        self._scheduler_engine = scheduler_engine
-        self._scheduler_cfg = scheduler_cfg
-        self._tick_log = HeartbeatTickLog(scheduler_dir)
+        self._tick_log = HeartbeatTickLog(log_dir)
         self._force_tick: bool = False
         self._soul: SoulService | None = None
 
@@ -49,8 +47,6 @@ class HeartbeatModule:
         )
         self._evolution_worker = SoulEvolutionWorker(self._orchestrator)
         self._orchestrator.set_worker(self._evolution_worker)
-        if scheduler_engine is not None:
-            self._orchestrator.set_scheduler_engine(scheduler_engine)
 
         self._lock = threading.Lock()
 
@@ -62,6 +58,7 @@ class HeartbeatModule:
 
         in_active = self._in_active_hours()
         if self._soul is not None and self._soul.is_running:
+            self._orchestrator.run_due_item(_MEMORY_SLEEP_ITEM_ID)
             if not in_active:
                 if self._soul.presence.is_awake():
                     self._soul.run_presence_sleep()
@@ -80,7 +77,9 @@ class HeartbeatModule:
             hb_debug(logger, "[Heartbeat] skip — soul not running")
             return result
 
-        results = self._orchestrator.run_due()
+        results = self._orchestrator.run_due(
+            exclude_item_ids=frozenset({_MEMORY_SLEEP_ITEM_ID}),
+        )
         duration_ms = int((time.monotonic() - t0) * 1000)
         ran = sum(1 for r in results if r.ok)
         enqueued = sum(1 for r in results if r.async_enqueued)
@@ -103,14 +102,10 @@ class HeartbeatModule:
         self._orchestrator.set_soul_service(soul)
         if soul is not None:
             self._soul_config = soul.config
-            soul.bind_heartbeat(self)
             if soul.is_running:
                 self.start_evolution_worker()
-        if self._scheduler_engine is not None:
-            self._orchestrator.set_scheduler_engine(self._scheduler_engine)
 
     def set_scheduler_engine(self, engine) -> None:
-        self._scheduler_engine = engine
         self._orchestrator.set_scheduler_engine(engine)
 
     def start_evolution_worker(self) -> None:
@@ -120,7 +115,7 @@ class HeartbeatModule:
         self._evolution_worker.stop()
 
     @property
-    def config(self) -> HeartbeatConfig:
+    def config(self) -> SoulHeartbeatConfig:
         return self._cfg
 
     @property

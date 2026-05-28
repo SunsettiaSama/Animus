@@ -47,7 +47,7 @@ def _wait_soul() -> dict:
             if data.get("soul_running"):
                 return data
             if data.get("react_ready") and not data.get("soul_running"):
-                # ReAct 已就绪但 Soul 未 start，再等一轮
+                # ReAct 已就绪但 Soul �?start，再等一�?
                 pass
         time.sleep(2)
     return last
@@ -70,10 +70,10 @@ def _case(name: str, method: str, path: str, body: dict | None = None, *, ok_cod
 def main() -> int:
     print(f"=== Soul API Smoke @ {BASE} ===\n")
 
-    print("等待 Soul 初始化…")
+    print("等待 Soul 初始化�?)
     readiness = _wait_soul()
     if not readiness.get("soul_running"):
-        print("[FAIL] Soul 未在时限内进入 running 状态")
+        print("[FAIL] Soul 未在时限内进�?running 状�?)
         print(json.dumps(readiness, ensure_ascii=False, indent=2))
         return 1
     print(f"[OK] Soul running  state={readiness.get('soul_state')!r}\n")
@@ -86,7 +86,7 @@ def main() -> int:
     results.append(_case("memory infra", "GET", "/api/soul/memory/infra"))
     results.append(_case("readiness", "GET", "/api/soul/readiness"))
 
-    # 需要 Soul 实例
+    # 需�?Soul 实例
     results.append(_case("status", "GET", "/api/soul/status"))
     results.append(_case("persona", "GET", "/api/soul/persona"))
     results.append(_case("memory search recent", "POST", "/api/soul/memory/search", {"mode": "recent", "top_k": 3}))

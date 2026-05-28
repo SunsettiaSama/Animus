@@ -3,13 +3,18 @@ from __future__ import annotations
 import random
 from datetime import datetime, timezone
 
+from typing import TYPE_CHECKING
+
 from agent.soul.memory.domain import MemoryNetwork, MemoryTier, Valence
 from agent.soul.memory.graph.scored import ScoredUnit
 from agent.soul.memory.ports import GraphNodeStore, VectorIndexPort
 
+if TYPE_CHECKING:
+    from agent.soul.memory.graph.cluster import ClusterIndex
+
 
 class QueryEngine:
-    """事件网络检索（L3）：hybrid / recent / semantic 等，不含扩散激活。"""
+    """Event-network retrieval: hybrid, recent, semantic."""
 
     def __init__(
         self,
@@ -18,11 +23,15 @@ class QueryEngine:
         recent_half_life_days: float = 3.0,
         half_life_days: float = 30.0,
         vectors: VectorIndexPort | None = None,
+        cluster_index: ClusterIndex | None = None,
+        cluster_core_top_k: int = 4,
     ) -> None:
         self._nodes = nodes
         self._recent_hl = recent_half_life_days
         self._hl = half_life_days
         self._vectors = vectors
+        self._cluster_index = cluster_index
+        self._cluster_core_top_k = cluster_core_top_k
 
     def _activation(self, unit, now: datetime) -> float:
         hl = self._recent_hl if unit.tier == MemoryTier.short_term else self._hl
@@ -48,7 +57,7 @@ class QueryEngine:
 
     def semantic(self, query: str, top_k: int = 10) -> list[ScoredUnit]:
         if self._vectors is None:
-            raise RuntimeError("semantic() 需要 VectorIndexPort")
+            raise RuntimeError("semantic() requires VectorIndexPort")
         now = datetime.now(timezone.utc)
         vector = self._vectors.embed_query(query)
         hits = self._vectors.search(vector, top_k=top_k, network=MemoryNetwork.event)
@@ -74,7 +83,7 @@ class QueryEngine:
         candidates: list[ScoredUnit] = []
         if self._vectors is not None and query.strip():
             vector = self._vectors.embed_query(query)
-            hits = self._vectors.search(vector, top_k=top_k * 3, network=MemoryNetwork.event)
+            hits = self._semantic_hits(vector, top_k * 3, network=MemoryNetwork.event)
             id_score = {uid: score for uid, score in hits}
             for u in self._nodes.get_many(list(id_score.keys())):
                 act = self._activation(u, now)
@@ -88,6 +97,34 @@ class QueryEngine:
             candidates = [s for s in candidates if s.unit.valence == valence]
         if memory_type is not None:
             candidates = [s for s in candidates if s.unit.MEMORY_TYPE == memory_type]
+        for s in candidates:
+            s.final_score = w_relevance * s.relevance + w_activation * s.activation
+        candidates.sort(key=lambda s: s.final_score, reverse=True)
+        return candidates[:top_k]
+
+    def hybrid_with_vector(
+        self,
+        vector: list[float],
+        top_k: int = 5,
+        *,
+        network: MemoryNetwork | None = None,
+        w_relevance: float = 0.6,
+        w_activation: float = 0.4,
+    ) -> list[ScoredUnit]:
+        now = datetime.now(timezone.utc)
+        candidates: list[ScoredUnit] = []
+        if self._vectors is not None and vector:
+            hits = self._semantic_hits(vector, top_k * 3, network=network or MemoryNetwork.event)
+            id_score = {uid: score for uid, score in hits}
+            for u in self._nodes.get_many(list(id_score.keys())):
+                act = self._activation(u, now)
+                rel = id_score.get(u.id, 0.0)
+                candidates.append(ScoredUnit(u, relevance=rel, activation=act))
+        if not candidates:
+            recent_network = network if network is not None else MemoryNetwork.event
+            for u in self._nodes.list_recent(limit=top_k * 2, network=recent_network):
+                act = self._activation(u, now)
+                candidates.append(ScoredUnit(u, relevance=1.0, activation=act))
         for s in candidates:
             s.final_score = w_relevance * s.relevance + w_activation * s.activation
         candidates.sort(key=lambda s: s.final_score, reverse=True)
@@ -114,3 +151,28 @@ class QueryEngine:
             scored.append(ScoredUnit(u, activation=act, final_score=min(1.0, raw)))
         scored.sort(key=lambda s: s.final_score, reverse=True)
         return scored[:n]
+
+    def _semantic_hits(
+        self,
+        vector: list[float],
+        top_k: int,
+        *,
+        network: MemoryNetwork,
+    ) -> list[tuple[str, float]]:
+        vectors = self._vectors
+        if vectors is None or not vector:
+            return []
+        index = self._cluster_index
+        if (
+            index is not None
+            and index.ready
+            and hasattr(vectors, "search_subset")
+        ):
+            member_ids = index.member_ids_near_cores(
+                vector,
+                networks=(network,),
+                top_k=self._cluster_core_top_k,
+            )
+            if member_ids:
+                return vectors.search_subset(vector, member_ids, top_k, network=network)
+        return vectors.search(vector, top_k, network=network)

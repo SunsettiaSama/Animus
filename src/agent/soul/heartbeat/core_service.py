@@ -13,8 +13,8 @@ from agent.soul.heartbeat.inject_mailbox import (
     get_heartbeat_mailbox,
     set_global_mailbox,
 )
+from agent.soul.heartbeat.config import SoulHeartbeatConfig
 from agent.soul.heartbeat.tick_log import HeartbeatTickResult
-from runtime.scheduler.heartbeat_config import HeartbeatConfig
 
 if TYPE_CHECKING:
     from agent.soul.heartbeat.module import HeartbeatModule
@@ -28,7 +28,7 @@ _AGENT_INJECT_SYSTEM = (
 )
 
 
-def _effective_inject_window(cfg: HeartbeatConfig) -> tuple[str, str, str]:
+def _effective_inject_window(cfg: SoulHeartbeatConfig) -> tuple[str, str, str]:
     start = cfg.inject_window_start or cfg.active_hours_start
     end = cfg.inject_window_end or cfg.active_hours_end
     tz = cfg.inject_timezone or cfg.active_timezone
@@ -60,7 +60,7 @@ class HeartbeatCoreService:
         register_global_mailbox: bool = True,
     ) -> None:
         self._heartbeat = heartbeat
-        self._cfg: HeartbeatConfig = heartbeat._cfg
+        self._cfg: SoulHeartbeatConfig = heartbeat._cfg
         self._llm_service = llm_service
         self._llm_cfg_path = llm_cfg_path
         self._mailbox = mailbox or HeartbeatInjectMailbox()
@@ -88,7 +88,7 @@ class HeartbeatCoreService:
         hb_info(
             logger,
             "[HeartbeatCore] started — poll=%ds mode=%s",
-            self._cfg.core_service_poll_interval_sec,
+            self._cfg.poll_interval_sec,
             self._cfg.inject_window_mode,
         )
 
@@ -102,7 +102,7 @@ class HeartbeatCoreService:
         hb_info(logger, "[HeartbeatCore] stopped")
 
     def _run(self) -> None:
-        interval = max(5, int(self._cfg.core_service_poll_interval_sec))
+        interval = max(5, int(self._cfg.poll_interval_sec))
         while not self._stop.is_set():
             if self._stop.wait(timeout=interval):
                 break
@@ -165,18 +165,20 @@ class HeartbeatCoreService:
         raw = (self._cfg.preflight_instruction or "").strip()
         if not raw:
             return
-        engine = self._heartbeat._scheduler_engine
-        scheduler_cfg = self._heartbeat._scheduler_cfg
-        if engine is None or scheduler_cfg is None:
+        soul = self._heartbeat._soul
+        if soul is None:
+            hb_warning(logger, "[HeartbeatCore] preflight skipped — soul not wired")
+            return
+        engine = soul.scheduler_engine
+        if engine is None:
             hb_warning(logger, "[HeartbeatCore] preflight skipped — scheduler_engine not wired")
             return
         from agent.profile import SubAgentProfile
         from agent.runner import SubAgentRunner
+        from agent.soul.heartbeat.profiles import make_default_scheduler_config
 
-        base = (
-            scheduler_cfg.profiles.get("minimal")
-            or SubAgentProfile()
-        )
+        scheduler_cfg = make_default_scheduler_config(llm_cfg_path=self._llm_cfg_path)
+        base = scheduler_cfg.profiles.get("minimal") or SubAgentProfile()
         runner = SubAgentRunner()
         runner.run_sync(
             instruction=raw,

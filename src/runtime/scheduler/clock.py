@@ -26,7 +26,7 @@ class TemporalClock:
     unaffected by HTTP/SSE/WebSocket load on the application side.
 
     ``executor`` implements TaskExecutorProtocol (agent's TaskRunner).
-    ``heartbeat`` implements HeartbeatProtocol (agent's HeartbeatModule); optional.
+    ``heartbeat`` is optional legacy hook (Soul heartbeat no longer uses this path).
     """
 
     def __init__(

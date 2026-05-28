@@ -2,7 +2,7 @@
 
 from agent.soul.memory.facade.build import build_memory_service
 from agent.soul.memory.facade.service import MemoryService
-from agent.soul.memory.networks.event.service import MemoryBlock
+from agent.soul.memory.graph.networks.block import MemoryBlock
 
 MemoryService.build = staticmethod(build_memory_service)
 

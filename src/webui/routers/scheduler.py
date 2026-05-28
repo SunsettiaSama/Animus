@@ -347,8 +347,14 @@ def scheduler_config_set(req: SchedulerConfigPatch):
         for k, v in req.heartbeat.items():
             if hasattr(hb, k):
                 setattr(hb, k, type(getattr(hb, k))(v))
-        if eng.heartbeat is not None and hasattr(eng.heartbeat, "apply_console_log_config"):
-            eng.heartbeat.apply_console_log_config()
+        from webui.routers.soul import _resolve_soul
+
+        soul = _resolve_soul()
+        if soul is not None and soul.heartbeat is not None:
+            for k, v in req.heartbeat.items():
+                if hasattr(soul.heartbeat.config, k):
+                    setattr(soul.heartbeat.config, k, type(getattr(soul.heartbeat.config, k))(v))
+            soul.heartbeat.apply_console_log_config()
 
     # Comm rate limits
     if req.comm_notify_rpm is not None:
@@ -398,22 +404,30 @@ def scheduler_journal_get(date: str | None = None):
     }
 
 
+def _soul_heartbeat_log(n: int = 50) -> dict:
+    from webui.routers.soul import _resolve_soul
+
+    soul = _resolve_soul()
+    if soul is None or soul.heartbeat is None:
+        return {"entries": [], "ready": False}
+    return {"entries": soul.heartbeat.recent_log(n=n), "ready": True}
+
+
 @router.get("/api/scheduler/heartbeat-log")
 def heartbeat_log_get(n: int = 50):
-    eng = _scheduler_engine()
-    if eng is None:
-        return {"entries": [], "ready": False}
-    entries = eng.heartbeat.recent_log(n=n)
-    return {"entries": entries, "ready": True}
+    return _soul_heartbeat_log(n)
 
 
 @router.post("/api/scheduler/webhook/heartbeat")
 async def webhook_heartbeat(request: Request):
-    eng = _scheduler_engine()
-    if eng is None:
-        return JSONResponse(status_code=503, content={"error": "Scheduler not initialized."})
+    from webui.routers.soul import _resolve_soul
 
-    secret = eng._cfg.heartbeat.webhook_secret
+    soul = _resolve_soul()
+    if soul is None or not soul.is_running:
+        return JSONResponse(status_code=503, content={"error": "Soul 未运行。"})
+
+    hb_cfg = soul.heartbeat.config if soul.heartbeat is not None else None
+    secret = hb_cfg.webhook_secret if hb_cfg is not None else ""
     if secret:
         sig_header = request.headers.get("X-Signature-SHA256", "")
         body = await request.body()
@@ -423,7 +437,7 @@ async def webhook_heartbeat(request: Request):
         if not hmac.compare_digest(expected, sig_header):
             return JSONResponse(status_code=401, content={"error": "Invalid signature."})
 
-    eng.trigger_proactive_now()
+    soul.force_heartbeat_tick()
     return {"ok": True, "triggered_at": time.time()}
 
 

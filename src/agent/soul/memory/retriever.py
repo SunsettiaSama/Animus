@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from agent.soul.memory.emotion_intensity import node_emotion_intensity
 from agent.soul.memory.embed_text import (
     cluster_key as make_cluster_key,
     cosine_similarity,
@@ -22,26 +23,26 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class EmbedderBackend(Protocol):
-    """最小嵌入器协议，任何实现 embed() 的对象均满足。"""
+    """最小嵌入器协议，任何实�?embed() 的对象均满足�?""
     def embed(self, text: str) -> list[float]: ...
 
 
 @runtime_checkable
 class VectorBackend(Protocol):
-    """最小向量存储协议。
+    """最小向量存储协议�?
 
-    search() 返回 (unit_id, similarity_score) 列表，相似度 0~1。
+    search() 返回 (unit_id, similarity_score) 列表，相似度 0~1�?
     """
     def search(self, vector: list[float], top_k: int) -> list[tuple[str, float]]: ...
     def upsert(self, unit_id: str, vector: list[float]) -> None: ...
     def delete(self, unit_id: str) -> None: ...
 
 
-# ── 检索结果单元 ─────────────────────────────────────────────────────────────
+# ── 检索结果单�?─────────────────────────────────────────────────────────────
 
 @dataclass
 class ScoredUnit:
-    """带评分的记忆单元，作为所有检索模式的统一返回类型。"""
+    """带评分的记忆单元，作为所有检索模式的统一返回类型�?""
 
     unit: MemoryUnit
     relevance: float = 1.0
@@ -61,7 +62,7 @@ class ScoredUnit:
 
 @dataclass
 class PersonaThemeProfile:
-    """Persona 主题簇的质量画像：反复性 × 长时性 × 参与度 × 语义凝聚。"""
+    """Persona 主题簇的质量画像：反复�?× 长时�?× 参与�?× 语义凝聚�?""
 
     recurrence: int = 0
     span_days: float = 0.0
@@ -73,7 +74,7 @@ class PersonaThemeProfile:
 
 @dataclass
 class PersonaThemeCluster:
-    """跨多条记忆的主题聚类，供 Persona buffer 写入 recurring theme 信号。"""
+    """跨多条记忆的主题聚类，供 Persona buffer 写入 recurring theme 信号�?""
 
     theme: str
     mass: float
@@ -98,7 +99,7 @@ class PersonaThemeCluster:
         return self.profile.persona_score
 
     def to_buffer_meta(self, tick_id: str = "") -> dict:
-        """Persona buffer 元数据（不含记忆正文，含回查锚点）。"""
+        """Persona buffer 元数据（不含记忆正文，含回查锚点）�?""
         return {
             "theme": self.theme,
             "tick_id": tick_id,
@@ -115,7 +116,7 @@ class PersonaThemeCluster:
 
 @dataclass
 class PersonaClusterMaterial:
-    """月度 drift 回查时返回的聚类材料（含渲染行，不含 buffer 写入）。"""
+    """月度 drift 回查时返回的聚类材料（含渲染行，不含 buffer 写入）�?""
 
     theme: str
     cluster_key: str
@@ -128,7 +129,7 @@ class PersonaClusterMaterial:
         return [s.unit.id for s in self.units]
 
     def to_dict(self) -> dict:
-        from agent.soul.memory.codec import scored_to_dict
+        from agent.soul.memory.graph.networks.store.codec import scored_to_dict
 
         return {
             "theme": self.theme,
@@ -155,7 +156,7 @@ class _RawPersonaCluster:
 # ── MemoryRetriever ───────────────────────────────────────────────────────────
 
 class MemoryRetriever:
-    """记忆检索器：单一 MySQL 记忆库 + 可选向量语义检索。"""
+    """记忆检索器：单一 MySQL 记忆�?+ 可选向量语义检索�?""
 
     def __init__(
         self,
@@ -198,8 +199,8 @@ class MemoryRetriever:
     def semantic(self, query: str, top_k: int = 10) -> list[ScoredUnit]:
         if self._embedder is None or self._vector_store is None:
             raise RuntimeError(
-                "semantic() 需要 embedder 和 vector_store，"
-                "请经 MemoryInfraService 注入。"
+                "semantic() 需�?embedder �?vector_store�?
+                "请经 MemoryInfraService 注入�?
             )
         now = datetime.now(timezone.utc)
         vector = self._embedder.embed(query)
@@ -383,7 +384,7 @@ class MemoryRetriever:
             u = s.unit
             rehearsal_score = math.log1p(u.rehearsal_count) / math.log1p(max_rehearsal)
             raw = (
-                emotion_weight * u.emotion_intensity
+                emotion_weight * node_emotion_intensity(u)
                 + rehearsal_weight * rehearsal_score
                 + noise * random.random()
             )
@@ -415,10 +416,10 @@ class MemoryRetriever:
         min_cohesion: float = 0.0,
         min_persona_score: float = 0.35,
     ) -> list[PersonaThemeCluster]:
-        """Persona 专用：识别跨时间反复出现、语义共事件的 recurring themes。
+        """Persona 专用：识别跨时间反复出现、语义共事件�?recurring themes�?
 
-        评分维度：反复性（跨日共现）、长时性（时间跨度 + long tier）、
-        参与度（recall / rehearsal / narrative_ref）、语义凝聚（embedding 簇内相似度）。
+        评分维度：反复性（跨日共现）、长时性（时间跨度 + long tier）�?
+        参与度（recall / rehearsal / narrative_ref）、语义凝聚（embedding 簇内相似度）�?
         """
         now = datetime.now(timezone.utc)
         candidates = [
@@ -484,7 +485,7 @@ class MemoryRetriever:
         similarity_threshold: float = 0.60,
         ltm_limit: int = 120,
     ) -> PersonaClusterMaterial:
-        """Persona 月度 drift 回查：按主题 + 锚点 unit_ids 拉取共同事件材料。"""
+        """Persona 月度 drift 回查：按主题 + 锚点 unit_ids 拉取共同事件材料�?""
         theme = theme.strip()
         if not theme:
             return PersonaClusterMaterial(
@@ -578,7 +579,7 @@ class MemoryRetriever:
         u = scored.unit
         act = max(scored.activation if scored.activation > 0 else self._activation(u, now), 0.08)
         tier_boost = 1.4 if u.tier == MemoryTier.long else 1.0
-        emotional = 1.0 + 0.4 * u.emotion_intensity
+        emotional = 1.0 + 0.4 * node_emotion_intensity(u)
         engagement = 1.0 + self._engagement_score(u)
         return act * tier_boost * emotional * engagement
 
@@ -721,7 +722,7 @@ class MemoryRetriever:
         indices: list[int],
     ) -> tuple[str, float]:
         if not members:
-            return "（未命名）", 0.0
+            return "（未命名�?, 0.0
         if len(members) == 1:
             focus = members[0].unit.focus
             return focus or focus_bucket(focus), 1.0
@@ -746,7 +747,7 @@ class MemoryRetriever:
     def render_block(
         self,
         scored: list[ScoredUnit],
-        label: str = "记忆参考",
+        label: str = "记忆参�?,
         max_content: int = 80,
     ) -> str:
         if not scored:

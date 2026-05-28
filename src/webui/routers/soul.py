@@ -277,6 +277,32 @@ def save_soul_config(body: dict[str, Any]):
     return {"status": "ok", "path": path}
 
 
+@router.get("/api/soul/heartbeat-log")
+def get_soul_heartbeat_log(n: int = 50):
+    soul, err = _soul_or_400()
+    if err is not None:
+        return err
+    if soul.heartbeat is None:
+        return {"entries": [], "ready": False}
+    return {"entries": soul.heartbeat.recent_log(n=n), "ready": True}
+
+
+@router.post("/api/soul/heartbeat/tick")
+def post_soul_heartbeat_tick():
+    soul, err = _soul_or_400()
+    if err is not None:
+        return err
+    if not soul.is_running:
+        return JSONResponse(status_code=409, content={"detail": "Soul 未运行"})
+    result = soul.force_heartbeat_tick()
+    return {
+        "ok": True,
+        "outcome": result.outcome,
+        "reason": result.reason,
+        "duration_ms": result.duration_ms,
+    }
+
+
 @router.get("/api/soul/status")
 def get_soul_status():
     soul, err = _soul_or_400()

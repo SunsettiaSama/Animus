@@ -18,9 +18,9 @@ class BenchmarkRunner(Protocol):
     implement this protocol and register the runner with BenchmarkSuite.
 
     gate values:
-      "smoke"       â€” fast, zero-network; run on every PR
-      "regression"  â€” full pipeline; run on every merge to main
-      "performance" â€” latency/token-budget tracking; run nightly
+      "smoke"       â€?fast, zero-network; run on every PR
+      "regression"  â€?full pipeline; run on every merge to main
+      "performance" â€?latency/token-budget tracking; run nightly
     """
 
     name: str
@@ -48,7 +48,7 @@ class BenchmarkReport:
     total_scenarios: int
     passed: int
     failed: int
-    pass_rate: float        # passed / total_scenarios  (0.0â€“1.0)
+    pass_rate: float        # passed / total_scenarios  (0.0â€?.0)
     total_wall_ms: float
     slowest_runner: str     # name of the runner with highest sum(wall_ms)
 

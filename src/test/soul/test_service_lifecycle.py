@@ -11,7 +11,7 @@ def test_idle_allows_read_rejects_write(soul_service):
     assert isinstance(snap, dict)
     assert soul_service.state == "idle"
 
-    with pytest.raises(RuntimeError, match="未运行"):
+    with pytest.raises(RuntimeError, match="未运�?):
         soul_service.dispatch(SoulRequest(
             domain=SoulDomain.memory,
             action=MemoryAction.FORGET_SCAN,
@@ -26,10 +26,10 @@ def test_start_stop_lifecycle(soul_service):
     soul_service.stop()
     assert soul_service.state == "stopped"
 
-    with pytest.raises(RuntimeError, match="已 stop"):
+    with pytest.raises(RuntimeError, match="�?stop"):
         soul_service.start()
 
-    with pytest.raises(RuntimeError, match="已停止"):
+    with pytest.raises(RuntimeError, match="已停�?):
         soul_service.query_persona()
 
 

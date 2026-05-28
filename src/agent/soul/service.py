@@ -97,6 +97,9 @@ class SoulService:
         self._speak_outbound_router: SpeakOutboundRouter | None = None
         self._embedding_port: EmbeddingPort | None = None
         self._heartbeat: Any = None
+        self._core_heartbeat: Any = None
+        self._scheduler_engine: Any = None
+        self._heartbeat_llm_cfg_path: str = "config/llm_core/config.yaml"
         self._orchestrator: HeartbeatOrchestrator | None = None
         self._workers = SoulWorkers()
         self._presence_service: PresenceService | None = None
@@ -492,14 +495,18 @@ class SoulService:
         self._ensure_speak_service().start()
 
         self.life.api.load_profile()
-        if self._heartbeat is not None:
-            self._heartbeat.start_evolution_worker()
+        hb = self._ensure_heartbeat()
+        hb.start_evolution_worker()
+        self._start_core_heartbeat()
         self._state = "running"
         logger.info("[SoulService] started — life_dir=%s", self._life_dir)
 
     def stop(self) -> None:
         if self._state == "idle":
             return
+        if self._state == "running":
+            self._run_shutdown_memory_sleep()
+        self._stop_core_heartbeat()
         if self._heartbeat is not None:
             self._heartbeat.stop_evolution_worker()
         if self._speak_service is not None:
@@ -511,13 +518,29 @@ class SoulService:
         logger.info("[SoulService] stopped")
 
     def bind_heartbeat(self, heartbeat) -> None:
-        """HeartbeatModule 接线：Soul 仅持有编排器引用，不重复创建。"""
+        """可选：注入外部 HeartbeatModule；默认由 Soul 在 start() 时自建。"""
         self._heartbeat = heartbeat
         self._orchestrator = heartbeat.orchestrator
+        heartbeat.set_soul_service(self)
         self._ensure_presence_service()
         self.presence.set_timezone(heartbeat.config.active_timezone)
+        if self._scheduler_engine is not None:
+            heartbeat.set_scheduler_engine(self._scheduler_engine)
         if self._state == "running":
             heartbeat.start_evolution_worker()
+            self._start_core_heartbeat()
+
+    @property
+    def heartbeat(self):
+        return self._heartbeat
+
+    @property
+    def scheduler_engine(self):
+        return self._scheduler_engine
+
+    def force_heartbeat_tick(self):
+        self._require_running()
+        return self._ensure_heartbeat().tick()
 
     def status(self) -> dict[str, Any]:
         evolution_status: dict[str, Any] = {}
@@ -540,9 +563,52 @@ class SoulService:
         }
 
     def bind_scheduler_engine(self, engine) -> None:
-        """绑定 runtime 调度引擎（HeartbeatOrchestrator checklist 使用）。"""
-        if self._orchestrator is not None:
+        """绑定 runtime 调度引擎（仅 checklist 摘要等只读集成，不驱动 Soul 心跳 tick）。"""
+        self._scheduler_engine = engine
+        if self._heartbeat is not None:
+            self._heartbeat.set_scheduler_engine(engine)
+        elif self._orchestrator is not None:
             self._orchestrator.set_scheduler_engine(engine)
+
+    def _ensure_heartbeat(self):
+        if self._heartbeat is not None:
+            return self._heartbeat
+        from agent.soul.heartbeat.config import SoulHeartbeatConfig
+        from agent.soul.heartbeat.module import HeartbeatModule
+
+        hb_cfg = SoulHeartbeatConfig.from_soul_config(self._cfg)
+        module = HeartbeatModule(
+            cfg=hb_cfg,
+            log_dir=self._life_dir,
+            llm_cfg_path=self._heartbeat_llm_cfg_path,
+            soul_config=self._cfg,
+        )
+        module.set_soul_service(self)
+        self._heartbeat = module
+        self._orchestrator = module.orchestrator
+        self._ensure_presence_service()
+        self.presence.set_timezone(hb_cfg.active_timezone)
+        if self._scheduler_engine is not None:
+            module.set_scheduler_engine(self._scheduler_engine)
+        return module
+
+    def _start_core_heartbeat(self) -> None:
+        if self._core_heartbeat is not None:
+            return
+        from agent.soul.heartbeat.core_service import HeartbeatCoreService
+
+        self._core_heartbeat = HeartbeatCoreService(
+            heartbeat=self._ensure_heartbeat(),
+            llm_service=self._llm_service,
+            llm_cfg_path=self._heartbeat_llm_cfg_path,
+        )
+        self._core_heartbeat.start()
+
+    def _stop_core_heartbeat(self) -> None:
+        if self._core_heartbeat is None:
+            return
+        self._core_heartbeat.stop()
+        self._core_heartbeat = None
 
     def dispatch(self, request: SoulRequest) -> Any:
         if self._state == "stopped":
@@ -576,9 +642,16 @@ class SoulService:
         tid = new_heartbeat_tick_id()
         presence_snap = self.presence.snapshot("tao")
         persona_snap = self.persona.service.snapshot()
+        from agent.soul.speak.compose.injected.persona import collect_persona_injected
+
+        injected = collect_persona_injected(persona_snap=persona_snap)
+        persona_profile = "\n\n".join(
+            part for part in (injected.traits, injected.self_concept) if part
+        )
         snap = PersonaSnapshot(
             emotional_state=presence_snap.state.affect.narrative,
             attention_keywords=list(persona_snap.get("attention_keywords") or [])[:20],
+            persona_profile=persona_profile,
             tick_id=tid,
         )
 
@@ -599,6 +672,17 @@ class SoulService:
             lambda: self.life.api.apply_wander_experience(result)
         ).result()
         return result, story_beats
+
+    def run_memory_sleep(self, *, dry_run: bool = False) -> dict:
+        """记忆睡眠巩固：遗忘扫描、聚类重建、反刍缓冲衰减。"""
+        from agent.soul.heartbeat.evolution import new_heartbeat_tick_id
+
+        self._require_running()
+        tid = new_heartbeat_tick_id()
+        result = self._workers.memory.submit(
+            lambda: self.memory.api.run_sleep(tick_id=tid, dry_run=dry_run)
+        ).result()
+        return result.to_dict()
 
     def run_trigger_landmarks(self) -> list[dict]:
         self._require_running()
@@ -685,14 +769,22 @@ class SoulService:
         }
 
     def run_presence_sleep(self, session_id: str = "tao") -> dict[str, Any]:
-        """休眠：清空当下态并标记 asleep。"""
+        """休眠：清空当下态并标记 asleep，并触发一次记忆睡眠巩固。"""
         self._require_running()
         result = self.presence.sleep(session_id)
+        memory_sleep = self.run_memory_sleep()
         return {
             "ok": True,
             "applied": result.applied,
             "reason": result.reason,
+            "memory_sleep": memory_sleep,
         }
+
+    def _run_shutdown_memory_sleep(self) -> None:
+        if self.presence.is_awake():
+            self.run_presence_sleep()
+            return
+        self.run_memory_sleep()
 
     def _build_wake_context(self) -> WakeContext:
         snap = self.query_persona()
@@ -973,10 +1065,17 @@ class SoulService:
                 semantic_distance_threshold=self._cfg.speak_session_semantic_distance_threshold,
                 embedder=self.resolve_embedding_port(),
                 context_distill_chunk_size=self._cfg.speak_context_distill_chunk_size,
+                memory_turn_gap=self._memory_cfg.memory_turn_proximity_max,
                 lifecycle=self,
                 touch_dialogue=_touch_dialogue,
             )
-            from agent.soul.speak.io.inbound.memory import RecallRequest, RecallResult
+            from agent.soul.speak.io.inbound.memory import (
+                PointQueryRequest,
+                RecallRequest,
+                RecallResult,
+                SimilarMemoryBlock,
+                SimilarMemoryPullResult,
+            )
 
             def _recall_for_speak(request: RecallRequest) -> RecallResult:
                 payload = self.recall_memory(
@@ -989,16 +1088,46 @@ class SoulService:
                     text=str(payload.get("text", "")),
                 )
 
-            self._speak_service.attach_memory_recall(_recall_for_speak)
-
-            def _activate_for_speak(session_id: str, interactor_id: str, user_text: str) -> None:
-                self.memory.api.trigger_speak_activation(
-                    session_id=session_id,
-                    interactor_id=interactor_id,
-                    user_text=user_text,
+            def _point_query_for_speak(request: PointQueryRequest) -> None:
+                self.memory.api.request_speak_point_query(
+                    session_id=request.session_id,
+                    interactor_id=request.interactor_id,
+                    turn_index=request.turn_index,
+                    user_text=request.user_text,
+                    agent_text=request.agent_text,
                 )
 
-            self._speak_service.attach_memory_activation(_activate_for_speak)
+            def _pull_similar_for_speak(session_id: str, turn_index: int) -> SimilarMemoryPullResult:
+                consumed = self._speak_service.session_manager.consume_memory_for_compose(
+                    session_id,
+                    turn_index,
+                )
+                return SimilarMemoryPullResult(
+                    inject=SimilarMemoryBlock(
+                        turn_index=consumed.inject_turn_index or turn_index,
+                        lines=list(consumed.inject_lines),
+                        unit_ids=list(consumed.inject_unit_ids),
+                    ),
+                    spilled=SimilarMemoryBlock(
+                        turn_index=consumed.spilled_turn_index,
+                        lines=list(consumed.spilled_lines),
+                        unit_ids=list(consumed.spilled_unit_ids),
+                    ),
+                )
+
+            def _on_point_emergence_ready(result) -> None:
+                self._speak_service.session_manager.enqueue_memory_result(
+                    result.session_id,
+                    turn_index=result.turn_index,
+                    lines=result.merged_lines(),
+                    unit_ids=result.merged_unit_ids(),
+                    associative_ready=result.associative_ready,
+                )
+
+            self._speak_service.attach_memory_recall(_recall_for_speak)
+            self._speak_service.attach_memory_point_query(_point_query_for_speak)
+            self._speak_service.attach_memory_pull_similar(_pull_similar_for_speak)
+            self.memory.api.on_point_emergence_ready(_on_point_emergence_ready)
         return self._speak_service
 
     def _relay_presence_status_to_speak(self, snap) -> None:

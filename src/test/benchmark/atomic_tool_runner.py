@@ -1,10 +1,10 @@
 """
-AtomicToolRunner — smoke-gate BenchmarkRunner that directly calls real tool
+AtomicToolRunner �?smoke-gate BenchmarkRunner that directly calls real tool
 implementations without any LLM or TaoLoop involved.
 
 Each test case:
   1. Instantiates the real tool class.
-  2. Calls execute(**args) — goes through Pydantic validation.
+  2. Calls execute(**args) �?goes through Pydantic validation.
   3. Asserts the output matches an expected substring or passes a predicate.
   4. Maps pass/fail to ScenarioResult so results enter the unified report.
 
@@ -128,14 +128,14 @@ _CASES: list[_ToolCase] = [
         tool_cls_path="agent.react.action.tools.impl.unit_converter.UnitConverterAction",
         args={"value": 1.0, "from_unit": "kg", "to_unit": "lb"},
         expect=lambda out: "2.2" in out,
-        description="1 kg ≈ 2.2046 lb",
+        description="1 kg �?2.2046 lb",
     ),
     _ToolCase(
         name="tool_get_weekday",
         tool_cls_path="agent.react.action.tools.impl.datetime_tool.GetWeekdayAction",
         args={"date": "2026-01-01"},
-        expect="星期四",
-        description="2026-01-01 is Thursday (星期四)",
+        expect="星期�?,
+        description="2026-01-01 is Thursday (星期�?",
     ),
     # ── datetime ──────────────────────────────────────────────────────────────
     _ToolCase(
@@ -231,7 +231,7 @@ def _run_case(case: _ToolCase) -> ScenarioResult:
 
     tool_cls = _import_cls(case.tool_cls_path)
 
-    # Apply @probe at call-site — production tool code is never modified.
+    # Apply @probe at call-site �?production tool code is never modified.
     # emit_metric() calls inside execute() (if any) are captured automatically.
     probed_execute = probe(
         description=case.description,
@@ -249,7 +249,7 @@ def _run_case(case: _ToolCase) -> ScenarioResult:
         ok = case.expect in output
 
     # The probe already recorded the run; annotate with assertion outcome
-    # via a second emit — this is a post-call metric, so we emit it directly
+    # via a second emit �?this is a post-call metric, so we emit it directly
     # onto the last recorded run rather than through the context.
     from test.probe import _runs
     if _runs:
@@ -292,7 +292,7 @@ class AtomicToolRunner:
     Gate: smoke (fast, zero-network, instant feedback on every PR).
 
     Registered test cases cover: calculator, string_transform, base64,
-    unit_converter, datetime — the full set of deterministic built-in tools.
+    unit_converter, datetime �?the full set of deterministic built-in tools.
     Failures here indicate a tool-level regression, independent of LLM behaviour.
     """
 

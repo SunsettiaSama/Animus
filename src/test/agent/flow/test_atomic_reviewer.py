@@ -191,7 +191,7 @@ def test_review_returns_revised_when_llm_rejects():
 # ── AtomicPlanner + AtomicReviewer integration ───────────────────────────────
 
 def test_planner_uses_reviewer_approved_decision():
-    """Reviewer approves → planner's original decision used unchanged."""
+    """Reviewer approves �?planner's original decision used unchanged."""
     flat_json = json.dumps({
         "kind": "flat", "reason": "two sub-tasks", "output_node_id": "",
         "sub_nodes": [
@@ -210,7 +210,7 @@ def test_planner_uses_reviewer_approved_decision():
 
 
 def test_planner_uses_revised_when_reviewer_rejects():
-    """Reviewer rejects with revised → revised decision used."""
+    """Reviewer rejects with revised �?revised decision used."""
     flat_json = json.dumps({
         "kind": "flat", "reason": "two sub-tasks", "output_node_id": "",
         "sub_nodes": [
@@ -238,7 +238,7 @@ def test_planner_uses_revised_when_reviewer_rejects():
 
 
 def test_planner_falls_back_to_atomic_when_reviewer_cannot_revise():
-    """Reviewer rejects, no revision → atomic fallback."""
+    """Reviewer rejects, no revision �?atomic fallback."""
     flat_json = json.dumps({
         "kind": "flat", "reason": "two sub-tasks", "output_node_id": "",
         "sub_nodes": [
@@ -260,7 +260,7 @@ def test_planner_falls_back_to_atomic_when_reviewer_cannot_revise():
 
 
 def test_planner_skips_review_when_budget_disables_it():
-    """max_review_rounds=0 → reviewer's LLM never called."""
+    """max_review_rounds=0 �?reviewer's LLM never called."""
     flat_json = json.dumps({
         "kind": "flat", "reason": "two sub-tasks", "output_node_id": "",
         "sub_nodes": [

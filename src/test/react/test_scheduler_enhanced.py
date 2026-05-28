@@ -1,19 +1,19 @@
 """
-Scheduler 四项增强方案 — 新增/改动模块测试
+Scheduler 四项增强方案 �?新增/改动模块测试
 ==========================================
 
 覆盖范围（无外部依赖，不启动 LLM / asyncio loop）：
 
   单元测试
-  ├── EventCommand          — render / to_dict / from_dict / display_label
-  ├── ScheduledTask.command — to_dict/from_dict 往返兼容
-  ├── SchedulerConfig       — scheduler_system_note 字段 & from_dict
-  ├── WorkJournal           — append_task_result / append_mid_run_message / read / today_conv_id
-  ├── ChannelRouter         — register / unregister / deliver / available_channels
-  ├── ReplyTarget           — from_task_dict / to_task_dict
-  └── NotifyUserAction      — execute(有/无 notify_fn) / description 存在
+  ├── EventCommand          �?render / to_dict / from_dict / display_label
+  ├── ScheduledTask.command �?to_dict/from_dict 往返兼�?
+  ├── SchedulerConfig       �?scheduler_system_note 字段 & from_dict
+  ├── WorkJournal           �?append_task_result / append_mid_run_message / read / today_conv_id
+  ├── ChannelRouter         �?register / unregister / deliver / available_channels
+  ├── ReplyTarget           �?from_task_dict / to_task_dict
+  └── NotifyUserAction      �?execute(�?�?notify_fn) / description 存在
 
-运行方式：
+运行方式�?
   cd G:/ReAct
   python -m pytest src/test/react/test_scheduler_enhanced.py -v
 """
@@ -53,13 +53,13 @@ def _mod_stub(name: str) -> types.ModuleType:
     return sys.modules[name]
 
 
-# Stub react 包体系
+# Stub react 包体�?
 _pkg_stub("agent.react")
 _pkg_stub("agent.react.action")
 _pkg_stub("agent.react.action.tools")
 _pkg_stub("agent.react.action.tools.impl")
 
-# BaseAction stub（供 notify_user.py 使用）
+# BaseAction stub（供 notify_user.py 使用�?
 _react_base = _mod_stub("agent.react.action.base")
 
 
@@ -106,7 +106,7 @@ def _load_tool_file(dotted_name: str, file_path: Path):
 
 _TOOLS_DIR = SRC / "agent" / "react" / "action" / "tools" / "impl"
 
-# 直接加载 notify_user.py（绕开包 __init__）
+# 直接加载 notify_user.py（绕开�?__init__�?
 _nu_mod = _load_tool_file(
     "agent.react.action.tools.impl.notify_user",
     _TOOLS_DIR / "notify_user.py",
@@ -167,18 +167,18 @@ class TestEventCommand(unittest.TestCase):
     def test_render_with_params(self):
         cmd = EventCommand(
             command_type="run_task",
-            template="分析 {topic} 的最新动态",
+            template="分析 {topic} 的最新动�?,
             params={"topic": "AI"},
         )
-        self.assertEqual(cmd.render(), "分析 AI 的最新动态")
+        self.assertEqual(cmd.render(), "分析 AI 的最新动�?)
 
     def test_render_multiple_params(self):
         cmd = EventCommand(
             command_type="chain",
             template="{verb} {count} 份{doc}",
-            params={"verb": "汇总", "count": "3", "doc": "报告"},
+            params={"verb": "汇�?, "count": "3", "doc": "报告"},
         )
-        self.assertEqual(cmd.render(), "汇总 3 份报告")
+        self.assertEqual(cmd.render(), "汇�?3 份报�?)
 
     def test_to_dict_keys(self):
         cmd = EventCommand(command_type="ask_user", template="问题", params={"k": "v"}, label="lbl")
@@ -212,7 +212,7 @@ class TestEventCommand(unittest.TestCase):
         self.assertEqual(cmd.label, "")
 
     def test_display_label_uses_label_when_set(self):
-        cmd = EventCommand(command_type="run_task", template="很长的模板文字", label="我的标签")
+        cmd = EventCommand(command_type="run_task", template="很长的模板文�?, label="我的标签")
         self.assertEqual(cmd.display_label(), "我的标签")
 
     def test_display_label_falls_back_to_template_slice(self):
@@ -226,7 +226,7 @@ class TestEventCommand(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ScheduledTask — command 字段向后兼容
+# ScheduledTask �?command 字段向后兼容
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestScheduledTaskCommand(unittest.TestCase):
@@ -244,7 +244,7 @@ class TestScheduledTaskCommand(unittest.TestCase):
     def test_command_field_roundtrip(self):
         cmd_dict = EventCommand(
             command_type="run_task",
-            template="请 {verb}",
+            template="�?{verb}",
             params={"verb": "汇报"},
         ).to_dict()
         t = _make_task(command=cmd_dict)
@@ -252,10 +252,10 @@ class TestScheduledTaskCommand(unittest.TestCase):
         t2 = ScheduledTask.from_dict(d)
         self.assertIsNotNone(t2.command)
         self.assertEqual(t2.command["command_type"], "run_task")
-        self.assertEqual(t2.command["template"], "请 {verb}")
+        self.assertEqual(t2.command["template"], "�?{verb}")
 
     def test_from_dict_without_command_key(self):
-        """旧格式 JSON（无 command 字段）能无缝加载。"""
+        """旧格�?JSON（无 command 字段）能无缝加载�?""
         minimal = {
             "id": "old",
             "name": "old_task",
@@ -266,16 +266,16 @@ class TestScheduledTaskCommand(unittest.TestCase):
         self.assertIsNone(t.command)
 
     def test_task_instruction_independent_of_command(self):
-        """instruction 与 command 独立；修改 command 不影响 instruction。"""
-        cmd = EventCommand(command_type="run_task", template="从 command 来的", params={})
+        """instruction �?command 独立；修�?command 不影�?instruction�?""
+        cmd = EventCommand(command_type="run_task", template="�?command 来的", params={})
         t = _make_task(instruction="原始指令", command=cmd.to_dict())
         self.assertEqual(t.instruction, "原始指令")
-        # render 只是工具，不会自动写回 instruction
-        self.assertEqual(cmd.render(), "从 command 来的")
+        # render 只是工具，不会自动写�?instruction
+        self.assertEqual(cmd.render(), "�?command 来的")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SchedulerConfig — scheduler_system_note
+# SchedulerConfig �?scheduler_system_note
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestSchedulerConfigSystemNote(unittest.TestCase):
@@ -286,9 +286,9 @@ class TestSchedulerConfigSystemNote(unittest.TestCase):
 
     def test_from_dict_parses_system_note(self):
         cfg = SchedulerConfig.from_dict({
-            "scheduler_system_note": "你在调度模式下运行",
+            "scheduler_system_note": "你在调度模式下运�?,
         })
-        self.assertEqual(cfg.scheduler_system_note, "你在调度模式下运行")
+        self.assertEqual(cfg.scheduler_system_note, "你在调度模式下运�?)
 
     def test_from_dict_missing_key_uses_default(self):
         cfg = SchedulerConfig.from_dict({"poll_interval": 2.0})
@@ -350,11 +350,11 @@ class TestWorkJournal(unittest.TestCase):
         self.assertEqual(meta["entry_type"], "task_result")
 
     def test_append_mid_run_message_content(self):
-        self.journal.append_mid_run_message("tid-002", "proc_task", "进度汇报", "已完成 50%")
+        self.journal.append_mid_run_message("tid-002", "proc_task", "进度汇报", "已完�?50%")
         data = self.journal.read()
         msg = data["messages"][-1]
         self.assertIn("proc_task", msg["content"])
-        self.assertIn("已完成 50%", msg["content"])
+        self.assertIn("已完�?50%", msg["content"])
 
     def test_append_mid_run_meta_entry_type(self):
         self.journal.append_mid_run_message("tid-003", "t", "title", "msg")
@@ -493,7 +493,7 @@ class TestChannelRouter(unittest.TestCase):
         self.assertEqual(calls_b, ["hello"])
 
     def test_deliver_is_thread_safe(self):
-        """多线程并发 deliver 不应死锁或抛出异常。"""
+        """多线程并�?deliver 不应死锁或抛出异常�?""
         import threading
         results = []
         self.router.register("ch", lambda t, ti, m: results.append(m))
@@ -527,7 +527,7 @@ class TestNotifyUserAction(unittest.TestCase):
     def test_execute_no_fn_returns_sent(self):
         action = NotifyUserAction(notify_fn=None)
         result = action.execute(message="hello")
-        self.assertIn("已发送", result)
+        self.assertIn("已发�?, result)
 
     def test_execute_calls_notify_fn(self):
         calls = []
@@ -546,7 +546,7 @@ class TestNotifyUserAction(unittest.TestCase):
     def test_execute_with_extra_kwargs_no_error(self):
         action = NotifyUserAction(notify_fn=None)
         result = action.execute(message="m", title="t", extra_field="x")
-        self.assertIn("已发送", result)
+        self.assertIn("已发�?, result)
 
     def test_notify_fn_injected_as_attribute(self):
         fn = MagicMock()
@@ -555,7 +555,7 @@ class TestNotifyUserAction(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TaskStore — update with command field
+# TaskStore �?update with command field
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestTaskStoreCommandUpdate(unittest.TestCase):
@@ -576,20 +576,20 @@ class TestTaskStoreCommandUpdate(unittest.TestCase):
     def test_update_instruction_field(self):
         task = _make_task("instr-task")
         self.store.add(task)
-        self.store.update("instr-task", instruction="新指令内容")
+        self.store.update("instr-task", instruction="新指令内�?)
         fetched = self.store.get("instr-task")
-        self.assertEqual(fetched.instruction, "新指令内容")
+        self.assertEqual(fetched.instruction, "新指令内�?)
 
     def test_update_name_field(self):
         task = _make_task("name-task")
         self.store.add(task)
-        self.store.update("name-task", name="重命名后的任务")
+        self.store.update("name-task", name="重命名后的任�?)
         fetched = self.store.get("name-task")
-        self.assertEqual(fetched.name, "重命名后的任务")
+        self.assertEqual(fetched.name, "重命名后的任�?)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SchedulerEngine — edit action 集成（通过 store.update 实现）
+# SchedulerEngine �?edit action 集成（通过 store.update 实现�?
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestSchedulerEngineEdit(unittest.TestCase):
@@ -600,10 +600,10 @@ class TestSchedulerEngineEdit(unittest.TestCase):
         self.engine = SchedulerEngine(self.cfg, executor=_NoopTaskExecutor())
 
     def test_edit_task_instruction(self):
-        task = self.engine.schedule_once("edit_me", "旧指令", _future(3600))
-        self.engine._store.update(task.id, instruction="新指令")
+        task = self.engine.schedule_once("edit_me", "旧指�?, _future(3600))
+        self.engine._store.update(task.id, instruction="新指�?)
         fetched = self.engine.get(task.id)
-        self.assertEqual(fetched.instruction, "新指令")
+        self.assertEqual(fetched.instruction, "新指�?)
 
     def test_edit_task_name(self):
         task = self.engine.schedule_once("old_name", "i", _future(3600))
@@ -619,16 +619,16 @@ class TestSchedulerEngineEdit(unittest.TestCase):
         self.assertEqual(fetched.next_run_at, new_at)
 
     def test_edit_command_and_instruction_together(self):
-        task = self.engine.schedule_once("cmd_task", "旧指令", _future(3600))
-        cmd = EventCommand(command_type="run_task", template="新 {x} 指令", params={"x": "的"})
+        task = self.engine.schedule_once("cmd_task", "旧指�?, _future(3600))
+        cmd = EventCommand(command_type="run_task", template="�?{x} 指令", params={"x": "�?})
         self.engine._store.update(
             task.id,
             command=cmd.to_dict(),
             instruction=cmd.render(),
         )
         fetched = self.engine.get(task.id)
-        self.assertEqual(fetched.instruction, "新 的 指令")
-        self.assertEqual(fetched.command["template"], "新 {x} 指令")
+        self.assertEqual(fetched.instruction, "�?�?指令")
+        self.assertEqual(fetched.command["template"], "�?{x} 指令")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -636,18 +636,18 @@ class TestSchedulerEngineEdit(unittest.TestCase):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestSystemNotePrepend(unittest.TestCase):
-    """验证 TaskRunner 中的 system_note 拼接逻辑，无需实例化 TaskRunner。"""
+    """验证 TaskRunner 中的 system_note 拼接逻辑，无需实例�?TaskRunner�?""
 
     def _prepend(self, sched_note: str, profile_note: str) -> str:
         return "\n\n".join(filter(None, [sched_note, profile_note]))
 
     def test_both_notes_combined(self):
-        result = self._prepend("调度模式", "个人提示词")
-        self.assertEqual(result, "调度模式\n\n个人提示词")
+        result = self._prepend("调度模式", "个人提示�?)
+        self.assertEqual(result, "调度模式\n\n个人提示�?)
 
     def test_empty_sched_note_only_profile(self):
-        result = self._prepend("", "个人提示词")
-        self.assertEqual(result, "个人提示词")
+        result = self._prepend("", "个人提示�?)
+        self.assertEqual(result, "个人提示�?)
 
     def test_empty_profile_note_only_sched(self):
         result = self._prepend("调度模式", "")

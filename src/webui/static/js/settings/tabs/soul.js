@@ -30,7 +30,11 @@ export async function load() {
     const life = c.life ?? {};
 
     _si('s-soul-hb-scan', hb.scan_interval_sec);
+    _si('s-soul-hb-active-start', hb.active_hours_start ?? '08:00');
+    _si('s-soul-hb-active-end', hb.active_hours_end ?? '22:00');
+    _si('s-soul-hb-active-tz', hb.active_timezone ?? 'Asia/Shanghai');
     _si('s-soul-hb-forget', hb.memory_forget_interval_sec);
+    _si('s-soul-hb-memory-sleep', hb.memory_sleep_at ?? '04:00');
     _si('s-soul-hb-ruminate', hb.memory_ruminate_interval_sec);
     _si('s-soul-hb-surprise', hb.surprise_tick_interval_sec);
     _si('s-soul-hb-drift-day', hb.persona_drift_day_of_month);
@@ -93,7 +97,11 @@ export async function save() {
   const soulConfig = {
     heartbeat: {
       scan_interval_sec: _num('s-soul-hb-scan', 300),
+      active_hours_start: _v('s-soul-hb-active-start') || '08:00',
+      active_hours_end: _v('s-soul-hb-active-end') || '22:00',
+      active_timezone: _v('s-soul-hb-active-tz') || 'Asia/Shanghai',
       memory_forget_interval_sec: _num('s-soul-hb-forget', 21600),
+      memory_sleep_at: _v('s-soul-hb-memory-sleep') || '04:00',
       memory_ruminate_interval_sec: _num('s-soul-hb-ruminate', 3600),
       surprise_tick_interval_sec: _num('s-soul-hb-surprise', 300),
       persona_drift_day_of_month: _int('s-soul-hb-drift-day', 1),

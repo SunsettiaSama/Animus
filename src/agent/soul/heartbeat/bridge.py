@@ -57,6 +57,7 @@ class PersonaSnapshot:
     emotional_state: str = ""
     valence_bias: Valence | None = None
     attention_keywords: list[str] = field(default_factory=list)
+    persona_profile: str = ""
     tick_id: str = ""
 
 
@@ -83,6 +84,9 @@ class MemoryHeartbeatResult:
     signal: EmotionalSignal = field(default_factory=EmotionalSignal)
     tick_id: str = ""
     buffer_candidates: list[dict] = field(default_factory=list)
+    rumination_buffer_size: int = 0
+    rumination_picked_id: str = ""
+    rumination_skill: dict = field(default_factory=dict)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -104,7 +108,7 @@ class MemoryHeartbeatPort(Protocol):
         ----------
         1. 解析 snapshot.valence_bias / attention_keywords 作为 wander() 偏置
         2. 调用 retriever.wander(n, emotion_weight, noise, ...)
-        3. 将 wandered 记忆 id 交给 MemoryService.ruminate()，生成 ReconstructiveMemory
+        3. 将 wandered 记忆 id 交给 RuminationService.ruminate()，生成 ReconstructiveMemory
         4. 判断是否触发 NarrativeWriter（如：本次浮现的高情绪记忆 >= 阈值）
         5. 调用 retriever.persona_clusters()，产出 Persona buffer 主题元数据
         6. 从 wandered 记忆中提取情绪信号，构建 EmotionalSignal
@@ -149,9 +153,12 @@ class LifeHeartbeatPort(Protocol):
 
 @runtime_checkable
 class MemoryLifecycleHeartbeatPort(Protocol):
-    """记忆子系统生命周期（由 checklist FORGET_SCAN 或显式 API 触发）。"""
+    """记忆子系统生命周期（由 checklist FORGET_SCAN / SLEEP 或显式 API 触发）。"""
 
     def forget_scan(self, threshold: float = 0.05, dry_run: bool = False) -> list[str]:
+        ...
+
+    def run_sleep(self, *, tick_id: str = "", dry_run: bool = False) -> Any:
         ...
 
 

@@ -17,7 +17,7 @@ def test_speak_outbound_blocks_proactive_when_required():
     outbound = SpeakPresenceOutbound(soul)
     result = outbound.deliver_agent_message(
         session_id="tao",
-        message="想聊聊",
+        message="想聊�?,
         wait_reply=True,
         append=False,
     )
@@ -36,7 +36,7 @@ def test_speak_outbound_handle_expectation_append():
     speak_service.deliver_agent_message.return_value = {
         "ok": True,
         "session_id": "tao",
-        "message": "补充一句",
+        "message": "补充一�?,
         "exchange_id": "ex-1",
     }
     soul._ensure_speak_service.return_value = speak_service
@@ -44,12 +44,12 @@ def test_speak_outbound_handle_expectation_append():
     outbound = SpeakPresenceOutbound(soul)
     request = SpeakRequest(
         session_id="tao",
-        reason="补充一句",
+        reason="补充一�?,
         impulse_level=0.4,
         share_desire=ShareDesire.moderate,
         expectation=Expectation.optional,
         package=ShareFoldedPackage(
-            summary="补充一句",
+            summary="补充一�?,
             entries=(),
             peak_salience=0.0,
             total_salience=0.0,

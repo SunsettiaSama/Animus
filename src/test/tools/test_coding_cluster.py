@@ -105,7 +105,7 @@ def test_code_result_empty_outputs():
     assert "done" in result.render()
 
 
-# ── CodeOrchestrator 端到端（无真实 LLM）─────────────────────────────────────
+# ── CodeOrchestrator 端到端（无真�?LLM）─────────────────────────────────────
 
 def test_orchestrator_full_run():
     call_log: list = []
@@ -116,7 +116,7 @@ def test_orchestrator_full_run():
 
     assert result.status == "done"
     assert set(result.artifacts.keys()) == {"design_api", "impl_limiter", "test_limiter"}
-    assert result.summary  # replanner 汇总存在
+    assert result.summary  # replanner 汇总存�?
 
 
 def test_orchestrator_plan_called_once():
@@ -124,7 +124,7 @@ def test_orchestrator_plan_called_once():
     llm = make_mock_llm(call_log)
     orch = CodeOrchestrator(llm, CodingConfig(use_react_action=False))
     asyncio.run(orch.run_coding("Write a calculator"))
-    # Planner 的 system prompt 包含 "coding task planner"（与其他角色 prompt 不同）
+    # Planner �?system prompt 包含 "coding task planner"（与其他角色 prompt 不同�?
     plan_calls = [c for c in call_log if "coding task planner" in c["system"].lower()]
     assert len(plan_calls) == 1
 
@@ -135,11 +135,11 @@ def test_orchestrator_mro():
 
 
 def test_orchestrator_dispatch_bypasses_node_registry():
-    """_dispatch_atomic 不经过 NodeRegistry/NodeRuntimeManager，运行时验证。
+    """_dispatch_atomic 不经�?NodeRegistry/NodeRuntimeManager，运行时验证�?
 
-    NodeRegistry 没有注册 executor_factory；
-    若路径经过父类 _dispatch_atomic → build_executor()，会抛 RuntimeError。
-    成功运行即证明走了子类覆写路径。
+    NodeRegistry 没有注册 executor_factory�?
+    若路径经过父�?_dispatch_atomic �?build_executor()，会�?RuntimeError�?
+    成功运行即证明走了子类覆写路径�?
     """
     call_log: list = []
     llm = make_mock_llm(call_log)

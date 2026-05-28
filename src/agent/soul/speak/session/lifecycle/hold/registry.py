@@ -18,6 +18,7 @@ def _utcnow() -> datetime:
 class SpeakSessionRecord:
     session_id: str
     generation: int = 1
+    turn_index: int = 0
     opened_at: datetime = field(default_factory=_utcnow)
     last_activity_at: datetime = field(default_factory=_utcnow)
 
@@ -95,12 +96,21 @@ class SpeakSessionRegistry:
         record.last_activity_at = now
         return record
 
+    def begin_turn(self, session_id: str) -> int:
+        record = self.get(session_id)
+        record.turn_index += 1
+        return record.turn_index
+
+    def current_turn_index(self, session_id: str) -> int:
+        return self.get(session_id).turn_index
+
     def rotate_generation(self, session_id: str, *, now: datetime | None = None) -> SpeakSessionRecord:
         record = self.get(session_id)
         current = now or self._now_fn()
         record = SpeakSessionRecord(
             session_id=session_id,
             generation=record.generation + 1,
+            turn_index=0,
             opened_at=current,
             last_activity_at=current,
         )

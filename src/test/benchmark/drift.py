@@ -30,7 +30,7 @@ class DriftAlert:
     drift_pct: float
 
     def __str__(self) -> str:
-        direction = "â–²" if self.drift_pct > 0 else "â–¼"
+        direction = "â–? if self.drift_pct > 0 else "â–?
         return (
             f"[DRIFT] {self.scenario} / {self.metric}: "
             f"{self.current:.1f} vs baseline {self.baseline:.1f} "
@@ -98,10 +98,10 @@ def check_drift(
     Compare current results against rolling average from history.
 
     Tracked metrics per scenario:
-      total_tokens  â€” prompt + completion token count
-      wall_ms       â€” end-to-end wall-clock time
-      quality_score â€” 0-1 quality score (only when present in both current and history)
-      retry_rate    â€” llm_retries / max(steps, 1) â€” parser degradation signal
+      total_tokens  â€?prompt + completion token count
+      wall_ms       â€?end-to-end wall-clock time
+      quality_score â€?0-1 quality score (only when present in both current and history)
+      retry_rate    â€?llm_retries / max(steps, 1) â€?parser degradation signal
 
     Returns a list of DriftAlert, empty when no drift exceeds threshold.
     """

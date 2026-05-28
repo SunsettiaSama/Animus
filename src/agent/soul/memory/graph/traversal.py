@@ -95,3 +95,15 @@ class GraphTraversal:
                 weight=weight,
             )
         )
+
+    def link_involves(self, from_id: str, to_id: str, *, weight: float = 0.85) -> None:
+        from agent.soul.memory.domain import MemoryEdge
+
+        self._edges.put(
+            MemoryEdge(
+                from_id=from_id,
+                to_id=to_id,
+                edge_type=EdgeType.involves,
+                weight=weight,
+            )
+        )

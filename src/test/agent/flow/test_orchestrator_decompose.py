@@ -1,6 +1,6 @@
 """Integration tests for the atomic planning layer inside FlowOrchestrator.
 
-Tests use mock AtomicPlanner and mock ExecutorAgent — no LLM calls.
+Tests use mock AtomicPlanner and mock ExecutorAgent �?no LLM calls.
 Follows the same async execution pattern as test_orchestrator.py.
 """
 from __future__ import annotations
@@ -119,7 +119,7 @@ Test decomposition.
 # ── Mock AtomicPlanner helpers ────────────────────────────────────────────────
 
 def _mock_planner(decision_fn):
-    """Returns mock AtomicPlanner whose assess(manifest, budget) → decision_fn(manifest, budget)."""
+    """Returns mock AtomicPlanner whose assess(manifest, budget) �?decision_fn(manifest, budget)."""
     planner = MagicMock()
     async def _assess(manifest, budget, *, context=None):
         return decision_fn(manifest, budget)
@@ -231,7 +231,7 @@ class TestFlatExpansion:
         assert doc.get_task("complex_task").result == "result_of_sub_b"
 
     def test_flat_dependency_order_respected(self, tmp_path):
-        """sub_b depends_on sub_a → execution order is sub_a then sub_b."""
+        """sub_b depends_on sub_a �?execution order is sub_a then sub_b."""
         doc = _single_task_doc("big_task")
         orch = _make_orch(tmp_path)
 
@@ -340,7 +340,7 @@ class TestBudgetEnforcement:
         assert orch._executor_agent.run.call_count == 2
 
     def test_nested_passes_descend_budget(self, tmp_path):
-        """Nested call receives budget.descend() — depth is one less."""
+        """Nested call receives budget.descend() �?depth is one less."""
         doc = _single_task_doc("outer_task")
         orch = _make_orch(tmp_path, max_depth=2)
 

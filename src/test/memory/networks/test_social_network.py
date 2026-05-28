@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+
+from agent.soul.life.experience.anchor_codec import AnchorUnitContext, InteractionDirection, stamp_anchor_context
 from agent.soul.life.experience.unit import (
     ExperienceAction,
     ExperienceActionKind,
@@ -8,11 +11,10 @@ from agent.soul.life.experience.unit import (
     ExperienceUnit,
 )
 from agent.soul.memory.domain import EdgeType, MemoryEdge, SocialCoreNode, SocialNeighborhoodNode, SocialNodeRole
-from agent.soul.memory.graph.traversal import GraphTraversal
-from agent.soul.memory.networks.social.neighborhood_ingest import NeighborhoodIngestor
-from agent.soul.memory.networks.social.service import SocialMemoryNetwork
-from agent.soul.memory.processors.neighborhood_extractor import NeighborhoodCandidate
-from agent.soul.memory.processors.rule_neighborhood_extractor import RuleNeighborhoodExtractor
+from agent.soul.memory.graph.networks.archival import ExperienceArchiver
+from agent.soul.memory.graph.networks.experience_block import classify_experience, read_experience_block
+from agent.soul.memory.graph.networks.social.network import SocialMemoryNetwork
+from agent.soul.memory.graph.networks.types import ExperienceKind
 
 
 class _MemStore:
@@ -41,9 +43,24 @@ class _MemStore:
             out.append(node)
         return out[:limit]
 
+    def list_recent(self, memory_type=None, valence=None, network=None, limit: int = 50):
+        out = list(self._nodes.values())
+        if network is not None:
+            out = [n for n in out if n.network == network]
+        return out[:limit]
+
     def get_core_for_interactor(self, interactor_id: str):
         nodes = self.list_by_interactor(interactor_id, SocialNodeRole.core, limit=1)
         return nodes[0] if nodes else None
+
+    def get_by_life_event_id(self, life_event_id: str):
+        for node in self._nodes.values():
+            meta = getattr(node, "meta", {}) or {}
+            if meta.get("life_event_id") == life_event_id:
+                return node
+            if getattr(node, "life_event_id", "") == life_event_id:
+                return node
+        return None
 
     def archive(self, node_id: str) -> None:
         self._nodes.pop(node_id, None)
@@ -53,9 +70,6 @@ class _MemStore:
 
     def add_rehearsal(self, node_id: str) -> None:
         pass
-
-    def get_by_life_event_id(self, life_event_id: str):
-        return None
 
     def forget_scan(self, **kwargs):
         return []
@@ -91,58 +105,105 @@ class _InteractorStore:
         return self.get_or_create(interactor_id)
 
 
-def test_social_network_isolates_interactors():
-    nodes = _MemStore()
-    edges = _EdgeStore()
-    social = SocialMemoryNetwork(
-        nodes,
-        edges,
-        _InteractorStore(),
-        RuleNeighborhoodExtractor(),
-    )
-    core_a = social.ensure_core("alice")
-    core_b = social.ensure_core("bob")
-    assert core_a.id != core_b.id
-    assert core_a.interactor_id == "alice"
+class _FakeLLM:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def generate_messages(self, messages) -> str:
+        return json.dumps(self._payload, ensure_ascii=False)
 
 
-def test_neighborhood_ingest_creates_about_edges():
-    nodes = _MemStore()
-    edges = _EdgeStore()
-    core = SocialCoreNode(interactor_id="alice", focus="印象", core_traits="")
-    nodes.put(core)
-    ingestor = NeighborhoodIngestor(nodes, GraphTraversal(edges), RuleNeighborhoodExtractor())
-    created = ingestor.ingest(
-        core,
-        [
-            NeighborhoodCandidate(label="宠物", content="养猫"),
-            NeighborhoodCandidate(label="小黑", content="猫的名字", related_labels=["宠物"]),
-        ],
-    )
-    assert created
-    assert any(e.edge_type == EdgeType.about and e.from_id == core.id for e in edges.edges)
-    assert any(e.edge_type == EdgeType.related_to for e in edges.edges)
-
-
-def test_ingest_interaction_from_experience_unit():
-    nodes = _MemStore()
-    edges = _EdgeStore()
-    social = SocialMemoryNetwork(
-        nodes,
-        edges,
-        _InteractorStore(),
-        RuleNeighborhoodExtractor(),
-    )
+def _anchor_unit(text: str = "用户：我养了一只猫") -> ExperienceUnit:
     unit = ExperienceUnit.make(
         situation=ExperienceSituation(
             session_id="s1",
-            perception="用户：我养了一只猫叫小黑",
+            perception=text,
             narration="聊宠物",
         ),
         action=ExperienceAction(kind=ExperienceActionKind.speaking, content="真好"),
         feeling=ExperienceFeeling(salience=0.6, emotion_label="好奇"),
         source="interaction",
     )
-    nodes_out = social.ingest_interaction(unit, interactor_id="alice")
-    assert nodes_out
-    assert isinstance(social.ensure_core("alice"), SocialCoreNode)
+    stamp_anchor_context(
+        unit,
+        AnchorUnitContext(
+            direction=InteractionDirection.inbound,
+            session_id="s1",
+            interactor_id="alice",
+        ),
+    )
+    return unit
+
+
+def _event_unit() -> ExperienceUnit:
+    return ExperienceUnit.make(
+        situation=ExperienceSituation(
+            perception="午后阳光落在书桌上",
+            narration="独自整理笔记",
+        ),
+        action=ExperienceAction(kind=ExperienceActionKind.reasoning, content="回顾今天"),
+        feeling=ExperienceFeeling(salience=0.55, emotion_label="平静"),
+        source="narrative",
+    )
+
+
+def test_classify_anchor_vs_event():
+    assert classify_experience(_anchor_unit()) == ExperienceKind.anchor
+    assert classify_experience(_event_unit()) == ExperienceKind.event
+
+    user_unit = ExperienceUnit.make(
+        situation=ExperienceSituation(session_id="tao", perception="用户说你好"),
+        action=ExperienceAction(kind=ExperienceActionKind.speaking, content="你好"),
+        feeling=ExperienceFeeling(salience=0.5),
+        source="user",
+    )
+    assert classify_experience(user_unit) == ExperienceKind.anchor
+
+
+def test_social_anchor_ingest_links_core_and_parent():
+    nodes = _MemStore()
+    edges = _EdgeStore()
+    parent = SocialNeighborhoodNode(
+        interactor_id="alice",
+        focus="旧对话",
+        label="旧对话",
+        content="之前聊过宠物",
+    )
+    nodes.put(parent)
+
+    llm = _FakeLLM(
+        {
+            "focus": "宠物",
+            "subjective_statement": "我记得用户说他养了一只猫",
+            "label": "宠物",
+            "parent_node_id": parent.id,
+            "parent_reason": "同属生活细节",
+            "emotion": "好奇",
+            "emotion_intensity": 0.6,
+            "valence": "neutral",
+            "base_activation": 0.6,
+        }
+    )
+    archiver = ExperienceArchiver(llm, nodes)
+    social = SocialMemoryNetwork(
+        nodes,
+        edges,
+        _InteractorStore(),
+        archiver,
+    )
+    created = social.ingest_anchor_experience(_anchor_unit())
+    assert len(created) == 1
+    assert isinstance(created[0], SocialNeighborhoodNode)
+    assert created[0].content.startswith("我记得")
+    assert any(e.edge_type == EdgeType.about for e in edges.edges)
+    assert any(
+        e.edge_type == EdgeType.related_to and e.from_id == parent.id
+        for e in edges.edges
+    )
+
+
+def test_read_experience_block_carries_experience_id():
+    unit = _anchor_unit()
+    block = read_experience_block(unit)
+    assert block.experience_id == unit.id
+    assert block.interactor_id == "alice"

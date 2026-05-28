@@ -14,7 +14,7 @@ from agent.interaction.core.semantic import SemanticInteraction
 def _ix(stakes: str = "报告风险") -> SemanticInteraction:
     ctx = InteractionContext(session_id="tao", expectation=Expectation.required)
     ix = SemanticInteraction(context=ctx, stakes=stakes)
-    ix.append_user("帮我分析报告风险点")
+    ix.append_user("帮我分析报告风险�?)
     ix.append_utterance("好的")
     return ix
 
@@ -30,8 +30,8 @@ def _ortho_embed(text: str) -> list[float]:
 class _FakeContinuityLlm:
     def complete(self, system: str, user: str) -> str:
         if "天气" in user:
-            return "BREAK\nreason: 新话题"
-        return "CONTINUE\nreason: 同一线"
+            return "BREAK\nreason: 新话�?
+        return "CONTINUE\nreason: 同一�?
 
 
 def test_embedding_breaks_topic():
@@ -41,7 +41,7 @@ def test_embedding_breaks_topic():
         embedding_continue_above=0.9,
     )
     ix = _ix()
-    d = j.judge(ContinuityInput(active=ix, incoming_user_text="明天天气怎么样"))
+    d = j.judge(ContinuityInput(active=ix, incoming_user_text="明天天气怎么�?))
     assert d.verdict == ContinuityVerdict.close_and_new
     assert d.layer == "embedding"
 
@@ -59,7 +59,7 @@ def test_llm_when_embedding_gray():
         embedding_continue_above=0.95,
     )
     ix = _ix()
-    d = j.judge(ContinuityInput(active=ix, incoming_user_text="明天天气怎么样"))
+    d = j.judge(ContinuityInput(active=ix, incoming_user_text="明天天气怎么�?))
     assert d.verdict == ContinuityVerdict.close_and_new
     assert d.layer == "llm"
 

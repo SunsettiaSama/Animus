@@ -1,21 +1,21 @@
 """
-test/probe.py — Lightweight instrumentation decorator for the benchmark WebUI.
+test/probe.py �?Lightweight instrumentation decorator for the benchmark WebUI.
 
 Design goals
 ────────────
-1. Minimum invasion — production code is never modified.  Callers wrap
+1. Minimum invasion �?production code is never modified.  Callers wrap
    functions at test-call-time:
        probed = probe("desc")(ToolClass().execute)
        result = probed(**args)
 
-2. Arbitrary metrics — emit_metric(key, value) can be called from *inside*
+2. Arbitrary metrics �?emit_metric(key, value) can be called from *inside*
    any probe-wrapped function (or any function it calls) using a
    contextvars.ContextVar.  No need to thread a context object around.
 
-3. Thread & async safe — ContextVar is isolated per-coroutine / per-thread,
+3. Thread & async safe �?ContextVar is isolated per-coroutine / per-thread,
    so concurrent probe calls never bleed metrics into each other.
 
-4. Zero dependencies — only stdlib (contextvars, functools, dataclasses, uuid,
+4. Zero dependencies �?only stdlib (contextvars, functools, dataclasses, uuid,
    inspect, time, datetime).
 
 Usage
@@ -72,14 +72,14 @@ def emit_metric(key: str, value: Any) -> None:
         ctx[key] = value
 
 
-# ── ProbeRun — the captured snapshot of a single call ────────────────────────
+# ── ProbeRun �?the captured snapshot of a single call ────────────────────────
 
 @dataclass
 class ProbeRun:
     run_id: str
     probe_name: str
     description: str
-    inputs: dict[str, str]        # param_name → safe-serialized value
+    inputs: dict[str, str]        # param_name �?safe-serialized value
     output: str | None            # safe-serialized return value
     wall_ms: float
     timestamp: str                # ISO-8601 UTC
@@ -117,21 +117,21 @@ def _safe_str(val: Any, max_len: int = 400) -> str:
     if val is None:
         return "None"
     s = repr(val) if not isinstance(val, str) else val
-    return s[:max_len] + ("…" if len(s) > max_len else "")
+    return s[:max_len] + ("�? if len(s) > max_len else "")
 
 
 def _serialize_args(fn: Callable, args: tuple, kwargs: dict) -> dict[str, str]:
     """
     Map positional and keyword arguments to {param_name: repr(value)}.
 
-    Falls back to positional keys ("arg_0", "arg_1", …) when the function
+    Falls back to positional keys ("arg_0", "arg_1", �? when the function
     signature cannot be introspected (built-ins, C extensions, etc.).
     """
     out: dict[str, str] = {}
     try:
         sig = inspect.signature(fn)
         params = list(sig.parameters.keys())
-        # Skip 'self' / 'cls' for bound methods — they're noise in the UI
+        # Skip 'self' / 'cls' for bound methods �?they're noise in the UI
         if params and params[0] in ("self", "cls"):
             params = params[1:]
         for i, val in enumerate(args):
@@ -165,11 +165,11 @@ def probe(
                   Used for filtering in the WebUI.
 
     The decorator captures:
-      • All input arguments (name → safe repr)
-      • The return value (safe repr)
-      • Wall-clock execution time
-      • Any emit_metric() calls made during execution
-      • Exceptions (status = "error", error = "ExcType: message")
+      �?All input arguments (name �?safe repr)
+      �?The return value (safe repr)
+      �?Wall-clock execution time
+      �?Any emit_metric() calls made during execution
+      �?Exceptions (status = "error", error = "ExcType: message")
 
     Apply at *call-site* to avoid touching production code:
 

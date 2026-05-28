@@ -1,5 +1,5 @@
 """
-TaoLoop integration regression tests â€” exercised via TaoLoopRunner.
+TaoLoop integration regression tests â€?exercised via TaoLoopRunner.
 
 These tests inject MockLLM + ScriptActionExecutor into a real TaoLoop
 instance and assert end-to-end behaviour for the scenarios introduced

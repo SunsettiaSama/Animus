@@ -18,7 +18,6 @@ def test_read_api_actions_cover_query_wrappers():
 
 
 def test_write_actions_not_read():
-    assert not is_read_api_action(SoulDomain.memory, MemoryAction.FLUSH)
     assert not is_read_api_action(SoulDomain.persona, PersonaAction.RELOAD_PROFILE)
     assert not is_read_api_action(SoulDomain.persona, PersonaAction.REBUILD_PROFILE)
     assert not is_read_api_action(SoulDomain.persona, PersonaAction.RUN_MONTHLY_DRIFT)

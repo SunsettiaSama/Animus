@@ -9,7 +9,7 @@ from agent.soul.memory.domain import (
     SocialNeighborhoodNode,
     Valence,
 )
-from agent.soul.memory.networks.social.core_evolution import CoreEvolver
+from agent.soul.memory.graph.networks.social.core_evolution import CoreEvolver
 
 
 def test_factual_memory_activation_increases_with_recall():
@@ -31,8 +31,8 @@ def test_social_neighborhood_fields():
     node = SocialNeighborhoodNode(
         interactor_id="alice",
         focus="宠物",
-        label="猫",
-        content="叫小黑",
+        label="�?,
+        content="叫小�?,
     )
     assert node.network.value == "social"
     assert "小黑" in node.embed_text()

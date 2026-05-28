@@ -1,4 +1,4 @@
-"""Backward-compatible re-exports â€” prefer ``agent.soul.memory.domain``."""
+"""Backward-compatible re-exports â€?prefer ``agent.soul.memory.domain``."""
 
 from agent.soul.memory.domain.enums import MemoryTier, Valence
 from agent.soul.memory.domain.node import (

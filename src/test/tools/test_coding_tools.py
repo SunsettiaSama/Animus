@@ -1,4 +1,4 @@
-"""agent.flow.coding.tools 的单元测试。"""
+"""agent.flow.coding.tools 的单元测试�?""
 from __future__ import annotations
 
 import asyncio
@@ -67,7 +67,7 @@ def test_write_and_read_file():
     with tempfile.TemporaryDirectory() as tmp:
         path = str(Path(tmp) / "test.py")
         write_msg = suite.call("write_file", path=path, content="x = 1\n")
-        assert "已写入" in write_msg
+        assert "已写�? in write_msg
         content = suite.call("read_file", path=path)
         assert "x = 1" in content
 
@@ -75,7 +75,7 @@ def test_write_and_read_file():
 def test_read_file_not_found():
     suite = CodingToolSuite()
     result = suite.call("read_file", path="/nonexistent/path/x.py")
-    assert "不存在" in result
+    assert "不存�? in result
 
 
 def test_append_file():
@@ -161,14 +161,14 @@ def test_executor_single_shot_no_tools():
     )
     result = executor.run(manifest, {})
     assert "def foo" in result
-    assert len(calls) == 1  # 只调用一次 LLM
+    assert len(calls) == 1  # 只调用一�?LLM
 
 
 def test_executor_with_tools_final_answer():
     calls = []
     def llm(system, user):
         calls.append(len(calls))
-        # 第一轮直接给出 FINAL_ANSWER
+        # 第一轮直接给�?FINAL_ANSWER
         return "FINAL_ANSWER:\ndef add(a, b): return a + b"
 
     suite = CodingToolSuite()
@@ -186,7 +186,7 @@ def test_executor_with_tools_final_answer():
 
 
 def test_executor_with_tools_uses_tool_then_answers():
-    """LLM 先调用 run_python，再给出 FINAL_ANSWER。"""
+    """LLM 先调�?run_python，再给出 FINAL_ANSWER�?""
     step = [0]
     def llm(system, user):
         s = step[0]

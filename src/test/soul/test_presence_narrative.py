@@ -6,20 +6,20 @@ from agent.soul.presence.share_desire import ShareDesire, StaticStatePatch
 def test_compose_self_narrative_includes_share_queue():
     svc = PresenceService()
     session = svc._session("tao")
-    session.state.affect.narrative = "有点想聊天"
+    session.state.affect.narrative = "有点想聊�?
     session.state.expectation.share_queue.enqueue(
         ShareIntent(topic="想告诉你一件事", share_desire=ShareDesire.moderate)
     )
     text = svc.compose_self_narrative("tao")
-    assert "此刻我的状态" in text
+    assert "此刻我的状�? in text
     assert "想告诉你一件事" in text
-    assert "有点想聊天" in text
+    assert "有点想聊�? in text
 
 
 def test_apply_state_block_queues_share_when_desired():
     svc = PresenceService()
     notes = svc.apply_state_block(PresenceStateBlock.experience(
-        narratives={"affect": "刚经历了一件小事"},
+        narratives={"affect": "刚经历了一件小�?},
         meta={
             "wants_to_share": "true",
             "share_topic": "想分享刚才的体验",
@@ -50,7 +50,7 @@ def test_state_block_on_worker_queues_share():
     block = PresenceStateBlock.experience(
         meta={
             "wants_to_share": "true",
-            "share_topic": "异步块测试",
+            "share_topic": "异步块测�?,
             "share_desire": "eager",
         },
     )

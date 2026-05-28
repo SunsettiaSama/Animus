@@ -9,6 +9,18 @@ from agent.soul.presence.actions import PresenceAction
 from .item import ChecklistItem, ChecklistTrigger
 
 
+def _resolve_memory_sleep_at(cfg: SoulConfig) -> str:
+    hb = getattr(cfg, "heartbeat", None)
+    if hb is not None:
+        at = getattr(hb, "memory_sleep_at", None)
+        if at:
+            return str(at)
+    at = getattr(cfg, "memory_sleep_at", None)
+    if at:
+        return str(at)
+    return "04:00"
+
+
 def default_checklist(cfg: SoulConfig | None = None) -> list[ChecklistItem]:
     """内置待办时间轴：间隔与配额来自 ``SoulConfig``。"""
     c = cfg or SoulConfig.default()
@@ -55,6 +67,13 @@ def default_checklist(cfg: SoulConfig | None = None) -> list[ChecklistItem]:
             action=MemoryAction.FORGET_SCAN,
             trigger=ChecklistTrigger.interval,
             interval_sec=c.memory_forget_interval_sec,
+        ),
+        ChecklistItem(
+            id="memory-sleep",
+            domain="memory",
+            action=MemoryAction.SLEEP,
+            trigger=ChecklistTrigger.daily,
+            daily_at=_resolve_memory_sleep_at(c),
         ),
         ChecklistItem(
             id="presence-wake-up",

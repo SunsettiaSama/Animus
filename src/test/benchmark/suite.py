@@ -75,10 +75,10 @@ class BenchmarkSuite:
         """
         Execute all registered runners matching *gate*.
 
-        gate=None         â†’ run every registered runner
-        gate="smoke"      â†’ only smoke-level runners
-        gate="regression" â†’ only regression-level runners
-        gate="performance"â†’ only performance-level runners
+        gate=None         â†?run every registered runner
+        gate="smoke"      â†?only smoke-level runners
+        gate="regression" â†?only regression-level runners
+        gate="performance"â†?only performance-level runners
         """
         if gate is not None and gate not in _VALID_GATES:
             raise ValueError(

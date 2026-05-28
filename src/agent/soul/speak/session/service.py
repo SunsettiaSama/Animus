@@ -47,8 +47,9 @@ class SpeakSessionService:
         touch_dialogue: Callable[[str], None] | None = None,
         registry: SpeakSessionRegistry | None = None,
         reset_context: Callable[[str], None] | None = None,
+        memory_turn_gap: int = 3,
     ) -> None:
-        self._queues = SessionQueueHub()
+        self._queues = SessionQueueHub(memory_turn_gap=memory_turn_gap)
         self._bootstrap = SessionBootstrap(
             idle_sec=idle_sec,
             inner_lifecycle=inner_lifecycle,
@@ -193,6 +194,33 @@ class SpeakSessionService:
 
     def clear_compose(self, session_id: str) -> None:
         self._queues.clear_session(session_id)
+
+    def begin_turn(self, session_id: str) -> int:
+        return self.registry.begin_turn(session_id)
+
+    def enqueue_memory_result(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        lines: list[str],
+        unit_ids: list[str],
+        associative_ready: bool = False,
+    ) -> None:
+        from .queue.memory import MemoryQueueItem
+
+        self._queues.enqueue_memory(
+            session_id,
+            MemoryQueueItem(
+                turn_index=turn_index,
+                lines=tuple(lines),
+                unit_ids=tuple(unit_ids),
+                associative_ready=associative_ready,
+            ),
+        )
+
+    def consume_memory_for_compose(self, session_id: str, turn_index: int):
+        return self._queues.consume_memory_for_compose(session_id, turn_index)
 
 
 SpeakSessionManager = SpeakSessionService

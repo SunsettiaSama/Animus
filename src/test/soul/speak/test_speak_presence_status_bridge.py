@@ -54,19 +54,19 @@ def test_speak_on_presence_status_update_writes_status_store():
 
 def test_collect_status_prefers_store_over_snapshot():
     store = SpeakStatusStore()
-    store.update_presence("tao", "【当下态·状态】\n情感：缓存态")
+    store.update_presence("tao", "【当下态·状态】\n情感：缓存�?)
 
     snap = MagicMock()
     snap.session_id = "tao"
-    snap.state.affect.render.return_value = "实时态"
+    snap.state.affect.render.return_value = "实时�?
 
     injected = collect_status_injected(
         presence_snap=snap,
         status_store=store,
     )
 
-    assert injected.presence == "【当下态·状态】\n情感：缓存态"
-    assert "实时态" not in injected.presence
+    assert injected.presence == "【当下态·状态】\n情感：缓存�?
+    assert "实时�? not in injected.presence
 
 
 def test_apply_presence_status_update_renders_snapshot():
@@ -112,20 +112,20 @@ def test_status_update_refreshes_compose_prefetch_frame():
     presence.register_status_update_listener(speak.on_presence_status_update)
 
     speak.start()
-    presence.patch_static("tao", StaticStatePatch(affect="旧状态"))
+    presence.patch_static("tao", StaticStatePatch(affect="旧状�?))
     first = _wait_ready_frame(speak)
     assert first is not None
-    assert "旧状态" in first.status.presence
+    assert "旧状�? in first.status.presence
 
-    presence.patch_static("tao", StaticStatePatch(affect="新状态"))
+    presence.patch_static("tao", StaticStatePatch(affect="新状�?))
     second = _wait_ready_frame(speak)
     assert second is not None
-    assert "新状态" in second.status.presence
-    assert "旧状态" not in second.status.presence
+    assert "新状�? in second.status.presence
+    assert "旧状�? not in second.status.presence
 
     bundle = speak.composer.finalize(second, "你好")
     system = bundle.build_system()
-    assert "新状态" in system
+    assert "新状�? in system
     assert bundle.meta["compose_source"] == "prefetch"
 
     speak.stop()

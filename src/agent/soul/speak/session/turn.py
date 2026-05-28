@@ -23,12 +23,13 @@ _APPEND_CONTINUE_INSTRUCTION = (
 @dataclass
 class SessionTurnHost:
     compose_bundle: Callable[..., SpeakPromptBundle]
+    begin_turn: Callable[[str], int]
+    refresh_similar_memories: Callable[..., None] | None
     llm: SpeakLLMEngine
     stream_pipeline: SpeakStreamPipeline
     outbound_stream: SpeakStreamChannel
     record_turn: Callable[[SpeakTurnChunk], Any]
     schedule_compose: Callable[[str], None]
-    on_memory_activation: Callable[[str, str, str], None] | None = None
     resolve_interactor_id: Callable[[str], str] | None = None
     continue_share_handoff: Callable[..., tuple[str, list[SpeakStreamEvent], "SpeakAgentOutput"] | None] | None = None
     continue_recall_handoff: Callable[..., tuple[str, list[SpeakStreamEvent], "SpeakAgentOutput"] | None] | None = None
@@ -131,16 +132,13 @@ def run_session_turn(
     if interrupt_context is not None:
         notes.append("session: user interrupt turn")
 
+    turn_index = host.begin_turn(session_id)
+    notes.append(f"session: turn_index={turn_index}")
+
     manager.begin_push(session_id, user_text)
     partial_output = ""
     try:
-        interactor_id = session_id
-        if host.resolve_interactor_id is not None:
-            interactor_id = host.resolve_interactor_id(session_id)
-        if host.on_memory_activation is not None:
-            host.on_memory_activation(session_id, interactor_id, user_text)
-
-        bundle = host.compose_bundle(session_id, user_text, mode=mode)
+        bundle = host.compose_bundle(session_id, user_text, mode=mode, turn_index=turn_index)
         all_events: list[SpeakStreamEvent] = []
         answer = ""
         parsed: SpeakAgentOutput | None = None
@@ -205,7 +203,12 @@ def run_session_turn(
                 break
 
             if manager.compose_queue.has_pending(session_id, mode=mode) and host.compose_from_queue is not None:
-                queued = host.compose_from_queue(session_id, user_text, mode=mode)
+                queued = host.compose_from_queue(
+                    session_id,
+                    user_text,
+                    mode=mode,
+                    turn_index=turn_index,
+                )
                 if queued is not None:
                     bundle = queued
                     notes.append("compose: queued push")
@@ -221,11 +224,16 @@ def run_session_turn(
         answer_body = parsed.speak or answer.strip()
         recorded = False
         if record and answer_body:
+            memory_ids = list(bundle.meta.get("activated_memory_ids", []))
+            spill = bundle.meta.get("memory_spill")
+            if isinstance(spill, dict):
+                memory_ids.extend(list(spill.get("unit_ids", [])))
             chunk = SpeakTurnChunk(
                 session_id=session_id,
                 user_text=user_text,
                 agent_text=answer_body,
                 subjective=SpeakSubjectiveChunk(prior_thought=parsed.thought),
+                activated_memory_ids=list(dict.fromkeys(memory_ids)),
             )
             dispatch = manager.record_turn(
                 chunk,
@@ -233,6 +241,13 @@ def run_session_turn(
             )
             recorded = dispatch.recorded
             notes.extend(dispatch.notes)
+            if host.refresh_similar_memories is not None:
+                host.refresh_similar_memories(
+                    session_id,
+                    turn_index=turn_index,
+                    user_text=user_text,
+                    agent_text=answer_body,
+                )
 
         return SpeakTurnResult(
             session_id=session_id,
@@ -245,6 +260,7 @@ def run_session_turn(
             meta={
                 "session_state": parsed.session_state,
                 "interrupted": interrupt_context is not None,
+                "turn_index": turn_index,
             },
         )
     finally:

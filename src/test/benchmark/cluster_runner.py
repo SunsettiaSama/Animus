@@ -1,7 +1,7 @@
 """
-ClusterRunner â€” smoke-gate BenchmarkRunner for multi-agent cluster workflows.
+ClusterRunner â€?smoke-gate BenchmarkRunner for multi-agent cluster workflows.
 
-Tests the full parent-agent â†’ delegate_task â†’ sub-agent â†’ answer pipeline
+Tests the full parent-agent â†?delegate_task â†?sub-agent â†?answer pipeline
 using a lightweight mini-loop (no real TaoLoop required, no torch dependency):
 
   * MockLLM feeds scripted parent-agent responses step by step.
@@ -254,7 +254,7 @@ class ClusterRunner:
     BenchmarkRunner for multi-agent cluster workflow tests.
 
     Uses a lightweight mini-loop (no TaoLoop, no torch) to test the
-    parent-agent â†’ DelegateTaskSkill â†’ MockSubAgentRunner delegation
+    parent-agent â†?DelegateTaskSkill â†?MockSubAgentRunner delegation
     path end-to-end.  The real DelegateTaskSkill (including Pydantic
     arg validation and event forwarding) is exercised for every step.
     """

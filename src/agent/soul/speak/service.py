@@ -15,7 +15,14 @@ from .drive import SpeakDriveBridge, SpeakDriveResult, SpeakDriveSnapshot
 from .io.inbound import SpeakDialogueBridge, SpeakIngestResult, SpeakInboundPort, ingest_question
 from .io.inbound.compose.gateway import InboundComposeGateway
 from .io.inbound.compose.request import ComposePrepareRequest
-from .io.inbound.memory import InboundMemoryGateway, RecallRequest, RecallResult
+from .io.inbound.memory import (
+    InboundMemoryGateway,
+    PointQueryRequest,
+    RecallRequest,
+    RecallResult,
+    SimilarMemoryBlock,
+    SimilarMemoryPullResult,
+)
 from .io.inbound.session.bridge import SpeakSessionBridge
 from .session import SpeakSessionManager, SpeakSessionService
 from .session.queue import QueueDecisionRunner, UserInputItem
@@ -92,13 +99,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         touch_dialogue: Callable[[str], None] | None = None,
         context_distiller: SpeakContextDistiller | None = None,
         context_distill_chunk_size: int = 4,
+        memory_turn_gap: int = 3,
     ) -> None:
         self._presence = presence
         self._persona = persona
         self._compose_runner = SpeakComposeRunner()
         self._inbound_compose = InboundComposeGateway(self._compose_runner)
         self._inbound_memory = InboundMemoryGateway()
-        self._on_memory_activation = None
+        self._memory_turn_gap = memory_turn_gap
         self._inbound = inbound
         self._outbound = outbound
         self._reply_style = reply_style or SpeakReplyStyle()
@@ -144,6 +152,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             touch_dialogue=touch_dialogue,
             registry=session_registry,
             reset_context=self.reset_context,
+            memory_turn_gap=memory_turn_gap,
         )
         self._session_manager.bind_record_fn(self.record_turn)
         self._session_manager.bind_compose_scheduler(
@@ -251,8 +260,11 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def attach_memory_recall(self, recall_fn) -> None:
         self._inbound_memory.attach_recall(recall_fn)
 
-    def attach_memory_activation(self, activation_fn) -> None:
-        self._on_memory_activation = activation_fn
+    def attach_memory_point_query(self, point_query_fn) -> None:
+        self._inbound_memory.attach_point_query(point_query_fn)
+
+    def attach_memory_pull_similar(self, pull_similar_fn) -> None:
+        self._inbound_memory.attach_pull_similar(pull_similar_fn)
 
     def bind_interactor(self, session_id: str, interactor_id: str) -> None:
         self._session_bridge.registry.bind_interactor(session_id, interactor_id)
@@ -352,13 +364,87 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._session_manager.open(session_id)
         return self._llm.generate_stream(user_text, system=system, context=context)
 
+    @staticmethod
+    def _render_similar_memories(lines: list[str]) -> str:
+        cleaned = [line.strip() for line in lines if line.strip()]
+        if not cleaned:
+            return ""
+        body = "\n".join(f"- {line}" for line in cleaned)
+        return f"【可能相关的记忆】\n{body}"
+
+    def _request_similar_memories(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        user_text: str,
+        agent_text: str = "",
+    ) -> None:
+        interactor_id = self._session_bridge.registry.get_interactor(session_id)
+        self._inbound_memory.request_point_query(
+            PointQueryRequest(
+                session_id=session_id,
+                interactor_id=interactor_id,
+                turn_index=turn_index,
+                user_text=user_text,
+                agent_text=agent_text,
+            ),
+        )
+
+    def _pull_similar_memories(self, session_id: str, turn_index: int) -> SimilarMemoryPullResult:
+        return self._inbound_memory.pull_similar_memories(session_id, turn_index)
+
+    def _apply_similar_memories(self, bundle: SpeakPromptBundle, pulled: SimilarMemoryPullResult) -> None:
+        inject_block = self._render_similar_memories(pulled.inject.lines)
+        if inject_block:
+            bundle.injected.status.similar_memories = inject_block
+        if pulled.inject.unit_ids:
+            bundle.meta.setdefault("activated_memory_ids", [])
+            bundle.meta["activated_memory_ids"].extend(pulled.inject.unit_ids)
+        if pulled.spilled.lines or pulled.spilled.unit_ids:
+            bundle.meta["memory_spill"] = {
+                "turn_index": pulled.spilled.turn_index,
+                "lines": list(pulled.spilled.lines),
+                "unit_ids": list(pulled.spilled.unit_ids),
+            }
+
+    def _refresh_similar_memories_after_turn(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        user_text: str,
+        agent_text: str,
+    ) -> None:
+        if not user_text.strip() and not agent_text.strip():
+            return
+        self._request_similar_memories(
+            session_id,
+            turn_index=turn_index,
+            user_text=user_text,
+            agent_text=agent_text,
+        )
+
     def _compose_bundle(
         self,
         session_id: str,
         user_text: str,
         *,
         mode: SpeakTurnMode = "inbound",
+        turn_index: int | None = None,
     ) -> SpeakPromptBundle:
+        resolved_turn = (
+            turn_index
+            if turn_index is not None
+            else self._session_bridge.registry.current_turn_index(session_id)
+        )
+        self._request_similar_memories(
+            session_id,
+            turn_index=resolved_turn,
+            user_text=user_text,
+        )
+        pulled = self._pull_similar_memories(session_id, resolved_turn)
+
         if self._composer is None:
             from .compose.injected import SpeakInjectedContext
             from agent.soul.speak.io.inbound.compose import SpeakStatusInjected
@@ -394,7 +480,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 ),
             )
 
-            return SpeakPromptBundle(
+            bundle = SpeakPromptBundle(
                 session_id=session_id,
                 mode=mode,
                 injected=SpeakInjectedContext(
@@ -408,16 +494,21 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 ),
                 reply_style=self._reply_style,
             )
+            self._apply_similar_memories(bundle, pulled)
+            return bundle
 
         queued = self._session_manager.pop_compose(session_id, mode=mode)
         if queued is not None:
             bundle = self._composer.finalize(queued.frame, user_text)
             bundle.meta["compose_source"] = "session_queue"
+            self._apply_similar_memories(bundle, pulled)
             return bundle
 
         frame = self._compose_runner.take_ready_frame(session_id, mode=mode)
         if frame is not None:
-            return self._composer.finalize(frame, user_text)
+            bundle = self._composer.finalize(frame, user_text)
+            self._apply_similar_memories(bundle, pulled)
+            return bundle
 
         bundle = self._composer.compose(
             session_id,
@@ -426,6 +517,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             reply_style=self._reply_style,
         )
         bundle.meta["compose_source"] = "sync_fallback"
+        self._apply_similar_memories(bundle, pulled)
         return bundle
 
     _SHARE_HANDOFF_INSTRUCTION = (
@@ -441,6 +533,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         user_text: str,
         *,
         mode: SpeakTurnMode = "inbound",
+        turn_index: int | None = None,
     ) -> SpeakPromptBundle | None:
         if self._composer is None:
             return None
@@ -449,6 +542,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             return None
         bundle = self._composer.finalize(queued.frame, user_text)
         bundle.meta["compose_source"] = "session_queue"
+        resolved_turn = (
+            turn_index
+            if turn_index is not None
+            else self._session_bridge.registry.current_turn_index(session_id)
+        )
+        pulled = self._pull_similar_memories(session_id, resolved_turn)
+        self._apply_similar_memories(bundle, pulled)
         return bundle
 
     def _generate_turn(
@@ -624,12 +724,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             interrupt_context = None
         host = SessionTurnHost(
             compose_bundle=self._compose_bundle,
+            begin_turn=self._session_manager.begin_turn,
+            refresh_similar_memories=self._refresh_similar_memories_after_turn,
             llm=self._llm,
             stream_pipeline=self._stream,
             outbound_stream=self._outbound_stream,
             record_turn=self.record_turn,
             schedule_compose=lambda sid: self._schedule_compose_prepare(sid, mode=item.mode),
-            on_memory_activation=self._on_memory_activation,
             resolve_interactor_id=lambda sid: self._session_bridge.registry.get_interactor(sid),
             continue_share_handoff=self._continue_share_handoff,
             continue_recall_handoff=self._continue_recall_handoff,

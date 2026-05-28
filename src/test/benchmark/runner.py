@@ -127,7 +127,7 @@ class _DummyMessage:
         self.content = content
 
 
-# ── ScenarioFileRunner — BenchmarkRunner implementation ───────────────────────
+# ── ScenarioFileRunner �?BenchmarkRunner implementation ───────────────────────
 
 
 class ScenarioFileRunner:
@@ -139,7 +139,7 @@ class ScenarioFileRunner:
     every-PR CI runs where zero network / zero GPU is required.
 
     To add a new YAML-driven scenario to the smoke suite, simply drop a
-    .yaml file in the scenarios directory — no code changes needed.
+    .yaml file in the scenarios directory �?no code changes needed.
     """
 
     name = "scenario_file"

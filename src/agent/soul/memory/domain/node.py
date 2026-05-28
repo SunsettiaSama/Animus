@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import ClassVar
 
+from agent.soul.memory.emotion_intensity import node_emotion_intensity
+
 from .enums import MemoryNetwork, MemoryTier, SocialNodeRole, Valence
 
 
@@ -20,7 +22,7 @@ def _uid() -> str:
 
 @dataclass(kw_only=True)
 class GraphNode(ABC):
-    """记忆图节点抽象基类。"""
+    """Memory graph node base."""
 
     NODE_KIND: ClassVar[str]
 
@@ -54,7 +56,7 @@ class GraphNode(ABC):
         delta = (now - self.last_accessed).total_seconds() / 86400.0
         decay = math.exp(-math.log(2) / half_life_days * max(delta, 0.0))
         boost_recall = math.log1p(self.recall_count)
-        boost_emotion = self.emotion_intensity * 0.5
+        boost_emotion = node_emotion_intensity(self) * 0.5
         return min(1.0, self.base_activation * decay + boost_recall + boost_emotion)
 
     def on_recall(self) -> None:

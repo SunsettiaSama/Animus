@@ -20,7 +20,7 @@ def test_user_opens_then_agent_questions():
 
 def test_deferred_then_close():
     posture = InteractionPosture()
-    posture.dispatch(InteractionEvent.user_text("tao", "查一下"))
+    posture.dispatch(InteractionEvent.user_text("tao", "查一�?))
     posture.dispatch(InteractionEvent.agent_deferred("tao"))
 
     r2 = posture.dispatch(InteractionEvent.close("tao"))

@@ -1,5 +1,5 @@
 """
-ParserRegressionRunner — regression-gate BenchmarkRunner that wraps
+ParserRegressionRunner �?regression-gate BenchmarkRunner that wraps
 parse_llm_output unit cases as ScenarioResult objects.
 
 Each test case calls parse_llm_output directly (no LLM, no network) and
@@ -24,8 +24,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 # Import parser.py directly via importlib to avoid running the
-# agent.react.prompt package __init__.py, which imports block.py →
-# memory chain → torch (breaks in environments where torch is unavailable).
+# agent.react.prompt package __init__.py, which imports block.py �?# memory chain �?torch (breaks in environments where torch is unavailable).
 # We register the module under its real dotted name so that @dataclass (which
 # looks up cls.__module__ in sys.modules) and other internal cross-references
 # work correctly.
@@ -107,7 +106,7 @@ _CASES: list[_Case] = [
         expected_quality="clean",
         expected_answer=None,
     ),
-    # ── Implicit finish (no Action line) → FAILED quality, is_finish=True ────
+    # ── Implicit finish (no Action line) �?FAILED quality, is_finish=True ────
     _Case(
         name="parser_implicit_finish_no_action",
         raw="The answer is 42.",

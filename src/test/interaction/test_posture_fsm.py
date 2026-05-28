@@ -91,15 +91,15 @@ def test_apply_transition_scene_enter_with_admission():
             "tao",
             scene_id="room-1",
             scene_kind="room",
-            title="作战室",
-            stakes="查风险",
+            title="作战�?,
+            stakes="查风�?,
             admitted=True,
         ),
     )
     assert result.after.scene.in_scene is True
     assert result.after.scene.scene_admitted is True
     assert result.after.scene.scene_kind == "room"
-    assert result.after.scene.stakes == "查风险"
+    assert result.after.scene.stakes == "查风�?
     assert result.after.dialogue.line_open is True
 
 

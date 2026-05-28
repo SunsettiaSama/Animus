@@ -16,6 +16,7 @@ class ActivationCue:
     interactor_id: str
     user_text: str
     agent_text: str = ""
+    turn_index: int = 0
     networks: tuple[MemoryNetwork, ...] = (MemoryNetwork.social, MemoryNetwork.event)
 
 

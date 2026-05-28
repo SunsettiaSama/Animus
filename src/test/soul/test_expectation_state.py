@@ -11,9 +11,9 @@ from agent.soul.presence.transition.interaction import PresenceInteraction
 
 def test_expectation_state_accumulates_toward_user():
     exp = ExpectationState()
-    exp.accumulate_toward_user(0.4, reason="想分享今天的事", source="story_beat")
+    exp.accumulate_toward_user(0.4, reason="想分享今天的�?, source="story_beat")
     assert exp.toward_user == 0.4
-    assert exp.reason == "想分享今天的事"
+    assert exp.reason == "想分享今天的�?
     assert exp.at_proactive_threshold() is False
     exp.accumulate_toward_user(0.3)
     assert exp.at_proactive_threshold(threshold=PROACTIVE_OPEN_THRESHOLD) is True

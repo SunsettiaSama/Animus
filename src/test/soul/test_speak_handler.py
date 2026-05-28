@@ -14,7 +14,7 @@ def test_speak_handler_api_property(soul_service):
 
 def test_record_dialogue_turn_matches_dispatch(soul_service):
     soul_service.start()
-    via_method = soul_service.record_dialogue_turn("你好", "嗨", session_id="tao")
+    via_method = soul_service.record_dialogue_turn("你好", "�?, session_id="tao")
     via_dispatch = soul_service.dispatch(SoulRequest(
         domain=SoulDomain.speak,
         action=SpeakAction.RECORD_DIALOGUE,
@@ -77,7 +77,7 @@ def test_speak_read_actions_allowed_in_idle(soul_service):
 
     import pytest
 
-    with pytest.raises(RuntimeError, match="未运行"):
+    with pytest.raises(RuntimeError, match="未运�?):
         soul_service.dispatch(SoulRequest(
             domain=SoulDomain.speak,
             action=SpeakAction.RECORD_DIALOGUE,

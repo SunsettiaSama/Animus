@@ -124,7 +124,7 @@ Test write resource locking.
 
 - [ ] **writer_b** `profile:minimal` `writes:shared.txt`
 
-  Also writes to shared file ï¿½?should not run concurrently.
+  Also writes to shared file ï¿?should not run concurrently.
 
 """
 

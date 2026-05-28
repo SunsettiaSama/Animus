@@ -1,6 +1,5 @@
-from .codec import unit_from_dict, unit_from_json, unit_to_dict, unit_to_json
+from .graph.networks.store.codec import unit_from_dict, unit_from_json, unit_to_dict, unit_to_json
 from .embed_text import cluster_key, cosine_similarity, focus_bucket, memory_unit_embed_text
-from .long_term import LongTermMemoryManager
 from .retriever import (
     EmbedderBackend,
     MemoryRetriever,
@@ -12,7 +11,8 @@ from .retriever import (
 )
 from .service import MemoryBlock, MemoryService
 from .unit import FactualMemory, MemoryTier, MemoryUnit, NarrativeMemory, ReconstructiveMemory, Valence
-from .writer import NarrativeWriter, RuminationWriter
+from .graph.networks.writer import NarrativeWriter
+from .rumination import RuminationService, RuminationWriter
 
 __all__ = [
     "MemoryUnit",
@@ -21,7 +21,7 @@ __all__ = [
     "NarrativeMemory",
     "Valence",
     "MemoryTier",
-    "LongTermMemoryManager",
+    "RuminationService",
     "RuminationWriter",
     "NarrativeWriter",
     "MemoryRetriever",

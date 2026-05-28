@@ -2,22 +2,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agent.soul.memory.activation.service import ActivationService
 from agent.soul.memory.domain import GraphNode
-from agent.soul.memory.facade.adapters.life_ingest import LifeIngestAdapter
-from agent.soul.memory.facade.adapters.speak_activation import SpeakActivationAdapter
+from agent.soul.memory.emergence import Emergence, SpeakEmergence, SpreadActivationService
+from agent.soul.memory.emergence.dispatcher import EmergenceQueryDispatcher
 from agent.soul.memory.facade.service import MemoryService
+from agent.soul.memory.graph.cluster import ClusterIndex
 from agent.soul.memory.graph.query import QueryEngine
-from agent.soul.memory.networks.event.service import EventMemoryNetwork
-from agent.soul.memory.networks.social.service import SocialMemoryNetwork
-from agent.soul.memory.processors.rule_neighborhood_extractor import RuleNeighborhoodExtractor
+from agent.soul.memory.graph.networks.archival import ArchivalConfig, ExperienceArchiver
+from agent.soul.memory.graph.networks.event.network import EventMemoryNetwork
+from agent.soul.memory.graph.networks.semantic_index import SemanticVectorIndex
+from agent.soul.memory.graph.networks.social.network import SocialMemoryNetwork
+from agent.soul.memory.graph.networks.store.mysql.edges import MySQLEdgeStore
+from agent.soul.memory.graph.networks.store.mysql.interactors import MySQLInteractorStore
+from agent.soul.memory.graph.networks.store.mysql.nodes import MySQLNodeStore
+from agent.soul.memory.graph.networks.writer import NarrativeWriter
+from agent.soul.memory.rumination import RuminationService, RuminationWriter
 from agent.soul.memory.retriever import MemoryRetriever
-from agent.soul.memory.store.mysql.edges import MySQLEdgeStore
-from agent.soul.memory.store.mysql.interactors import MySQLInteractorStore
-from agent.soul.memory.store.mysql.nodes import MySQLNodeStore
-from agent.soul.memory.store.vector.qdrant import QdrantVectorIndex
-from agent.soul.memory.writer.narrative_writer import NarrativeWriter
-from agent.soul.memory.writer.rumination_writer import RuminationWriter
+from agent.soul.memory.sleep import SleepConfig, SleepService
 from config.soul.memory.service_config import MemoryServiceConfig
 from infra.memory import MemoryInfraService
 
@@ -41,31 +42,71 @@ def build_memory_service(
     interactors = MySQLInteractorStore(mysql_client)
     nodes.init_schema()
 
-    vectors = QdrantVectorIndex(infra) if infra.enabled else None
-    svc_holder: list[MemoryService] = []
-
-    def _after_write(node: GraphNode) -> None:
-        if svc_holder and vectors is not None and vectors.enabled:
-            text = node.embed_text()
-            if text.strip():
-                uid = node.id
-                svc_holder[0]._enqueue_write(
-                    lambda u=uid, t=text, n=node.network: vectors.upsert(u, t, network=n)
-                )
-
-    rumination = RuminationWriter(llm, nodes, on_written=_after_write)
-    narrative = NarrativeWriter(llm, nodes, on_written=_after_write)
+    vectors = SemanticVectorIndex(infra) if infra.enabled else SemanticVectorIndex(None)
+    cluster_index = ClusterIndex(
+        similarity_threshold=cfg.cluster_similarity_threshold,
+        min_cluster_size=cfg.cluster_min_size,
+        core_probe_top_k=cfg.cluster_core_top_k,
+        cache_path=cfg.cluster_cache_path,
+    )
+    cluster_index.try_load_cache()
     query = QueryEngine(
         nodes,
         recent_half_life_days=cfg.recent_half_life_days,
         half_life_days=cfg.half_life_days,
         vectors=vectors,
+        cluster_index=cluster_index,
+        cluster_core_top_k=cfg.cluster_core_top_k,
     )
+    query_dispatcher = EmergenceQueryDispatcher(max_workers=cfg.emergence_query_workers)
+    spread = SpreadActivationService(
+        nodes,
+        edges,
+        vectors,
+        query,
+        cluster_index,
+        threshold=cfg.activation_threshold,
+        max_hops=cfg.activation_max_hops,
+        hop_decay=cfg.activation_hop_decay,
+        seed_top_k=cfg.activation_seed_top_k,
+        keyword_weight=cfg.activation_keyword_weight,
+        cluster_core_top_k=cfg.cluster_core_top_k,
+        hot_seed_top_k=cfg.hot_seed_top_k,
+        hot_max_hops=cfg.hot_max_hops,
+        point_top_k=cfg.point_query_top_k,
+        associative_sigma=cfg.associative_sigma,
+        hybrid_w_relevance=cfg.hybrid_w_relevance,
+        hybrid_w_activation=cfg.hybrid_w_activation,
+        query_submit=query_dispatcher.submit,
+    )
+    svc_holder: list[MemoryService] = []
+
+    def _after_write(node: GraphNode) -> None:
+        if not svc_holder or not vectors.enabled:
+            return
+
+        def _task() -> None:
+            vectors.record(node)
+            spread.schedule_cluster_rebuild()
+
+        svc_holder[0]._enqueue_write(_task)
+
+    archiver = ExperienceArchiver(
+        llm,
+        nodes,
+        vectors=vectors,
+        cfg=ArchivalConfig(
+            candidate_k=getattr(cfg, "archive_candidate_k", 5),
+            min_similarity=getattr(cfg, "archive_min_similarity", 0.20),
+        ),
+    )
+    rumination_writer = RuminationWriter(llm, nodes, on_written=_after_write)
+    narrative = NarrativeWriter(llm, nodes, on_written=_after_write)
     social = SocialMemoryNetwork(
         nodes,
         edges,
         interactors,
-        RuleNeighborhoodExtractor(),
+        archiver,
         vectors=vectors,
         on_written=_after_write,
     )
@@ -73,24 +114,16 @@ def build_memory_service(
         nodes,
         edges,
         query,
-        rumination,
         narrative,
         cfg,
+        archiver,
         vectors=vectors,
         on_written=_after_write,
     )
-    activation = ActivationService(
-        nodes,
-        edges,
-        vectors,
-        threshold=cfg.activation_threshold,
-        max_hops=cfg.activation_max_hops,
-        hop_decay=cfg.activation_hop_decay,
-        seed_top_k=cfg.activation_seed_top_k,
-        keyword_weight=cfg.activation_keyword_weight,
+    emergence = Emergence(
+        spread=spread,
+        speak=SpeakEmergence(spread, use_point_query=cfg.speak_use_point_query),
     )
-    life_ingest = LifeIngestAdapter(event, social)
-    speak_activation = SpeakActivationAdapter(activation)
     retriever = MemoryRetriever(
         nodes,
         recent_half_life_days=cfg.recent_half_life_days,
@@ -98,18 +131,42 @@ def build_memory_service(
         embedder=infra.retriever_embedder(),
         vector_store=infra.retriever_vector_store(),
     )
+    rumination = RuminationService(
+        nodes,
+        edges,
+        query,
+        rumination_writer,
+        narrative,
+        spread,
+        cfg,
+    )
+    sleep = SleepService(
+        event,
+        social,
+        emergence,
+        rumination,
+        cfg,
+        sleep_cfg=SleepConfig(
+            buffer_decay=getattr(cfg, "sleep_buffer_decay", 0.85),
+            buffer_drop_below=getattr(cfg, "sleep_buffer_drop_below", 0.08),
+            sleep_emotion_threshold=getattr(cfg, "sleep_emotion_threshold", 0.55),
+            consolidation_scan_limit=getattr(cfg, "sleep_consolidation_scan_limit", 500),
+        ),
+    )
     svc = MemoryService(
         social,
         event,
-        activation,
-        life_ingest,
-        speak_activation,
+        emergence,
+        rumination,
+        sleep,
         retriever,
         cfg,
         nodes,
         memory_infra=infra,
+        query_dispatcher=query_dispatcher,
     )
     svc_holder.append(svc)
+    spread.schedule_cluster_rebuild()
     return svc
 
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 工具模块测试
 ============
 覆盖 react/action/tools/impl/ 下全部工具，以及 web_search（SearXNG）。

@@ -116,7 +116,7 @@ def test_parse_decision_with_json_noise():
     assert d.kind == TopologyKind.atomic
 
 
-# ── AtomicPlanner.assess — fast paths (no LLM) ───────────────────────────────
+# ── AtomicPlanner.assess �?fast paths (no LLM) ───────────────────────────────
 
 def test_assess_skips_llm_when_is_atomic():
     calls: list[str] = []
@@ -150,11 +150,11 @@ def test_assess_returns_atomic_when_budget_exhausted():
         planner.assess(manifest, TIGHT_BUDGET)
     )
 
-    assert len(calls) == 0   # budget exhausted → no LLM
+    assert len(calls) == 0   # budget exhausted �?no LLM
     assert decision.kind == TopologyKind.atomic
 
 
-# ── AtomicPlanner.assess — LLM routing ───────────────────────────────────────
+# ── AtomicPlanner.assess �?LLM routing ───────────────────────────────────────
 
 def test_assess_calls_llm_and_returns_flat():
     flat_json = json.dumps({
@@ -207,7 +207,7 @@ def test_assess_calls_llm_and_returns_nested():
 
 
 def test_assess_width_overflow_promoted_to_nested():
-    """When LLM returns more sub_nodes than max_width, flat → nested."""
+    """When LLM returns more sub_nodes than max_width, flat �?nested."""
     narrow_budget = DecompositionBudget(max_depth=3, max_width=2, max_atom_steps=5)
     sub_nodes = [
         {"task_id": f"sub_{i}", "description": f"Step {i}",

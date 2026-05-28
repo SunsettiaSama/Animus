@@ -20,11 +20,11 @@ def memory_unit_embed_text(unit: MemoryUnit) -> str:
 def focus_bucket(focus: str) -> str:
     text = focus.strip().lower()
     if not text:
-        return "（未命名）"
-    for sep in ("：", ":", "—", "-", "·", " "):
+        return "（未命名�?
+    for sep in ("�?, ":", "�?, "-", "·", " "):
         if sep in text:
             text = text.split(sep, 1)[0].strip()
-    return text[:16] or "（未命名）"
+    return text[:16] or "（未命名�?
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:

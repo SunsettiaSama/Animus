@@ -1,5 +1,5 @@
 """
-Approximate BPE token counter â€” no external dependencies.
+Approximate BPE token counter â€?no external dependencies.
 
 Calibrated against cl100k_base (GPT-3.5 / GPT-4 tokenizer) for typical
 Chinese + English + JSON content.  Typical error margin: Â±15 %.
@@ -46,7 +46,7 @@ def count_tokens(text: str, encoding: str = "") -> int:  # noqa: ARG001
     Return approximate token count for *text*.
 
     The ``encoding`` parameter is accepted for API compatibility with
-    tiktoken-based callers but is ignored â€” the same algorithm is used
+    tiktoken-based callers but is ignored â€?the same algorithm is used
     regardless of model family.
     """
     if not text:

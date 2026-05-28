@@ -25,8 +25,8 @@ def _utcnow_iso() -> str:
 class SchedulerEngine:
     """Top-level scheduler facade.
 
-    Executor (TaskRunner) and Heartbeat (HeartbeatModule) are injected from the
-    agent layer via Protocol interfaces — the engine itself has zero agent imports.
+    Executor (TaskRunner) is injected from the agent layer.
+    Soul heartbeat is independent and not wired through this engine.
 
     Internally uses a TemporalClock running on a dedicated daemon thread,
     completely isolated from the uvicorn asyncio event loop.

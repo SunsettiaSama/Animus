@@ -52,7 +52,7 @@ def test_incremental_l2_bracket_tags():
     assert tags == ["action", "speak", "state"]
     action_text = "".join(event.text or "" for event in events if event.kind == "action")
     speak_text = "".join(event.text or "" for event in events if event.kind == "speak")
-    assert "标本夹" in action_text
+    assert "标本�? in action_text
     assert "怎么会不记得" in speak_text
 
 

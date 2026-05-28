@@ -25,6 +25,7 @@ _PRESENCE_SCAN_EXTERNAL_ACTION = PresenceAction.SCAN_EXTERNAL
 _HEAVY_ITEM_KEYS: frozenset[tuple[str, str]] = frozenset({
     (SoulDomain.memory.value, MemoryAction.WANDER),
     (SoulDomain.memory.value, MemoryAction.FORGET_SCAN),
+    (SoulDomain.memory.value, MemoryAction.SLEEP),
     (SoulDomain.life.value, LifeAction.PLAN_LANDMARK),
     (SoulDomain.persona.value, PersonaAction.RUN_MONTHLY_DRIFT),
 })
@@ -80,7 +81,7 @@ class HeartbeatOrchestrator:
     def is_heavy(item: ChecklistItem) -> bool:
         return (item.domain, item.action) in _HEAVY_ITEM_KEYS
 
-    def run_due(self) -> list[ChecklistRunResult]:
+    def run_due(self, *, exclude_item_ids: frozenset[str] = frozenset()) -> list[ChecklistRunResult]:
         if self._soul is None:
             return []
 
@@ -89,6 +90,8 @@ class HeartbeatOrchestrator:
         results: list[ChecklistRunResult] = []
 
         for item in self._checklist.due(now_mono, now_dt):
+            if item.id in exclude_item_ids:
+                continue
             if self.is_heavy(item):
                 result = self._enqueue_heavy(item, now_mono, now_dt)
             else:
@@ -106,6 +109,36 @@ class HeartbeatOrchestrator:
             )
 
         return results
+
+    def run_due_item(self, item_id: str) -> ChecklistRunResult | None:
+        if self._soul is None:
+            return None
+
+        item = self._checklist._items.get(item_id)
+        if item is None or not item.enabled:
+            return None
+
+        now_mono = time.monotonic()
+        now_dt = datetime.now(timezone.utc)
+        due_ids = {i.id for i in self._checklist.due(now_mono, now_dt)}
+        if item_id not in due_ids:
+            return None
+
+        if self.is_heavy(item):
+            result = self._enqueue_heavy(item, now_mono, now_dt)
+        else:
+            result = self.execute_item(item)
+            if result.ok:
+                self._checklist.mark_run(item, now_mono, now_dt)
+        hb_debug(
+            logger,
+            "[HeartbeatOrchestrator] %s/%s ok=%s async=%s",
+            item.domain,
+            item.action,
+            result.ok,
+            result.async_enqueued,
+        )
+        return result
 
     def _enqueue_heavy(
         self,
@@ -146,6 +179,8 @@ class HeartbeatOrchestrator:
 
         if item.domain == SoulDomain.memory.value and item.action == MemoryAction.WANDER:
             return self._run_wander(item)
+        if item.domain == SoulDomain.memory.value and item.action == MemoryAction.SLEEP:
+            return self._run_memory_sleep(item)
         if item.domain == "presence" and item.action == PresenceAction.WAKE_UP:
             return self._run_presence_wake(item)
         if item.domain == "presence" and item.action == PresenceAction.SLEEP:
@@ -205,6 +240,17 @@ class HeartbeatOrchestrator:
                 "capture_outbound": capture_report.outbound_count,
                 "incident_fsm_updates": capture_report.incident_count,
             }
+        return ChecklistRunResult(
+            item.id,
+            item.domain,
+            item.action,
+            True,
+            detail=detail,
+        )
+
+    def _run_memory_sleep(self, item: ChecklistItem) -> ChecklistRunResult:
+        dry_run = bool(item.payload.get("dry_run", False))
+        detail = self._soul.run_memory_sleep(dry_run=dry_run)
         return ChecklistRunResult(
             item.id,
             item.domain,

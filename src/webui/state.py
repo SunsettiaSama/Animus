@@ -44,7 +44,7 @@ class AppState:
     # ── Async event loop ──────────────────────────────────────────────────────
     main_event_loop: Any = None       # asyncio.AbstractEventLoop | None
     scheduler_engine: Any = None      # SchedulerEngine | None — global singleton
-    agent_service: Any = None           # AgentService | None — global heartbeat host
+    agent_service: Any = None           # AgentService | None — global scheduler host
     scheduler_future: Any = None
     preload_future: Any = None
 

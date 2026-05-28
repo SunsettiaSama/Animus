@@ -60,8 +60,8 @@ def test_embedding_semantic_boundary_rotates_on_distant_topic():
             return [0.5, 0.5]
 
     boundary = EmbeddingSemanticBoundary(_Embedder(), distance_threshold=0.5)
-    first = SpeakTurnChunk(session_id="tao", user_text="今天天气怎么样", agent_text="不错")
-    second = SpeakTurnChunk(session_id="tao", user_text="帮我写段 Python 代码", agent_text="好")
+    first = SpeakTurnChunk(session_id="tao", user_text="今天天气怎么�?, agent_text="不错")
+    second = SpeakTurnChunk(session_id="tao", user_text="帮我写段 Python 代码", agent_text="�?)
 
     assert boundary.should_rotate("tao", last_turn=first) is False
     assert boundary.should_rotate("tao", last_turn=second) is True
@@ -77,7 +77,7 @@ def test_composite_boundary_keeps_explicit_marker():
         explicit=TopicShiftSemanticBoundary(),
         embedding=EmbeddingSemanticBoundary(_Embedder(), distance_threshold=0.01),
     )
-    chunk = SpeakTurnChunk(session_id="tao", user_text="/new 聊聊别的", agent_text="好")
+    chunk = SpeakTurnChunk(session_id="tao", user_text="/new 聊聊别的", agent_text="�?)
     assert boundary.should_rotate("tao", last_turn=chunk) is True
     assert boundary.reason().startswith("explicit marker")
 

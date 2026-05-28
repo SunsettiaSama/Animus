@@ -19,7 +19,7 @@ from agent.soul.memory.domain import (
 if TYPE_CHECKING:
     from agent.soul.life.experience.unit import ExperienceUnit
     from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
-    from agent.soul.memory.networks.event.service import MemoryBlock
+    from agent.soul.memory.graph.networks.block import MemoryBlock
 
 
 @runtime_checkable
@@ -69,6 +69,7 @@ class InteractorStore(Protocol):
 
 @runtime_checkable
 class VectorIndexPort(Protocol):
+    def record(self, node: GraphNode) -> None: ...
     def upsert(self, node_id: str, text: str, *, network: MemoryNetwork) -> None: ...
     def search(
         self,
@@ -104,13 +105,6 @@ class SocialMemoryPort(Protocol):
 class EventMemoryPort(Protocol):
     def ingest_experience(self, unit: ExperienceUnit) -> GraphNode: ...
     def retract_experience(self, life_event_id: str) -> bool: ...
-    def ruminate(
-        self,
-        node_id: str,
-        *,
-        trigger: str,
-        emotional_context: str,
-    ) -> GraphNode | None: ...
     def ingest_narrative(
         self,
         source_unit_ids: list[str],
@@ -121,10 +115,33 @@ class EventMemoryPort(Protocol):
     ) -> GraphNode | None: ...
     def recall(self, query: str, top_k: int, emotional_context: str = "") -> MemoryBlock: ...
     def forget_scan(self, threshold: float | None, dry_run: bool) -> list[str]: ...
-    def tick_heartbeat(self, snapshot) -> MemoryHeartbeatResult: ...
 
 
 @runtime_checkable
-class MemoryActivationPort(Protocol):
-    def activate_async(self, cue: ActivationCue) -> None: ...
+class RuminationPort(Protocol):
+    def ruminate(
+        self,
+        node_id: str,
+        *,
+        trigger: str,
+        emotional_context: str,
+    ) -> GraphNode | None: ...
+
+    def tick(self, snapshot) -> MemoryHeartbeatResult: ...
+
+
+@runtime_checkable
+class MemoryEmergencePort(Protocol):
+    def request_speak_point_query(
+        self,
+        *,
+        session_id: str,
+        interactor_id: str,
+        turn_index: int,
+        user_text: str,
+        agent_text: str = "",
+    ) -> None: ...
+
+    def get_point_emergence(self, session_id: str, turn_index: int): ...
+
     def get_snapshot(self, session_id: str) -> ActivationSnapshot | None: ...

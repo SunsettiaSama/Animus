@@ -112,7 +112,7 @@ def test_is_atomic_steps_exceed_limit():
 
 
 def test_is_atomic_no_max_steps_declared():
-    """No max_steps â†’ doesn't fail the step check, other conditions decide."""
+    """No max_steps â†?doesn't fail the step check, other conditions decide."""
     m = _manifest(max_steps=None)
     assert is_atomic(m, DEFAULT_BUDGET)
 

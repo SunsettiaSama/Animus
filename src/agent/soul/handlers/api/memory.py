@@ -103,6 +103,14 @@ class MemoryHandler:
             )
             return {"archived": len(archived), "unit_ids": archived}
 
+        if action == MemoryAction.SLEEP:
+            result = service.run_sleep(
+                tick_id=str(payload.get("tick_id", "")),
+                dry_run=bool(payload.get("dry_run", False)),
+                forget_threshold=payload.get("threshold"),
+            )
+            return result.to_dict()
+
         if action == MemoryAction.FLUSH:
             archived = service.forget_scan()
             return {"archived": len(archived), "unit_ids": archived}
@@ -142,6 +150,26 @@ class MemoryHandler:
                     }
                     for n in snap.nodes
                 ],
+            }
+
+        if action == MemoryAction.GET_POINT_EMERGENCE:
+            session_id = str(payload.get("session_id", ""))
+            turn_index = int(payload.get("turn_index", 0) or 0)
+            result = service.get_point_emergence(session_id, turn_index)
+            if result is None:
+                return {
+                    "session_id": session_id,
+                    "turn_index": turn_index,
+                    "precise_lines": [],
+                    "associative_lines": [],
+                }
+            return {
+                "session_id": result.session_id,
+                "turn_index": result.turn_index,
+                "associative_ready": result.associative_ready,
+                "precise_lines": list(result.precise_lines),
+                "associative_lines": list(result.associative_lines),
+                "unit_ids": result.merged_unit_ids(),
             }
 
         raise ValueError(f"unknown memory action: {action!r}")
