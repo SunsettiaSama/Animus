@@ -145,7 +145,7 @@
       <div class="ws-section-title">Quick Start</div>
       <div class="ws-quick-btns">
         <button class="ws-big-btn accent" data-action="start-react">
-          <span>⚡</span><span>New Session</span>
+          <span>💬</span><span>开始对话</span>
         </button>
         <button class="ws-big-btn" data-action="start-plan">
           <span>🗂</span><span>Plan Mode</span>
@@ -157,7 +157,6 @@
           <span>🗓</span><span>Scheduler</span>
         </button>
       </div>
-      <div id="landing-recent"></div>
     </div>
 
   </div>
@@ -167,34 +166,18 @@
 <!-- ══════════════════════════════════
      WORKSPACE SCREEN
 ══════════════════════════════════ -->
-<div id="s-workspace" class="hidden">
+<div id="s-workspace" class="hidden workspace-single">
 
-  <!-- Sidebar -->
-  <aside id="sidebar">
-    <div class="sidebar-hdr">
-      <button id="btn-go-home" class="icon-btn" title="Home">←</button>
-      <span class="logo-text">History</span>
-      <div class="sidebar-hdr-actions">
-        <button id="btn-new-conv" class="icon-btn" title="New conversation">＋</button>
-        <button id="btn-clear-hist" class="icon-btn danger" title="Clear all history">🗑</button>
-        <button id="btn-open-kb" class="icon-btn" title="知识库">📚</button>
-        <button id="btn-settings-sidebar" class="icon-btn" title="Settings">⚙</button>
-      </div>
-    </div>
-    <div id="sidebar-list"></div>
-  </aside>
-
-  <!-- Main -->
   <div id="main-area">
     <div id="topbar">
       <div class="topbar-left">
-        <button id="btn-sidebar-toggle" class="icon-btn sidebar-toggle-btn" title="折叠/展开侧边栏">◀</button>
-        <span id="tb-title">New Conversation</span>
+        <button id="btn-go-home" class="icon-btn" title="Home">←</button>
+        <span id="tb-title">对话</span>
         <span id="tb-persona-badge" class="persona-badge hidden">🎭 Persona</span>
         <span id="tb-mem-loading" class="mem-loading-badge hidden"><span class="spin">⟳</span>加载记忆中…</span>
       </div>
       <div class="topbar-right">
-        <button class="icon-btn hidden" id="btn-clear-react" title="Clear ReAct dialogue history">🔄</button>
+        <button id="btn-open-kb" class="icon-btn" title="知识库">📚</button>
         <button id="btn-settings-topbar" class="icon-btn" title="Settings">⚙</button>
       </div>
     </div>

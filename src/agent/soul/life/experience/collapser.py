@@ -22,7 +22,7 @@ class ExperienceCollapser(Protocol):
     注意
     ----
     新 collision unit 的情感字段继承参与单元中 salience 最高者；
-    是否写入 STM 仍由 ``stm_ingest_threshold``（体验 feeling.salience）决定。
+    是否写入记忆图由 ``ExperienceUnit.should_promote_to_memory()``（自叙正则）决定。
     """
 
     def collapse(self, units: list[ExperienceUnit]) -> str:

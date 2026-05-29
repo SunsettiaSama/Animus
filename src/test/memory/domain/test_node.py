@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from agent.soul.memory.domain import (
-    EdgeType,
     EvolutionSource,
     FactualMemory,
-    MemoryEdge,
     SocialCoreNode,
     SocialNeighborhoodNode,
-    Valence,
 )
 from agent.soul.memory.graph.networks.social.core_evolution import CoreEvolver
+from agent.soul.memory.graph.networks.social.portrait import InteractorPortrait
 
 
 def test_factual_memory_activation_increases_with_recall():
@@ -21,18 +19,28 @@ def test_factual_memory_activation_increases_with_recall():
 
 
 def test_core_evolver_appends_delta():
-    core = SocialCoreNode(interactor_id="alice", focus="印象", core_traits="")
-    evolved = CoreEvolver().evolve(core, delta="我觉得他是个好人", source=EvolutionSource.manual)
+    core = SocialCoreNode(
+        interactor_id="alice",
+        focus="?alice???",
+        portrait=InteractorPortrait(name="Alice"),
+    )
+    evolved = CoreEvolver().evolve(
+        core,
+        delta="???????",
+        source=EvolutionSource.manual,
+    )
     assert evolved.trait_version == 2
-    assert "好人" in evolved.core_traits
+    assert "???????" in evolved.trait_changelog
 
 
 def test_social_neighborhood_fields():
     node = SocialNeighborhoodNode(
         interactor_id="alice",
-        focus="宠物",
-        label="�?,
-        content="叫小�?,
+        focus="pets",
+        label="cat",
+        content="??????",
+        related_interactor_ids=["bob"],
     )
     assert node.network.value == "social"
-    assert "小黑" in node.embed_text()
+    assert "??" in node.embed_text()
+    assert "bob" in node.embed_text()

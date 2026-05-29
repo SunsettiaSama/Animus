@@ -48,6 +48,7 @@ class ExperienceBuilder:
                 arousal_delta=arousal_delta,
                 salience=salience,
                 emotion_label=emotion_label,
+                salience_note=narrative_hint.strip(),
             ),
             source="narrative",
         )
@@ -72,7 +73,10 @@ class ExperienceBuilder:
                 kind=ExperienceActionKind.attending,
                 content=narrative_hint,
             ),
-            feeling=ExperienceFeeling(salience=salience),
+            feeling=ExperienceFeeling(
+                salience=salience,
+                salience_note=narrative_hint.strip(),
+            ),
             source="surprise",
         )
         ctx = virtual_ctx or VirtualUnitContext(

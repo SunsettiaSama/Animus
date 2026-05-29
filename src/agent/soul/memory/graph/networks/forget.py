@@ -5,11 +5,12 @@ from typing import TYPE_CHECKING
 from agent.soul.memory.domain import MemoryNetwork
 
 if TYPE_CHECKING:
-    from agent.soul.memory.ports import GraphNodeStore, VectorIndexPort
+    from agent.soul.memory.graph.node_store import GraphNodeStore
+    from agent.soul.memory.ports import VectorIndexPort
 
 
 class NetworkForgetEngine:
-    """记忆网络遗忘：低激活节点归档，并同步清理向量索引�?""
+    """?????????????????????????"""
 
     def forget_scan(
         self,

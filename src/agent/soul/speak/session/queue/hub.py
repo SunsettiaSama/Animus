@@ -5,6 +5,7 @@ from collections.abc import Callable
 from .compose import SessionComposeQueue
 from .decision import QueueDecisionResult
 from .memory import MemoryQueueConsumeResult, MemoryQueueItem, SessionMemoryQueue
+from .portrait import PortraitQueueConsumeResult, PortraitQueueItem, SessionPortraitQueue
 from .interrupt import render_interrupt_system_block, summarize_suspended_compose
 from .types import InterruptContext, SessionRuntime, SubmitUserInputResult, SpeakTurnMode
 from .user import SessionUserQueue, UserInputItem
@@ -17,6 +18,7 @@ class SessionQueueHub:
         self._compose_queue = SessionComposeQueue()
         self._user_queue = SessionUserQueue()
         self._memory_queue = SessionMemoryQueue(max_turn_gap=memory_turn_gap)
+        self._portrait_queue = SessionPortraitQueue(max_turn_gap=memory_turn_gap)
         self._runtimes: dict[str, SessionRuntime] = {}
         self._schedule_compose: Callable[[str, str], None] | None = None
         self._schedule_queue_decision: Callable[[str, InterruptContext, int], None] | None = None
@@ -56,6 +58,16 @@ class SessionQueueHub:
         current_turn_index: int,
     ) -> MemoryQueueConsumeResult:
         return self._memory_queue.consume_for_compose(session_id, current_turn_index)
+
+    def enqueue_portrait(self, session_id: str, item: PortraitQueueItem) -> None:
+        self._portrait_queue.enqueue(session_id, item)
+
+    def consume_portrait_for_compose(
+        self,
+        session_id: str,
+        current_turn_index: int,
+    ) -> PortraitQueueConsumeResult:
+        return self._portrait_queue.consume_for_compose(session_id, current_turn_index)
 
     def is_pushing(self, session_id: str) -> bool:
         runtime = self._runtime(session_id)
@@ -294,6 +306,7 @@ class SessionQueueHub:
     def clear_session(self, session_id: str) -> None:
         self._compose_queue.clear_session(session_id)
         self._memory_queue.clear_session(session_id)
+        self._portrait_queue.clear_session(session_id)
         runtime = self._runtimes.get(session_id)
         if runtime is not None:
             with runtime.lock:

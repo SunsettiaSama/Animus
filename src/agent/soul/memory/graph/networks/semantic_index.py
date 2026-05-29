@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from agent.soul.memory.domain import GraphNode, MemoryNetwork
+from agent.soul.memory.domain import MemoryNetwork
+from agent.soul.memory.graph.base_node import BaseNode
 from agent.soul.memory.embed_text import cosine_similarity
 
 if TYPE_CHECKING:
@@ -29,7 +30,21 @@ class SemanticVectorIndex:
     def enabled(self) -> bool:
         return self._infra is not None and self._infra.enabled
 
-    def record(self, node: GraphNode) -> None:
+    def rehydrate(self, node: BaseNode) -> None:
+        text = (getattr(node, "embed_text_cache", "") or node.embed_text()).strip()
+        vector = list(getattr(node, "embedding", None) or [])
+        if not text or not vector:
+            return
+        self._ingested[node.id] = IngestedSemanticVector(
+            node_id=node.id,
+            network=node.network,
+            text=text,
+            vector=vector,
+        )
+        if self._infra is not None and self._infra.vectors is not None:
+            self._infra.vectors.upsert(node.id, vector)
+
+    def record(self, node: BaseNode) -> None:
         text = node.embed_text().strip()
         if not text:
             return
@@ -99,6 +114,9 @@ class SemanticVectorIndex:
         if self._infra is None or self._infra.embedding is None:
             return []
         return self._infra.embedding.embed_query(text)
+
+    def embed_passage(self, text: str) -> list[float]:
+        return self._embed_passage(text)
 
     def get(self, node_id: str) -> IngestedSemanticVector | None:
         return self._ingested.get(node_id)

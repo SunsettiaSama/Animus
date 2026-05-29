@@ -44,12 +44,15 @@ class SpeakSessionRegistry:
         self._interactors: dict[str, str] = {}
 
     def bind_interactor(self, session_id: str, interactor_id: str) -> None:
-        resolved = interactor_id.strip() or session_id.strip()
+        resolved = interactor_id.strip()
         if resolved:
             self._interactors[session_id] = resolved
 
+    def get_bound_interactor(self, session_id: str) -> str:
+        return self._interactors.get(session_id, "").strip()
+
     def get_interactor(self, session_id: str) -> str:
-        bound = self._interactors.get(session_id, "").strip()
+        bound = self.get_bound_interactor(session_id)
         if bound:
             return bound
         return session_id.strip() or "default"

@@ -12,8 +12,8 @@
 
 import { S, set }                   from './state.js';
 import { http, PATHS, pollUntilReady } from './api.js';
-import * as historyMod              from './history.js';
 import * as settings                from './settings.js';
+import { getChannelId }             from './channel.js';
 
 // Feature modules
 import * as llmMod                  from './modules/llm.js';
@@ -40,7 +40,7 @@ import { initToast, showToast }     from './shared/toast.js';
 import { loadWorkstation, registerModules as regLanding,
          bindLanding }              from './screens/landing.js';
 import { startNew, handleSend, handleMicClick,
-         rebuildFromHistory, updateReactBadge,
+         updateReactBadge,
          initTTSHandler, initLifecycleListeners,
          openKBPanel, registerModules as regWorkspace }
                                     from './screens/workspace.js';
@@ -66,9 +66,6 @@ reactMod.setCallbacks({
   onReady:        () => {
     soulMod.fetchReadiness().then(() => updateReactBadge()).catch(() => {});
     speakMod.fetchStatus().then(() => updateReactBadge()).catch(() => {});
-    if (S.convId && historyMod.getMessages().length > 0) {
-      historyMod.syncConvLoopFromMessages(historyMod.getMessages()).catch(() => {});
-    }
   },
   onError:        msg => { showToast(msg); },
   onStatusUpdate: () => {},
@@ -91,11 +88,6 @@ personaMod.setCallbacks({
     const name = data?.profile?.name;
     if (name) setAgentAvatar(name.charAt(0));
   },
-});
-
-historyMod.setCallbacks({
-  onToast: _toast,
-  onLoad:  msgs => rebuildFromHistory(msgs),
 });
 
 // ── Scheduler form helpers ────────────────────────────────────────────────────
@@ -176,25 +168,11 @@ function _bind() {
   on('btn-mic',    'click', handleMicClick);
   on('btn-open-kb','click', openKBPanel);
 
-  // Sidebar horizontal collapse toggle
-  on('btn-sidebar-toggle', 'click', () => {
-    const sidebar   = document.getElementById('sidebar');
-    const btn       = document.getElementById('btn-sidebar-toggle');
-    const collapsed = sidebar.classList.toggle('collapsed');
-    if (btn) btn.textContent = collapsed ? '▶' : '◀';
-  });
-
   // Navigation
   on('btn-go-home',     'click', () => { goHome(); loadWorkstation(); });
   on('plan-btn-home',   'click', () => { goHome(); loadWorkstation(); });
   on('bench-btn-home',  'click', () => { goHome(); loadWorkstation(); });
   on('sched-btn-home',  'click', () => { goHome(); loadWorkstation(); });
-  on('btn-new-conv',    'click', startNew);
-  on('btn-clear-hist',  'click', () => {
-    if (confirm('Clear ALL history?'))
-      historyMod.clearAllHistory().then(() => bus.emit('toast', 'History cleared'));
-  });
-
   // Quick-start landing cards (also wires start-plan/benchmark/scheduler/btn-refresh-ws)
   bindLanding({ onStartReact: startNew });
 
@@ -308,9 +286,6 @@ async function boot() {
   if (reactStatus?.status === 'ready') {
     set('reactReady', true);
     await speakMod.fetchStatus().catch(() => {});
-    if (S.convId && historyMod.getMessages().length > 0) {
-      historyMod.syncConvLoopFromMessages(historyMod.getMessages()).catch(() => {});
-    }
   } else if (reactStatus?.status === 'initializing') {
     bus.emit('toast', 'ReAct initializing…');
     pollUntilReady()
@@ -319,9 +294,6 @@ async function boot() {
         updateReactBadge();
         bus.emit('toast', 'ReAct ready');
         speakMod.fetchStatus().then(() => updateReactBadge()).catch(() => {});
-        if (S.convId && historyMod.getMessages().length > 0) {
-          historyMod.syncConvLoopFromMessages(historyMod.getMessages()).catch(() => {});
-        }
       })
       .catch(() => {});
   }
@@ -345,6 +317,7 @@ async function boot() {
     await personaMod.updateWorkstationCard();
   });
 
+  set('channelId', getChannelId());
   loadWorkstation();
 
   void botMod.updateWorkstationCard();

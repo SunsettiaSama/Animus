@@ -32,8 +32,8 @@ _emotion = _load(
     "agent/soul/memory/emotion_intensity.py",
 )
 _node = _load(
-    "agent.soul.memory.domain.node",
-    "agent/soul/memory/domain/node.py",
+    "agent.soul.memory.graph.networks.event.node",
+    "agent/soul/memory/graph/networks/event/node.py",
 )
 FactualMemory = _node.FactualMemory
 infer_emotion_intensity = _emotion.infer_emotion_intensity

@@ -183,6 +183,10 @@
       inset: 0;
       display: flex;
     }
+    #s-workspace.workspace-single #main-area {
+      flex: 1;
+      width: 100%;
+    }
 
     /* -- Sidebar -- */
     #sidebar {

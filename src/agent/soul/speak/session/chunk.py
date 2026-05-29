@@ -60,15 +60,20 @@ def resolve_subjective(chunk: SpeakTurnChunk) -> SpeakSubjectiveChunk:
     )
 
 
+def feeling_self_narration(feeling: SpeakFeelingChunk) -> str:
+    """合并轮级感受自叙，供 life 层 salience_note 与正则擢升判定。"""
+    parts: list[str] = []
+    for text in (feeling.salience, feeling.emotion, feeling.valence, feeling.arousal):
+        line = text.strip()
+        if line:
+            parts.append(line)
+    return "；".join(parts)
+
+
 def _estimate_salience(text: str) -> float:
-    t = text.strip()
-    if not t:
-        return 0.3
-    if any(k in t for k in ("深刻", "重大", "关键", "难忘", "强烈", "很重要", "印象深刻")):
-        return 0.7
-    if any(k in t for k in ("日常", "寒暄", "平淡", "寻常", "轻微", "不太重要")):
-        return 0.2
-    return 0.4
+    from agent.soul.life.experience.memory_promotion import salience_score_from_narration
+
+    return salience_score_from_narration(text)
 
 
 def _estimate_valence(text: str) -> float:

@@ -3,6 +3,7 @@ from .chunk import (
     SpeakFeelingChunk,
     SpeakSubjectiveChunk,
     SpeakTurnChunk,
+    feeling_self_narration,
     resolve_feeling,
     resolve_subjective,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "SessionTurnHost",
     "SessionUserQueue",
     "SpeakFeelingChunk",
+    "feeling_self_narration",
     "SpeakSessionLifecycleAdapter",
     "SpeakSessionManager",
     "SpeakSessionRecord",

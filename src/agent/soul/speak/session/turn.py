@@ -24,12 +24,13 @@ _APPEND_CONTINUE_INSTRUCTION = (
 class SessionTurnHost:
     compose_bundle: Callable[..., SpeakPromptBundle]
     begin_turn: Callable[[str], int]
-    refresh_similar_memories: Callable[..., None] | None
     llm: SpeakLLMEngine
     stream_pipeline: SpeakStreamPipeline
     outbound_stream: SpeakStreamChannel
     record_turn: Callable[[SpeakTurnChunk], Any]
     schedule_compose: Callable[[str], None]
+    refresh_similar_memories: Callable[..., None] | None = None
+    refresh_interactor_portrait: Callable[..., None] | None = None
     resolve_interactor_id: Callable[[str], str] | None = None
     continue_share_handoff: Callable[..., tuple[str, list[SpeakStreamEvent], "SpeakAgentOutput"] | None] | None = None
     continue_recall_handoff: Callable[..., tuple[str, list[SpeakStreamEvent], "SpeakAgentOutput"] | None] | None = None
@@ -151,6 +152,8 @@ def run_session_turn(
 
         max_rounds = 8
         for round_idx in range(max_rounds):
+            if host.refresh_interactor_portrait is not None:
+                host.refresh_interactor_portrait(session_id, bundle, turn_index)
             system = bundle.build_system()
             if interrupt_context is not None:
                 system = f"{system}\n\n{manager.render_interrupt_block(interrupt_context)}"

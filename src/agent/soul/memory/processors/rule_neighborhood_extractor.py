@@ -8,7 +8,7 @@ from .neighborhood_extractor import NeighborhoodCandidate, NeighborhoodExtractor
 
 
 class RuleNeighborhoodExtractor:
-    """Phase 1：规则抽取邻域事件（�?LLM）�?""
+    """Phase 1??????????? LLM??"""
 
     def extract(self, unit: ExperienceUnit) -> list[NeighborhoodCandidate]:
         text = " ".join(
@@ -25,17 +25,17 @@ class RuleNeighborhoodExtractor:
         candidates: list[NeighborhoodCandidate] = []
         candidates.append(
             NeighborhoodCandidate(
-                label="对话摘要",
+                label="????",
                 content=text[:240],
             )
         )
-        pet = re.search(r"(猫|狗|宠物)[^，。]{0,20}(叫|名为|名字�?([^，。\s]+)", text)
+        pet = re.search(r"(?|?|??)[^??]{0,20}(?|??|???)([^??\s]+)", text)
         if pet:
             candidates.append(
                 NeighborhoodCandidate(
-                    label="宠物",
+                    label="??",
                     content=pet.group(0)[:120],
-                    related_labels=["宠物"],
+                    related_labels=["??"],
                 )
             )
         return candidates

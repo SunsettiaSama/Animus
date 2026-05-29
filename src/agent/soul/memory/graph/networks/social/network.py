@@ -3,19 +3,19 @@ from __future__ import annotations
 from typing import Callable
 
 from agent.soul.life.experience.unit import ExperienceUnit
-from agent.soul.memory.domain import (
-    EvolutionSource,
-    MemoryNetwork,
-    SocialCoreNode,
-    SocialNeighborhoodNode,
-    SocialNodeRole,
-)
+from agent.soul.memory.domain.enums import EdgeType, EvolutionSource, MemoryNetwork, SocialNodeRole
+from agent.soul.memory.graph.networks.block import MemoryBlock
 from agent.soul.memory.graph.traversal import GraphTraversal
 from agent.soul.memory.graph.networks.archival import ExperienceArchiver
 from agent.soul.memory.graph.networks.experience_block import ExperienceBlock, read_experience_block
 from agent.soul.memory.graph.networks.forget import NetworkForgetEngine
 from agent.soul.memory.graph.networks.social.core_evolution import CoreEvolver
-from agent.soul.memory.ports import GraphEdgeStore, GraphNodeStore, InteractorStore, VectorIndexPort
+from agent.soul.memory.graph.networks.social.portrait import InteractorPortrait
+from agent.soul.memory.graph.networks.social.query import SocialQueryEngine
+from agent.soul.memory.graph.node_store import GraphNodeStore
+from agent.soul.memory.ports import GraphEdgeStore, InteractorStore, VectorIndexPort
+
+from .node import SocialCoreNode, SocialNeighborhoodNode
 
 
 class SocialMemoryNetwork:
@@ -27,16 +27,173 @@ class SocialMemoryNetwork:
         archiver: ExperienceArchiver,
         *,
         vectors: VectorIndexPort | None = None,
+        query: SocialQueryEngine | None = None,
         on_written: Callable[[SocialNeighborhoodNode | SocialCoreNode], None] | None = None,
     ) -> None:
         self._nodes = nodes
         self._interactors = interactors
         self._vectors = vectors
+        self._query = query or SocialQueryEngine(nodes, vectors=vectors)
         self._on_written = on_written
         self._archiver = archiver
         self._forget = NetworkForgetEngine()
         self._traversal = GraphTraversal(edges)
         self._core_evolver = CoreEvolver()
+
+    def register_core_portrait(
+        self,
+        interactor_id: str,
+        portrait: InteractorPortrait | dict,
+        *,
+        agent_relation: str = "",
+        display_name: str = "",
+    ) -> SocialCoreNode:
+        """Register or update interactor core portrait (PersonaProfile-shaped fields)."""
+        self._interactors.get_or_create(interactor_id, display_name=display_name)
+        profile = (
+            portrait
+            if isinstance(portrait, InteractorPortrait)
+            else InteractorPortrait.from_dict(portrait)
+        )
+        if display_name.strip():
+            profile.name = display_name.strip()
+        core = self.ensure_core(interactor_id)
+        core.portrait = profile
+        if agent_relation.strip():
+            core.agent_relation = agent_relation.strip()
+        core.focus = f"\u5bf9{profile.name or interactor_id}\u7684\u5370\u8c61"
+        return self._persist(core)
+
+    def set_agent_relation(self, interactor_id: str, relation: str) -> SocialCoreNode:
+        core = self.ensure_core(interactor_id)
+        core.agent_relation = relation.strip()
+        return self._persist(core)
+
+    def link_nodes(
+        self,
+        from_id: str,
+        to_id: str,
+        *,
+        edge_type: EdgeType = EdgeType.related_to,
+        weight: float = 0.9,
+        bidirectional: bool = False,
+    ) -> None:
+        if edge_type == EdgeType.about:
+            self._traversal.link_about(from_id, to_id, weight=weight)
+        elif edge_type == EdgeType.involves:
+            self._traversal.link_involves(from_id, to_id, weight=weight)
+        else:
+            self._traversal.link_related_to(from_id, to_id, weight=weight)
+        if bidirectional:
+            self.link_nodes(to_id, from_id, edge_type=edge_type, weight=weight, bidirectional=False)
+
+    def link_interactor_relation(
+        self,
+        interactor_id: str,
+        other_interactor_id: str,
+        *,
+        label: str,
+        content: str,
+    ) -> SocialNeighborhoodNode:
+        """Record a social relation between two interactors and link both cores."""
+        core_a = self.ensure_core(interactor_id)
+        core_b = self.ensure_core(other_interactor_id)
+        node = SocialNeighborhoodNode(
+            interactor_id=interactor_id,
+            focus=label[:60] or content[:60],
+            label=label[:200],
+            content=content,
+            related_interactor_ids=[other_interactor_id],
+        )
+        merged = self._merge_neighborhood(core_a, node)
+        self.link_nodes(merged.id, core_b.id, edge_type=EdgeType.related_to, bidirectional=True)
+        self.link_nodes(core_a.id, merged.id, edge_type=EdgeType.about)
+        return merged
+
+    def add_supplement(
+        self,
+        interactor_id: str,
+        *,
+        label: str,
+        content: str,
+        related_interactor_ids: list[str] | None = None,
+        link_core: bool = True,
+    ) -> SocialNeighborhoodNode:
+        core = self.ensure_core(interactor_id)
+        node = SocialNeighborhoodNode(
+            interactor_id=interactor_id,
+            focus=label[:60] or content[:60],
+            label=label[:200],
+            content=content,
+            related_interactor_ids=list(related_interactor_ids or []),
+        )
+        merged = self._merge_neighborhood(core, node)
+        for other_id in node.related_interactor_ids:
+            other_core = self.ensure_core(other_id)
+            self.link_nodes(merged.id, other_core.id, edge_type=EdgeType.related_to)
+        if not link_core:
+            return merged
+        return merged
+
+    def resolve_interactor_for_tone(
+        self,
+        query: str,
+        *,
+        hinted_interactor_id: str = "",
+        top_k: int = 12,
+    ) -> tuple[str, SocialCoreNode | None]:
+        from .interactor_resolve import resolve_likely_interactor_core
+
+        return resolve_likely_interactor_core(
+            self,
+            query,
+            hinted_interactor_id=hinted_interactor_id,
+            top_k=top_k,
+        )
+
+    def probe_interactor_for_tone(
+        self,
+        query: str,
+        *,
+        hinted_interactor_id: str = "",
+        top_k: int = 12,
+        min_best_score: float = 0.12,
+        max_score_gap: float = 0.20,
+    ):
+        from .interactor_resolve import probe_interactor_core
+
+        return probe_interactor_core(
+            self,
+            query,
+            hinted_interactor_id=hinted_interactor_id,
+            top_k=top_k,
+            min_best_score=min_best_score,
+            max_score_gap=max_score_gap,
+        )
+
+    def render_interactor_portrait(
+        self,
+        interactor_id: str,
+        core: SocialCoreNode,
+    ) -> str:
+        from .interactor_resolve import render_interactor_portrait_block
+
+        return render_interactor_portrait_block(interactor_id, core)
+
+    def recall(
+        self,
+        query: str,
+        top_k: int = 5,
+        *,
+        interactor_id: str = "",
+    ) -> MemoryBlock:
+        scored = self._query.recall(query, top_k, interactor_id=interactor_id)
+        entries = [s.render_line() for s in scored]
+        if interactor_id:
+            label = f"\u793e\u4ea4\u8bb0\u5fc6\u00b7{interactor_id}"
+        else:
+            label = "\u793e\u4ea4\u8bb0\u5fc6"
+        return MemoryBlock(label=label, entries=entries)
 
     def evolve_core(
         self,
@@ -50,10 +207,7 @@ class SocialMemoryNetwork:
         core = self._core_evolver.evolve(core, delta=delta, source=source)
         if evidence_ids:
             core.meta = {**core.meta, "evidence_ids": list(evidence_ids)}
-        self._nodes.put(core)
-        if self._on_written is not None:
-            self._on_written(core)
-        return core
+        return self._persist(core)
 
     def ingest_anchor_experience(
         self,
@@ -72,7 +226,7 @@ class SocialMemoryNetwork:
         merged = self._merge_neighborhood(core, node)
         if archived.parent_node_id and archived.parent_node_id != merged.id:
             self._traversal.link_related_to(archived.parent_node_id, merged.id)
-        self._index_node(merged)
+        self._persist(merged)
         return [merged]
 
     def forget_scan(
@@ -98,12 +252,9 @@ class SocialMemoryNetwork:
             return existing
         core = SocialCoreNode(
             interactor_id=interactor_id,
-            focus=f"对{interactor_id}的坰�?,
-            core_traits="",
+            focus=f"\u5bf9{interactor_id}\u7684\u5370\u8c61",
         )
-        self._nodes.put(core)
-        if self._on_written is not None:
-            self._on_written(core)
+        self._persist(core)
         return core
 
     def _merge_neighborhood(
@@ -125,18 +276,34 @@ class SocialMemoryNetwork:
             if node.content.strip() and node.content not in existing.content:
                 existing.content = f"{existing.content}\n{node.content}".strip()
                 existing.focus = existing.label[:60] or existing.content[:60]
+            if node.related_interactor_ids:
+                merged_ids = list(
+                    dict.fromkeys(
+                        [*existing.related_interactor_ids, *node.related_interactor_ids]
+                    )
+                )
+                existing.related_interactor_ids = merged_ids
             existing.meta = {**existing.meta, **node.meta}
-            self._nodes.put(existing)
+            self._persist(existing)
             self._traversal.link_about(core.id, existing.id)
             return existing
 
-        self._nodes.put(node)
+        self._persist(node)
         self._traversal.link_about(core.id, node.id)
+        return node
+
+    def _persist(
+        self,
+        node: SocialNeighborhoodNode | SocialCoreNode,
+    ) -> SocialNeighborhoodNode | SocialCoreNode:
+        embed_text = node.embed_text().strip()
+        node.embed_text_cache = embed_text
+        if self._vectors is not None and embed_text:
+            vector = self._vectors.embed_passage(embed_text)
+            node.embedding = vector
+            if vector:
+                self._vectors.upsert(node.id, embed_text, network=node.network)
+        self._nodes.put(node)
         if self._on_written is not None:
             self._on_written(node)
         return node
-
-    def _index_node(self, node: SocialNeighborhoodNode | SocialCoreNode) -> None:
-        if self._vectors is None:
-            return
-        self._vectors.record(node)

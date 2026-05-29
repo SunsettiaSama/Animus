@@ -1,46 +1,81 @@
 /**
- * screens/workspace.js — Chat workspace screen logic.
- *
- * Main conversation uses Soul Speak streaming (/ws/speak/run).
- * ReAct/Tao WS is no longer used for workspace chat.
+ * screens/workspace.js — 单一 Speak 会话窗口（无历史/多会话）。
  */
 
 import { S, setState, set }    from '../state.js';
 import * as render              from '../render.js';
-import * as historyMod          from '../history.js';
 import * as streaming           from '../streaming.js';
 import * as speakMod            from '../modules/speak.js';
+import { getChannelId }         from '../channel.js';
 import { goWorkspace }         from '../router.js';
 import { showToast }           from '../shared/toast.js';
 
 let _voiceMod     = null;
 let _knowledgeMod = null;
+let _speakSession = null;
+let _messages     = [];
 
 export function registerModules({ voiceMod, knowledgeMod }) {
   _voiceMod     = voiceMod;
   _knowledgeMod = knowledgeMod;
 }
 
-// ── New conversation ──────────────────────────────────────────────────────────
+function _closeSpeakSession() {
+  if (_speakSession) {
+    _speakSession.close();
+    _speakSession = null;
+  }
+  streaming.clearCurrent();
+}
+
+function _finishTurn(streamCtrl, payload) {
+  const answer = payload.answer ?? streamCtrl?.speakText ?? '';
+  const aborted = Boolean(payload.aborted);
+  streamCtrl?.finalize(answer, aborted);
+
+  if (!aborted && answer) {
+    _messages.push({
+      role: 'assistant',
+      content: answer,
+      speak_events: streamCtrl?.events ?? [],
+    });
+  }
+  setState('idle');
+  _syncSendButton();
+}
+
+function _bindTurnCallbacks(session, streamCtrl) {
+  session.setTurnCallbacks({
+    onEvent: (kind, text, meta) => streamCtrl?.onEvent(kind, text, meta),
+    onUserAck: msg => {
+      if (msg.interrupt) showToast('已插队，Agent 将转向新消息');
+      else if (msg.queued) showToast('消息已排队');
+    },
+    onTurnFinish: payload => _finishTurn(streamCtrl, payload),
+    onError: e => {
+      showToast('Speak error: ' + e.message);
+      streamCtrl?.finalize('', true);
+      _closeSpeakSession();
+      setState('idle');
+      _syncSendButton();
+    },
+  });
+}
 
 export async function startNew() {
   streaming.abortCurrent();
-  await speakMod.resetSession().catch(() => {});
-  set('convId', null);
-  set('convTitle', 'New Conversation');
-  set('convMode', 'speak');
-  historyMod.clearMessages();
+  _closeSpeakSession();
+  const channelId = getChannelId();
+  await speakMod.resetSession(channelId).catch(() => {});
+  _messages = [];
   render.clearMsgs();
   render.showEmptyState('speak');
   const tb = document.getElementById('tb-title');
-  if (tb) tb.textContent = 'New Conversation';
+  if (tb) tb.textContent = '对话';
   _updateStatusBadge();
   goWorkspace();
-  historyMod.renderSidebar();
   import('/static/js/modules/plan.js').then(m => m.initSubPanel()).catch(() => {});
 }
-
-// ── Topbar badge ──────────────────────────────────────────────────────────────
 
 export function updateReactBadge() { _updateStatusBadge(); }
 
@@ -59,28 +94,60 @@ function _updateStatusBadge() {
   }
 }
 
-// ── Send / abort ──────────────────────────────────────────────────────────────
-
 export async function handleSend() {
+  const inputEl  = document.getElementById('msg-input');
+  const question = inputEl?.value.trim() ?? '';
+
   if (S.lifecycle === 'streaming' || S.lifecycle === 'aborting') {
+    if (!question) {
+      streaming.abortCurrent();
+      _closeSpeakSession();
+      setState('idle');
+      _syncSendButton();
+      return;
+    }
+    const session = _speakSession || streaming.getCurrent();
+    if (session?.sendUserMessage(question)) {
+      if (inputEl) inputEl.value = '';
+      goWorkspace();
+      render.appendUserMsg(question);
+      _messages.push({ role: 'user', content: question });
+      showToast('已发送，Agent 回复中可继续输入');
+      return;
+    }
     streaming.abortCurrent();
-    setState('aborting');
+    _closeSpeakSession();
+    setState('idle');
+    _syncSendButton();
     return;
   }
-  const inputEl  = document.getElementById('msg-input');
-  const question = inputEl?.value.trim();
+
   if (!question) return;
   if (inputEl) inputEl.value = '';
 
   goWorkspace();
-  historyMod.renderSidebar();
   import('/static/js/modules/plan.js').then(m => m.initSubPanel()).catch(() => {});
   render.appendUserMsg(question);
-  historyMod.pushMessage({ role: 'user', content: question });
+  _messages.push({ role: 'user', content: question });
+
+  if (_speakSession?.isConnected()) {
+    await _continueSpeakTurn(question);
+    return;
+  }
   await _runSpeak(question);
 }
 
-// ── Soul Speak streaming ──────────────────────────────────────────────────────
+async function _continueSpeakTurn(question) {
+  if (!_speakSession?.isConnected()) {
+    await _runSpeak(question);
+    return;
+  }
+
+  setState('streaming');
+  const streamCtrl = render.appendSpeakStream();
+  _bindTurnCallbacks(_speakSession, streamCtrl);
+  await _speakSession.sendTurn(question);
+}
 
 async function _runSpeak(question) {
   if (!S.speakReady) {
@@ -88,53 +155,56 @@ async function _runSpeak(question) {
     return;
   }
 
+  _closeSpeakSession();
+
   const genId = crypto.randomUUID();
+  const channelId = getChannelId();
   set('genId', genId);
+  set('channelId', channelId);
   setState('streaming');
 
   const streamCtrl = render.appendSpeakStream();
 
-  const session = new streaming.SpeakSession(question, genId, {
+  const session = new streaming.SpeakSession(genId, {
+    sessionId: channelId,
     onEvent: (kind, text, meta) => streamCtrl?.onEvent(kind, text, meta),
-    onFinish: payload => {
-      const answer = payload.answer ?? streamCtrl?.speakText ?? '';
-      const aborted = Boolean(payload.aborted);
-      streamCtrl?.finalize(answer, aborted);
-
-      if (!aborted && answer) {
-        historyMod.pushMessage({
-          role: 'assistant',
-          content: answer,
-          speak_events: streamCtrl?.events ?? [],
-        });
-        historyMod.saveConversation();
-        _updateTitle(answer);
-      }
-      streaming.clearCurrent();
-      setState('idle');
+    onUserAck: msg => {
+      if (msg.interrupt) showToast('已插队，Agent 将转向新消息');
+      else if (msg.queued) showToast('消息已排队');
     },
+    onTurnFinish: payload => _finishTurn(streamCtrl, payload),
     onError: e => {
       showToast('Speak error: ' + e.message);
       streamCtrl?.finalize('', true);
-      streaming.clearCurrent();
+      _closeSpeakSession();
       setState('idle');
+      _syncSendButton();
     },
   });
 
+  _speakSession = session;
   streaming.startSession(session);
-  session.run().catch(e => {
-    showToast('Connection error: ' + e.message);
-    streamCtrl?.finalize('', true);
-    streaming.clearCurrent();
-    setState('idle');
-  });
+
+  const result = await session.run(question);
+  if (result?.type === 'session_end') {
+    _speakSession = null;
+  }
 }
 
-// ── History rebuild ───────────────────────────────────────────────────────────
+function _syncSendButton() {
+  const sendBtn = document.getElementById('btn-send');
+  const busy = S.lifecycle === 'streaming' || S.lifecycle === 'aborting';
+  if (!sendBtn) return;
+  sendBtn.textContent = '↑';
+  sendBtn.title = busy
+    ? '发送（Agent 回复中可继续输入）；空内容点击为中止'
+    : '发送';
+}
 
 export function rebuildFromHistory(messages) {
+  _messages = Array.isArray(messages) ? [...messages] : [];
   render.clearMsgs();
-  messages.forEach(m => {
+  _messages.forEach(m => {
     if (m.role === 'user') {
       render.appendUserMsg(m.content);
     } else if (m.role === 'assistant') {
@@ -153,24 +223,8 @@ export function rebuildFromHistory(messages) {
   });
   render.scrollBottom();
   goWorkspace();
-  historyMod.renderSidebar();
   import('/static/js/modules/plan.js').then(m => m.initSubPanel()).catch(() => {});
 }
-
-// ── Title update ──────────────────────────────────────────────────────────────
-
-function _updateTitle(answerOrQuestion) {
-  if (S.convTitle && S.convTitle !== 'New Conversation') return;
-  const msgs  = historyMod.getMessages();
-  const first = msgs.find(m => m.role === 'user');
-  if (!first) return;
-  const title = first.content.slice(0, 48) + (first.content.length > 48 ? '…' : '');
-  set('convTitle', title);
-  const tb = document.getElementById('tb-title');
-  if (tb) tb.textContent = title;
-}
-
-// ── Mic recording ─────────────────────────────────────────────────────────────
 
 export async function handleMicClick() {
   if (!_voiceMod) return;
@@ -187,8 +241,6 @@ export async function handleMicClick() {
     btn?.classList.add('recording');
   }
 }
-
-// ── TTS delegation ────────────────────────────────────────────────────────────
 
 export function initTTSHandler() {
   document.addEventListener('click', async e => {
@@ -207,8 +259,6 @@ export function initTTSHandler() {
   });
 }
 
-// ── Knowledge-base panel ──────────────────────────────────────────────────────
-
 export function openKBPanel() {
   const panel = document.getElementById('kb-panel');
   if (!panel) return;
@@ -218,15 +268,10 @@ export function openKBPanel() {
   }
 }
 
-// ── Lifecycle listeners ───────────────────────────────────────────────────────
-
 export function initLifecycleListeners() {
-  window.addEventListener('react:state', e => {
-    const { to } = e.detail;
-    const sendBtn = document.getElementById('btn-send');
+  window.addEventListener('react:state', () => {
+    _syncSendButton();
     const inputEl = document.getElementById('msg-input');
-    const busy    = to === 'streaming' || to === 'aborting' || to === 'initializing';
-    if (sendBtn) { sendBtn.textContent = busy ? '⊘' : '↑'; sendBtn.title = busy ? 'Abort' : 'Send'; }
-    if (inputEl)   inputEl.disabled = busy;
+    if (inputEl) inputEl.disabled = false;
   });
 }

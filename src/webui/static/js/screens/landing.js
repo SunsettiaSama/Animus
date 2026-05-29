@@ -11,7 +11,6 @@ import { http, PATHS }         from '../api.js';
 import { bus }                 from '../eventBus.js';
 import { goWorkspace, goPlan,
          goBenchmark, goScheduler } from '../router.js';
-import { renderRecentLanding } from '../history.js';
 
 let _modules = null;   // injected by app.js to avoid circular deps
 
@@ -41,7 +40,6 @@ export async function loadWorkstation() {
     benchMod.updateWorkstationCard(),
     botMod.updateWorkstationCard(),
     infraMod.updateServicesRow(),
-    renderRecentLanding(document.getElementById('landing-recent')),
   ]);
 }
 

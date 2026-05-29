@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.soul.memory.ports import GraphNodeStore
+from agent.soul.memory.graph.node_store import GraphNodeStore
 from agent.soul.memory.rumination.eligibility import (
     entry_weight,
     is_high_emotion,

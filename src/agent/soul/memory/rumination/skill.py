@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from agent.soul.memory.emergence.spread import SpreadActivationService
 from agent.soul.memory.graph.traversal import GraphTraversal
-from agent.soul.memory.ports import GraphNodeStore
+from agent.soul.memory.graph.node_store import GraphNodeStore
 from agent.soul.memory.rumination.types import (
     RuminationConfig,
     RuminationSkillContext,

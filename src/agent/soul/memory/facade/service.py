@@ -4,18 +4,22 @@ import threading
 from typing import TYPE_CHECKING, Callable
 
 from agent.soul.life.experience.unit import ExperienceUnit
-from agent.soul.memory.domain import ActivationCue, EvolutionSource, GraphNode
+from agent.soul.memory.domain import ActivationCue, EvolutionSource
+from agent.soul.memory.graph.base_node import BaseNode
 from agent.soul.memory.emergence import Emergence
 from agent.soul.memory.emergence.dispatcher import EmergenceQueryDispatcher
 from agent.soul.memory.emergence.types import PointEmergenceResult
 from agent.soul.memory.graph.networks.block import MemoryBlock
 from agent.soul.memory.graph.networks.event.network import EventMemoryNetwork
 from agent.soul.memory.graph.networks.experience_block import read_experience_block
+from agent.soul.memory.facade.interactor_portrait import InteractorPortraitSpeakResult
 from agent.soul.memory.graph.networks.social.network import SocialMemoryNetwork
 from agent.soul.memory.graph.networks.types import ExperienceKind
 from agent.soul.memory.graph.networks.store.mysql.nodes import MySQLNodeStore
 from agent.soul.memory.retriever import MemoryRetriever
 from agent.soul.memory.rumination import RuminationService
+from agent.soul.memory.session.buffer import SessionMemoryBuffer
+from agent.soul.memory.session.types import DialogueCompressionBlock
 from agent.soul.memory.sleep import SleepService
 from agent.soul.memory.sleep.types import SleepResult
 from config.soul.memory.service_config import MemoryServiceConfig
@@ -41,6 +45,8 @@ class MemoryService:
         memory_infra: MemoryInfraService | None = None,
         worker: DomainWorker | None = None,
         query_dispatcher: EmergenceQueryDispatcher | None = None,
+        session_buffer: SessionMemoryBuffer | None = None,
+        session_channels=None,
     ) -> None:
         self._social = social
         self._event = event
@@ -53,6 +59,9 @@ class MemoryService:
         self._memory_infra = memory_infra
         self._worker = worker
         self._query_dispatcher = query_dispatcher
+        self._session_buffer = session_buffer
+        self._session_channels = session_channels
+        self._interactor_portrait_ready: Callable[[InteractorPortraitSpeakResult], None] | None = None
         self._bind_enqueue()
 
     def set_worker(self, worker: DomainWorker | None) -> None:
@@ -79,10 +88,10 @@ class MemoryService:
         if self._memory_infra is not None:
             self._memory_infra.warm_up()
 
-    def get_unit(self, unit_id: str) -> GraphNode | None:
+    def get_unit(self, unit_id: str) -> BaseNode | None:
         return self._nodes.get(unit_id)
 
-    def ingest_experience(self, unit: ExperienceUnit) -> GraphNode | list[GraphNode]:
+    def ingest_experience(self, unit: ExperienceUnit) -> BaseNode | list[BaseNode]:
         block = read_experience_block(unit)
         if block.kind == ExperienceKind.anchor:
             written = self._social.ingest_anchor_experience(unit, block=block)
@@ -94,6 +103,38 @@ class MemoryService:
 
     def retract_experience(self, life_event_id: str) -> bool:
         return self._event.retract_experience(life_event_id)
+
+    def ingest_session_block(
+        self,
+        block: DialogueCompressionBlock,
+        *,
+        interactor_id: str = "",
+    ) -> None:
+        if self._session_buffer is None:
+            return
+        self._enqueue_write(
+            lambda: self._session_buffer.ingest_session_block(
+                block,
+                interactor_id=interactor_id,
+            )
+        )
+
+    def close_dialogue_session(
+        self,
+        session_id: str,
+        *,
+        interactor_id: str = "",
+        final_unit: ExperienceUnit | None = None,
+    ) -> None:
+        if self._session_buffer is None:
+            return
+        self._enqueue_write(
+            lambda: self._session_buffer.close_dialogue_session(
+                session_id,
+                interactor_id=interactor_id,
+                final_unit=final_unit,
+            )
+        )
 
     def evolve_core(
         self,
@@ -109,6 +150,49 @@ class MemoryService:
             source=source,
             evidence_ids=evidence_ids,
         )
+
+    def register_core_portrait(
+        self,
+        interactor_id: str,
+        portrait: dict,
+        *,
+        agent_relation: str = "",
+        display_name: str = "",
+    ):
+        return self._social.register_core_portrait(
+            interactor_id,
+            portrait,
+            agent_relation=agent_relation,
+            display_name=display_name,
+        )
+
+    def set_agent_relation(self, interactor_id: str, relation: str):
+        return self._social.set_agent_relation(interactor_id, relation)
+
+    def link_interactor_relation(
+        self,
+        interactor_id: str,
+        other_interactor_id: str,
+        *,
+        label: str,
+        content: str,
+    ):
+        return self._social.link_interactor_relation(
+            interactor_id,
+            other_interactor_id,
+            label=label,
+            content=content,
+        )
+
+    def recall_social(
+        self,
+        query: str,
+        top_k: int | None = None,
+        *,
+        interactor_id: str = "",
+    ) -> MemoryBlock:
+        k = top_k if top_k is not None else self._cfg.recall_top_k
+        return self._social.recall(query, k, interactor_id=interactor_id)
 
     def activate_async(self, cue: ActivationCue) -> None:
         self.emergence.expand_hot_async(cue)
@@ -139,6 +223,84 @@ class MemoryService:
             turn_index=turn_index,
         )
         self.emergence.query_point_async(cue)
+
+    def on_interactor_portrait_ready(
+        self,
+        handler: Callable[[InteractorPortraitSpeakResult], None],
+    ) -> None:
+        self._interactor_portrait_ready = handler
+
+    def resolve_channel_interactor(self, session_id: str) -> str:
+        sid = session_id.strip()
+        if not sid:
+            return ""
+        if self._session_channels is not None:
+            bound = self._session_channels.get_interactor(sid)
+            if bound:
+                return bound
+        return ""
+
+    def bind_session_channel(self, session_id: str, interactor_id: str) -> None:
+        sid = session_id.strip()
+        iid = interactor_id.strip()
+        if not sid or not iid:
+            return
+        if self._session_channels is not None:
+            self._session_channels.bind(sid, iid)
+
+    def request_speak_interactor_portrait(
+        self,
+        *,
+        session_id: str,
+        turn_index: int,
+        user_text: str,
+        agent_text: str = "",
+        hinted_interactor_id: str = "",
+    ) -> None:
+        """异步：已知渠道直达画像；新渠道试探检索，歧义则空画像防污染。"""
+        user = user_text.strip()
+        agent = agent_text.strip()
+        query = "\n".join(part for part in (user, agent) if part)
+        channel_id = session_id.strip()
+
+        def _task() -> None:
+            from agent.soul.memory.graph.networks.social.node import SocialCoreNode
+
+            bound = hinted_interactor_id.strip() or self.resolve_channel_interactor(channel_id)
+            interactor_id = ""
+            core = None
+            portrait_text = ""
+
+            if bound:
+                direct = self._social._nodes.get_core_for_interactor(bound)
+                if isinstance(direct, SocialCoreNode):
+                    interactor_id = bound
+                    core = direct
+                    portrait_text = self._social.render_interactor_portrait(interactor_id, core)
+            else:
+                probe = self._social.probe_interactor_for_tone(
+                    query,
+                    hinted_interactor_id="",
+                    min_best_score=self._cfg.portrait_probe_min_score,
+                    max_score_gap=self._cfg.portrait_probe_max_score_gap,
+                )
+                if not probe.ambiguous and probe.core is not None and probe.interactor_id:
+                    interactor_id = probe.interactor_id
+                    core = probe.core
+                    portrait_text = self._social.render_interactor_portrait(interactor_id, core)
+                    self.bind_session_channel(channel_id, interactor_id)
+
+            result = InteractorPortraitSpeakResult(
+                session_id=session_id,
+                turn_index=turn_index,
+                interactor_id=interactor_id,
+                portrait_text=portrait_text,
+            )
+            handler = self._interactor_portrait_ready
+            if handler is not None:
+                handler(result)
+
+        self._enqueue_write(_task)
 
     def on_point_emergence_ready(
         self,
@@ -191,7 +353,7 @@ class MemoryService:
 
     def ingest_narrative_from_units(
         self,
-        source_units: list[GraphNode],
+        source_units: list[BaseNode],
         chapter: str,
         persona_snapshot: str = "",
         emotional_context: str = "",
@@ -331,11 +493,11 @@ class MemoryService:
         )
         return material.to_dict()
 
-    def list_drift_units(self, *, month: str, anchor_unit_ids: list[str] | None = None, limit: int = 120) -> list[GraphNode]:
+    def list_drift_units(self, *, month: str, anchor_unit_ids: list[str] | None = None, limit: int = 120) -> list[BaseNode]:
         target_month = month.strip()
         anchors = [uid for uid in (anchor_unit_ids or []) if uid]
         seen: set[str] = set()
-        out: list[GraphNode] = []
+        out: list[BaseNode] = []
         for unit in self._nodes.get_many(anchors):
             if unit.id in seen:
                 continue

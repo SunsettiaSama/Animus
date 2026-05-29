@@ -40,11 +40,13 @@ export const S = {
   /** Per-generation UUID, used to validate abort signals. */
   genId:       '',
 
-  /** Active conversation UUID (null = not yet saved). */
+  /** @deprecated 单会话模式不再使用多会话历史 */
   convId:      null,
 
-  /** Title shown in topbar / sidebar. */
-  convTitle:   'New Conversation',
+  convTitle:   '对话',
+
+  /** 唯一通信渠道 ID（localStorage 持久化，传入 Soul/Memory）。 */
+  channelId:   '',
 
   /** True when ReAct backend is ready. */
   reactReady:  false,

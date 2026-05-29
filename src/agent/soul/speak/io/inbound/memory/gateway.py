@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .request import (
+    InteractorPortraitPullResult,
+    InteractorPortraitRequest,
     PointQueryRequest,
     RecallRequest,
     RecallResult,
@@ -19,10 +21,14 @@ class InboundMemoryGateway:
         recall_fn: Callable[[RecallRequest], RecallResult] | None = None,
         point_query_fn: Callable[[PointQueryRequest], None] | None = None,
         pull_similar_fn: Callable[[str, int], SimilarMemoryPullResult] | None = None,
+        portrait_query_fn: Callable[[InteractorPortraitRequest], None] | None = None,
+        pull_portrait_fn: Callable[[str, int], InteractorPortraitPullResult] | None = None,
     ) -> None:
         self._recall_fn = recall_fn
         self._point_query_fn = point_query_fn
         self._pull_similar_fn = pull_similar_fn
+        self._portrait_query_fn = portrait_query_fn
+        self._pull_portrait_fn = pull_portrait_fn
 
     def attach_recall(self, recall_fn: Callable[[RecallRequest], RecallResult]) -> None:
         self._recall_fn = recall_fn
@@ -50,3 +56,29 @@ class InboundMemoryGateway:
         if self._pull_similar_fn is None:
             return SimilarMemoryPullResult()
         return self._pull_similar_fn(session_id, turn_index)
+
+    def attach_portrait_query(
+        self,
+        portrait_query_fn: Callable[[InteractorPortraitRequest], None],
+    ) -> None:
+        self._portrait_query_fn = portrait_query_fn
+
+    def attach_pull_portrait(
+        self,
+        pull_portrait_fn: Callable[[str, int], InteractorPortraitPullResult],
+    ) -> None:
+        self._pull_portrait_fn = pull_portrait_fn
+
+    def request_interactor_portrait(self, request: InteractorPortraitRequest) -> None:
+        if self._portrait_query_fn is None:
+            return
+        self._portrait_query_fn(request)
+
+    def pull_interactor_portrait(
+        self,
+        session_id: str,
+        turn_index: int,
+    ) -> InteractorPortraitPullResult:
+        if self._pull_portrait_fn is None:
+            return InteractorPortraitPullResult()
+        return self._pull_portrait_fn(session_id, turn_index)

@@ -11,9 +11,11 @@ from .log import ExperienceLog
 from .orchestrator import ExperienceOrchestrator, MemoryIngestPort
 from .pipeline import LifeExperiencePipeline
 from .sources import ExperienceSource
+from .compression import build_unit_from_compression
 from .unit import ExperienceUnit
 
 if TYPE_CHECKING:
+    from agent.soul.memory.session.types import DialogueCompressionBlock
     from agent.soul.life.anchor.chronicle import AnchorChronicleStore
     from agent.soul.life.virtual.chronicle import VirtualChronicleStore
     from agent.soul.presence.service import PresenceService
@@ -113,6 +115,7 @@ class LifeExperienceStack:
         user_text: str,
         agent_text: str,
         salience: float = 0.3,
+        salience_note: str = "",
         emotion_label: str = "",
         valence_delta: float = 0.0,
         arousal_delta: float = 0.0,
@@ -125,6 +128,7 @@ class LifeExperienceStack:
             user_text=user_text,
             agent_text=agent_text,
             salience=salience,
+            salience_note=salience_note,
             emotion_label=emotion_label,
             valence_delta=valence_delta,
             arousal_delta=arousal_delta,
@@ -134,3 +138,17 @@ class LifeExperienceStack:
 
     def close_dialogue(self, session_id: str = "tao") -> ExperienceUnit | None:
         return self.dialogue.close_dialogue(self._require_presence(), session_id)
+
+    def ingest_compression_block(
+        self,
+        block: DialogueCompressionBlock,
+        *,
+        interactor_id: str = "",
+    ) -> ExperienceUnit:
+        unit = build_unit_from_compression(block, interactor_id=interactor_id)
+        self.orchestrator.ingest_compression_block(
+            unit,
+            interactor_id=interactor_id or block.session_id,
+            block=block,
+        )
+        return unit

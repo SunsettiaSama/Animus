@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from agent.soul.memory.domain import SocialCoreNode, SocialNeighborhoodNode, SocialNodeRole
+from agent.soul.memory.domain.enums import SocialNodeRole
+
+from .node import SocialCoreNode, SocialNeighborhoodNode
 from agent.soul.memory.graph.traversal import GraphTraversal
-from agent.soul.memory.ports import GraphNodeStore
+from agent.soul.memory.graph.node_store import GraphNodeStore
 from agent.soul.memory.processors.neighborhood_extractor import NeighborhoodCandidate, NeighborhoodExtractorPort
 
 

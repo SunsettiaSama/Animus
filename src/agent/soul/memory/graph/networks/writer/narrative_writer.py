@@ -8,29 +8,24 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.soul.memory.emotion_intensity import infer_emotion_intensity
 from agent.soul.memory.unit import MemoryTier, NarrativeMemory, Valence
-
-from agent.soul.memory.ports import GraphNodeStore
+from agent.soul.memory.graph.node_store import GraphNodeStore
 
 if TYPE_CHECKING:
     from infra.llm import BaseLLM
     from agent.soul.memory.unit import MemoryUnit
 
 
-# ── System prompt ─────────────────────────────────────────────────────────────
-
 _SYSTEM = """\
-你是记忆叙事系统。将若干事实�?重构型记忆片段编织为一段连贯的叙事记忆，\
-模拟人类将零散记忆整合为"人生故事"的过程�?
+You are a memory narrative system. Weave factual/reconstructive fragments into one coherent first-person narrative memory.
 
-规则�?
-- focus: 整段叙事的核心主题，12字以�?
-- narrative: 第一人称叙事段落�?00~300字；自然流畅，允许情感色彩；
-  不要逐条列举原始记忆，而是提炼成有温度的故�?
-- emotion: 这段叙事折射的主要情绪，命名字符串（�?成就�?�?怀�?�?不安"�?
-- valence: 严格输出 "positive" | "negative" | "mixed" | "neutral" 之一
-- base_activation: 叙事记忆的初始重要性，浮点�?0.4~1.0
+Rules:
+- focus: core theme, <=12 chars
+- narrative: first-person paragraph, 100-300 chars
+- emotion: named emotion string
+- valence: "positive" | "negative" | "mixed" | "neutral"
+- base_activation: 0.4~1.0
 
-严格输出合法 JSON，不含任何其他文字�?""
+Output valid JSON only."""
 
 _SCHEMA = """\
 {
@@ -46,7 +41,7 @@ def _extract_json(raw: str) -> dict:
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     if m:
         return json.loads(m.group())
-    raise ValueError(f"LLM 输出中未找到合法 JSON：{raw[:200]}")
+    raise ValueError(f"no JSON in LLM output: {raw[:200]}")
 
 
 def _valence(v: str) -> Valence:
@@ -57,39 +52,19 @@ def _valence(v: str) -> Valence:
 
 
 def _render_unit(unit: MemoryUnit) -> str:
-    """将单�?MemoryUnit 渲染�?prompt 可读的文本行�?""
     parts = [f"[{unit.MEMORY_TYPE}] {unit.focus}"]
     if hasattr(unit, "fact") and unit.fact:
-        parts.append(f"事实：{unit.fact}")
+        parts.append(f"fact: {unit.fact}")
     if hasattr(unit, "reconstructed_fact") and unit.reconstructed_fact:
-        parts.append(f"重构：{unit.reconstructed_fact}")
+        parts.append(f"reconstructed: {unit.reconstructed_fact}")
     if hasattr(unit, "narrative") and unit.narrative:
-        parts.append(f"叙事：{unit.narrative}")
+        parts.append(f"narrative: {unit.narrative}")
     if unit.emotion:
-        parts.append(f"情绪：{unit.emotion}（烈�?{unit.emotion_intensity:.1f}�?)
+        parts.append(f"emotion: {unit.emotion} ({unit.emotion_intensity:.1f})")
     return "  ".join(parts)
 
 
 class NarrativeWriter:
-    """叙事性记忆生成写入器�?
-
-    将若干事实�?重构型记忆单元整合为一�?`NarrativeMemory`，写入长期记忆�?
-    �?`LifeManager` 在日终回顾（daily review）或章节归档时调用�?
-
-    两种调用方式
-    --------
-    1. **write(source_unit_ids, chapter, ...)** �?传入 id 列表，内部从 LTM 拉取完整 unit
-    2. **write_from_units(source_units, chapter, ...)** �?传入已在内存中的 unit 列表
-       （适合 LifeManager 已经持有 unit 对象时，避免二次�?DB�?
-
-    参数说明
-    --------
-    llm
-        底层推理实例
-    ltm
-        长期记忆管理器（MySQL）；用于读取 source units 和写�?NarrativeMemory
-    """
-
     def __init__(
         self,
         llm: BaseLLM,
@@ -100,8 +75,6 @@ class NarrativeWriter:
         self._store = store
         self._on_written = on_written
 
-    # ── Public API ────────────────────────────────────────────────────────────
-
     def write(
         self,
         source_unit_ids: list[str],
@@ -109,23 +82,6 @@ class NarrativeWriter:
         persona_snapshot: str = "",
         emotional_context: str = "",
     ) -> NarrativeMemory | None:
-        """�?LTM 拉取 source units，合成叙事并写入�?
-
-        参数
-        ----
-        source_unit_ids
-            参与叙事编织�?MemoryUnit id 列表（从 LTM 查询�?
-        chapter
-            人生章节标签（如"系统构建早期"），用于跨章节检�?
-        persona_snapshot
-            PersonaManager 渲染的人格上下文字符串（可选）
-        emotional_context
-            当前情绪状态文字（可来�?EmotionalStateBlock.render()�?
-
-        返回
-        ----
-        写入�?NarrativeMemory；source_unit_ids 全部无效时返�?None�?
-        """
         source_units = self._store.get_many(source_unit_ids)
         if not source_units:
             return None
@@ -143,25 +99,6 @@ class NarrativeWriter:
         persona_snapshot: str = "",
         emotional_context: str = "",
     ) -> NarrativeMemory:
-        """从已�?unit 列表合成叙事并写入�?
-
-        适合 LifeManager 已持�?unit 对象时调用（避免二次�?DB）�?
-
-        参数
-        ----
-        source_units
-            参与叙事编织�?MemoryUnit 实例列表
-        chapter
-            人生章节标签
-        persona_snapshot
-            人格上下文字符串（可选）
-        emotional_context
-            情绪状态文字（可选）
-
-        返回
-        ----
-        写入�?NarrativeMemory
-        """
         unit = self._extract(source_units, chapter, persona_snapshot, emotional_context)
         self._store.put(unit)
         for src in source_units:
@@ -169,8 +106,6 @@ class NarrativeWriter:
         if self._on_written is not None:
             self._on_written(unit)
         return unit
-
-    # ── Internal ──────────────────────────────────────────────────────────────
 
     def _extract(
         self,
@@ -180,20 +115,20 @@ class NarrativeWriter:
         emotional_context: str,
     ) -> NarrativeMemory:
         memories_text = "\n".join(
-            f"{i+1}. {_render_unit(u)}" for i, u in enumerate(source_units)
+            f"{i + 1}. {_render_unit(u)}" for i, u in enumerate(source_units)
         )
         persona_section = (
-            f"【人格背景】\n{persona_snapshot}\n\n" if persona_snapshot.strip() else ""
+            f"[persona]\n{persona_snapshot}\n\n" if persona_snapshot.strip() else ""
         )
         emotion_section = (
-            f"【当前情绪状态】\n{emotional_context}\n\n" if emotional_context.strip() else ""
+            f"[emotion]\n{emotional_context}\n\n" if emotional_context.strip() else ""
         )
         prompt = (
             f"{persona_section}"
             f"{emotion_section}"
-            f"【章节】{chapter}\n\n"
-            f"【原始记忆片段（�?{len(source_units)} 条）】\n{memories_text}\n\n"
-            f"请将以上记忆编织为一段叙事记�?JSON：\n{_SCHEMA}"
+            f"[chapter] {chapter}\n\n"
+            f"[fragments x{len(source_units)}]\n{memories_text}\n\n"
+            f"Output narrative JSON:\n{_SCHEMA}"
         )
         raw = self._llm.generate_messages(
             [SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)]
@@ -210,7 +145,7 @@ class NarrativeWriter:
         narrative = d.get("narrative", "")
         emotion = d.get("emotion", "")
         return NarrativeMemory(
-            focus=d.get("focus", chapter or "（未提取�?),
+            focus=d.get("focus", chapter or "untitled"),
             narrative=narrative,
             source_ids=[u.id for u in source_units],
             chapter=chapter,

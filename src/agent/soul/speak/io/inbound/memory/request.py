@@ -38,3 +38,19 @@ class SimilarMemoryBlock:
 class SimilarMemoryPullResult:
     inject: SimilarMemoryBlock = field(default_factory=SimilarMemoryBlock)
     spilled: SimilarMemoryBlock = field(default_factory=SimilarMemoryBlock)
+
+
+@dataclass(frozen=True)
+class InteractorPortraitRequest:
+    session_id: str
+    turn_index: int
+    user_text: str
+    agent_text: str = ""
+    hinted_interactor_id: str = ""
+
+
+@dataclass
+class InteractorPortraitPullResult:
+    portrait_text: str = ""
+    interactor_id: str = ""
+    turn_index: int = 0

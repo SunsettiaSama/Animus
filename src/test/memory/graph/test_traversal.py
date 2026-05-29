@@ -23,6 +23,9 @@ class _FakeEdgeStore:
             inn = [e for e in inn if e.edge_type == edge_type]
         return inn
 
+    def delete_edge(self, edge_id: str) -> None:
+        self._edges = [e for e in self._edges if e.id != edge_id]
+
     def delete_by_node(self, node_id: str) -> None:
         self._edges = [e for e in self._edges if e.from_id != node_id and e.to_id != node_id]
 

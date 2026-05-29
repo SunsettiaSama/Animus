@@ -82,6 +82,7 @@ class DialogueExperiencePipeline:
         user_text: str,
         agent_text: str,
         salience: float = 0.3,
+        salience_note: str = "",
         emotion_label: str = "",
         valence_delta: float = 0.0,
         arousal_delta: float = 0.0,
@@ -101,6 +102,7 @@ class DialogueExperiencePipeline:
             user_text=user_text,
             agent_text=agent_text,
             salience=salience,
+            salience_note=salience_note,
             emotion_label=emotion_label,
             valence_delta=valence_delta,
             arousal_delta=arousal_delta,
@@ -131,7 +133,7 @@ class DialogueExperiencePipeline:
 
         experience = build_dialogue_experience(snap.state, block_count=len(item.session.turns))
         unit = unit_from_dialogue_session(item.session, experience)
-        self._orchestrator.ingest(unit)
+        self._orchestrator.ingest_dialogue_close(unit)
         self._append_interaction_close_chronicle(unit, experience.narration)
         return unit
 

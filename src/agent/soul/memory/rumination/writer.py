@@ -11,7 +11,7 @@ from agent.soul.memory.domain import EdgeType
 from agent.soul.memory.emotion_intensity import infer_emotion_intensity
 from agent.soul.memory.graph.scored import ScoredUnit
 from agent.soul.memory.graph.traversal import GraphTraversal
-from agent.soul.memory.ports import GraphNodeStore
+from agent.soul.memory.graph.node_store import GraphNodeStore
 from agent.soul.memory.unit import MemoryTier, MemoryUnit, ReconstructiveMemory, Valence
 
 if TYPE_CHECKING:

@@ -4,8 +4,10 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from agent.soul.memory.session.types import DialogueCompressionBlock
 from agent.soul.speak.llm.engine import SpeakLLMEngine
 
+from .chunk_types import DialogueContextChunk
 from .render import normalize_one_sentence, render_dialogue_compressed
 
 DistillFn = Callable[[list[tuple[str, str]], list[str]], str]
@@ -17,12 +19,6 @@ _DISTILL_SYSTEM = (
     "忠实转述已出现的事实与意图，不添加情绪、评价或未出现的信息（不加戏）。"
     "只输出这一句话：不要编号、不要列表、不要引号、不要换行、不要解释。"
 )
-
-
-@dataclass(frozen=True)
-class DialogueContextChunk:
-    user_text: str
-    agent_text: str
 
 
 @dataclass
@@ -52,6 +48,7 @@ class SpeakContextDistiller:
         self._distill_fn = distill_fn
         self._submit = submit or _default_submit
         self._sessions: dict[str, _SessionDistillState] = {}
+        self._on_block_ready: Callable[[DialogueCompressionBlock], None] | None = None
 
     @property
     def chunk_size(self) -> int:
@@ -59,6 +56,12 @@ class SpeakContextDistiller:
 
     def set_llm_engine(self, llm: SpeakLLMEngine | None) -> None:
         self._llm = llm
+
+    def set_on_block_ready(
+        self,
+        handler: Callable[[DialogueCompressionBlock], None] | None,
+    ) -> None:
+        self._on_block_ready = handler
 
     def reset_session(self, session_id: str) -> None:
         state = self._sessions.pop(session_id, None)
@@ -138,7 +141,17 @@ class SpeakContextDistiller:
             batch = state.queued_batches.pop(0)
             prior = list(state.distilled)
 
-        sentence = normalize_one_sentence(self._distill_batch(batch, prior))
+        from .structured_distill import distill_compression_block
+
+        block_index = len(prior)
+        block = distill_compression_block(
+            self._llm,
+            session_id=session_id,
+            block_index=block_index,
+            batch=batch,
+            prior=prior,
+        )
+        sentence = normalize_one_sentence(block.summary)
 
         with state.lock:
             if sentence:
@@ -147,6 +160,9 @@ class SpeakContextDistiller:
                 self._submit(lambda sid=session_id: self._pump_session(sid))
             else:
                 state.distilling = False
+
+        if block.summary.strip() and self._on_block_ready is not None:
+            self._on_block_ready(block)
 
     def _distill_batch(
         self,

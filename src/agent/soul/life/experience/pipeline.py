@@ -107,6 +107,15 @@ class LifeExperiencePipeline:
 
         emotion_label = incident.emotion_text.strip() or snap.state.affect.narrative.strip()[:24]
 
+        salience_note = "；".join(
+            part.strip()
+            for part in (
+                incident.hint,
+                incident.emotion_text,
+                incident.context,
+            )
+            if part.strip()
+        )
         unit = ExperienceUnit.make(
             situation=ExperienceSituation(
                 session_id=incident.session_id,
@@ -121,6 +130,7 @@ class LifeExperiencePipeline:
                 salience=max(salience, incident.salience),
                 emotion_label=emotion_label,
                 valence_delta=incident.emotion_intensity,
+                salience_note=salience_note,
             ),
             source=source,
         )

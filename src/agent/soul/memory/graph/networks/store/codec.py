@@ -4,22 +4,28 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from agent.soul.memory.domain import (
+from agent.soul.memory.domain.edge import MemoryEdge
+from agent.soul.memory.domain.enums import (
     EdgeType,
-    FactualMemory,
-    GraphNode,
-    MemoryEdge,
     MemoryNetwork,
     MemoryTier,
-    NarrativeMemory,
-    ReconstructiveMemory,
-    SocialCoreNode,
-    SocialNeighborhoodNode,
     SocialNodeRole,
     Valence,
 )
+from agent.soul.memory.graph.base_node import BaseNode
 
-_TYPE_MAP: dict[str, type[GraphNode]] = {
+from agent.soul.memory.graph.networks.event.node import (
+    FactualMemory,
+    NarrativeMemory,
+    ReconstructiveMemory,
+)
+from agent.soul.memory.graph.networks.social.node import (
+    SocialCoreNode,
+    SocialNeighborhoodNode,
+)
+from agent.soul.memory.graph.networks.social.portrait import InteractorPortrait
+
+_TYPE_MAP: dict[str, type[BaseNode]] = {
     "factual": FactualMemory,
     "reconstructive": ReconstructiveMemory,
     "narrative": NarrativeMemory,
@@ -42,7 +48,7 @@ def _str_to_dt(s: str | datetime) -> datetime:
     return dt
 
 
-def node_to_dict(node: GraphNode) -> dict[str, Any]:
+def node_to_dict(node: BaseNode) -> dict[str, Any]:
     d: dict[str, Any] = {
         "memory_type": node.NODE_KIND,
         "id": node.id,
@@ -76,17 +82,24 @@ def node_to_dict(node: GraphNode) -> dict[str, Any]:
         d["chapter"] = node.chapter
     elif isinstance(node, SocialCoreNode):
         d["node_role"] = SocialNodeRole.core.value
-        d["core_traits"] = node.core_traits
+        d["portrait"] = node.portrait.to_dict()
+        d["agent_relation"] = node.agent_relation
+        d["trait_changelog"] = node.trait_changelog
         d["trait_version"] = node.trait_version
         d["last_evolved_at"] = node.last_evolved_at.isoformat()
+        d["embed_text"] = node.embed_text_cache
+        d["embedding"] = list(node.embedding)
     elif isinstance(node, SocialNeighborhoodNode):
         d["node_role"] = SocialNodeRole.neighborhood.value
         d["neighborhood_label"] = node.label
         d["neighborhood_content"] = node.content
+        d["related_interactor_ids"] = list(node.related_interactor_ids)
+        d["embed_text"] = node.embed_text_cache
+        d["embedding"] = list(node.embedding)
     return d
 
 
-def node_to_row_params(node: GraphNode) -> dict[str, Any]:
+def node_to_row_params(node: BaseNode) -> dict[str, Any]:
     d = node_to_dict(node)
     role = d.get("node_role", "")
     if isinstance(node, SocialCoreNode):
@@ -119,15 +132,28 @@ def node_to_row_params(node: GraphNode) -> dict[str, Any]:
         "narrative": d.get("narrative"),
         "source_ids_json": json.dumps(d.get("source_ids") or [], ensure_ascii=False),
         "chapter": d.get("chapter", ""),
-        "core_traits": d.get("core_traits"),
+        "core_traits": d.get("trait_changelog") if isinstance(node, SocialCoreNode) else d.get("core_traits"),
         "trait_version": int(d.get("trait_version") or 1),
         "last_evolved_at": _dt_to_str(node.last_evolved_at) if isinstance(node, SocialCoreNode) else None,
         "neighborhood_label": d.get("neighborhood_label", ""),
         "neighborhood_content": d.get("neighborhood_content"),
+        "related_interactors_json": json.dumps(
+            d.get("related_interactor_ids") or [],
+            ensure_ascii=False,
+        ),
+        "portrait_json": json.dumps(
+            d.get("portrait") or {},
+            ensure_ascii=False,
+        )
+        if isinstance(node, SocialCoreNode)
+        else None,
+        "agent_relation": d.get("agent_relation", "") if isinstance(node, SocialCoreNode) else "",
+        "embed_text": d.get("embed_text") or node.embed_text().strip(),
+        "embedding_json": json.dumps(d.get("embedding") or list(getattr(node, "embedding", [])), ensure_ascii=False),
     }
 
 
-def row_to_node(row: dict) -> GraphNode:
+def row_to_node(row: dict) -> BaseNode:
     memory_type = row["memory_type"]
     cls = _TYPE_MAP.get(memory_type)
     if cls is None:
@@ -177,17 +203,32 @@ def row_to_node(row: dict) -> GraphNode:
         )
     if cls is SocialCoreNode:
         evolved = row.get("last_evolved_at")
+        portrait_raw = row.get("portrait_json")
+        portrait_data = json.loads(portrait_raw) if portrait_raw else {}
+        embedding_raw = row.get("embedding_json")
+        embedding = json.loads(embedding_raw) if embedding_raw else []
         return SocialCoreNode(
             **common,
-            core_traits=row.get("core_traits") or "",
+            portrait=InteractorPortrait.from_dict(portrait_data),
+            agent_relation=row.get("agent_relation") or "",
+            trait_changelog=row.get("core_traits") or "",
             trait_version=int(row.get("trait_version") or 1),
             last_evolved_at=_str_to_dt(evolved) if evolved else common["created_at"],
+            embed_text_cache=row.get("embed_text") or "",
+            embedding=[float(x) for x in embedding],
         )
     if cls is SocialNeighborhoodNode:
+        related_raw = row.get("related_interactors_json")
+        related_ids = json.loads(related_raw) if related_raw else []
+        embedding_raw = row.get("embedding_json")
+        embedding = json.loads(embedding_raw) if embedding_raw else []
         return SocialNeighborhoodNode(
             **common,
             label=row.get("neighborhood_label") or "",
             content=row.get("neighborhood_content") or "",
+            related_interactor_ids=[str(x) for x in related_ids],
+            embed_text_cache=row.get("embed_text") or "",
+            embedding=[float(x) for x in embedding],
         )
     raise ValueError(f"Unhandled node class: {cls}")
 
@@ -215,7 +256,7 @@ def row_to_edge(row: dict) -> MemoryEdge:
     )
 
 
-def unit_from_dict(d: dict[str, Any]) -> GraphNode:
+def unit_from_dict(d: dict[str, Any]) -> BaseNode:
     row: dict[str, Any] = {
         "memory_type": d["memory_type"],
         "id": d["id"],
@@ -241,10 +282,15 @@ def unit_from_dict(d: dict[str, Any]) -> GraphNode:
         "narrative": d.get("narrative"),
         "source_ids_json": json.dumps(d.get("source_ids") or []),
         "chapter": d.get("chapter", ""),
-        "core_traits": d.get("core_traits"),
+        "core_traits": d.get("trait_changelog") or d.get("core_traits"),
         "trait_version": d.get("trait_version", 1),
         "neighborhood_label": d.get("neighborhood_label", ""),
         "neighborhood_content": d.get("neighborhood_content"),
+        "portrait_json": json.dumps(d.get("portrait") or {}, ensure_ascii=False),
+        "agent_relation": d.get("agent_relation", ""),
+        "related_interactors_json": json.dumps(d.get("related_interactor_ids") or [], ensure_ascii=False),
+        "embed_text": d.get("embed_text", ""),
+        "embedding_json": json.dumps(d.get("embedding") or [], ensure_ascii=False),
     }
     if d.get("life_event_id"):
         meta = json.loads(row["meta_json"])
@@ -256,11 +302,11 @@ def unit_from_dict(d: dict[str, Any]) -> GraphNode:
 unit_to_dict = node_to_dict
 
 
-def unit_to_json(node: GraphNode) -> str:
+def unit_to_json(node: BaseNode) -> str:
     return json.dumps(node_to_dict(node), ensure_ascii=False)
 
 
-def unit_from_json(s: str) -> GraphNode:
+def unit_from_json(s: str) -> BaseNode:
     return unit_from_dict(json.loads(s))
 
 

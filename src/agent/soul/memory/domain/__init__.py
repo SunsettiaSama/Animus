@@ -13,13 +13,13 @@ from agent.soul.memory.domain.enums import (
     Valence,
 )
 from agent.soul.memory.domain.interactor import InteractorRef
-from agent.soul.memory.domain.node import (
+from agent.soul.memory.graph.networks.event.node import (
     EventNode,
     FactualMemory,
-    GraphNode,
-    MemoryUnit,
     NarrativeMemory,
     ReconstructiveMemory,
+)
+from agent.soul.memory.graph.networks.social.node import (
     SocialCoreNode,
     SocialNeighborhoodNode,
     SocialNode,
@@ -33,11 +33,9 @@ __all__ = [
     "EvolutionSource",
     "EventNode",
     "FactualMemory",
-    "GraphNode",
     "MemoryEdge",
     "MemoryNetwork",
     "MemoryTier",
-    "MemoryUnit",
     "NarrativeMemory",
     "ReconstructiveMemory",
     "SocialCoreNode",

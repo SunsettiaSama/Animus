@@ -9,12 +9,18 @@ class SpeakStatusInjected:
 
     presence: str = ""
     dialogue_compressed: str = ""
+    interactor_portrait: str = ""
     similar_memories: str = ""
 
     def render_blocks(self) -> list[str]:
         blocks = [
             block.strip()
-            for block in (self.presence, self.dialogue_compressed, self.similar_memories)
+            for block in (
+                self.presence,
+                self.dialogue_compressed,
+                self.interactor_portrait,
+                self.similar_memories,
+            )
             if block.strip()
         ]
         return blocks

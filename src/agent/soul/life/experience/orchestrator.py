@@ -17,7 +17,6 @@ from .unit import (
 from config.soul.presence.config import (
     EXPERIENCE_COLLISION_SCAN_LIMIT,
     EXPERIENCE_COLLISION_WINDOW_MIN,
-    EXPERIENCE_MEMORY_INGEST_THRESHOLD,
 )
 
 if TYPE_CHECKING:
@@ -31,6 +30,16 @@ class MemoryIngestPort(Protocol):
     def ingest_experience(self, unit: ExperienceUnit) -> None: ...
 
     def retract_experience(self, life_event_id: str) -> bool: ...
+
+    def ingest_session_block(self, block: object, *, interactor_id: str = "") -> None: ...
+
+    def close_dialogue_session(
+        self,
+        session_id: str,
+        *,
+        interactor_id: str = "",
+        final_unit: ExperienceUnit | None = None,
+    ) -> None: ...
 
 
 class ExperienceOrchestrator:
@@ -52,7 +61,7 @@ class ExperienceOrchestrator:
         *,
         anchor_chronicle: AnchorChroniclePort | None = None,
         chronicle_store: AnchorChroniclePort | None = None,
-        memory_ingest_threshold: float = EXPERIENCE_MEMORY_INGEST_THRESHOLD,
+        memory_ingest_threshold: float | None = None,
         collapser: ExperienceCollapser | None = None,
         collision_window_min: int = EXPERIENCE_COLLISION_WINDOW_MIN,
     ) -> None:
@@ -60,7 +69,7 @@ class ExperienceOrchestrator:
         self._memory_port = memory_port
         self._anchor_chronicle = anchor_chronicle or reality_chronicle or chronicle_store
         self._virtual_chronicle = virtual_chronicle
-        self._memory_ingest_threshold = memory_ingest_threshold
+        _ = memory_ingest_threshold
         self._collapser = collapser
         self._collision_window_sec = collision_window_min * 60
         self._memory_ingested_ids: set[str] = set()
@@ -96,6 +105,62 @@ class ExperienceOrchestrator:
 
             stamp_presence_bundle(unit, presence_bundle_from_unit(unit))
 
+    def ingest_compression_block(
+        self,
+        unit: ExperienceUnit,
+        *,
+        interactor_id: str = "",
+        block: object | None = None,
+    ) -> None:
+        """Speak 压缩块：写入 life 热日志并粗粒度擢升到 memory 会话 buffer。"""
+        self._log.append(unit)
+        self._stamp_presence_bundle_on_unit(unit)
+        self._route_chronicle(unit)
+        port = self._memory_port
+        if port is not None and block is not None:
+            ingest_block = getattr(port, "ingest_session_block", None)
+            if callable(ingest_block):
+                ingest_block(block, interactor_id=interactor_id)
+        self._notify_after_ingest(unit)
+
+    def ingest_dialogue_close(self, unit: ExperienceUnit) -> None:
+        """会话闭合：写入 life 账簿与 chronicle，由 memory 会话 buffer 做终局整合。"""
+        self._log.append(unit)
+        session_id = unit.situation.session_id or "tao"
+        interactor_id = unit.interactor_id if hasattr(unit, "interactor_id") else ""
+        from agent.soul.life.experience.anchor_codec import read_anchor_context
+
+        ctx = read_anchor_context(unit)
+        if ctx is not None and ctx.interactor_id.strip():
+            interactor_id = ctx.interactor_id.strip()
+        if not interactor_id:
+            interactor_id = session_id
+        self._route_chronicle(unit)
+        self.notify_dialogue_session_close(
+            session_id,
+            interactor_id=interactor_id,
+            final_unit=unit,
+        )
+        self._notify_after_ingest(unit)
+
+    def notify_dialogue_session_close(
+        self,
+        session_id: str,
+        *,
+        interactor_id: str = "",
+        final_unit: ExperienceUnit | None = None,
+    ) -> None:
+        port = self._memory_port
+        if port is None:
+            return
+        closer = getattr(port, "close_dialogue_session", None)
+        if callable(closer):
+            closer(
+                session_id,
+                interactor_id=interactor_id,
+                final_unit=final_unit,
+            )
+
     def ingest(self, unit: ExperienceUnit) -> None:
         self._log.append(unit)
         self._stamp_presence_bundle_on_unit(unit)
@@ -114,7 +179,7 @@ class ExperienceOrchestrator:
         for unit in hot:
             if unit.source == "collision":
                 continue
-            if unit.is_salient(self._memory_ingest_threshold) and unit.id not in self._memory_ingested_ids:
+            if unit.should_promote_to_memory() and unit.id not in self._memory_ingested_ids:
                 self._promote_to_memory(unit)
                 promoted.append(unit)
         self._log.purge_old()
@@ -181,13 +246,21 @@ class ExperienceOrchestrator:
                 emotion_label=top.feeling.emotion_label,
                 valence_delta=top.feeling.valence_delta,
                 arousal_delta=top.feeling.arousal_delta,
+                salience_note="；".join(
+                    part.strip()
+                    for part in (
+                        merged_text,
+                        *(u.feeling.salience_note for u in units),
+                    )
+                    if part.strip()
+                ),
             ),
             source="collision",
         )
 
         self._log.append(collision_unit)
         self._write_collision_chronicle(collision_unit, merged_text, has_user=has_user)
-        if collision_unit.is_salient(self._memory_ingest_threshold):
+        if collision_unit.should_promote_to_memory():
             self._promote_to_memory(collision_unit)
 
     def _notify_after_ingest(self, unit: ExperienceUnit) -> None:
@@ -196,7 +269,7 @@ class ExperienceOrchestrator:
 
     def _finalize_single(self, unit: ExperienceUnit) -> None:
         self._route_chronicle(unit)
-        if unit.is_salient(self._memory_ingest_threshold):
+        if unit.should_promote_to_memory():
             self._promote_to_memory(unit)
 
     def _route_chronicle(self, unit: ExperienceUnit) -> None:

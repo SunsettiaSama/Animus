@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from agent.soul.memory.domain import MemoryNetwork, ReconstructiveMemory
+from agent.soul.memory.domain.enums import MemoryNetwork
+from agent.soul.memory.graph.networks.event.node import ReconstructiveMemory
 from agent.soul.memory.emotion_intensity import node_emotion_intensity
 from agent.soul.memory.graph.query import QueryEngine
 from agent.soul.memory.graph.traversal import GraphTraversal
-from agent.soul.memory.ports import GraphEdgeStore, GraphNodeStore
+from agent.soul.memory.graph.node_store import GraphNodeStore
+from agent.soul.memory.ports import GraphEdgeStore
 from agent.soul.memory.rumination.buffer import RuminationBuffer
 from agent.soul.memory.rumination.sample import gaussian_pick
 from agent.soul.memory.rumination.skill import RuminationSkill

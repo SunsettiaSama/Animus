@@ -1,18 +1,7 @@
 /**
  * streaming.js — WebSocket streaming session management.
- *
- * Issue 1 fix: abort sends {type:'abort',gen_id} over the SAME WebSocket,
- *              avoiding a separate REST call that could race with the WS close.
- * Issue 3 fix: on aborted finish, caller skips conversation persistence.
- * Issue 6 fix: full prompt is sent exactly once via prompt_preview message
- *              and rendered by render.js; never duplicated.
- *
- * channel=workflow 的事件派发到 window「workflow:wire」，供 plan 子面板与 Conv 主 UI 解耦。
  */
 import { wsFactory, PATHS }  from './api.js';
-import { S, setState, set }  from './state.js';
-
-// ── Base session ──────────────────────────────────────────────────────────────
 
 class BaseSession {
   constructor(wsPath, genId) {
@@ -26,36 +15,21 @@ class BaseSession {
     this._ws = wsFactory(this._path);
     return new Promise((resolve, reject) => {
       this._ws.onopen  = resolve;
-      this._ws.onerror = e => reject(new Error(`WebSocket error on ${this._path}`));
+      this._ws.onerror = () => reject(new Error(`WebSocket error on ${this._path}`));
     });
   }
 
   close() {
     if (this._ws && !this._closed) {
       this._closed = true;
+      if (this._ws.readyState === WebSocket.OPEN) {
+        this._ws.send(JSON.stringify({ type: 'close', gen_id: this._genId }));
+      }
       this._ws.close();
     }
   }
 }
 
-// ── ReAct session ─────────────────────────────────────────────────────────────
-
-/**
- * Streams a full ReAct reasoning turn.
- *
- * @param {string}   question
- * @param {string}   genId
- * @param {object}   [opts]
- * @param {string}   [opts.streamMode]  'chunk' | 'flush' | 'live' | 'batched'（默认 chunk）
- * @param {Function} [opts.onPromptPreview]   (messages: array) => void  — Issue 6
- * @param {Function} [opts.onStepStart]       (index: number) => void
- * @param {Function} [opts.onChunk]           (index: number, chunk: string) => void
- * @param {Function} [opts.onStep]            (stepObj) => void
- * @param {Function} [opts.onRetry]           (index: number, reason: string) => void
- * @param {Function} [opts.onApprovalRequest] (requestId, tool, args) => void
- * @param {Function} [opts.onFinish]          (answer: string, aborted: bool) => void
- * @param {Function} [opts.onError]           (err: Error) => void
- */
 export class ReactSession extends BaseSession {
   constructor(question, genId, opts = {}) {
     super(PATHS.react.run, genId);
@@ -69,12 +43,6 @@ export class ReactSession extends BaseSession {
     this._onApprovalRequest = opts.onApprovalRequest ?? (() => {});
     this._onFinish          = opts.onFinish          ?? (() => {});
     this._onError           = opts.onError           ?? (() => {});
-    this._onSubStart        = opts.onSubStart        ?? (() => {});
-    this._onSubChunk        = opts.onSubChunk        ?? (() => {});
-    this._onSubStep         = opts.onSubStep         ?? (() => {});
-    this._onSubFinish       = opts.onSubFinish       ?? (() => {});
-    this._onSubError        = opts.onSubError        ?? (() => {});
-    this._onMaxSteps        = opts.onMaxSteps        ?? null;
     this._aborted           = false;
   }
 
@@ -98,56 +66,14 @@ export class ReactSession extends BaseSession {
             reject(new Error(`Malformed WebSocket frame: ${e.message}`));
             return;
           }
-          const ch = msg.channel;
-          if (ch === 'workflow') {
+          if (msg.channel === 'workflow') {
             window.dispatchEvent(new CustomEvent('workflow:wire', { detail: msg }));
             return;
           }
-          if (ch != null && ch !== 'dialog' && ch !== 'sub_agent') {
-            return;
-          }
-
           switch (msg.type) {
-            case 'prompt_preview':
-              this._onPromptPreview(msg.messages);
-              break;
-            case 'step_start':
-              this._onStepStart(msg.index);
-              break;
-            case 'chunk':
-              this._onChunk(msg.index, msg.chunk);
-              break;
-            case 'step':
-              this._onStep(msg);
-              break;
-            case 'retry':
-              this._onRetry(msg.index, msg.reason);
-              break;
-            case 'approval_request':
-              this._onApprovalRequest(msg.request_id, msg.tool, msg.args ?? {});
-              break;
-            case 'sub_start':
-              this._onSubStart(msg.action, msg.instruction);
-              break;
-            case 'sub_chunk':
-              this._onSubChunk(msg.index, msg.chunk);
-              break;
-            case 'sub_step':
-              this._onSubStep(msg);
-              break;
-            case 'sub_finish':
-              this._onSubFinish(msg.answer);
-              break;
-            case 'sub_error':
-              this._onSubError(msg.error);
-              break;
             case 'finish':
-              finalAnswer   = msg.answer ?? '';
+              finalAnswer = msg.answer ?? '';
               this._aborted = msg.aborted ?? false;
-              resolve();
-              break;
-            case 'max_steps':
-              this._onMaxSteps?.(msg.max_steps);
               resolve();
               break;
             case 'error':
@@ -159,11 +85,8 @@ export class ReactSession extends BaseSession {
         };
         this._ws.onerror = () => reject(new Error('WebSocket connection error'));
         this._ws.onclose = e => {
-          if (e.wasClean || e.code === 1000 || e.code === 1005) {
-            resolve();
-          } else {
-            reject(new Error(`Connection dropped (code ${e.code})`));
-          }
+          if (e.wasClean || e.code === 1000 || e.code === 1005) resolve();
+          else reject(new Error(`Connection dropped (code ${e.code})`));
         };
       });
       this._onFinish(finalAnswer, this._aborted);
@@ -173,19 +96,9 @@ export class ReactSession extends BaseSession {
   }
 
   abort() {
-    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+    if (this._ws?.readyState === WebSocket.OPEN) {
       this._aborted = true;
       this._ws.send(JSON.stringify({ type: 'abort', gen_id: this._genId }));
-    }
-  }
-
-  respond(requestId, approved) {
-    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-      this._ws.send(JSON.stringify({
-        type: 'approval_response',
-        request_id: requestId,
-        approved,
-      }));
     }
   }
 }
@@ -195,97 +108,178 @@ let _current = null;
 export function startSession(session) {
   if (_current) {
     _current.abort();
+    _current.close();
     _current = null;
   }
   _current = session;
   return session;
 }
 
+export function getCurrent() {
+  return _current;
+}
+
 export function abortCurrent() {
   if (_current) {
     _current.abort();
+    _current.close();
     _current = null;
   }
 }
 
 export function clearCurrent() {
+  if (_current) _current.close();
   _current = null;
 }
 
-// ── Speak session（Soul 流式推送）────────────────────────────────────────────
-
 /**
- * @param {string} question
- * @param {string} genId
- * @param {object} [opts]
- * @param {Function} [opts.onEvent]   (kind, text, meta) => void
- * @param {Function} [opts.onFinish]  (payload) => void
- * @param {Function} [opts.onError]   (err: Error) => void
+ * Soul Speak 长连接：单条 WebSocket 可多轮输入；流式过程中可 sendUserMessage。
  */
 export class SpeakSession extends BaseSession {
-  constructor(question, genId, opts = {}) {
+  constructor(genId, opts = {}) {
     super(PATHS.speak.run, genId);
-    this._question = question;
     this._sessionId = opts.sessionId ?? 'webui';
     this._onEvent = opts.onEvent ?? (() => {});
-    this._onFinish = opts.onFinish ?? (() => {});
+    this._onTurnFinish = opts.onTurnFinish ?? (() => {});
+    this._onUserAck = opts.onUserAck ?? (() => {});
     this._onError = opts.onError ?? (() => {});
+    this._turnResolvers = [];
+    this._connected = false;
     this._aborted = false;
   }
 
-  async run() {
-    await this._open();
-    this._ws.send(JSON.stringify({
-      question: this._question,
-      gen_id: this._genId,
-      session_id: this._sessionId,
-    }));
+  isConnected() {
+    return this._connected && this._ws?.readyState === WebSocket.OPEN;
+  }
 
-    try {
-      await new Promise((resolve, reject) => {
-        this._ws.onmessage = evt => {
-          let msg;
-          try {
-            msg = JSON.parse(evt.data);
-          } catch (e) {
-            reject(new Error(`Malformed WebSocket frame: ${e.message}`));
-            return;
-          }
+  setTurnCallbacks(opts = {}) {
+    if (opts.onEvent) this._onEvent = opts.onEvent;
+    if (opts.onTurnFinish) this._onTurnFinish = opts.onTurnFinish;
+    if (opts.onUserAck) this._onUserAck = opts.onUserAck;
+  }
 
-          if (msg.type === 'speak_event') {
-            this._onEvent(msg.kind, msg.text ?? '', msg.meta ?? {});
-            return;
-          }
-
-          if (msg.type === 'finish') {
-            this._aborted = Boolean(msg.aborted);
-            this._onFinish(msg);
-            resolve();
-            return;
-          }
-
-          if (msg.type === 'error') {
-            reject(new Error(msg.message ?? 'Speak error'));
-          }
-        };
-        this._ws.onerror = () => reject(new Error('WebSocket connection error'));
-        this._ws.onclose = e => {
-          if (e.wasClean || e.code === 1000 || e.code === 1005) {
-            resolve();
-          } else {
-            reject(new Error(`Connection dropped (code ${e.code})`));
-          }
-        };
-      });
-    } catch (e) {
-      this._onError(e);
+  _send(payload) {
+    if (this._ws?.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify(payload));
     }
   }
 
-  abort() {
-    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-      this._aborted = true;
-      this._ws.send(JSON.stringify({ type: 'abort', gen_id: this._genId }));
+  sendUserMessage(question) {
+    const text = String(question ?? '').trim();
+    if (!text || !this._connected) return false;
+    this._send({
+      type: 'user_message',
+      question: text,
+      gen_id: this._genId,
+      session_id: this._sessionId,
+    });
+    return true;
+  }
+
+  _handleMessage(msg) {
+    if (msg.gen_id && msg.gen_id !== this._genId) return;
+
+    if (msg.type === 'speak_event') {
+      this._onEvent(msg.kind, msg.text ?? '', msg.meta ?? {});
+      return;
     }
+
+    if (msg.type === 'user_ack') {
+      this._onUserAck(msg);
+      return;
+    }
+
+    if (msg.type === 'turn_finish') {
+      this._aborted = Boolean(msg.aborted);
+      this._onTurnFinish(msg);
+      const resolve = this._turnResolvers.shift();
+      if (resolve) resolve(msg);
+      return;
+    }
+
+    if (msg.type === 'session_end') {
+      this._connected = false;
+      const resolve = this._turnResolvers.shift();
+      if (resolve) resolve({ type: 'session_end' });
+      return;
+    }
+
+    if (msg.type === 'error') {
+      const resolve = this._turnResolvers.shift();
+      if (resolve) resolve({ type: 'error', message: msg.message });
+      this._onError(new Error(msg.message ?? 'Speak error'));
+    }
+  }
+
+  _waitTurn() {
+    return new Promise(resolve => {
+      this._turnResolvers.push(resolve);
+    });
+  }
+
+  async run(question) {
+    const first = String(question ?? '').trim();
+    if (!first) {
+      this._onError(new Error('empty question'));
+      return;
+    }
+
+    await this._open();
+    this._connected = true;
+    this._turnRejectors = [];
+
+    this._ws.onmessage = evt => {
+      let msg;
+      try {
+        msg = JSON.parse(evt.data);
+      } catch (e) {
+        this._onError(new Error(`Malformed WebSocket frame: ${e.message}`));
+        return;
+      }
+      this._handleMessage(msg);
+    };
+
+    this._ws.onerror = () => {
+      this._connected = false;
+      this._onError(new Error('WebSocket connection error'));
+    };
+
+    this._ws.onclose = () => {
+      this._connected = false;
+    };
+
+    this._send({
+      type: 'start',
+      question: first,
+      gen_id: this._genId,
+      session_id: this._sessionId,
+    });
+
+    const result = await this._waitTurn();
+    if (result?.type === 'error') {
+      this._onError(new Error(result.message ?? 'Speak error'));
+    }
+    return result;
+  }
+
+  async sendTurn(question) {
+    const text = String(question ?? '').trim();
+    if (!text || !this.isConnected()) return null;
+    this._send({
+      type: 'user_message',
+      question: text,
+      gen_id: this._genId,
+      session_id: this._sessionId,
+    });
+    const result = await this._waitTurn();
+    if (result?.type === 'error') {
+      this._onError(new Error(result.message ?? 'Speak error'));
+    }
+    return result;
+  }
+
+  abort() {
+    this._aborted = true;
+    this._send({ type: 'abort', gen_id: this._genId });
   }
 }

@@ -14,11 +14,11 @@ from .soul import _resolve_soul, _soul_or_400
 
 router = APIRouter()
 
-WEBUI_SPEAK_SESSION_ID = "webui"
+# 前端须在 localStorage 持久化 channel session_id，经 WS 传入；不再使用固定 webui。
 
 
 class SpeakResetRequest(BaseModel):
-    session_id: str = Field(default=WEBUI_SPEAK_SESSION_ID)
+    session_id: str = Field(default="")
 
 
 class WebUISpeakStreamPort:
@@ -68,6 +68,22 @@ def _serialize_turn_result(result) -> dict[str, Any]:
     }
 
 
+def _submit_user_message(soul, session_id: str, text: str) -> dict[str, Any]:
+    service = soul._ensure_speak_service()
+    submit = service._session_manager.submit_user_input(
+        session_id,
+        text,
+        stream=True,
+        mode="inbound",
+        record=True,
+    )
+    return {
+        "queued": bool(submit.queued),
+        "interrupt": bool(submit.interrupt),
+        "notes": list(submit.notes),
+    }
+
+
 @router.get("/api/speak/status")
 def get_speak_status():
     soul = _resolve_soul()
@@ -81,7 +97,7 @@ def get_speak_status():
         "status": "ready" if running and speak is not None else "idle",
         "ready": running and speak is not None,
         "soul_state": soul.state,
-        "session_id": WEBUI_SPEAK_SESSION_ID,
+        "session_id": "",
     }
 
 
@@ -90,9 +106,9 @@ def reset_speak_session(body: SpeakResetRequest | None = None):
     soul, err = _soul_or_400()
     if err is not None:
         return err
-    session_id = WEBUI_SPEAK_SESSION_ID
-    if body is not None and body.session_id.strip():
-        session_id = body.session_id.strip()
+    if body is None or not body.session_id.strip():
+        return {"ok": False, "error": "missing session_id"}
+    session_id = body.session_id.strip()
     closed = soul.close_dialogue_interaction(session_id)
     opened = soul.start_dialogue_session(session_id)
     return {
@@ -105,16 +121,19 @@ def reset_speak_session(body: SpeakResetRequest | None = None):
 
 @router.websocket("/ws/speak/run")
 async def ws_speak_run(websocket: WebSocket) -> None:
+    """Speak 双向会话：同一条 WebSocket 可多轮 user_message，流式事件持续下行。"""
     state = get_state()
     await websocket.accept()
 
-    data = await websocket.receive_json()
-    question = str(data.get("question", "")).strip()
-    gen_id = str(data.get("gen_id", ""))
-    session_id = str(data.get("session_id", WEBUI_SPEAK_SESSION_ID)).strip() or WEBUI_SPEAK_SESSION_ID
-
-    if not question:
-        await websocket.send_json({"type": "error", "message": "empty question"})
+    first = await websocket.receive_json()
+    session_id = str(first.get("session_id", "")).strip()
+    if not session_id:
+        await websocket.send_json({"type": "error", "message": "missing session_id"})
+        await websocket.close()
+        return
+    gen_id = str(first.get("gen_id", "")).strip()
+    if not gen_id:
+        await websocket.send_json({"type": "error", "message": "missing gen_id"})
         await websocket.close()
         return
 
@@ -136,71 +155,128 @@ async def ws_speak_run(websocket: WebSocket) -> None:
 
     loop = asyncio.get_running_loop()
     event_q: asyncio.Queue = asyncio.Queue()
+    inbound_q: asyncio.Queue = asyncio.Queue()
     port = WebUISpeakStreamPort(loop, event_q, gen_id=gen_id)
     soul.bind_speak_stream_port(port)
+    soul.start_dialogue_session(session_id)
+    soul.hydrate_speak_channel(session_id)
 
-    turn_payload: dict[str, Any] = {}
-    turn_error: list[str] = []
-    done_sentinel = {"type": "_turn_done"}
-
-    def _run_turn() -> None:
-        try:
-            service = soul._ensure_speak_service()
-            result = service.run_turn(
-                session_id,
-                question,
-                stream=True,
-                mode="inbound",
-                record=True,
-            )
-            turn_payload["result"] = _serialize_turn_result(result)
-        except Exception as exc:
-            turn_error.append(str(exc))
-        finally:
-            loop.call_soon_threadsafe(event_q.put_nowait, done_sentinel)
-
-    worker = threading.Thread(target=_run_turn, name="webui-speak-turn", daemon=True)
-    worker.start()
-
-    aborted = False
+    if first.get("type") in ("start", "user_message", None):
+        question = str(first.get("question", "")).strip()
+        if question:
+            await inbound_q.put(first)
 
     async def _receive_client() -> None:
-        nonlocal aborted
         while True:
             msg = await websocket.receive_json()
-            if msg.get("type") == "abort" and msg.get("gen_id") == gen_id:
-                aborted = True
-                port.close()
-                return
+            await inbound_q.put(msg)
 
     receive_task = asyncio.create_task(_receive_client())
 
-    try:
+    async def _pump_events_until(done_sentinel: object) -> None:
         while True:
             item = await event_q.get()
             if item is done_sentinel:
-                break
+                return
             await websocket.send_json(item)
-            if item.get("kind") == "finish":
-                await asyncio.sleep(0)
 
-        if turn_error:
-            await websocket.send_json({"type": "error", "message": turn_error[0]})
-        elif turn_payload:
-            payload = turn_payload["result"]
+    try:
+        await websocket.send_json({
+            "type": "session_ready",
+            "gen_id": gen_id,
+            "session_id": session_id,
+        })
+
+        while True:
+            msg = await inbound_q.get()
+            msg_type = str(msg.get("type", "user_message"))
+
+            if msg_type == "close":
+                break
+
+            if msg_type == "abort" and msg.get("gen_id") == gen_id:
+                port.close()
+                await websocket.send_json({"type": "aborted", "gen_id": gen_id})
+                continue
+
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong", "gen_id": gen_id})
+                continue
+
+            if msg_type not in ("start", "user_message"):
+                continue
+
+            question = str(msg.get("question", "")).strip()
+            if not question:
+                await websocket.send_json({"type": "error", "message": "empty question"})
+                continue
+
+            if soul._session_manager.is_pushing(session_id):
+                ack = await asyncio.to_thread(
+                    _submit_user_message,
+                    soul,
+                    session_id,
+                    question,
+                )
+                await websocket.send_json({
+                    "type": "user_ack",
+                    "gen_id": gen_id,
+                    "question": question,
+                    **ack,
+                })
+                continue
+
+            turn_payload: dict[str, Any] = {}
+            turn_error: list[str] = []
+            done_sentinel = object()
+
+            def _run_turn() -> None:
+                try:
+                    service = soul._ensure_speak_service()
+                    result = service.run_turn(
+                        session_id,
+                        question,
+                        stream=True,
+                        mode="inbound",
+                        record=True,
+                    )
+                    turn_payload["result"] = _serialize_turn_result(result)
+                except Exception as exc:
+                    turn_error.append(str(exc))
+                finally:
+                    loop.call_soon_threadsafe(event_q.put_nowait, done_sentinel)
+
             await websocket.send_json({
-                "type": "finish",
+                "type": "turn_start",
                 "gen_id": gen_id,
-                "aborted": aborted,
-                **payload,
+                "question": question,
             })
-        else:
-            await websocket.send_json({
-                "type": "finish",
-                "gen_id": gen_id,
-                "aborted": aborted,
-                "answer": "",
-            })
+
+            worker = threading.Thread(target=_run_turn, name="webui-speak-turn", daemon=True)
+            worker.start()
+
+            pump_task = asyncio.create_task(_pump_events_until(done_sentinel))
+            await pump_task
+            worker.join()
+
+            if turn_error:
+                await websocket.send_json({"type": "error", "message": turn_error[0]})
+                continue
+
+            if turn_payload:
+                payload = turn_payload["result"]
+                await websocket.send_json({
+                    "type": "turn_finish",
+                    "gen_id": gen_id,
+                    **payload,
+                })
+            else:
+                await websocket.send_json({
+                    "type": "turn_finish",
+                    "gen_id": gen_id,
+                    "answer": "",
+                })
+
     finally:
         receive_task.cancel()
         try:
@@ -210,4 +286,5 @@ async def ws_speak_run(websocket: WebSocket) -> None:
         soul.bind_speak_stream_port(None)
         port.close()
         state.set_streaming(False)
+        await websocket.send_json({"type": "session_end", "gen_id": gen_id})
         await websocket.close()

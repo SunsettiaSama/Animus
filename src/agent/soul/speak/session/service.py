@@ -222,5 +222,27 @@ class SpeakSessionService:
     def consume_memory_for_compose(self, session_id: str, turn_index: int):
         return self._queues.consume_memory_for_compose(session_id, turn_index)
 
+    def enqueue_interactor_portrait(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        interactor_id: str,
+        portrait_text: str,
+    ) -> None:
+        from .queue.portrait import PortraitQueueItem
+
+        self._queues.enqueue_portrait(
+            session_id,
+            PortraitQueueItem(
+                turn_index=turn_index,
+                interactor_id=interactor_id,
+                portrait_text=portrait_text,
+            ),
+        )
+
+    def consume_portrait_for_compose(self, session_id: str, turn_index: int):
+        return self._queues.consume_portrait_for_compose(session_id, turn_index)
+
 
 SpeakSessionManager = SpeakSessionService

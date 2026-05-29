@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from ...session import SpeakTurnChunk, resolve_feeling, resolve_subjective
+from ...session import SpeakTurnChunk, feeling_self_narration, resolve_feeling, resolve_subjective
 from ..outbound.unit import SpeakAnswer
 from .unit import SpeakExchange, SpeakQuestion
 
@@ -29,6 +29,7 @@ class SpeakDialogueBridge:
                 user_text=chunk.user_text,
                 agent_text=chunk.agent_text,
                 salience=resolved.salience,
+                salience_note=feeling_self_narration(chunk.feeling),
                 emotion_label=resolved.emotion_label,
                 valence_delta=resolved.valence_delta,
                 arousal_delta=resolved.arousal_delta,

@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from agent.soul.memory.domain import GraphNode
+from agent.soul.memory.graph.base_node import BaseNode
 
 
 class ExperienceKind(str, Enum):
-    """Life 体验块在记忆侧的注入类型�?""
+    """Life ?????????????"""
 
     anchor = "anchor"
     event = "event"
@@ -15,7 +15,7 @@ class ExperienceKind(str, Enum):
 
 @dataclass(frozen=True)
 class ExperienceBlock:
-    """�?Life 体验单元解析出的写入块�?""
+    """? Life ????????????"""
 
     experience_id: str
     source: str
@@ -49,7 +49,7 @@ class ArchivePlacement:
 
 @dataclass
 class ArchiveResult:
-    node: GraphNode
+    node: BaseNode
     parent_node_id: str | None = None
     parent_reason: str = ""
     candidates: list[SemanticCandidate] = field(default_factory=list)

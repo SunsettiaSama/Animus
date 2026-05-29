@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agent.soul.memory.domain import GraphNode, MemoryNetwork
+from agent.soul.memory.domain import MemoryNetwork
+from agent.soul.memory.graph.base_node import BaseNode
 from agent.soul.memory.graph.keywords import extract_keywords
-from agent.soul.memory.ports import GraphNodeStore, VectorIndexPort
+from agent.soul.memory.graph.node_store import GraphNodeStore
+from agent.soul.memory.ports import VectorIndexPort
 
 if TYPE_CHECKING:
     from agent.soul.memory.graph.cluster import ClusterIndex
@@ -97,9 +99,18 @@ class SeedResolver:
         return vectors.search(vector, self._seed_top_k, network=network)
 
     @staticmethod
-    def _node_haystack(node: GraphNode) -> str:
+    def _node_haystack(node: BaseNode) -> str:
         parts = [node.focus, node.emotion]
-        for attr in ("fact", "perception", "reconstructed_fact", "narrative", "core_traits", "content", "label"):
+        for attr in (
+            "fact",
+            "perception",
+            "reconstructed_fact",
+            "narrative",
+            "trait_changelog",
+            "agent_relation",
+            "content",
+            "label",
+        ):
             val = getattr(node, attr, "")
             if val:
                 parts.append(str(val))

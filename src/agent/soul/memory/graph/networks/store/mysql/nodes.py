@@ -5,13 +5,30 @@ import os
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from agent.soul.memory.domain import GraphNode, MemoryNetwork, SocialNodeRole
+from agent.soul.memory.domain import MemoryNetwork, SocialNodeRole
+from agent.soul.memory.graph.base_node import BaseNode
 from agent.soul.memory.graph.networks.store.codec import node_to_row_params, row_to_node
 
 if TYPE_CHECKING:
     from infra.db.mysql import MySQLClient
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
+
+_UNIT_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("network", "VARCHAR(20) NOT NULL DEFAULT 'event'"),
+    ("interactor_id", "VARCHAR(64) NOT NULL DEFAULT ''"),
+    ("node_role", "VARCHAR(20) NOT NULL DEFAULT ''"),
+    ("core_traits", "LONGTEXT"),
+    ("trait_version", "INT NOT NULL DEFAULT 1"),
+    ("last_evolved_at", "DATETIME DEFAULT NULL"),
+    ("neighborhood_label", "VARCHAR(200) NOT NULL DEFAULT ''"),
+    ("neighborhood_content", "TEXT"),
+    ("related_interactors_json", "JSON"),
+    ("portrait_json", "JSON"),
+    ("agent_relation", "TEXT"),
+    ("embed_text", "TEXT"),
+    ("embedding_json", "JSON"),
+)
 
 _INSERT_SQL = """
 INSERT INTO soul_memory_units (
@@ -23,7 +40,9 @@ INSERT INTO soul_memory_units (
     source_id, reconstructed_fact, trigger_ctx,
     narrative, source_ids_json, chapter,
     core_traits, trait_version, last_evolved_at,
-    neighborhood_label, neighborhood_content
+    neighborhood_label, neighborhood_content,
+    related_interactors_json, portrait_json, agent_relation,
+    embed_text, embedding_json
 ) VALUES (
     %(id)s, %(memory_type)s, %(network)s, %(interactor_id)s, %(node_role)s,
     %(focus)s, %(emotion)s, %(emotion_intensity)s, %(valence)s,
@@ -33,7 +52,9 @@ INSERT INTO soul_memory_units (
     %(source_id)s, %(reconstructed_fact)s, %(trigger_ctx)s,
     %(narrative)s, %(source_ids_json)s, %(chapter)s,
     %(core_traits)s, %(trait_version)s, %(last_evolved_at)s,
-    %(neighborhood_label)s, %(neighborhood_content)s
+    %(neighborhood_label)s, %(neighborhood_content)s,
+    %(related_interactors_json)s, %(portrait_json)s, %(agent_relation)s,
+    %(embed_text)s, %(embedding_json)s
 )
 ON DUPLICATE KEY UPDATE
     network = VALUES(network),
@@ -61,7 +82,12 @@ ON DUPLICATE KEY UPDATE
     trait_version = VALUES(trait_version),
     last_evolved_at = VALUES(last_evolved_at),
     neighborhood_label = VALUES(neighborhood_label),
-    neighborhood_content = VALUES(neighborhood_content)
+    neighborhood_content = VALUES(neighborhood_content),
+    related_interactors_json = VALUES(related_interactors_json),
+    portrait_json = VALUES(portrait_json),
+    agent_relation = VALUES(agent_relation),
+    embed_text = VALUES(embed_text),
+    embedding_json = VALUES(embedding_json)
 """
 
 
@@ -77,14 +103,26 @@ class MySQLNodeStore:
             with conn.cursor() as cur:
                 for stmt in statements:
                     cur.execute(stmt)
+                self._migrate_unit_columns(cur)
 
-    def put(self, node: GraphNode) -> None:
+    def _migrate_unit_columns(self, cur) -> None:
+        cur.execute(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'soul_memory_units'"
+        )
+        existing = {row["COLUMN_NAME"] for row in cur.fetchall()}
+        for name, ddl in _UNIT_COLUMN_MIGRATIONS:
+            if name in existing:
+                continue
+            cur.execute(f"ALTER TABLE soul_memory_units ADD COLUMN {name} {ddl}")
+
+    def put(self, node: BaseNode) -> None:
         params = node_to_row_params(node)
         with self._db.conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(_INSERT_SQL, params)
 
-    def get(self, node_id: str) -> GraphNode | None:
+    def get(self, node_id: str) -> BaseNode | None:
         with self._db.conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -94,7 +132,7 @@ class MySQLNodeStore:
                 row = cur.fetchone()
         return row_to_node(row) if row else None
 
-    def get_many(self, node_ids: list[str]) -> list[GraphNode]:
+    def get_many(self, node_ids: list[str]) -> list[BaseNode]:
         if not node_ids:
             return []
         placeholders = ",".join(["%s"] * len(node_ids))
@@ -107,7 +145,7 @@ class MySQLNodeStore:
                 rows = cur.fetchall()
         return [row_to_node(r) for r in rows]
 
-    def list_by_network(self, network: MemoryNetwork, *, limit: int = 50) -> list[GraphNode]:
+    def list_by_network(self, network: MemoryNetwork, *, limit: int = 50) -> list[BaseNode]:
         with self._db.conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -128,7 +166,7 @@ class MySQLNodeStore:
         role: SocialNodeRole | None = None,
         *,
         limit: int = 50,
-    ) -> list[GraphNode]:
+    ) -> list[BaseNode]:
         conds = ["archived=0", "interactor_id=%s"]
         params: list = [interactor_id]
         if role is not None:
@@ -151,7 +189,7 @@ class MySQLNodeStore:
         valence=None,
         network: MemoryNetwork | None = None,
         limit: int = 50,
-    ) -> list[GraphNode]:
+    ) -> list[BaseNode]:
         conds = ["archived=0"]
         params: list = []
         if memory_type:
@@ -174,7 +212,7 @@ class MySQLNodeStore:
                 rows = cur.fetchall()
         return [row_to_node(r) for r in rows]
 
-    def list_all(self, limit: int = 2000, network: MemoryNetwork | None = None) -> list[GraphNode]:
+    def list_all(self, limit: int = 2000, network: MemoryNetwork | None = None) -> list[BaseNode]:
         conds = ["archived=0"]
         params: list = []
         if network is not None:
@@ -202,7 +240,7 @@ class MySQLNodeStore:
         created_before: str | None = None,
         limit: int = 50,
         network: MemoryNetwork | None = None,
-    ) -> list[GraphNode]:
+    ) -> list[BaseNode]:
         conds = ["archived=0"]
         params: list = []
         if memory_type:
@@ -240,7 +278,7 @@ class MySQLNodeStore:
                 rows = cur.fetchall()
         return [row_to_node(r) for r in rows]
 
-    def get_by_life_event_id(self, life_event_id: str) -> GraphNode | None:
+    def get_by_life_event_id(self, life_event_id: str) -> BaseNode | None:
         if not life_event_id:
             return None
         with self._db.conn() as conn:
@@ -257,7 +295,7 @@ class MySQLNodeStore:
                 row = cur.fetchone()
         return row_to_node(row) if row else None
 
-    def get_core_for_interactor(self, interactor_id: str) -> GraphNode | None:
+    def get_core_for_interactor(self, interactor_id: str) -> BaseNode | None:
         nodes = self.list_by_interactor(
             interactor_id,
             SocialNodeRole.core,

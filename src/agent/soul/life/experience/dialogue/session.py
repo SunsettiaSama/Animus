@@ -19,6 +19,7 @@ class DialogueTurn:
     user_text: str
     agent_text: str
     salience: float = 0.3
+    salience_note: str = ""
     emotion_label: str = ""
     valence_delta: float = 0.0
     arousal_delta: float = 0.0
@@ -62,11 +63,15 @@ def unit_from_dialogue_session(
 
     memory_ids: list[str] = []
     seen: set[str] = set()
+    salience_notes: list[str] = []
     for turn in session.turns:
         for mid in turn.activated_memory_ids:
             if mid and mid not in seen:
                 seen.add(mid)
                 memory_ids.append(mid)
+        note = turn.salience_note.strip()
+        if note and note not in salience_notes:
+            salience_notes.append(note)
 
     unit = ExperienceUnit.make(
         situation=ExperienceSituation(
@@ -85,6 +90,7 @@ def unit_from_dialogue_session(
             arousal_delta=peak.arousal_delta,
             salience=salience,
             emotion_label=emotion_label,
+            salience_note="；".join(salience_notes),
         ),
         source=ExperienceSource.interaction.value,
     )

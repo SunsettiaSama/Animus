@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 
 from agent.soul.memory.domain import MemoryNetwork, MemoryTier, Valence
 from agent.soul.memory.graph.scored import ScoredUnit
-from agent.soul.memory.ports import GraphNodeStore, VectorIndexPort
+from agent.soul.memory.graph.node_store import GraphNodeStore
+from agent.soul.memory.ports import VectorIndexPort
 
 if TYPE_CHECKING:
     from agent.soul.memory.graph.cluster import ClusterIndex

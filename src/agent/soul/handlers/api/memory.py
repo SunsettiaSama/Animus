@@ -7,7 +7,7 @@ from infra.db.mysql import MySQLClient
 from infra.llm import BaseLLM
 from infra.memory import MemoryInfraService
 
-from agent.soul.memory.codec import unit_to_dict
+from agent.soul.memory.graph.networks.store.codec import unit_to_dict
 from agent.soul.memory.service import MemoryBlock, MemoryService
 from config.soul.config import SoulConfig
 from agent.soul.ports import LLMServicePort

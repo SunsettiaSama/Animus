@@ -5,20 +5,24 @@
 ----
   full / single     DagOrchestrator + 可选 Sandbox（默认 full）
   persona-drift     Persona 月度 self_concept 漂移演示（10 条记忆 + 画像 → 演化前后对比）
+  soul-evolution    Soul 全链路：speak → life → memory → compose 检索（真实 LLM + MySQL + embedding）
 
 用法：
   python test.py <llm.yaml> [选项]
 
-  --mode full|single|persona-drift
+  --mode full|single|persona-drift|soul-evolution
   --goal "..."        目标文本（DAG 模式）
   --no-sandbox        不创建沙箱（DAG 模式）
   --no-infra          persona-drift：跳过 BGE/Qdrant，聚类退化为 focus 分桶
   --persona-dir DIR   persona-drift 工作目录（默认 .react/test_persona_drift）
   --flow-log LEVEL    verbose / normal / silent（DAG 模式）
 
-示例：
-  python test.py config\\llm_core\\config.yaml --mode persona-drift
-  python test.py config\\llm_core\\config.yaml --mode single --goal "把 2025-05-01 是星期几写入 out.txt"
+示例（推荐 conda 环境 LLMs）：
+  conda run -n LLMs python test.py config\\llm_core\\config.yaml --mode soul-evolution
+  conda run -n LLMs python test.py config\\llm_core\\config.yaml --mode persona-drift
+  conda run -n LLMs python test.py config\\llm_core\\config.yaml --mode single --goal "把 2025-05-01 是星期几写入 out.txt"
+
+  soul-evolution 需 MySQL（可先：docker compose -f docker/docker-compose-db.yml up -d mysql）
 """
 
 from __future__ import annotations
@@ -157,9 +161,9 @@ def _parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--mode",
-        choices=("full", "single", "persona-drift"),
+        choices=("full", "single", "persona-drift", "soul-evolution"),
         default="full",
-        help="full|single=DAG；persona-drift=Persona 月度漂移演示",
+        help="full|single=DAG；persona-drift=Persona 漂移；soul-evolution=Soul 全链路",
     )
     ap.add_argument(
         "--goal",
@@ -167,7 +171,29 @@ def _parse_args() -> argparse.Namespace:
         help="任务目标文本",
     )
     ap.add_argument("--no-sandbox", action="store_true")
-    ap.add_argument("--no-infra", action="store_true", help="persona-drift：不用 BGE/Qdrant")
+    ap.add_argument(
+        "--no-infra",
+        action="store_true",
+        help="persona-drift / soul-evolution：跳过 BGE+Qdrant",
+    )
+    ap.add_argument(
+        "--soul-dir",
+        type=str,
+        default="",
+        help="soul-evolution 工作目录（默认 .react/test_soul_evolution）",
+    )
+    ap.add_argument(
+        "--session-id",
+        type=str,
+        default="soul-evolution",
+        help="soul-evolution 会话 id",
+    )
+    ap.add_argument(
+        "--memory-wait",
+        type=float,
+        default=4.0,
+        help="soul-evolution：闭合会话后等待 memory 异步写入秒数",
+    )
     ap.add_argument(
         "--persona-dir",
         type=str,
@@ -699,6 +725,205 @@ def _run_persona_drift(ns: argparse.Namespace, llm_yaml: str) -> None:
     print(f"数据目录          = {persona_dir}")
 
 
+# ── mode=soul-evolution：life → memory → speak compose ───────────────────────
+
+def _seed_soul_persona(persona_dir: Path) -> None:
+    from agent.soul.persona.profile.profile import PersonaProfile
+    from agent.soul.persona.profile.store import ProfileStore
+    from agent.soul.persona.self_concept.concept import Belief, BeliefStrength, SelfConcept
+    from agent.soul.persona.self_concept.store import SelfConceptStore
+
+    persona_dir.mkdir(parents=True, exist_ok=True)
+    ProfileStore(str(persona_dir)).save_profile(
+        PersonaProfile(
+            name="林知遥",
+            background_facts=["产品团队后端开发，习惯把问题拆成小步骤验证"],
+            core_traits=["谨慎", "内省", "负责"],
+            values=["诚实沟通", "可靠交付"],
+            built=True,
+            built_at="soul-evolution-seed",
+        )
+    )
+    SelfConceptStore(str(persona_dir)).save(
+        SelfConcept(
+            narrative="我在学习如何更稳定地陪伴用户，重视承诺也因此在协作前会多确认一步。",
+            beliefs=[
+                Belief(
+                    content="我擅长把复杂问题拆成可验证的小步骤",
+                    strength=BeliefStrength.established,
+                    source="build",
+                ),
+            ],
+        )
+    )
+
+
+def _snippet(text: str, *, limit: int = 480) -> str:
+    one = text.replace("\n", " ").strip()
+    return one if len(one) <= limit else one[: limit - 3] + "..."
+
+
+def _run_soul_evolution(ns: argparse.Namespace, llm_yaml: str, llm) -> None:
+    import time
+    from dataclasses import replace
+
+    from config.agent.persona_config import PersonaConfig
+    from config.infra.db_config import DBConfig
+    from config.soul.config import SoulConfig
+    from config.soul.memory.infra_config import SoulMemoryInfraConfig
+    from infra.memory import MemoryInfraService
+
+    from agent.soul.persona.profile.store import ProfileStore
+    from agent.soul.service import SoulService
+
+    work_root = Path(ns.soul_dir).resolve() if ns.soul_dir.strip() else (ROOT / ".react" / "test_soul_evolution")
+    persona_dir = work_root / "persona"
+    life_dir = work_root / "life"
+    session_id = (ns.session_id or "soul-evolution").strip()
+
+    _log_section("Soul 全链路演化 — 初始化")
+    print(f"work_root   = {work_root}")
+    print(f"session_id  = {session_id}")
+    print(f"llm_yaml    = {llm_yaml}")
+    print("python env  = 建议使用 conda 环境 LLMs")
+
+    _seed_soul_persona(persona_dir)
+    print(f"已种子化 persona → {persona_dir}")
+
+    db_cfg = DBConfig.load_default()
+    if not db_cfg.mysql.enabled:
+        sys.stderr.write("MySQL 未启用：请在 config/infra/db.yaml 中设置 mysql.enabled=true\n")
+        raise SystemExit(2)
+    mysql = db_cfg.mysql.build_client()
+    print(f"[mysql] 连接 {db_cfg.mysql.url} …")
+    print("        若拒绝连接，请先启动：docker compose -f docker/docker-compose-db.yml up -d mysql")
+    mysql.ping()
+    print("[mysql] ping OK")
+
+    infra_cfg = SoulMemoryInfraConfig.load_default()
+    memory_infra = None
+    if ns.no_infra:
+        infra_cfg = replace(infra_cfg, enabled=False)
+        memory_infra = MemoryInfraService(
+            cfg=infra_cfg,
+            embedding=None,
+            vectors=None,
+        )
+        print("[infra] 已禁用（--no-infra）")
+    else:
+        print("[infra] 加载 BGE + Qdrant …")
+        memory_infra = MemoryInfraService.build(infra_cfg)
+        memory_infra.warm_up()
+        print(f"[infra] embedder={'OK' if memory_infra.retriever_embedder() else 'NONE'}")
+
+    persona_cfg = PersonaConfig(
+        enabled=True,
+        persona_dir=str(persona_dir),
+        evolution_enabled=False,
+    )
+    soul = SoulService(
+        life_dir=str(life_dir),
+        persona_cfg=persona_cfg,
+        mysql_client=mysql,
+        primary_llm=llm,
+        cfg=SoulConfig.load_default(),
+        memory_infra=memory_infra,
+    )
+    soul.start()
+    print(f"[soul] state={soul.state}")
+
+    prompts = [
+        "你好，我是联调用户小遥。",
+        "上周跨组评审出了意外变故，我久久不能平静，想和你聊聊。",
+        "你还记得我刚才说的评审那件事吗？",
+    ]
+
+    _log_section("Step 1 · 打开 dialogue 会话")
+    soul.start_dialogue_session(session_id)
+    print(f"profile.name = {ProfileStore(str(persona_dir)).load_profile().name!r}")
+
+    _log_section("Step 2 · Speak 轮次（life 记账 + 上下文蒸馏）")
+    for i, prompt in enumerate(prompts, start=1):
+        print(f"\n--- turn #{i} user ---\n{prompt}")
+        payload = soul.speak_turn(prompt, session_id=session_id, stream=False)
+        answer = str(payload.get("answer") or "").strip()
+        bundle_log = payload.get("bundle") if isinstance(payload.get("bundle"), dict) else {}
+        print(f"agent≈{_snippet(answer)}")
+        if bundle_log:
+            print(f"bundle: {bundle_log}")
+        time.sleep(0.5)
+
+    _log_section("Step 3 · 闭合会话 → life chronicle + memory buffer 整合")
+    close_out = soul.close_dialogue_interaction(session_id)
+    print(f"close_dialogue → {close_out}")
+    wait_sec = max(0.0, float(ns.memory_wait))
+    if wait_sec > 0:
+        print(f"等待 memory 异步写入 {wait_sec:.1f}s …")
+        time.sleep(wait_sec)
+
+    _log_section("Step 4 · Life 热日志 / Chronicle")
+    hot = soul.query_life_hot(hours=24)
+    print(f"hot_storage count = {len(hot)}")
+    for row in hot[:5]:
+        if isinstance(row, dict):
+            print(f"  · {row.get('source', '?')} turn={row.get('turn_index', '?')} {_snippet(str(row.get('content', row)))}")
+
+    chronicle = soul.query_life_chronicle(days=3, tail=8)
+    print(f"chronicle count = {len(chronicle)}")
+    for row in chronicle[:5]:
+        if isinstance(row, dict):
+            print(f"  · {row.get('kind', '?')} {_snippet(str(row.get('summary', row)))}")
+
+    _log_section("Step 5 · Memory 检索（recent / semantic / recall）")
+    recent = soul.search_memory(mode="recent", top_k=5)
+    print(f"search recent → count={recent.get('count', 0)}")
+    for item in (recent.get("results") or [])[:5]:
+        if isinstance(item, dict):
+            print(f"  · [{item.get('id', '?')}] {_snippet(str(item.get('fact') or item.get('text') or item))}")
+
+    semantic = soul.search_memory(
+        mode="semantic",
+        query="跨组评审 意外变故",
+        top_k=5,
+    )
+    print(f"search semantic → count={semantic.get('count', 0)}")
+    for item in (semantic.get("results") or [])[:5]:
+        if isinstance(item, dict):
+            print(f"  · [{item.get('id', '?')}] score={item.get('score', '?')} {_snippet(str(item.get('fact') or item))}")
+
+    recall = soul.recall_memory("评审 久久不能平静", top_k=3)
+    recall_text = str(recall.get("text") or "").strip()
+    print(f"recall text ({len(recall_text)} chars):")
+    print(_snippet(recall_text, limit=600) if recall_text else "  （空）")
+
+    _log_section("Step 6 · Speak compose 检索注入预览")
+    speak = soul._ensure_speak_service()
+    probe_user = "请结合你记得的评审经历，简短回应我。"
+    bundle = speak._compose_bundle(session_id, probe_user, mode="inbound")
+    system = bundle.build_system()
+    print(f"compose.system chars = {len(system)}")
+    markers = (
+        "【人物画像】",
+        "【自我认知】",
+        "【当前态·状态】",
+        "【当前对话·压缩】",
+        "【可能相关的记忆】",
+    )
+    for tag in markers:
+        print(f"  {tag} → {'Y' if tag in system else 'N'}")
+    if bundle.injected.status.similar_memories:
+        print(f"similar_memories≈{_snippet(bundle.injected.status.similar_memories)}")
+    if bundle.dialogue_compressed:
+        print(f"dialogue_compressed≈{_snippet(bundle.dialogue_compressed)}")
+    activated = bundle.meta.get("activated_memory_ids") or []
+    if activated:
+        print(f"activated_memory_ids = {activated}")
+
+    _log_section("完成")
+    soul.stop()
+    print(f"数据目录 = {work_root}")
+
+
 # ── 入口 ─────────────────────────────────────────────────────────────────────
 
 def _run() -> None:
@@ -710,7 +935,7 @@ def _run() -> None:
     cfg_path = (ns.cfg or "").strip()
     if not cfg_path:
         sys.stderr.write(
-            "用法: python test.py <llm.yaml> [--mode single|full] [--goal \"...\"]\n"
+            "用法: conda run -n LLMs python test.py <llm.yaml> [--mode MODE] [--goal \"...\"]\n"
             "  或  LLM_CFG=/path/to/llm.yaml python test.py\n"
         )
         raise SystemExit(2)
@@ -744,6 +969,8 @@ def _run() -> None:
     try:
         if ns.mode == "persona-drift":
             _run_persona_drift(ns, llm_yaml)
+        elif ns.mode == "soul-evolution":
+            _run_soul_evolution(ns, llm_yaml, core)
         elif ns.mode == "single":
             asyncio.run(_run_single(ns, llm_yaml, llm_call))
         else:

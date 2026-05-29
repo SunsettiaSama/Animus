@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS soul_memory_units (
     last_evolved_at   DATETIME      DEFAULT NULL,
     neighborhood_label VARCHAR(200) NOT NULL DEFAULT '',
     neighborhood_content TEXT,
+    related_interactors_json JSON,
+
+    portrait_json     JSON,
+    agent_relation    TEXT,
+    embed_text        TEXT,
+    embedding_json    JSON,
 
     archived          TINYINT(1)    NOT NULL DEFAULT 0,
     archived_at       DATETIME      DEFAULT NULL,
@@ -65,4 +71,12 @@ CREATE TABLE IF NOT EXISTS soul_interactors (
     id            VARCHAR(64)  NOT NULL PRIMARY KEY,
     display_name  VARCHAR(200) NOT NULL DEFAULT '',
     created_at    DATETIME     NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 通信渠道 session_id（前端持久化）→ 已绑定交互者
+CREATE TABLE IF NOT EXISTS soul_session_channels (
+    session_id     VARCHAR(64)  NOT NULL PRIMARY KEY,
+    interactor_id  VARCHAR(64)  NOT NULL,
+    bound_at       DATETIME     NOT NULL,
+    INDEX idx_channel_interactor (interactor_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -7,7 +7,6 @@ from agent.soul.memory.domain import (
     ActivationSnapshot,
     EdgeType,
     EvolutionSource,
-    GraphNode,
     InteractorRef,
     MemoryEdge,
     MemoryNetwork,
@@ -15,6 +14,7 @@ from agent.soul.memory.domain import (
     SocialNeighborhoodNode,
     SocialNodeRole,
 )
+from agent.soul.memory.graph.base_node import BaseNode
 
 if TYPE_CHECKING:
     from agent.soul.life.experience.unit import ExperienceUnit
@@ -23,41 +23,11 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class GraphNodeStore(Protocol):
-    def put(self, node: GraphNode) -> None: ...
-    def get(self, node_id: str) -> GraphNode | None: ...
-    def get_many(self, node_ids: list[str]) -> list[GraphNode]: ...
-    def list_by_network(self, network: MemoryNetwork, *, limit: int = 50) -> list[GraphNode]: ...
-    def list_by_interactor(
-        self,
-        interactor_id: str,
-        role: SocialNodeRole | None = None,
-        *,
-        limit: int = 50,
-    ) -> list[GraphNode]: ...
-    def archive(self, node_id: str) -> None: ...
-    def on_recall(self, node_id: str) -> None: ...
-    def add_rehearsal(self, node_id: str) -> None: ...
-    def get_by_life_event_id(self, life_event_id: str) -> GraphNode | None: ...
-    def get_core_for_interactor(self, interactor_id: str) -> GraphNode | None: ...
-    def query_by_fields(self, **kwargs) -> list[GraphNode]: ...
-    def list_recent(self, memory_type: str | None = None, valence=None, network: MemoryNetwork | None = None, limit: int = 50) -> list[GraphNode]: ...
-    def list_all(self, limit: int = 2000, network: MemoryNetwork | None = None) -> list[GraphNode]: ...
-    def add_narrative_ref(self, node_id: str) -> None: ...
-    def forget_scan(
-        self,
-        *,
-        threshold: float,
-        half_life_days: float,
-        dry_run: bool,
-    ) -> list[str]: ...
-
-
-@runtime_checkable
 class GraphEdgeStore(Protocol):
     def put(self, edge: MemoryEdge) -> None: ...
     def out_edges(self, node_id: str, edge_type: EdgeType | None = None) -> list[MemoryEdge]: ...
     def in_edges(self, node_id: str, edge_type: EdgeType | None = None) -> list[MemoryEdge]: ...
+    def delete_edge(self, edge_id: str) -> None: ...
     def delete_by_node(self, node_id: str) -> None: ...
 
 
@@ -69,7 +39,8 @@ class InteractorStore(Protocol):
 
 @runtime_checkable
 class VectorIndexPort(Protocol):
-    def record(self, node: GraphNode) -> None: ...
+    def record(self, node: BaseNode) -> None: ...
+    def embed_passage(self, text: str) -> list[float]: ...
     def upsert(self, node_id: str, text: str, *, network: MemoryNetwork) -> None: ...
     def search(
         self,
@@ -85,6 +56,23 @@ class VectorIndexPort(Protocol):
 @runtime_checkable
 class SocialMemoryPort(Protocol):
     def ensure_core(self, interactor_id: str) -> SocialCoreNode: ...
+    def register_core_portrait(
+        self,
+        interactor_id: str,
+        portrait: object,
+        *,
+        agent_relation: str = "",
+        display_name: str = "",
+    ) -> SocialCoreNode: ...
+    def set_agent_relation(self, interactor_id: str, relation: str) -> SocialCoreNode: ...
+    def link_interactor_relation(
+        self,
+        interactor_id: str,
+        other_interactor_id: str,
+        *,
+        label: str,
+        content: str,
+    ) -> SocialNeighborhoodNode: ...
     def evolve_core(
         self,
         interactor_id: str,
@@ -93,6 +81,13 @@ class SocialMemoryPort(Protocol):
         source: EvolutionSource,
         evidence_ids: list[str] | None = None,
     ) -> SocialCoreNode: ...
+    def recall(
+        self,
+        query: str,
+        top_k: int = 5,
+        *,
+        interactor_id: str = "",
+    ): ...
     def ingest_interaction(
         self,
         unit: ExperienceUnit,
@@ -103,7 +98,7 @@ class SocialMemoryPort(Protocol):
 
 @runtime_checkable
 class EventMemoryPort(Protocol):
-    def ingest_experience(self, unit: ExperienceUnit) -> GraphNode: ...
+    def ingest_experience(self, unit: ExperienceUnit) -> BaseNode: ...
     def retract_experience(self, life_event_id: str) -> bool: ...
     def ingest_narrative(
         self,
@@ -112,7 +107,7 @@ class EventMemoryPort(Protocol):
         *,
         persona_snapshot: str = "",
         emotional_context: str = "",
-    ) -> GraphNode | None: ...
+    ) -> BaseNode | None: ...
     def recall(self, query: str, top_k: int, emotional_context: str = "") -> MemoryBlock: ...
     def forget_scan(self, threshold: float | None, dry_run: bool) -> list[str]: ...
 
@@ -125,7 +120,7 @@ class RuminationPort(Protocol):
         *,
         trigger: str,
         emotional_context: str,
-    ) -> GraphNode | None: ...
+    ) -> BaseNode | None: ...
 
     def tick(self, snapshot) -> MemoryHeartbeatResult: ...
 

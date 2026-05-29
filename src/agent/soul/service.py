@@ -196,12 +196,26 @@ class SoulService:
         self._require_running()
         self._ensure_experience_pipeline()
         state = self.experience.dialogue.open_session(session_id)
+        self.hydrate_speak_channel(session_id)
         return {
             "ok": True,
             "session_id": session_id,
             "trigger": trigger,
             "turn_count": len(state.session.turns),
         }
+
+    def hydrate_speak_channel(self, session_id: str) -> str:
+        """从持久化渠道绑定恢复「认出对方」，供 Speak 画像直达。"""
+        sid = session_id.strip()
+        if not sid:
+            return ""
+        bound = ""
+        if self.memory is not None and self.memory.api is not None:
+            bound = self.memory.api.resolve_channel_interactor(sid)
+        if bound:
+            speak = self._ensure_speak_service()
+            speak.bind_interactor(sid, bound)
+        return bound
 
     def open_proactive_outbound(
         self,
@@ -1032,6 +1046,7 @@ class SoulService:
                     user_text=kwargs.get("user_text", kwargs.get("question", "")),
                     agent_text=kwargs.get("agent_text", kwargs.get("answer", "")),
                     salience=kwargs.get("salience", 0.3),
+                    salience_note=str(kwargs.get("salience_note", "")),
                     emotion_label=kwargs.get("emotion_label", ""),
                     valence_delta=kwargs.get("valence_delta", 0.0),
                     arousal_delta=kwargs.get("arousal_delta", 0.0),
@@ -1069,6 +1084,21 @@ class SoulService:
                 lifecycle=self,
                 touch_dialogue=_touch_dialogue,
             )
+            from agent.soul.memory.session.types import DialogueCompressionBlock
+
+            def _on_compression_block(block: DialogueCompressionBlock) -> None:
+                pipeline = self._ensure_experience_pipeline()
+                interactor_id = block.session_id
+                bridge = getattr(self._speak_service, "_session_bridge", None)
+                if bridge is not None:
+                    resolved = bridge.registry.get_interactor(block.session_id)
+                    if resolved:
+                        interactor_id = resolved
+                pipeline.ingest_compression_block(block, interactor_id=interactor_id)
+
+            if self._speak_service._context is not None:
+                self._speak_service._context.set_on_block_ready(_on_compression_block)
+
             from agent.soul.speak.io.inbound.memory import (
                 PointQueryRequest,
                 RecallRequest,
@@ -1115,6 +1145,47 @@ class SoulService:
                     ),
                 )
 
+            from agent.soul.speak.io.inbound.memory import (
+                InteractorPortraitPullResult,
+                InteractorPortraitRequest,
+            )
+
+            def _portrait_query_for_speak(request: InteractorPortraitRequest) -> None:
+                self.memory.api.request_speak_interactor_portrait(
+                    session_id=request.session_id,
+                    turn_index=request.turn_index,
+                    user_text=request.user_text,
+                    agent_text=request.agent_text,
+                    hinted_interactor_id=request.hinted_interactor_id,
+                )
+
+            def _on_interactor_portrait_ready(result) -> None:
+                if result.interactor_id.strip():
+                    iid = result.interactor_id.strip()
+                    sid = result.session_id.strip()
+                    self._speak_service.bind_interactor(sid, iid)
+                    self.memory.api.bind_session_channel(sid, iid)
+                self._speak_service.session_manager.enqueue_interactor_portrait(
+                    result.session_id,
+                    turn_index=result.turn_index,
+                    interactor_id=result.interactor_id,
+                    portrait_text=result.portrait_text,
+                )
+
+            def _pull_portrait_for_speak(
+                session_id: str,
+                turn_index: int,
+            ) -> InteractorPortraitPullResult:
+                consumed = self._speak_service.session_manager.consume_portrait_for_compose(
+                    session_id,
+                    turn_index,
+                )
+                return InteractorPortraitPullResult(
+                    portrait_text=consumed.portrait_text,
+                    interactor_id=consumed.interactor_id,
+                    turn_index=consumed.inject_turn_index or turn_index,
+                )
+
             def _on_point_emergence_ready(result) -> None:
                 self._speak_service.session_manager.enqueue_memory_result(
                     result.session_id,
@@ -1127,6 +1198,9 @@ class SoulService:
             self._speak_service.attach_memory_recall(_recall_for_speak)
             self._speak_service.attach_memory_point_query(_point_query_for_speak)
             self._speak_service.attach_memory_pull_similar(_pull_similar_for_speak)
+            self.memory.api.on_interactor_portrait_ready(_on_interactor_portrait_ready)
+            self._speak_service.attach_memory_portrait_query(_portrait_query_for_speak)
+            self._speak_service.attach_memory_pull_portrait(_pull_portrait_for_speak)
             self.memory.api.on_point_emergence_ready(_on_point_emergence_ready)
         return self._speak_service
 

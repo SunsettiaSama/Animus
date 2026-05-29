@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agent.soul.memory.domain import GraphNode
+from agent.soul.memory.graph.base_node import BaseNode
 from agent.soul.memory.emergence import Emergence, SpeakEmergence, SpreadActivationService
 from agent.soul.memory.emergence.dispatcher import EmergenceQueryDispatcher
 from agent.soul.memory.facade.service import MemoryService
@@ -12,12 +12,15 @@ from agent.soul.memory.graph.networks.archival import ArchivalConfig, Experience
 from agent.soul.memory.graph.networks.event.network import EventMemoryNetwork
 from agent.soul.memory.graph.networks.semantic_index import SemanticVectorIndex
 from agent.soul.memory.graph.networks.social.network import SocialMemoryNetwork
+from agent.soul.memory.graph.networks.social.query import SocialQueryEngine
 from agent.soul.memory.graph.networks.store.mysql.edges import MySQLEdgeStore
 from agent.soul.memory.graph.networks.store.mysql.interactors import MySQLInteractorStore
 from agent.soul.memory.graph.networks.store.mysql.nodes import MySQLNodeStore
+from agent.soul.memory.graph.networks.store.mysql.session_channels import MySQLSessionChannelStore
 from agent.soul.memory.graph.networks.writer import NarrativeWriter
 from agent.soul.memory.rumination import RuminationService, RuminationWriter
 from agent.soul.memory.retriever import MemoryRetriever
+from agent.soul.memory.session.buffer import SessionMemoryBuffer
 from agent.soul.memory.sleep import SleepConfig, SleepService
 from config.soul.memory.service_config import MemoryServiceConfig
 from infra.memory import MemoryInfraService
@@ -40,9 +43,14 @@ def build_memory_service(
     nodes = MySQLNodeStore(mysql_client)
     edges = MySQLEdgeStore(mysql_client)
     interactors = MySQLInteractorStore(mysql_client)
+    session_channels = MySQLSessionChannelStore(mysql_client)
     nodes.init_schema()
 
     vectors = SemanticVectorIndex(infra) if infra.enabled else SemanticVectorIndex(None)
+    from agent.soul.memory.domain import MemoryNetwork
+
+    for node in nodes.list_by_network(MemoryNetwork.social, limit=5000):
+        vectors.rehydrate(node)
     cluster_index = ClusterIndex(
         similarity_threshold=cfg.cluster_similarity_threshold,
         min_cluster_size=cfg.cluster_min_size,
@@ -81,7 +89,7 @@ def build_memory_service(
     )
     svc_holder: list[MemoryService] = []
 
-    def _after_write(node: GraphNode) -> None:
+    def _after_write(node: BaseNode) -> None:
         if not svc_holder or not vectors.enabled:
             return
 
@@ -102,12 +110,20 @@ def build_memory_service(
     )
     rumination_writer = RuminationWriter(llm, nodes, on_written=_after_write)
     narrative = NarrativeWriter(llm, nodes, on_written=_after_write)
+    social_query = SocialQueryEngine(
+        nodes,
+        half_life_days=cfg.half_life_days,
+        vectors=vectors,
+        w_relevance=cfg.hybrid_w_relevance,
+        w_activation=cfg.hybrid_w_activation,
+    )
     social = SocialMemoryNetwork(
         nodes,
         edges,
         interactors,
         archiver,
         vectors=vectors,
+        query=social_query,
         on_written=_after_write,
     )
     event = EventMemoryNetwork(
@@ -153,6 +169,15 @@ def build_memory_service(
             consolidation_scan_limit=getattr(cfg, "sleep_consolidation_scan_limit", 500),
         ),
     )
+    session_buffer = SessionMemoryBuffer(
+        nodes=nodes,
+        edges=edges,
+        social=social,
+        social_query=social_query,
+        archiver=archiver,
+        llm=llm,
+        vectors=vectors,
+    )
     svc = MemoryService(
         social,
         event,
@@ -164,6 +189,8 @@ def build_memory_service(
         nodes,
         memory_infra=infra,
         query_dispatcher=query_dispatcher,
+        session_buffer=session_buffer,
+        session_channels=session_channels,
     )
     svc_holder.append(svc)
     spread.schedule_cluster_rebuild()

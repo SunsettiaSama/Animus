@@ -24,9 +24,13 @@ export async function fetchStatus() {
   return data;
 }
 
-export async function resetSession(sessionId = 'webui') {
-  await http.post(PATHS.speak.reset, { session_id: sessionId });
-  _cb.onToast('Speak session reset');
+export async function resetSession(sessionId) {
+  const sid = String(sessionId ?? '').trim();
+  if (!sid) {
+    throw new Error('missing session_id');
+  }
+  await http.post(PATHS.speak.reset, { session_id: sid });
+  _cb.onToast('对话已重置');
 }
 
 export async function pollUntilReady(timeoutMs = 120_000, intervalMs = 800) {

@@ -17,7 +17,8 @@ from agent.soul.memory.graph.query import QueryEngine
 from agent.soul.memory.graph.scored import ScoredUnit
 from agent.soul.memory.graph.seeds import SeedResolver
 from agent.soul.memory.graph.traversal import GraphTraversal
-from agent.soul.memory.ports import GraphEdgeStore, GraphNodeStore, VectorIndexPort
+from agent.soul.memory.graph.node_store import GraphNodeStore
+from agent.soul.memory.ports import GraphEdgeStore, VectorIndexPort
 
 
 class SpreadActivationService:

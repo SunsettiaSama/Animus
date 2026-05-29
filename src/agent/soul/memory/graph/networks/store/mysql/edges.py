@@ -53,6 +53,13 @@ class MySQLEdgeStore:
                 rows = cur.fetchall()
         return [row_to_edge(r) for r in rows]
 
+    def delete_edge(self, edge_id: str) -> None:
+        if not edge_id:
+            return
+        with self._db.conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM soul_memory_edges WHERE id=%s", (edge_id,))
+
     def delete_by_node(self, node_id: str) -> None:
         with self._db.conn() as conn:
             with conn.cursor() as cur:

@@ -101,8 +101,9 @@ class ExperienceFeeling:
     """
     valence_delta: float = 0.0   # 负值 = 向负向漂移，正值 = 向正向漂移
     arousal_delta: float = 0.0   # 负值 = 平静化，正值 = 唤醒增强
-    salience:      float = 0.0   # 显著性 0~1，高于阈值可晋升为记忆或叙事素材
+    salience:      float = 0.0   # 显著性标量（由自叙投影，供记账与展示）
     emotion_label: str   = ""    # 命名情绪，惰性回填
+    salience_note: str   = ""    # agent 显著性/感受自叙原文（擢升判定主依据）
 
     def to_dict(self) -> dict:
         return {
@@ -110,6 +111,7 @@ class ExperienceFeeling:
             "arousal_delta": self.arousal_delta,
             "salience":      self.salience,
             "emotion_label": self.emotion_label,
+            "salience_note": self.salience_note,
         }
 
     @classmethod
@@ -119,6 +121,7 @@ class ExperienceFeeling:
             arousal_delta=float(d.get("arousal_delta", 0.0)),
             salience=float(d.get("salience", 0.0)),
             emotion_label=d.get("emotion_label", ""),
+            salience_note=d.get("salience_note", ""),
         )
 
 
@@ -148,8 +151,14 @@ class ExperienceUnit:
     source:    str = ""
     id:        str = field(default_factory=_uid)
 
-    def is_salient(self, threshold: float = 0.5) -> bool:
-        return self.feeling.salience >= threshold
+    def should_promote_to_memory(self) -> bool:
+        from .memory_promotion import should_promote_to_memory
+
+        return should_promote_to_memory(self)
+
+    def is_salient(self, threshold: float | None = None) -> bool:
+        _ = threshold
+        return self.should_promote_to_memory()
 
     @staticmethod
     def make(

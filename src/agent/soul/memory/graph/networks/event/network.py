@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Callable
 
 from agent.soul.life.experience.unit import ExperienceUnit
-from agent.soul.memory.domain import FactualMemory, GraphNode, MemoryNetwork
+from agent.soul.memory.domain.enums import MemoryNetwork
+from agent.soul.memory.graph.base_node import BaseNode
+
+from .node import FactualMemory
 from agent.soul.memory.graph.query import QueryEngine
 from agent.soul.memory.graph.traversal import GraphTraversal
 from agent.soul.memory.graph.networks.archival import ExperienceArchiver
@@ -11,7 +14,8 @@ from agent.soul.memory.graph.networks.block import MemoryBlock
 from agent.soul.memory.graph.networks.experience_block import ExperienceBlock as IngestBlock
 from agent.soul.memory.graph.networks.experience_block import read_experience_block
 from agent.soul.memory.graph.networks.forget import NetworkForgetEngine
-from agent.soul.memory.ports import GraphEdgeStore, GraphNodeStore, VectorIndexPort
+from agent.soul.memory.graph.node_store import GraphNodeStore
+from agent.soul.memory.ports import GraphEdgeStore, VectorIndexPort
 from agent.soul.memory.graph.networks.writer import NarrativeWriter
 from config.soul.memory.service_config import MemoryServiceConfig
 
@@ -27,7 +31,7 @@ class EventMemoryNetwork:
         archiver: ExperienceArchiver,
         *,
         vectors: VectorIndexPort | None = None,
-        on_written: Callable[[GraphNode], None] | None = None,
+        on_written: Callable[[BaseNode], None] | None = None,
         enqueue_recall: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         self._nodes = nodes
@@ -92,7 +96,7 @@ class EventMemoryNetwork:
 
     def ingest_narrative_from_units(
         self,
-        source_units: list[GraphNode],
+        source_units: list[BaseNode],
         chapter: str,
         *,
         persona_snapshot: str = "",
@@ -134,7 +138,7 @@ class EventMemoryNetwork:
             vectors=self._vectors,
         )
 
-    def _index(self, node: GraphNode) -> None:
+    def _index(self, node: BaseNode) -> None:
         if self._on_written is not None:
             self._on_written(node)
 
