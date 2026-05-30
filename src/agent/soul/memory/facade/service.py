@@ -37,6 +37,7 @@ from infra.memory import MemoryInfraService
 
 if TYPE_CHECKING:
     from agent.soul.workers import DomainWorker
+    from infra.llm import BaseLLM
 
 
 class MemoryService:
@@ -60,6 +61,7 @@ class MemoryService:
         session_io: SessionSpeakIO | None = None,
         life_io: LifeMemoryIO | None = None,
         session_channels=None,
+        llm: BaseLLM | None = None,
     ) -> None:
         self._social = social
         self._event = event
@@ -99,7 +101,7 @@ class MemoryService:
             session_compression=compression,
             enqueue_write=self._enqueue_write,
             agent_persona_narrative=self._agent_persona_narrative,
-            llm=self._promotion_llm_holder[0] if hasattr(self, "_promotion_llm_holder") else None,
+            llm=llm,
         )
         if life_io is not None:
             self._life_io = life_io
@@ -354,6 +356,47 @@ class MemoryService:
             )
         )
 
+    def request_interactor_social_prefetch(
+        self,
+        *,
+        session_id: str,
+        interactor_id: str,
+        turn_index: int = 0,
+    ) -> None:
+        from agent.soul.memory.io.session.request import InteractorPrefetchInbound
+
+        self._session_io.submit_interactor_prefetch(
+            InteractorPrefetchInbound(
+                session_id=session_id.strip(),
+                interactor_id=interactor_id.strip(),
+                turn_index=turn_index,
+            )
+        )
+
+    def submit_speak_keyword_query(
+        self,
+        *,
+        session_id: str,
+        turn_index: int,
+        user_text: str,
+        interactor_id: str = "",
+        agent_text: str = "",
+    ):
+        from agent.soul.memory.io.session.request import KeywordQueryInbound
+
+        return self._session_io.submit_keyword_query(
+            KeywordQueryInbound(
+                session_id=session_id.strip(),
+                turn_index=turn_index,
+                user_text=user_text,
+                interactor_id=interactor_id.strip(),
+                agent_text=agent_text,
+            )
+        )
+
+    def on_interactor_social_ready(self, handler) -> None:
+        self._session_io.on_interactor_social_ready(handler)
+
     def on_static_portrait_ready(
         self,
         handler: Callable[[InteractorPortraitSpeakResult], None],
@@ -454,7 +497,10 @@ class MemoryService:
             min_final_score=self._cfg.narrative_continuity_min_final_score,
             max_score_gap=self._cfg.narrative_continuity_max_score_gap,
         )
-        return [s.render_line(max_content=100) for s in scored]
+        return [
+            s.render_line(max_content=self._cfg.speak_memory_line_max_content)
+            for s in scored
+        ]
 
     def search(self, mode: str, **kwargs) -> list[dict]:
         from agent.soul.memory.graph.networks.store.codec import scored_to_dict

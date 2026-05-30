@@ -11,52 +11,46 @@ from agent.soul.speak.compose.injected import (
 
 def test_persona_collect_only_reads_persona_snapshot():
     persona_snap = {
-        "profile": {"name": "小A", "core_traits": ["温和"]},
-        "self_concept": {"narrative": "我在陪伴用户�?},
+        "profile": {"name": "A", "core_traits": ["calm"]},
+        "self_concept": {"narrative": "I accompany the user."},
     }
     injected = collect_persona_injected(persona_snap=persona_snap)
-    assert "小A" in injected.traits
-    assert "陪伴用户" in injected.self_concept
+    assert "A" in injected.traits
+    assert "accompany" in injected.self_concept
 
 
 def test_status_collect_only_reads_presence_and_dialogue():
-    presence = MagicMock()
     snap = MagicMock()
-    snap.state.affect.render.return_value = "专注"
+    snap.state.affect.render.return_value = "focused"
     snap.state.somatic.render.return_value = ""
-    snap.state.cognition.render.return_value = ""
+    snap.state.cognition.thinking = ""
     snap.state.perception.render.return_value = ""
-    presence.snapshot.return_value = snap
 
     injected = collect_status_injected(
         presence_snap=snap,
-        dialogue_compressed="【当前对话·压缩】\n- 用户聊了架构",
+        dialogue_compressed="OLD-BLOCK\n- user talked architecture",
     )
-    assert "专注" in injected.presence
-    assert "架构" in injected.dialogue_compressed
-    assert "小A" not in injected.presence
+    assert "focused" in injected.presence
+    assert "architecture" in injected.dialogue_compressed
+    rendered = "".join(injected.render_blocks())
+    assert "OLD-BLOCK" not in rendered
+    assert "architecture" not in rendered
 
 
 def test_persona_and_status_blocks_do_not_cross():
-    persona = MagicMock()
-    persona.get_persona_snapshot.return_value = {
-        "profile": {"name": "小A"},
+    persona_snap = {
+        "profile": {"name": "A"},
         "self_concept": {},
     }
-    presence = MagicMock()
     snap = MagicMock()
-    snap.state.affect.render.return_value = "平静"
+    snap.state.affect.render.return_value = "calm"
     snap.state.somatic.render.return_value = ""
-    snap.state.cognition.render.return_value = ""
+    snap.state.cognition.thinking = ""
     snap.state.perception.render.return_value = ""
-    snap.state.expectation.to_dict.return_value = {"share_queue": {"items": []}}
-    snap.interaction.impulse_reason = ""
-    snap.interaction.share_desire = ShareDesire.none
-    presence.snapshot.return_value = snap
 
-    persona_block = collect_persona_injected(persona_snap=persona.get_persona_snapshot())
+    persona_block = collect_persona_injected(persona_snap=persona_snap)
     status_block = collect_status_injected(presence_snap=snap)
 
     assert persona_block.traits
-    assert "平静" not in persona_block.traits
-    assert "小A" not in status_block.presence
+    assert "calm" not in persona_block.traits
+    assert "A" not in status_block.presence

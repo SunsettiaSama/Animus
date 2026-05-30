@@ -106,6 +106,8 @@ class SoulService:
         self._experience_pipeline: Any = None
         self._life_io_hub: Any = None
         self._speak_service: Any = None
+        self._warm_spread_lines: list[str] = []
+        self._warm_spread_unit_ids: list[str] = []
         self._account_service: Any = None
         self._story_world_context_supplier: StoryWorldContextSupplier | None = None
         self._external_opportunity_supplier: ExternalOpportunitySupplier | None = None
@@ -238,6 +240,11 @@ class SoulService:
         iid = self.hydrate_speak_channel(cid)
         if iid:
             self._ensure_speak_service().bind_interactor(sid, iid)
+            if self.memory is not None and self.memory.api is not None:
+                self.memory.api.request_interactor_social_prefetch(
+                    session_id=sid,
+                    interactor_id=iid,
+                )
         return iid
 
     @property
@@ -285,6 +292,10 @@ class SoulService:
                 interactor_id=iid,
                 session_id=cid,
                 turn_index=0,
+            )
+            self.memory.api.request_interactor_social_prefetch(
+                session_id=cid,
+                interactor_id=iid,
             )
         return {
             "ok": True,
@@ -368,6 +379,27 @@ class SoulService:
             "experience_id": ack.experience_id,
         }
 
+    def finalize_speak_session(self, session_id: str = "tao") -> dict[str, Any]:
+        """Speak 会话 rotate：reset_context + close + generation rotate + start。"""
+        self._require_running()
+        speak = self._ensure_speak_service()
+        result = speak.session_manager.holder.finalize_session(
+            session_id,
+            reason="manual",
+            note="manual reset",
+        )
+        return {
+            "ok": True,
+            "session_id": result.session_id,
+            "reason": result.reason,
+            "generation": result.generation,
+            "ingested": result.ingested,
+            "experience_id": result.experience_id,
+            "turn_index": result.turn_index,
+            "source": result.source,
+            "notes": list(result.notes),
+        }
+
     def speak_turn(
         self,
         user_text: str,
@@ -387,6 +419,77 @@ class SoulService:
                 "mode": mode,
             },
         ))
+
+    def speak_run_turn(
+        self,
+        session_id: str,
+        user_text: str,
+        *,
+        stream: bool = True,
+        mode: str = "inbound",
+        record: bool = True,
+    ):
+        """Speak 热路径门面：直调 SpeakService.run_turn（L0 收束，不经 dispatch）。"""
+        if self._state != "running":
+            raise RuntimeError(f"SoulService 未运行（state={self._state!r}）")
+        return self._ensure_speak_service().run_turn(
+            session_id,
+            user_text,
+            stream=stream,
+            mode="proactive" if mode == "proactive" else "inbound",
+            record=record,
+        )
+
+    def speak_submit_user_input(
+        self,
+        session_id: str,
+        user_text: str,
+        *,
+        stream: bool = True,
+        mode: str = "inbound",
+        record: bool = True,
+    ) -> dict[str, Any]:
+        """Speak 排队提交门面（推送中续聊）。"""
+        if self._state != "running":
+            raise RuntimeError(f"SoulService 未运行（state={self._state!r}）")
+        submit = self._ensure_speak_service().session_manager.submit_user_input(
+            session_id,
+            user_text,
+            stream=stream,
+            mode=mode,
+            record=record,
+        )
+        return {
+            "queued": bool(submit.queued),
+            "interrupt": bool(submit.interrupt),
+            "notes": list(submit.notes),
+        }
+
+    def speak_is_pushing(self, session_id: str) -> bool:
+        if self._speak_service is None:
+            return False
+        return self._speak_service.session_manager.is_pushing(session_id)
+
+    def speak_session_trace_cache(
+        self,
+        session_id: str,
+        *,
+        turn_index: int | None = None,
+    ) -> dict[str, object]:
+        if self._state != "running" or self._speak_service is None:
+            raise RuntimeError(f"Soul Speak 未就绪（state={self._state!r}）")
+        return self._speak_service.session_trace_cache(
+            session_id,
+            turn_index=turn_index,
+        )
+
+    @property
+    def speak_initialized(self) -> bool:
+        return self._speak_service is not None
+
+    def reset_presence_affect(self, session_id: str = "tao") -> None:
+        """重置 Presence 情感维度（管理操作）。"""
+        self.presence.reset_affect(session_id)
 
     def speak_generate(
         self,
@@ -585,6 +688,35 @@ class SoulService:
         self._ensure_experience_pipeline()
         return self.experience.ingest_incident(incident, salience=incident.salience)
 
+    def seed_session_warm_spread(self, session_id: str) -> None:
+        sid = session_id.strip()
+        if not sid or not self._warm_spread_unit_ids:
+            return
+        self._ensure_speak_service().seed_warm_spread(
+            sid,
+            lines=list(self._warm_spread_lines),
+            unit_ids=list(self._warm_spread_unit_ids),
+        )
+
+    def arm_enter_greeting(self, session_id: str) -> None:
+        self._ensure_speak_service().arm_enter_greeting(session_id)
+
+    def cancel_enter_greeting(self, session_id: str) -> None:
+        if self._speak_service is not None:
+            self._speak_service.cancel_enter_greeting(session_id)
+
+    def _prime_warm_spread(self) -> None:
+        from agent.soul.memory.domain import ActivationCue
+
+        cue = ActivationCue(
+            session_id="__warm__",
+            user_text="记忆 自然 联结 冒险 生灵",
+            interactor_id="",
+        )
+        result = self.memory.api.expand_hot_activation(cue)
+        self._warm_spread_lines = list(result.lines)
+        self._warm_spread_unit_ids = list(result.unit_ids)
+
     def start(self) -> None:
         if self._state == "running":
             return
@@ -593,6 +725,7 @@ class SoulService:
 
         self._ensure_memory_handler()
         self.memory.api.init_infra()
+        self._prime_warm_spread()
         self._ensure_life_handler()
         self._ensure_persona_handler()
         self._wire_workers()
@@ -1117,8 +1250,11 @@ class SoulService:
 
     def _ensure_speak_handler(self) -> SpeakHandler:
         if self._speak_handler is None:
+            from agent.soul.speak.io.experience_port import SoulSpeakExperiencePort
+
             self._speak_handler = SpeakHandler(
-                self,
+                get_speak_service=self._ensure_speak_service,
+                experience=SoulSpeakExperiencePort(self),
                 llm_service=self._llm_service,
                 llm_aux_name=self._cfg.speak_llm_aux_name,
                 primary_llm=self._primary_llm,
@@ -1204,7 +1340,9 @@ class SoulService:
                 embedder=self.resolve_embedding_port(),
                 context_distill_chunk_size=self._cfg.speak_context_distill_chunk_size,
                 memory_turn_gap=self._memory_cfg.memory_turn_proximity_max,
-                compose_memory_wait_ms=self._memory_cfg.speak_compose_memory_wait_ms,
+                keyword_wait_ms=self._memory_cfg.speak_compose_keyword_wait_ms,
+                memory_budget=self._memory_cfg.speak_compose_memory_budget,
+                portrait_wait_ms=self._memory_cfg.speak_compose_memory_wait_ms,
             )
             from agent.soul.memory.io.session import CompressionBlockInbound, DialogueCompressionBlock
 
@@ -1270,6 +1408,8 @@ class SoulService:
 
             from agent.soul.memory.io.session import DialogueTurnInbound
             from agent.soul.speak.io.inbound.memory import (
+                InteractorPortraitPullResult,
+                InteractorPortraitRequest,
                 PointQueryRequest,
                 RecallRequest,
                 RecallResult,
@@ -1301,33 +1441,91 @@ class SoulService:
                     )
                 )
 
+            def _keyword_query_for_speak(request) -> None:
+                from agent.soul.speak.io.inbound.memory import KeywordQueryRequest
+
+                assert isinstance(request, KeywordQueryRequest)
+                result = self.memory.api.submit_speak_keyword_query(
+                    session_id=request.session_id,
+                    turn_index=request.turn_index,
+                    user_text=request.user_text,
+                    interactor_id=request.interactor_id,
+                    agent_text=request.agent_text,
+                )
+                if result.unit_ids:
+                    self._speak_service.session_manager.enqueue_memory_result(
+                        result.session_id,
+                        turn_index=result.turn_index,
+                        lines=list(result.lines),
+                        unit_ids=list(result.unit_ids),
+                        source="keyword",
+                    )
+
             def _pull_similar_for_speak(
                 session_id: str,
                 turn_index: int,
-                wait_ms: int,
+                keyword_wait_ms: int,
+                budget: int,
+                merge_ratio,
             ) -> SimilarMemoryPullResult:
                 consumed = self._speak_service.session_manager.pull_memory_for_compose(
                     session_id,
                     turn_index,
-                    wait_ms=wait_ms,
+                    keyword_wait_ms=keyword_wait_ms,
+                    budget=budget,
+                    merge_ratio=merge_ratio,
+                )
+                inject_turn = (
+                    consumed.inject_turn_indices[0]
+                    if consumed.inject_turn_indices
+                    else turn_index
                 )
                 return SimilarMemoryPullResult(
                     inject=SimilarMemoryBlock(
-                        turn_index=consumed.inject_turn_index or turn_index,
+                        turn_index=inject_turn,
                         lines=list(consumed.inject_lines),
                         unit_ids=list(consumed.inject_unit_ids),
                     ),
                     spilled=SimilarMemoryBlock(
-                        turn_index=consumed.spilled_turn_index,
+                        turn_index=0,
                         lines=list(consumed.spilled_lines),
                         unit_ids=list(consumed.spilled_unit_ids),
                     ),
+                    social_prefetch_lines=list(consumed.social_prefetch_lines),
+                    social_prefetch_unit_ids=list(consumed.social_prefetch_unit_ids),
+                    warm_spread_lines=list(consumed.warm_spread_lines),
+                    warm_spread_unit_ids=list(consumed.warm_spread_unit_ids),
+                    merge_ratio=consumed.merge_ratio,
+                    keyword_wait_ms=consumed.keyword_wait_ms,
+                    sources=list(consumed.sources),
                 )
 
-            from agent.soul.speak.io.inbound.memory import (
-                InteractorPortraitPullResult,
-                InteractorPortraitRequest,
-            )
+            def _on_interactor_social_ready(result) -> None:
+                self._speak_service.session_manager.set_social_prefetch(
+                    result.session_id,
+                    lines=list(result.lines),
+                    unit_ids=list(result.unit_ids),
+                )
+
+            def _on_point_emergence_ready(result) -> None:
+                if not result.associative_ready:
+                    return
+                unit_ids = result.merged_unit_ids()
+                if not unit_ids:
+                    return
+                self._speak_service.session_manager.enqueue_memory_result(
+                    result.session_id,
+                    turn_index=result.turn_index,
+                    lines=result.merged_lines(),
+                    unit_ids=unit_ids,
+                    source="emergence",
+                    ready=True,
+                )
+
+            self._speak_service.attach_memory_recall(_recall_for_speak)
+            self._speak_service.attach_memory_point_query(_point_query_for_speak)
+            self._speak_service.attach_memory_keyword_query(_keyword_query_for_speak)
+            self._speak_service.attach_memory_pull_similar(_pull_similar_for_speak)
 
             def _portrait_query_for_speak(request: InteractorPortraitRequest) -> None:
                 self.memory.api.session_io.submit_dialogue_turn(
@@ -1384,27 +1582,16 @@ class SoulService:
                     turn_index=consumed.inject_turn_index or turn_index,
                 )
 
-            def _on_point_emergence_ready(result) -> None:
-                self._speak_service.session_manager.enqueue_memory_result(
-                    result.session_id,
-                    turn_index=result.turn_index,
-                    lines=result.merged_lines(),
-                    unit_ids=result.merged_unit_ids(),
-                    associative_ready=result.associative_ready,
-                )
-
-            self._speak_service.attach_memory_recall(_recall_for_speak)
-            self._speak_service.attach_memory_point_query(_point_query_for_speak)
-            self._speak_service.attach_memory_pull_similar(_pull_similar_for_speak)
+            self._speak_service.attach_memory_portrait_query(_portrait_query_for_speak)
+            self._speak_service.attach_memory_pull_portrait(_pull_portrait_for_speak)
             self.memory.api.session_io.on_dynamic_portrait_ready(
                 _on_interactor_portrait_ready
             )
             self.memory.api.session_io.on_static_portrait_ready(
                 _on_interactor_portrait_ready
             )
-            self._speak_service.attach_memory_portrait_query(_portrait_query_for_speak)
-            self._speak_service.attach_memory_pull_portrait(_pull_portrait_for_speak)
             self.memory.api.session_io.on_dynamic_event_ready(_on_point_emergence_ready)
+            self.memory.api.on_interactor_social_ready(_on_interactor_social_ready)
         return self._speak_service
 
     def _relay_presence_status_to_speak(self, snap) -> None:

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from agent.soul.handlers.api._llm import resolve_module_llm
+from agent.soul.ports import SpeakExperiencePort
 from infra.llm import BaseLLM
 
 from .actions import SpeakAction
@@ -12,23 +14,24 @@ from ..service import SpeakService
 
 if TYPE_CHECKING:
     from agent.soul.ports import LLMServicePort
-    from agent.soul.service import SoulService
 
 
 class SpeakHandler:
-    """Speak API Handler：会话记账 + presence/experience 穿透 + LLM 生成。"""
+    """Speak API Handler：会话记账 + experience 穿透 + LLM 生成。"""
 
     DEFAULT_AUX_NAME = "speak"
 
     def __init__(
         self,
-        soul: SoulService,
         *,
+        get_speak_service: Callable[[], SpeakService],
+        experience: SpeakExperiencePort,
         llm_service: LLMServicePort | None = None,
         llm_aux_name: str = DEFAULT_AUX_NAME,
         primary_llm: BaseLLM | None = None,
     ) -> None:
-        self._soul = soul
+        self._get_speak_service = get_speak_service
+        self._experience = experience
         self._llm_service = llm_service
         self._llm_aux_name = llm_aux_name
         self._primary_llm = primary_llm
@@ -42,7 +45,7 @@ class SpeakHandler:
 
     @property
     def api(self) -> SpeakService:
-        service = self._soul._ensure_speak_service()
+        service = self._get_speak_service()
         llm = self.resolve_llm()
         if llm is not None and service.llm_engine.llm is None:
             service.llm_engine.set_llm(llm)
@@ -90,7 +93,7 @@ class SpeakHandler:
             }
 
         if action == SpeakAction.WORKING_MEMORY:
-            text = self._soul.experience.dialogue.working_memory_text(
+            text = self._experience.dialogue.working_memory_text(
                 payload["session_id"],
             )
             return {"session_id": payload["session_id"], "text": text}
@@ -104,7 +107,7 @@ class SpeakHandler:
         session_id = payload["session_id"]
         trigger = str(payload.get("trigger", "user_message"))
         open_result = self.api.session_manager.open(session_id, trigger=trigger)
-        state = self._soul.experience.dialogue.state(session_id)
+        state = self._experience.dialogue.state(session_id)
         return {
             "ok": True,
             "session_id": session_id,
@@ -159,7 +162,7 @@ class SpeakHandler:
 
     def _close_session(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = payload.get("session_id", "tao")
-        unit = self._soul.experience.close_dialogue(session_id)
+        unit = self._experience.close_dialogue(session_id)
         if unit is None:
             return {"ok": True, "session_id": session_id, "ingested": False}
         return {
@@ -279,7 +282,7 @@ class SpeakHandler:
 
     def _dialogue_state(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = payload["session_id"]
-        state = self._soul.experience.dialogue.state(session_id)
+        state = self._experience.dialogue.state(session_id)
         if state is None:
             return {
                 "session_id": session_id,

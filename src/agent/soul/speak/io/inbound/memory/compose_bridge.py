@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from agent.soul.speak.compose.bundle import SpeakPromptBundle
 from agent.soul.speak.compose.interactor_portrait import render_interactor_portrait_inject
+from agent.soul.memory.emergence.line_dedup import dedupe_memory_line_pairs
 from agent.soul.speak.compose.memory import render_similar_memories_block
 from agent.soul.speak.session.prompt_trace import get_prompt_trace
 
@@ -11,6 +12,7 @@ from .gateway import InboundMemoryGateway
 from .request import (
     InteractorPortraitPullResult,
     InteractorPortraitRequest,
+    KeywordQueryRequest,
     PointQueryRequest,
     SimilarMemoryPullResult,
 )
@@ -19,18 +21,24 @@ GetBoundInteractor = Callable[[str], str]
 
 
 class InboundMemoryComposeBridge:
-    """Memory 检索结果入站：异步预取 + 有限等待，写入 ``SpeakPromptBundle``。"""
+    """Memory 检索结果入站：双通道（关键字 + 涌现）与 compose 注入。"""
 
     def __init__(
         self,
         gateway: InboundMemoryGateway,
         *,
         get_bound_interactor: GetBoundInteractor,
-        compose_wait_ms: int = 100,
+        keyword_wait_ms: int = 200,
+        memory_budget: int = 5,
+        portrait_wait_ms: int = 100,
+        merge_ratio: float | None = None,
     ) -> None:
         self._gateway = gateway
         self._get_bound_interactor = get_bound_interactor
-        self._compose_wait_ms = max(0, compose_wait_ms)
+        self._keyword_wait_ms = max(0, keyword_wait_ms)
+        self._memory_budget = max(1, memory_budget)
+        self._portrait_wait_ms = max(0, portrait_wait_ms)
+        self._merge_ratio = merge_ratio
 
     @property
     def gateway(self) -> InboundMemoryGateway:
@@ -41,6 +49,7 @@ class InboundMemoryComposeBridge:
         *,
         recall_fn=None,
         point_query_fn=None,
+        keyword_query_fn=None,
         pull_similar_fn=None,
         portrait_query_fn=None,
         pull_portrait_fn=None,
@@ -49,6 +58,8 @@ class InboundMemoryComposeBridge:
             self._gateway.attach_recall(recall_fn)
         if point_query_fn is not None:
             self._gateway.attach_point_query(point_query_fn)
+        if keyword_query_fn is not None:
+            self._gateway.attach_keyword_query(keyword_query_fn)
         if pull_similar_fn is not None:
             self._gateway.attach_pull_similar(pull_similar_fn)
         if portrait_query_fn is not None:
@@ -56,7 +67,7 @@ class InboundMemoryComposeBridge:
         if pull_portrait_fn is not None:
             self._gateway.attach_pull_portrait(pull_portrait_fn)
 
-    def request_similar_memories(
+    def request_emergence_query(
         self,
         session_id: str,
         *,
@@ -74,6 +85,39 @@ class InboundMemoryComposeBridge:
             ),
         )
 
+    def request_keyword_query(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        user_text: str,
+        agent_text: str = "",
+    ) -> None:
+        self._gateway.request_keyword_query(
+            KeywordQueryRequest(
+                session_id=session_id,
+                interactor_id=self._get_bound_interactor(session_id),
+                turn_index=turn_index,
+                user_text=user_text,
+                agent_text=agent_text,
+            ),
+        )
+
+    def request_similar_memories(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        user_text: str,
+        agent_text: str = "",
+    ) -> None:
+        self.request_emergence_query(
+            session_id,
+            turn_index=turn_index,
+            user_text=user_text,
+            agent_text=agent_text,
+        )
+
     def pull_similar_memories(
         self,
         session_id: str,
@@ -82,7 +126,9 @@ class InboundMemoryComposeBridge:
         return self._gateway.pull_similar_memories(
             session_id,
             turn_index,
-            wait_ms=self._compose_wait_ms,
+            keyword_wait_ms=self._keyword_wait_ms,
+            budget=self._memory_budget,
+            merge_ratio=self._merge_ratio,
         )
 
     def apply_similar_memories(
@@ -90,18 +136,30 @@ class InboundMemoryComposeBridge:
         bundle: SpeakPromptBundle,
         pulled: SimilarMemoryPullResult,
     ) -> None:
-        inject_block = render_similar_memories_block(pulled.inject.lines)
+        merged_lines, merged_ids = dedupe_memory_line_pairs(
+            list(pulled.social_prefetch_lines)
+            + list(pulled.warm_spread_lines)
+            + list(pulled.inject.lines),
+            list(pulled.social_prefetch_unit_ids)
+            + list(pulled.warm_spread_unit_ids)
+            + list(pulled.inject.unit_ids),
+        )
+        inject_block = render_similar_memories_block(merged_lines)
         if inject_block:
             bundle.injected.status.similar_memories = inject_block
-        if pulled.inject.unit_ids:
+
+        all_ids = merged_ids
+        if all_ids:
             bundle.meta.setdefault("activated_memory_ids", [])
-            bundle.meta["activated_memory_ids"].extend(pulled.inject.unit_ids)
+            bundle.meta["activated_memory_ids"].extend(all_ids)
+
         if pulled.spilled.lines or pulled.spilled.unit_ids:
             bundle.meta["memory_spill"] = {
                 "turn_index": pulled.spilled.turn_index,
                 "lines": list(pulled.spilled.lines),
                 "unit_ids": list(pulled.spilled.unit_ids),
             }
+
         if get_prompt_trace().is_enabled(bundle.session_id):
             trace_pull = bundle.meta.setdefault("trace_pull", {})
             if isinstance(trace_pull, dict):
@@ -109,9 +167,14 @@ class InboundMemoryComposeBridge:
                     "inject_lines": list(pulled.inject.lines),
                     "inject_unit_ids": list(pulled.inject.unit_ids),
                     "inject_turn_index": pulled.inject.turn_index,
+                    "social_prefetch_lines": list(pulled.social_prefetch_lines),
+                    "warm_spread_lines": list(pulled.warm_spread_lines),
                     "spill_lines": list(pulled.spilled.lines),
                     "spill_unit_ids": list(pulled.spilled.unit_ids),
                     "spill_turn_index": pulled.spilled.turn_index,
+                    "sources": list(pulled.sources),
+                    "keyword_wait_ms": pulled.keyword_wait_ms,
+                    "merge_ratio": pulled.merge_ratio,
                 }
 
     def request_interactor_portrait(
@@ -140,7 +203,7 @@ class InboundMemoryComposeBridge:
         return self._gateway.pull_interactor_portrait(
             session_id,
             turn_index,
-            wait_ms=self._compose_wait_ms,
+            wait_ms=self._portrait_wait_ms,
         )
 
     def apply_interactor_portrait(
@@ -174,7 +237,7 @@ class InboundMemoryComposeBridge:
     ) -> None:
         if not user_text.strip() and not agent_text.strip():
             return
-        self.request_similar_memories(
+        self.request_emergence_query(
             session_id,
             turn_index=turn_index,
             user_text=user_text,
@@ -198,7 +261,12 @@ class InboundMemoryComposeBridge:
         user_text: str,
         turn_index: int,
     ) -> tuple[SimilarMemoryPullResult, InteractorPortraitPullResult]:
-        self.request_similar_memories(
+        self.request_emergence_query(
+            session_id,
+            turn_index=turn_index,
+            user_text=user_text,
+        )
+        self.request_keyword_query(
             session_id,
             turn_index=turn_index,
             user_text=user_text,

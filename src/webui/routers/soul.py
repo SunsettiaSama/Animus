@@ -125,9 +125,7 @@ def get_soul_readiness():
     soul_state = getattr(soul, "state", None) if soul is not None else None
     soul_running = bool(soul is not None and soul.is_running)
 
-    speak_ready = False
-    if soul_running:
-        speak_ready = soul._ensure_speak_service() is not None
+    speak_ready = bool(soul_running and soul is not None and soul.speak_initialized)
 
     checks = [
         {

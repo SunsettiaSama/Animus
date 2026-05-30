@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from agent.soul.memory.emergence.session_results import (
+    InteractorSocialPrefetchResult,
+    KeywordFieldResult,
+    WarmSpreadResult,
+)
 from agent.soul.memory.emergence.types import PointEmergenceResult
 from agent.soul.memory.facade.interactor_portrait import InteractorPortraitSpeakResult
 
@@ -9,11 +14,15 @@ from .channel import SessionMemoryChannel
 from .deps import SessionIODeps
 from .outbound.dynamic_event import schedule_dynamic_event
 from .outbound.dynamic_portrait import run_dynamic_portrait
+from .outbound.interactor_social_prefetch import run_interactor_social_prefetch
+from .outbound.keyword_field import run_keyword_field_query
 from .outbound.static_portrait import load_static_core_portrait
 from .request import (
     CompressionBlockAck,
     CompressionBlockInbound,
     DialogueTurnInbound,
+    InteractorPrefetchInbound,
+    KeywordQueryInbound,
     SessionCloseAck,
     SessionCloseInbound,
     StaticPortraitInbound,
@@ -27,12 +36,13 @@ class SessionSpeakIO:
 
     入站：
     - 对话轮 → 动态画像 / 动态事件（emergence）
-    - 账号绑定 → 静态 SocialCore 画像
+    - 账号绑定 → 静态 SocialCore 画像 / Social 预取
     - 压缩块 / 会话闭合 → SessionMemoryBuffer
 
     出站（进程内回调 → Speak ``InboundMemoryGateway`` / session 队列 pull）：
     - 静态 / 动态画像 ``InteractorPortraitSpeakResult``
     - 点事件 ``PointEmergenceResult``
+    - Social 预取 / 关键字 / 预热 spread
     """
 
     def __init__(
@@ -46,6 +56,8 @@ class SessionSpeakIO:
         self._on_static_portrait: Callable[[InteractorPortraitSpeakResult], None] | None = None
         self._on_dynamic_portrait: Callable[[InteractorPortraitSpeakResult], None] | None = None
         self._on_dynamic_event: Callable[[PointEmergenceResult], None] | None = None
+        self._on_interactor_social: Callable[[InteractorSocialPrefetchResult], None] | None = None
+        self._on_warm_spread: Callable[[WarmSpreadResult], None] | None = None
         deps.emergence.spread.on_point_ready(self._dispatch_dynamic_event)
 
     @property
@@ -74,6 +86,18 @@ class SessionSpeakIO:
     ) -> None:
         self._on_dynamic_event = handler
 
+    def on_interactor_social_ready(
+        self,
+        handler: Callable[[InteractorSocialPrefetchResult], None] | None,
+    ) -> None:
+        self._on_interactor_social = handler
+
+    def on_warm_spread_ready(
+        self,
+        handler: Callable[[WarmSpreadResult], None] | None,
+    ) -> None:
+        self._on_warm_spread = handler
+
     def _dispatch_dynamic_event(self, result: PointEmergenceResult) -> None:
         if self._on_dynamic_event is not None:
             self._on_dynamic_event(result)
@@ -86,6 +110,14 @@ class SessionSpeakIO:
         if self._on_dynamic_portrait is not None:
             self._on_dynamic_portrait(payload)
 
+    def _emit_interactor_social(self, payload: InteractorSocialPrefetchResult) -> None:
+        if self._on_interactor_social is not None:
+            self._on_interactor_social(payload)
+
+    def _emit_warm_spread(self, payload: WarmSpreadResult) -> None:
+        if self._on_warm_spread is not None:
+            self._on_warm_spread(payload)
+
     def submit_dialogue_turn(self, inbound: DialogueTurnInbound) -> None:
         """Speak 投递一轮对话；按标志异步触发动态画像 / 事件检索。"""
         if inbound.want_dynamic_portrait:
@@ -96,6 +128,20 @@ class SessionSpeakIO:
             )
         if inbound.want_dynamic_event:
             schedule_dynamic_event(self._deps, inbound)
+
+    def submit_interactor_prefetch(self, inbound: InteractorPrefetchInbound) -> None:
+        if not inbound.interactor_id.strip():
+            return
+
+        def _task() -> None:
+            payload = run_interactor_social_prefetch(self._deps, inbound)
+            if payload.unit_ids:
+                self._emit_interactor_social(payload)
+
+        self._deps.enqueue_write(_task)
+
+    def submit_keyword_query(self, inbound: KeywordQueryInbound) -> KeywordFieldResult:
+        return run_keyword_field_query(self._deps, inbound)
 
     def fetch_static_portrait(self, inbound: StaticPortraitInbound) -> None:
         """账号 interactor 就绪后异步拉取 core 画像并出站。"""

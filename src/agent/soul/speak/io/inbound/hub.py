@@ -15,7 +15,7 @@ from .memory.compose_bridge import InboundMemoryComposeBridge
 class SpeakInboundHub:
     """Speak 入站总线（主路径已接线）。
 
-    - ``memory`` + ``memory_compose``：点检索 / 画像请求与 compose 注入
+    - ``memory`` + ``memory_compose``：涌现 / 关键字 / 画像与 compose 注入
     - ``compose``：Presence 推送 → 状态缓存 → ``SpeakComposeRunner`` 预组装
     - ``drive``：presence 冲动 / 分享意愿
     - ``registry``：``SpeakSessionRegistry``（interactor 绑定、轮次）
@@ -30,14 +30,18 @@ class SpeakInboundHub:
         share_threshold: float | None = None,
         presence=None,
         on_compose_prepare: Callable[[ComposePrepareRequest], None] | None = None,
-        compose_memory_wait_ms: int = 100,
+        keyword_wait_ms: int = 200,
+        memory_budget: int = 5,
+        portrait_wait_ms: int = 100,
     ) -> None:
         self._registry = session_manager.registry
         self.memory = InboundMemoryGateway()
         self.memory_compose = InboundMemoryComposeBridge(
             self.memory,
             get_bound_interactor=self._registry.get_bound_interactor,
-            compose_wait_ms=compose_memory_wait_ms,
+            keyword_wait_ms=keyword_wait_ms,
+            memory_budget=memory_budget,
+            portrait_wait_ms=portrait_wait_ms,
         )
         self.compose = InboundComposeGateway(compose_runner)
         self.drive = SpeakDriveBridge(presence, share_threshold=share_threshold)
@@ -49,6 +53,7 @@ class SpeakInboundHub:
         *,
         recall_fn=None,
         point_query_fn=None,
+        keyword_query_fn=None,
         pull_similar_fn=None,
         portrait_query_fn=None,
         pull_portrait_fn=None,
@@ -56,6 +61,7 @@ class SpeakInboundHub:
         self.memory_compose.attach_ports(
             recall_fn=recall_fn,
             point_query_fn=point_query_fn,
+            keyword_query_fn=keyword_query_fn,
             pull_similar_fn=pull_similar_fn,
             portrait_query_fn=portrait_query_fn,
             pull_portrait_fn=pull_portrait_fn,

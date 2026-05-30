@@ -69,3 +69,20 @@ def apply_sleep(
     state.perception.narrative = ""
     interaction.reset()
     return SleepResult(session_id=session_id, applied=True, reason="entered sleep window")
+
+
+def apply_dialogue_session_boundary(state: PresenceState) -> list[str]:
+    """Speak session rotate：裁剪对话型静态字段，避免 verbatim 跨 generation 注入。"""
+    from ...state.static import compose_narrative, normalize_narrative
+
+    notes: list[str] = []
+    perception = normalize_narrative(state.perception.narrative)
+    if perception:
+        existing = normalize_narrative(state.cognition.thinking)
+        folded = perception[:240]
+        state.cognition.thinking = compose_narrative(existing, folded) if existing else folded
+        notes.append("boundary: perception folded into thinking")
+    state.perception.narrative = ""
+    state.cognition.working_memory = ""
+    notes.append("boundary: cleared perception + working_memory")
+    return notes

@@ -1,6 +1,21 @@
 from __future__ import annotations
 
-from webui.speak_typing_sim import calc_typing_delay_ms
+import asyncio
+from dataclasses import dataclass, field
+
+from agent.soul.speak.io.outbound.stream.events import SpeakStreamEvent
+from webui.speak_typing_sim import SimulatedTypingStreamPort, calc_typing_delay_ms
+
+
+@dataclass
+class _RecordingPort:
+    events: list[SpeakStreamEvent] = field(default_factory=list)
+
+    def emit(self, session_id: str, event: SpeakStreamEvent) -> None:
+        self.events.append(event)
+
+    def close(self) -> None:
+        pass
 
 
 def _frontend_anim_ms(text: str) -> int:
@@ -32,6 +47,39 @@ def test_calc_typing_delay_short_post_buffer():
 def test_calc_typing_delay_caps_at_max():
     long_text = "你" * 500
     assert calc_typing_delay_ms(long_text) == 900
+
+
+def test_flush_emits_state_after_speak_before_finish():
+    async def _run() -> None:
+        inner = _RecordingPort()
+        loop = asyncio.get_running_loop()
+        port = SimulatedTypingStreamPort(inner=inner, loop=loop, ms_per_char=0.0)
+        sid = "s1"
+        port.emit(sid, SpeakStreamEvent(kind="tag", text="", meta={"tag": "speak"}))
+        port.emit(
+            sid,
+            SpeakStreamEvent(
+                kind="speak",
+                text="你好",
+                meta={"phase": "end", "tag": "speak"},
+            ),
+        )
+        port.emit(
+            sid,
+            SpeakStreamEvent(
+                kind="state",
+                text="finish",
+                meta={"session_state": "finish", "tag": "state"},
+            ),
+        )
+        port.emit(sid, SpeakStreamEvent(kind="finish", text="", final=True))
+        await port.flush_pending(sid)
+
+        kinds = [e.kind for e in inner.events]
+        assert kinds.index("speak") < kinds.index("state")
+        assert kinds.index("state") < kinds.index("finish")
+
+    asyncio.run(_run())
 
 
 def test_combined_typing_pace_reasonable_for_typical_replies():

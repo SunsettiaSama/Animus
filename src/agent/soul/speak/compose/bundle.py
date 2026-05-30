@@ -24,6 +24,7 @@ class SpeakPromptBundle:
     notes: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
     social_blocks: list[str] = field(default_factory=list)
+    session_working_memory: str = ""
 
     @property
     def persona_traits(self) -> str:
@@ -59,6 +60,9 @@ class SpeakPromptBundle:
         share = self.system.share.strip()
         if share:
             parts.append(share)
+        wm = self.session_working_memory.strip()
+        if wm:
+            parts.append(wm)
         output_format = self.system.output_format.strip()
         if output_format:
             parts.append(output_format)
@@ -79,6 +83,7 @@ class SpeakPromptBundle:
             "self_concept_chars": len(self.self_concept),
             "status_presence_chars": len(self.injected.status.presence),
             "status_dialogue_compressed_chars": len(self.dialogue_compressed),
+            "session_working_memory_chars": len(self.session_working_memory),
             "system_chars": len(self.build_system()),
             "user_chars": len(self.user_text),
             "notes": list(self.notes),

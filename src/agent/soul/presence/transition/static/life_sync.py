@@ -19,11 +19,6 @@ def apply_static_bundle(
     if bundle.narration.strip():
         state.cognition.thinking = normalize_narrative(bundle.narration)
         notes.append("static: thinking ← life narration")
-    if bundle.prior_thought.strip() and not bundle.prior_thought.startswith("__"):
-        wm = normalize_narrative(bundle.prior_thought)
-        if wm:
-            state.cognition.working_memory = wm
-            notes.append("static: working_memory ← prior_thought")
     if bundle.emotion_label.strip():
         state.affect.narrative = normalize_narrative(bundle.emotion_label)
         notes.append("static: affect ← emotion_label")

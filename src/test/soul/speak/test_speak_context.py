@@ -13,15 +13,15 @@ from agent.soul.speak.compose.context import (
 )
 
 
-def test_render_dialogue_compressed_labels_session_summary():
-    block = render_dialogue_compressed(["用户问候并聊起架构", "讨论�?speak 模块设计"])
-    assert "【当前对话·压缩�? in block
-    assert "已蒸�? in block
-    assert "用户问候并聊起架构" in block
+def test_render_dialogue_compressed_is_internal_probe_format():
+    block = render_dialogue_compressed(["user greeted", "discussed speak module"])
+    assert "\u3010\u5f53\u524d\u5bf9\u8bdd\u00b7\u538b\u7f29\u3011" not in block
+    assert "user greeted" in block
+    assert block.startswith("- ")
 
 
 def test_normalize_one_sentence_keeps_single_line():
-    assert normalize_one_sentence("第一句。第二句�?) == "第一句�?
+    assert normalize_one_sentence("\u7b2c\u4e00\u53e5\u3002\u7b2c\u4e8c\u53e5\u3002") == "\u7b2c\u4e00\u53e5\u3002"
     assert normalize_one_sentence("  hello world  \nmore") == "hello world"
 
 
@@ -32,7 +32,7 @@ def test_distiller_triggers_every_k_chunks():
     def distill_fn(batch, prior):
         distilled_batches.append(tuple(batch))
         done.set()
-        return f"压缩第{len(distilled_batches)}�?
+        return f"batch-{len(distilled_batches)}"
 
     distiller = SpeakContextDistiller(
         chunk_size=2,
@@ -46,45 +46,50 @@ def test_distiller_triggers_every_k_chunks():
     done.wait(timeout=1.0)
 
     block = distiller.prompt_block("tao")
-    assert "压缩�?�? in block
+    assert "batch-1" in block
     assert len(distilled_batches) == 1
     assert distilled_batches[0] == (("u1", "a1"), ("u2", "a2"))
 
 
-def test_compose_uses_completed_distillation_only():
-    persona = MagicMock()
-    persona.get_persona_snapshot.return_value = {
-        "profile": {"name": "小A"},
-        "self_concept": {},
-    }
-    presence = MagicMock()
+def _mock_presence_snap():
     snap = MagicMock()
     snap.state.affect.render.return_value = ""
     snap.state.somatic.render.return_value = ""
-    snap.state.cognition.render.return_value = ""
+    snap.state.cognition.thinking = ""
     snap.state.perception.render.return_value = ""
     snap.state.expectation.to_dict.return_value = {"share_queue": {"items": []}}
     snap.interaction.impulse_reason = ""
     snap.interaction.share_desire = ShareDesire.none
-    presence.snapshot.return_value = snap
+    return snap
+
+
+def test_compose_uses_working_memory_block_not_status_dialogue():
+    persona = MagicMock()
+    persona.get_persona_snapshot.return_value = {
+        "profile": {"name": "A"},
+        "self_concept": {},
+    }
+    presence = MagicMock()
+    presence.snapshot.return_value = _mock_presence_snap()
 
     distiller = SpeakContextDistiller(chunk_size=2, distill_fn=lambda batch, prior: "")
     composer = SpeakPromptComposer(persona, presence, context_distiller=distiller)
 
-    bundle_before = composer.compose("tao", "新问�?)
-    assert "【当前对话·压缩�? not in bundle_before.build_system()
+    bundle_before = composer.compose("tao", "new question", generation=1)
+    assert "\u3010\u5f53\u524d\u4f1a\u8bdd\u00b7\u5de5\u4f5c\u8bb0\u5fc6\u3011" not in bundle_before.build_system()
 
     distiller.on_turn("tao", "u1", "a1")
     distiller.on_turn("tao", "u2", "a2")
 
     state = distiller._session("tao")
     with state.lock:
-        state.distilled.append("用户连续两轮寒暄�?)
+        state.distilled.append("two turns of small talk")
 
-    bundle_after = composer.compose("tao", "新问�?)
+    bundle_after = composer.compose("tao", "new question", generation=1)
     system = bundle_after.build_system()
-    assert "【当前对话·压缩�? in system
-    assert "用户连续两轮寒暄�? in system
+    assert "\u3010\u5f53\u524d\u4f1a\u8bdd\u00b7\u5de5\u4f5c\u8bb0\u5fc6\u3011" in system
+    assert "two turns of small talk" in system
+    assert bundle_after.injected.status.dialogue_compressed == ""
 
 
 def test_async_compose_does_not_wait_for_pending_distill():
@@ -94,7 +99,7 @@ def test_async_compose_does_not_wait_for_pending_distill():
     def slow_distill(batch, prior):
         started.set()
         release.wait(timeout=1.0)
-        return "异步压缩完成�?
+        return "async done"
 
     distiller = SpeakContextDistiller(
         chunk_size=2,
@@ -112,7 +117,7 @@ def test_async_compose_does_not_wait_for_pending_distill():
     deadline = time.time() + 1.0
     while time.time() < deadline:
         block = distiller.prompt_block("tao")
-        if "异步压缩完成" in block:
+        if "async done" in block:
             break
         time.sleep(0.01)
-    assert "异步压缩完成" in block
+    assert "async done" in block

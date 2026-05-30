@@ -1085,6 +1085,8 @@ export function appendSpeakStream(opts = {}) {
   let _lastBubble = null;
   let _openBubble = null;
   let _simAnimToken = 0;
+  let _simAnimPromise = null;
+  let _deferredStates = [];
 
   function _splitSimChunks(text) {
     const chunks = [];
@@ -1109,22 +1111,47 @@ export function appendSpeakStream(opts = {}) {
     setTitleBarTyping(false);
   }
 
+  function _flushDeferredStates() {
+    if (!_deferredStates.length) return;
+    const pending = _deferredStates;
+    _deferredStates = [];
+    for (const item of pending) {
+      _addTagPill('state', item.text, item.meta);
+    }
+  }
+
   async function _animateSimulatedSpeak(fullText) {
     const text = String(fullText ?? '').trim();
-    if (!text) return;
+    if (!text) {
+      _flushDeferredStates();
+      return;
+    }
     _hideTypingIndicator();
     const token = ++_simAnimToken;
     const bubble = _ensureOpenBubble('speak');
     bubble.classList.add('sim-typing-cursor');
-    for (const chunk of _splitSimChunks(text)) {
-      if (token !== _simAnimToken) return;
-      bubble.textContent += chunk;
-      scrollBottom();
-      await new Promise(r => setTimeout(r, 36 + Math.min(chunk.length * 22, 320)));
-    }
-    if (token !== _simAnimToken) return;
-    bubble.classList.remove('sim-typing-cursor', 'streaming');
-    _finalizeOpenBubble('speak');
+    const run = async () => {
+      try {
+        for (const chunk of _splitSimChunks(text)) {
+          if (token !== _simAnimToken) return;
+          bubble.textContent += chunk;
+          scrollBottom();
+          await new Promise(r => setTimeout(r, 36 + Math.min(chunk.length * 22, 320)));
+        }
+        if (token !== _simAnimToken) return;
+        _finalizeOpenBubble('speak');
+        _flushDeferredStates();
+      } finally {
+        bubble.classList.remove('sim-typing-cursor');
+        if (token === _simAnimToken) {
+          bubble.classList.remove('streaming');
+        }
+      }
+    };
+    const p = run();
+    _simAnimPromise = p;
+    await p;
+    if (_simAnimPromise === p) _simAnimPromise = null;
   }
 
   function _clearChunkPill() {
@@ -1175,7 +1202,7 @@ export function appendSpeakStream(opts = {}) {
     const chunk = String(text ?? '');
 
     if (simulated && kind === 'speak' && phase === 'simulated') {
-      _animateSimulatedSpeak(chunk);
+      _simAnimPromise = _animateSimulatedSpeak(chunk);
       return;
     }
 
@@ -1343,7 +1370,11 @@ export function appendSpeakStream(opts = {}) {
           _handleStreamChunk('action', text, meta);
           break;
         case 'state':
-          _addTagPill('state', text, meta);
+          if (simulated) {
+            _deferredStates.push({ text, meta });
+          } else {
+            _addTagPill('state', text, meta);
+          }
           break;
         case 'observe':
           _addTagPill('observe', text, meta);
@@ -1364,24 +1395,34 @@ export function appendSpeakStream(opts = {}) {
           break;
       }
     },
-    finalize(answer, aborted = false) {
+    async finalize(answer, aborted = false) {
       _hideTypingIndicator();
+      if (_simAnimPromise) {
+        await _simAnimPromise;
+      }
       _simAnimToken += 1;
+      _simAnimPromise = null;
       _clearChunkPill();
-      if (_openBubble) _finalizeOpenBubble(_openBubble.dataset.kind);
-      if (_lastBubble) _lastBubble.classList.remove('streaming');
+      if (_openBubble) {
+        _openBubble.classList.remove('sim-typing-cursor', 'streaming');
+        _finalizeOpenBubble(_openBubble.dataset.kind);
+      }
+      if (_lastBubble) _lastBubble.classList.remove('streaming', 'sim-typing-cursor');
 
       const finalText = (_speakParts.join('') || String(answer ?? '')).trim();
       if (!_speakParts.length && finalText && !aborted) {
         if (simulated) {
-          _animateSimulatedSpeak(finalText);
+          await _animateSimulatedSpeak(finalText);
         } else {
           _appendChunkBubble('speak', finalText);
           if (_lastBubble) _lastBubble.classList.remove('streaming');
         }
+      } else {
+        _flushDeferredStates();
       }
 
       if (aborted) {
+        _deferredStates = [];
         const note = document.createElement('div');
         note.className = 'speak-abort-note';
         note.textContent = '⊘ aborted';
@@ -1395,6 +1436,8 @@ export function appendSpeakStream(opts = {}) {
     discardAgentTurn() {
       _hideTypingIndicator();
       _simAnimToken += 1;
+      _simAnimPromise = null;
+      _deferredStates = [];
       div.remove();
       _clearChunkPill();
       _openBubble = null;

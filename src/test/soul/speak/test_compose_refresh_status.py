@@ -22,7 +22,7 @@ class _Persona:
         return {}
 
 
-def test_refresh_status_for_turn_reads_distilled():
+def test_refresh_status_for_turn_keeps_presence_only():
     distiller = SpeakContextDistiller(chunk_size=4)
     state = distiller._session("s1")
     with state.lock:
@@ -35,8 +35,7 @@ def test_refresh_status_for_turn_reads_distilled():
     )
     refreshed = composer.refresh_status_for_turn(
         "s1",
-        SpeakStatusInjected(similar_memories="【可能相关的记忆】\n- old"),
+        SpeakStatusInjected(similar_memories="【涌现记忆·长期】\n- old"),
     )
-    assert "荧与莉奈娅谈到船与探险队" in refreshed.dialogue_compressed
-    assert "【当前对话·压缩】" in refreshed.dialogue_compressed
-    assert refreshed.similar_memories.startswith("【可能相关的记忆】")
+    assert refreshed.dialogue_compressed == ""
+    assert refreshed.similar_memories.startswith("【涌现记忆·长期】")

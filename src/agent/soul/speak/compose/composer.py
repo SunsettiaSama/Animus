@@ -71,15 +71,11 @@ class SpeakPromptComposer:
         drive_eval = self._share.evaluate_drive(presence_snap, session_id=session_id)
         style = reply_style or SpeakReplyStyle()
 
-        dialogue_compressed = ""
-        if self._context is not None:
-            dialogue_compressed = self._context.prompt_block(session_id)
-
         injected = collect_injected(
             persona_snap=persona_snap,
             presence_snap=presence_snap,
             user_text="",
-            dialogue_compressed=dialogue_compressed,
+            dialogue_compressed="",
             max_profile_chars=self._max_profile_chars,
             max_concept_chars=self._max_concept_chars,
             max_presence_chars=self._max_presence_chars,
@@ -108,18 +104,25 @@ class SpeakPromptComposer:
         session_id: str,
         status: SpeakStatusInjected,
     ) -> SpeakStatusInjected:
-        """预组装 status 可能过时：compose 前刷新 presence 与蒸馏摘要。"""
-        dialogue_compressed = ""
-        if self._context is not None:
-            dialogue_compressed = self._context.prompt_block(session_id)
+        """预组装 status 可能过时：compose 前刷新 presence。"""
         presence_snap = self._presence.snapshot(session_id)
         presence = render_presence(presence_snap.state, max_chars=self._max_presence_chars)
         return SpeakStatusInjected(
             presence=presence.strip() or status.presence,
-            dialogue_compressed=dialogue_compressed.strip() or status.dialogue_compressed,
+            dialogue_compressed=status.dialogue_compressed,
             interactor_portrait=status.interactor_portrait,
             similar_memories=status.similar_memories,
         )
+
+    def _session_working_memory(
+        self,
+        session_id: str,
+        *,
+        generation: int,
+    ) -> str:
+        if self._context is None or not session_id.strip():
+            return ""
+        return self._context.working_memory_block(session_id, generation=generation)
 
     def finalize(
         self,
@@ -148,6 +151,10 @@ class SpeakPromptComposer:
             reply_style=frame.reply_style,
             notes=list(frame.notes),
             meta={"compose_source": "prefetch"},
+            session_working_memory=self._session_working_memory(
+                sid,
+                generation=frame.generation,
+            ),
         )
 
     def compose(
@@ -157,8 +164,9 @@ class SpeakPromptComposer:
         *,
         mode: SpeakTurnMode = "inbound",
         reply_style: SpeakReplyStyle | None = None,
+        generation: int = 0,
     ) -> SpeakPromptBundle:
-        frame = self.prepare(session_id, mode=mode, reply_style=reply_style)
+        frame = self.prepare(session_id, mode=mode, reply_style=reply_style, generation=generation)
         bundle = self.finalize(frame, user_text, session_id=session_id)
         bundle.meta["compose_source"] = "sync"
         return bundle

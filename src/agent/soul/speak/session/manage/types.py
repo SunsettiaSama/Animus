@@ -63,3 +63,49 @@ class SilenceBreakTurnSpec:
 
     def user_text(self) -> str:
         return f"（系统：用户已静默约 {int(self.elapsed_sec)} 秒，无新消息。）"
+
+
+@dataclass(frozen=True)
+class EnterGreetingProbe:
+    session_id: str
+    elapsed_sec: float
+    turn_index: int
+    dialogue_compressed: str = ""
+
+
+@dataclass
+class EnterGreetingDecision:
+    should_greet: bool = False
+    thought: str = ""
+    angle: str = ""
+    raw: str = ""
+
+
+@dataclass(frozen=True)
+class EnterGreetingTurnSpec:
+    session_id: str
+    elapsed_sec: float
+    angle: str
+    thought: str
+    dialogue_compressed: str = ""
+
+    @property
+    def system_block(self) -> str:
+        angle = self.angle.strip()
+        angle_line = f"话头方向参考：{angle}" if angle else ""
+        lines = [
+            "【进入会话·主动话头】",
+            f"用户进入对话窗口已约 {int(self.elapsed_sec)} 秒，尚未发言。",
+            "在 think 里简短揣摩：是否适合你用一句极短、自然的话头先开口？",
+            "约束：最多一句 speak，勿连发、勿说教；若无合适开口，[state]finish 且不写 speak。",
+        ]
+        if angle_line:
+            lines.append(angle_line)
+        if self.dialogue_compressed.strip():
+            lines.append(
+                "近期对话摘要（供揣摩）：\n" + self.dialogue_compressed.strip()
+            )
+        return "\n".join(lines)
+
+    def user_text(self) -> str:
+        return f"（系统：用户进入会话已约 {int(self.elapsed_sec)} 秒，尚未发言。）"

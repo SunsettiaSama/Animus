@@ -8,7 +8,11 @@ from agent.soul.memory.io.session import DialogueCompressionBlock
 from agent.soul.speak.llm.engine import SpeakLLMEngine
 
 from .chunk_types import DialogueContextChunk
-from .render import normalize_one_sentence, render_dialogue_compressed
+from .render import (
+    normalize_one_sentence,
+    render_dialogue_compressed,
+    render_session_working_memory,
+)
 
 DistillFn = Callable[[list[tuple[str, str]], list[str]], str]
 
@@ -106,12 +110,28 @@ class SpeakContextDistiller:
             self._submit(lambda sid=session_id: self._pump_session(sid))
 
     def prompt_block(self, session_id: str) -> str:
-        """非阻塞：仅返回已完成蒸馏的单句摘要。"""
+        """非阻塞：仅返回已完成蒸馏的单句摘要（内部 probe，无 prompt 头）。"""
         state = self._sessions.get(session_id)
         if state is None:
             return ""
         with state.lock:
             return render_dialogue_compressed(list(state.distilled))
+
+    def working_memory_block(self, session_id: str, *, generation: int) -> str:
+        """非阻塞：当前 generation 工作记忆（蒸馏 + buffer verbatim）。"""
+        state = self._sessions.get(session_id)
+        if state is None:
+            return ""
+        with state.lock:
+            distilled = list(state.distilled)
+            recent_turns = [
+                (chunk.user_text, chunk.agent_text) for chunk in state.buffer
+            ]
+        return render_session_working_memory(
+            generation=generation,
+            distilled=distilled,
+            recent_turns=recent_turns,
+        )
 
     def snapshot(self, session_id: str) -> dict[str, object]:
         state = self._sessions.get(session_id)

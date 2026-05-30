@@ -5,9 +5,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..lifecycle.hold.registry import SpeakSessionRegistry
+from .enter_greeting import EnterGreetingHandler, EnterGreetingManager
 from .initiative import TurnInitiativeManager
 from .silence_break import SilenceBreakHandler, SilenceBreakManager
-from .types import InitiativeHint, SilenceBreakTurnSpec
+from .types import EnterGreetingTurnSpec, InitiativeHint, SilenceBreakTurnSpec
 
 if TYPE_CHECKING:
     from ...compose.bundle import SpeakPromptBundle
@@ -15,25 +16,24 @@ if TYPE_CHECKING:
 
 @dataclass
 class SessionSocialManager:
-    """会话弱社交：轮内可选主动 + 长静默打破。
-
-    NOTE: 当前仍以被动应答为主（用户发消息后才 compose）；initiative / silence_break
-    只是 prompt 侧的弱提示或补位开口。后续需演进为 agent 引导型主动提问（话题发起、
-    节奏主导），而非仅在应答末尾加一句或等静默超时。
-    """
+    """会话弱社交：轮内可选主动 + 长静默打破 + 进入会话话头。"""
 
     registry: SpeakSessionRegistry
     initiative: TurnInitiativeManager = field(default_factory=TurnInitiativeManager)
     silence: SilenceBreakManager | None = None
+    enter_greeting: EnterGreetingManager | None = None
     _dialogue_supplier: Callable[[str], str] | None = None
 
     def __post_init__(self) -> None:
         if self.silence is None:
             self.silence = SilenceBreakManager(registry=self.registry)
+        if self.enter_greeting is None:
+            self.enter_greeting = EnterGreetingManager(registry=self.registry)
 
     def bind_dialogue_supplier(self, supplier: Callable[[str], str] | None) -> None:
         self._dialogue_supplier = supplier
         self.silence.dialogue_supplier = supplier
+        self.enter_greeting.dialogue_supplier = supplier
 
     def bind_activity(
         self,
@@ -43,19 +43,28 @@ class SessionSocialManager:
     ) -> None:
         self.silence.is_active = is_active
         self.silence.is_pushing = is_pushing
+        self.enter_greeting.is_pushing = is_pushing
 
     def set_silence_break_handler(self, handler: SilenceBreakHandler | None) -> None:
         self.silence.set_break_handler(handler)
 
+    def set_enter_greeting_handler(self, handler: EnterGreetingHandler | None) -> None:
+        self.enter_greeting.set_greeting_handler(handler)
+
     def arm_silence_break(self, spec: SilenceBreakTurnSpec) -> None:
         self.silence.arm_turn(spec)
+
+    def arm_enter_greeting(self, spec: EnterGreetingTurnSpec) -> None:
+        self.enter_greeting.arm_turn(spec)
 
     def clear_session(self, session_id: str) -> None:
         self.initiative.clear_session(session_id)
         self.silence.clear_session(session_id)
+        self.enter_greeting.clear_session(session_id)
 
     def on_user_message(self, session_id: str) -> None:
         self.silence.on_user_message(session_id)
+        self.enter_greeting.on_user_message(session_id)
 
     def evaluate_initiative(
         self,
@@ -81,6 +90,16 @@ class SessionSocialManager:
         user_text: str,
         mode: str = "inbound",
     ) -> None:
+        armed_greeting = self.enter_greeting.pop_armed_turn(session_id)
+        if armed_greeting is not None:
+            bundle.social_blocks.append(armed_greeting.system_block)
+            bundle.notes.append(
+                f"enter_greeting: armed elapsed={int(armed_greeting.elapsed_sec)}s"
+            )
+            bundle.meta["enter_greeting"] = True
+            bundle.meta["enter_greeting_user"] = armed_greeting.user_text()
+            return
+
         armed = self.silence.pop_armed_turn(session_id)
         if armed is not None:
             bundle.social_blocks.append(armed.system_block)

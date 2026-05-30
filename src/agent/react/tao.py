@@ -232,7 +232,7 @@ class TaoLoop:
         )
 
         if self._life is not None and self._soul_memory is not None:
-            self._life.set_memory_port(self._soul_memory)
+            self._life.set_memory_port(self._soul_memory.life_port)
 
         effective_descriptions = dict(tool_descriptions)
         if self._soul is not None:
@@ -1048,7 +1048,7 @@ class TaoLoop:
         """清空 self_concept、体验 buffer 与 Presence.affect（管理操作，非漂移）。"""
         if self._soul is not None:
             self._soul.persona.service.reset_self_concept()
-            self._soul.presence_svc.reset_affect()
+            self._soul.reset_presence_affect()
             return
         if self._persona is None:
             raise RuntimeError("Persona not enabled.")

@@ -80,19 +80,13 @@ def _serialize_turn_result(result) -> dict[str, Any]:
 
 
 def _submit_user_message(soul, session_id: str, text: str) -> dict[str, Any]:
-    service = soul._ensure_speak_service()
-    submit = service._session_manager.submit_user_input(
+    return soul.speak_submit_user_input(
         session_id,
         text,
         stream=True,
         mode="inbound",
         record=True,
     )
-    return {
-        "queued": bool(submit.queued),
-        "interrupt": bool(submit.interrupt),
-        "notes": list(submit.notes),
-    }
 
 
 @router.get("/api/speak/status")
@@ -101,12 +95,10 @@ def get_speak_status():
     if soul is None:
         return {"status": "unavailable", "ready": False, "reason": "Soul 未初始化"}
     running = soul.is_running
-    speak = None
-    if running:
-        speak = soul._ensure_speak_service()
+    speak_ready = running and soul.speak_initialized
     return {
-        "status": "ready" if running and speak is not None else "idle",
-        "ready": running and speak is not None,
+        "status": "ready" if speak_ready else "idle",
+        "ready": speak_ready,
         "soul_state": soul.state,
         "session_id": "",
     }
@@ -167,12 +159,11 @@ def get_speak_session_debug(session_id: str):
     if soul is None or not soul.is_running:
         payload["reason"] = "Soul 未运行，暂无 session 缓存（可先 start Soul 再发消息）"
         return payload
-    speak = soul._ensure_speak_service()
-    if speak is None:
+    if not soul.speak_initialized:
         payload["reason"] = "Speak 未就绪"
         return payload
     payload["soul_ready"] = True
-    payload["cache"] = speak.session_trace_cache(sid)
+    payload["cache"] = soul.speak_session_trace_cache(sid)
     return payload
 
 
@@ -184,13 +175,11 @@ def reset_speak_session(body: SpeakResetRequest | None = None):
     if body is None or not body.session_id.strip():
         return {"ok": False, "error": "missing session_id"}
     session_id = body.session_id.strip()
-    closed = soul.close_dialogue_interaction(session_id)
-    opened = soul.start_dialogue_session(session_id)
+    ended = soul.finalize_speak_session(session_id)
     return {
         "ok": True,
         "session_id": session_id,
-        "closed": closed,
-        "opened": opened,
+        "ended": ended,
     }
 
 
@@ -282,6 +271,8 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
             "session_id": session_id,
             "delivery_mode": delivery_mode,
         })
+        soul.seed_session_warm_spread(session_id)
+        soul.arm_enter_greeting(session_id)
 
         while True:
             msg = await inbound_q.get()
@@ -317,7 +308,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                 await websocket.send_json({"type": "error", "message": "empty question"})
                 continue
 
-            if soul._ensure_speak_service().session_manager.is_pushing(session_id):
+            if soul.speak_is_pushing(session_id):
                 ack = await asyncio.to_thread(
                     _submit_user_message,
                     soul,
@@ -338,8 +329,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
 
             def _run_turn() -> None:
                 try:
-                    service = soul._ensure_speak_service()
-                    result = service.run_turn(
+                    result = soul.speak_run_turn(
                         session_id,
                         question,
                         stream=True,
@@ -404,6 +394,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
         except (asyncio.CancelledError, Exception):
             pass
         soul.bind_speak_stream_port(None)
+        soul.cancel_enter_greeting(session_id)
         port.close()
         state.set_streaming(False)
         if not state.shutting_down:

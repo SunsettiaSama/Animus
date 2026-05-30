@@ -106,7 +106,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         context_distiller: SpeakContextDistiller | None = None,
         context_distill_chunk_size: int = 4,
         memory_turn_gap: int = 3,
-        compose_memory_wait_ms: int = 100,
+        keyword_wait_ms: int = 200,
+        memory_budget: int = 5,
+        portrait_wait_ms: int = 100,
     ) -> None:
         self._presence = presence
         self._persona = persona
@@ -170,7 +172,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             share_threshold=share_threshold,
             presence=presence,
             on_compose_prepare=self._on_compose_prepare_request,
-            compose_memory_wait_ms=compose_memory_wait_ms,
+            keyword_wait_ms=keyword_wait_ms,
+            memory_budget=memory_budget,
+            portrait_wait_ms=portrait_wait_ms,
         )
         stream_hub = SpeakOutboundStreamHub(
             flush_mode=flush_mode,
@@ -225,7 +229,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def _bind_session_social(self) -> None:
         social = self._session_manager.social
         social.bind_dialogue_supplier(
-            lambda sid: self._context.prompt_block(sid) if self._context is not None else "",
+            lambda sid: self.session_working_memory_block(sid),
         )
         social.bind_activity(
             is_active=self._session_manager.has_active_dialogue,
@@ -233,6 +237,8 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         )
         social.silence.set_llm(self._llm)
         social.set_silence_break_handler(self._execute_silence_break)
+        social.enter_greeting.set_llm(self._llm)
+        social.set_enter_greeting_handler(self._execute_enter_greeting)
 
     def _apply_social_compose(
         self,
@@ -251,6 +257,42 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             mode=mode,
         )
         return bundle
+
+    def _execute_enter_greeting(self, spec) -> None:
+        from .session.manage.types import EnterGreetingTurnSpec
+
+        assert isinstance(spec, EnterGreetingTurnSpec)
+        session_id = spec.session_id.strip()
+        if not session_id:
+            return
+        if self._session_manager.is_pushing(session_id):
+            return
+        if self._session_manager.user_queue.has_pending(session_id):
+            return
+        self._session_manager.social.arm_enter_greeting(spec)
+        stream = self._outbound_stream.port is not None
+        self.run_turn(
+            session_id,
+            spec.user_text(),
+            stream=stream,
+            mode="proactive",
+            record=True,
+        )
+
+    def arm_enter_greeting(self, session_id: str) -> None:
+        self._session_manager.social.enter_greeting.arm_session(session_id.strip())
+
+    def cancel_enter_greeting(self, session_id: str) -> None:
+        self._session_manager.social.enter_greeting.cancel_session(session_id.strip())
+
+    def seed_warm_spread(self, session_id: str, *, lines: list[str], unit_ids: list[str]) -> None:
+        if not unit_ids:
+            return
+        self._session_manager.set_warm_spread(
+            session_id,
+            lines=list(lines),
+            unit_ids=list(unit_ids),
+        )
 
     def _execute_silence_break(self, spec: SilenceBreakTurnSpec) -> None:
         session_id = spec.session_id.strip()
@@ -292,10 +334,12 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._compose_runner.start()
         self._queue_decision_runner.start()
         self._session_manager.social.silence.start_worker()
+        self._session_manager.social.enter_greeting.start_worker()
         self._schedule_compose_prepare("tao")
 
     def stop(self) -> None:
         self._session_manager.social.silence.stop_worker()
+        self._session_manager.social.enter_greeting.stop_worker()
         self._queue_decision_runner.stop()
         self._compose_runner.stop()
 
@@ -394,6 +438,23 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._session_manager.clear_compose(session_id)
         if self._context is not None:
             self._context.reset_session(session_id)
+        if self._presence is not None:
+            self._presence.apply_dialogue_session_boundary(session_id)
+
+    def session_working_memory_block(
+        self,
+        session_id: str,
+        *,
+        generation: int | None = None,
+    ) -> str:
+        if self._context is None:
+            return ""
+        record = self.session_registry.get(session_id)
+        gen = record.generation if generation is None else generation
+        return self._context.working_memory_block(session_id, generation=gen)
+
+    def attach_memory_keyword_query(self, keyword_query_fn) -> None:
+        self._io.inbound.attach_memory_ports(keyword_query_fn=keyword_query_fn)
 
     def attach_memory_recall(self, recall_fn) -> None:
         self._io.inbound.attach_memory_ports(recall_fn=recall_fn)
@@ -547,17 +608,11 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             from .compose.share import ShareComposeState
             from .compose.system import build_system_prompt
 
-            dialogue_compressed = ""
-            if self._context is not None:
-                dialogue_compressed = self._context.prompt_block(session_id)
-
             presence_snap = self._presence.snapshot(session_id) if self._presence is not None else None
             status = self._inbound_compose.collect_status(
                 presence_snap,
-                dialogue_compressed=dialogue_compressed,
-            ) if presence_snap is not None else SpeakStatusInjected(
-                dialogue_compressed=dialogue_compressed,
-            )
+                dialogue_compressed="",
+            ) if presence_snap is not None else SpeakStatusInjected()
 
             empty_share = ShareComposeState(
                 wants_share=False,
@@ -586,6 +641,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                     output_format=self._reply_style.render_prompt(),
                 ),
                 reply_style=self._reply_style,
+                session_working_memory=self.session_working_memory_block(session_id),
             )
             self._memory_compose.apply_compose_context(
                 bundle,
@@ -638,6 +694,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             user_text,
             mode=mode,
             reply_style=self._reply_style,
+            generation=self.session_registry.get(session_id).generation,
         )
         bundle.meta["compose_source"] = "sync_fallback"
         self._memory_compose.apply_compose_context(

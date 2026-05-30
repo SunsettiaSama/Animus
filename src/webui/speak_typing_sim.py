@@ -55,6 +55,7 @@ class SimulatedTypingStreamPort:
     _in_speak: bool = False
     _pending: list[_SpeakBlock] = field(default_factory=list)
     _held_finish: SpeakStreamEvent | None = None
+    _held_state: SpeakStreamEvent | None = None
     _typing_active: bool = False
 
     def emit(self, session_id: str, event: SpeakStreamEvent) -> None:
@@ -121,6 +122,10 @@ class SimulatedTypingStreamPort:
             self._held_finish = event
             return
 
+        if kind == "state":
+            self._held_state = event
+            return
+
         if kind == "action":
             self.inner.emit(session_id, event)
             return
@@ -158,6 +163,11 @@ class SimulatedTypingStreamPort:
             )
         self._pending.clear()
         self._set_typing(session_id, False)
+
+        if self._held_state is not None:
+            state = self._held_state
+            self._held_state = None
+            self.inner.emit(session_id, state)
 
         if self._held_finish is not None:
             finish = self._held_finish

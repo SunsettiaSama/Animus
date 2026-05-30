@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-import types
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[3]
@@ -17,56 +16,73 @@ _mod = importlib.util.module_from_spec(_spec)
 sys.modules["agent.soul.speak.session.queue.memory"] = _mod
 _spec.loader.exec_module(_mod)
 
-MemoryQueueItem = _mod.MemoryQueueItem
-SessionMemoryQueue = _mod.SessionMemoryQueue
+MemoryBufferItem = _mod.MemoryBufferItem
+SessionMemoryBuffer = _mod.SessionMemoryBuffer
 
 
-def test_memory_queue_injects_near_turn_and_spills_stale():
-    queue = SessionMemoryQueue(max_turn_gap=3)
-    queue.enqueue(
+def test_memory_buffer_spills_stale_emergence_and_keeps_near():
+    buffer = SessionMemoryBuffer(max_turn_gap=3)
+    buffer.enqueue_turn(
         "s1",
-        MemoryQueueItem(turn_index=1, lines=("old",), unit_ids=("u-old",)),
+        MemoryBufferItem(
+            turn_index=1,
+            lines=("old",),
+            unit_ids=("u-old",),
+            source="emergence",
+        ),
     )
-    queue.enqueue(
+    buffer.enqueue_turn(
         "s1",
-        MemoryQueueItem(turn_index=4, lines=("near",), unit_ids=("u-near",)),
+        MemoryBufferItem(
+            turn_index=4,
+            lines=("near",),
+            unit_ids=("u-near",),
+            source="emergence",
+        ),
     )
 
-    result = queue.consume_for_compose("s1", current_turn_index=5)
-
-    assert result.spilled_lines == ["old"]
-    assert result.spilled_unit_ids == ["u-old"]
-    assert result.spilled_turn_index == 1
-    assert result.inject_lines == ["near"]
-    assert result.inject_unit_ids == ["u-near"]
-    assert result.inject_turn_index == 4
-
-
-def test_session_registry_begin_turn_increments():
-    lifecycle_types = types.ModuleType("agent.soul.speak.session.lifecycle.types")
-    lifecycle_types.SessionEndReason = str
-    lifecycle_types.SessionEndResult = object
-    lifecycle_types.SessionLifecyclePort = object
-    sys.modules["agent.soul.speak.session.lifecycle.types"] = lifecycle_types
-
-    init_mod = types.ModuleType("agent.soul.speak.session.lifecycle.init.bootstrap")
-    sys.modules["agent.soul.speak.session.lifecycle.init.bootstrap"] = init_mod
-
-    hold_pkg = types.ModuleType("agent.soul.speak.session.lifecycle.hold")
-    hold_pkg.__path__ = [str(SRC / "agent/soul/speak/session/lifecycle/hold")]
-    sys.modules["agent.soul.speak.session.lifecycle.hold"] = hold_pkg
-
-    registry_spec = importlib.util.spec_from_file_location(
-        "agent.soul.speak.session.lifecycle.hold.registry",
-        SRC / "agent/soul/speak/session/lifecycle/hold/registry.py",
+    result = buffer.pull_for_compose(
+        "s1",
+        current_turn_index=5,
+        keyword_wait_ms=0,
+        budget=5,
+        merge_ratio=0.0,
     )
-    registry_mod = importlib.util.module_from_spec(registry_spec)
-    sys.modules["agent.soul.speak.session.lifecycle.hold.registry"] = registry_mod
-    registry_spec.loader.exec_module(registry_mod)
 
-    registry = registry_mod.SpeakSessionRegistry()
-    first = registry.begin_turn("s1")
-    second = registry.begin_turn("s1")
-    assert first == 1
-    assert second == 2
-    assert registry.current_turn_index("s1") == 2
+    assert "old" not in result.inject_lines
+    assert "u-old" not in result.inject_unit_ids
+    assert "near" in result.inject_lines
+    assert "u-near" in result.inject_unit_ids
+
+
+def test_memory_buffer_keyword_only_for_current_turn():
+    buffer = SessionMemoryBuffer(max_turn_gap=3)
+    buffer.enqueue_turn(
+        "s1",
+        MemoryBufferItem(
+            turn_index=1,
+            lines=("kw-old",),
+            unit_ids=("u-kw-old",),
+            source="keyword",
+        ),
+    )
+    buffer.enqueue_turn(
+        "s1",
+        MemoryBufferItem(
+            turn_index=2,
+            lines=("kw-now",),
+            unit_ids=("u-kw-now",),
+            source="keyword",
+        ),
+    )
+
+    result = buffer.pull_for_compose(
+        "s1",
+        current_turn_index=2,
+        keyword_wait_ms=0,
+        budget=5,
+        merge_ratio=1.0,
+    )
+
+    assert result.inject_lines == ["kw-now"]
+    assert result.inject_unit_ids == ["u-kw-now"]

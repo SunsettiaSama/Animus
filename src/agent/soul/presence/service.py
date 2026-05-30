@@ -297,6 +297,15 @@ class PresenceService:
         session.state.cognition.working_memory = text
         self._persist(session_id)
 
+    def apply_dialogue_session_boundary(self, session_id: str) -> list[str]:
+        from .transition.static.lifecycle import apply_dialogue_session_boundary
+
+        session = self._session(session_id)
+        notes = apply_dialogue_session_boundary(session.state)
+        self._persist(session_id)
+        self._notify_status_update(self.snapshot(session_id))
+        return notes
+
     def trigger(self, trigger: PresenceTrigger) -> GatewayResult:
         return self.gateway.trigger(trigger)
 

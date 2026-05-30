@@ -21,13 +21,17 @@ def build_dialogue_experience(
     *,
     block_count: int = 0,
 ) -> DialogueExperience:
-    perception = normalize_narrative(state.perception.narrative)
     narration = compose_narrative(
         normalize_narrative(state.cognition.thinking),
         normalize_narrative(state.affect.narrative),
     )
     if not narration:
         narration = "与用户进行了对话。"
+
+    if block_count > 0:
+        perception = f"与用户完成一段对话（约 {block_count} 轮）。"
+    else:
+        perception = "与用户进行了对话。"
 
     emotion = normalize_narrative(state.affect.narrative)
     emotion_label = emotion if emotion and len(emotion) <= 24 else ""

@@ -26,6 +26,7 @@ from .queue import (
     UserInputItem,
 )
 from .manage import SessionSocialManager
+from .queue.memory import MemoryBufferItem, MemoryBufferSource
 
 if TYPE_CHECKING:
     from agent.soul.presence.service import PresenceService
@@ -260,31 +261,71 @@ class SpeakSessionService:
         turn_index: int,
         lines: list[str],
         unit_ids: list[str],
-        associative_ready: bool = False,
+        source: MemoryBufferSource = "emergence",
+        ready: bool = True,
     ) -> None:
-        from .queue.memory import MemoryQueueItem
-
         self._queues.enqueue_memory(
             session_id,
-            MemoryQueueItem(
+            MemoryBufferItem(
                 turn_index=turn_index,
                 lines=tuple(lines),
                 unit_ids=tuple(unit_ids),
-                associative_ready=associative_ready,
+                source=source,
+                ready=ready,
             ),
         )
 
-    def consume_memory_for_compose(self, session_id: str, turn_index: int):
-        return self._queues.consume_memory_for_compose(session_id, turn_index)
+    def set_social_prefetch(
+        self,
+        session_id: str,
+        *,
+        lines: list[str],
+        unit_ids: list[str],
+        interactor_id: str = "",
+    ) -> None:
+        self._queues.set_social_prefetch(
+            session_id,
+            MemoryBufferItem(
+                turn_index=0,
+                lines=tuple(lines),
+                unit_ids=tuple(unit_ids),
+                source="social_prefetch",
+            ),
+        )
+
+    def set_warm_spread(
+        self,
+        session_id: str,
+        *,
+        lines: list[str],
+        unit_ids: list[str],
+    ) -> None:
+        self._queues.set_warm_spread(
+            session_id,
+            MemoryBufferItem(
+                turn_index=0,
+                lines=tuple(lines),
+                unit_ids=tuple(unit_ids),
+                source="warm_spread",
+            ),
+        )
 
     def pull_memory_for_compose(
         self,
         session_id: str,
         turn_index: int,
         *,
-        wait_ms: int = 0,
+        keyword_wait_ms: int = 200,
+        budget: int = 5,
+        merge_ratio: float | None = None,
     ):
-        return self._queues.pull_memory_for_compose(session_id, turn_index, wait_ms=wait_ms)
+        return self._queues.pull_memory_for_compose(
+            session_id,
+            turn_index,
+            keyword_wait_ms=keyword_wait_ms,
+            budget=budget,
+            merge_ratio=merge_ratio,
+        )
 
     def pull_portrait_for_compose(
         self,

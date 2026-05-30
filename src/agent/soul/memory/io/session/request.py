@@ -62,3 +62,23 @@ class StaticPortraitInbound:
     interactor_id: str
     session_id: str = ""
     turn_index: int = 0
+
+
+@dataclass(frozen=True)
+class InteractorPrefetchInbound:
+    """Speak → Memory：interactor 绑定后 Social 网预取。"""
+
+    session_id: str
+    interactor_id: str
+    turn_index: int = 0
+
+
+@dataclass(frozen=True)
+class KeywordQueryInbound:
+    """Speak → Memory：当前轮粗粒度关键字检索。"""
+
+    session_id: str
+    turn_index: int
+    user_text: str
+    interactor_id: str = ""
+    agent_text: str = ""

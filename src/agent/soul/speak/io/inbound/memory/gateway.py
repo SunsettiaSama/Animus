@@ -5,26 +5,31 @@ from collections.abc import Callable
 from .request import (
     InteractorPortraitPullResult,
     InteractorPortraitRequest,
+    KeywordQueryRequest,
     PointQueryRequest,
     RecallRequest,
     RecallResult,
     SimilarMemoryPullResult,
 )
 
+PullSimilarFn = Callable[..., SimilarMemoryPullResult]
+
 
 class InboundMemoryGateway:
-    """inbound → memory：recall（同步）与相似记忆点检索（异步 + 有限等待 pull）。"""
+    """inbound → memory：recall、涌现检索、关键字检索与 compose pull。"""
 
     def __init__(
         self,
         recall_fn: Callable[[RecallRequest], RecallResult] | None = None,
         point_query_fn: Callable[[PointQueryRequest], None] | None = None,
-        pull_similar_fn: Callable[[str, int, int], SimilarMemoryPullResult] | None = None,
+        keyword_query_fn: Callable[[KeywordQueryRequest], None] | None = None,
+        pull_similar_fn: PullSimilarFn | None = None,
         portrait_query_fn: Callable[[InteractorPortraitRequest], None] | None = None,
         pull_portrait_fn: Callable[[str, int, int], InteractorPortraitPullResult] | None = None,
     ) -> None:
         self._recall_fn = recall_fn
         self._point_query_fn = point_query_fn
+        self._keyword_query_fn = keyword_query_fn
         self._pull_similar_fn = pull_similar_fn
         self._portrait_query_fn = portrait_query_fn
         self._pull_portrait_fn = pull_portrait_fn
@@ -35,10 +40,13 @@ class InboundMemoryGateway:
     def attach_point_query(self, point_query_fn: Callable[[PointQueryRequest], None]) -> None:
         self._point_query_fn = point_query_fn
 
-    def attach_pull_similar(
+    def attach_keyword_query(
         self,
-        pull_similar_fn: Callable[[str, int, int], SimilarMemoryPullResult],
+        keyword_query_fn: Callable[[KeywordQueryRequest], None],
     ) -> None:
+        self._keyword_query_fn = keyword_query_fn
+
+    def attach_pull_similar(self, pull_similar_fn: PullSimilarFn) -> None:
         self._pull_similar_fn = pull_similar_fn
 
     def recall(self, request: RecallRequest) -> RecallResult:
@@ -51,16 +59,29 @@ class InboundMemoryGateway:
             return
         self._point_query_fn(request)
 
+    def request_keyword_query(self, request: KeywordQueryRequest) -> None:
+        if self._keyword_query_fn is None:
+            return
+        self._keyword_query_fn(request)
+
     def pull_similar_memories(
         self,
         session_id: str,
         turn_index: int,
         *,
-        wait_ms: int = 0,
+        keyword_wait_ms: int = 200,
+        budget: int = 5,
+        merge_ratio: float | None = None,
     ) -> SimilarMemoryPullResult:
         if self._pull_similar_fn is None:
             return SimilarMemoryPullResult()
-        return self._pull_similar_fn(session_id, turn_index, wait_ms)
+        return self._pull_similar_fn(
+            session_id,
+            turn_index,
+            keyword_wait_ms,
+            budget,
+            merge_ratio,
+        )
 
     def attach_portrait_query(
         self,

@@ -151,7 +151,7 @@ def merge_presence_bundles(bundles: list[PresenceExperienceBundle]) -> PresenceE
     for b in bundles:
         if b.narration and b.narration not in parts_narration:
             parts_narration.append(b.narration)
-        if b.perception and b.perception not in parts_perception:
+        if b.source != "interaction" and b.perception and b.perception not in parts_perception:
             parts_perception.append(b.perception)
         unit_ids.extend(b.unit_ids)
         if b.wants_to_share and b.share_topic:

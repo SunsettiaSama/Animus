@@ -62,7 +62,7 @@ function _speakSessionOpts(genId, streamCtrl) {
   };
 }
 
-function _finishTurn(streamCtrl, payload) {
+async function _finishTurn(streamCtrl, payload) {
   const aborted = Boolean(payload.aborted);
   if (payload.hide_agent || payload.silence_policy === 'hidden') {
     streamCtrl?.discardAgentTurn?.();
@@ -72,7 +72,7 @@ function _finishTurn(streamCtrl, payload) {
     return;
   }
   const answer = payload.answer ?? streamCtrl?.speakText ?? '';
-  streamCtrl?.finalize(answer, aborted);
+  await streamCtrl?.finalize(answer, aborted);
 
   if (!aborted && answer) {
     history.pushMessage({
@@ -335,7 +335,7 @@ export function rebuildFromHistory(messages) {
         m.speak_events.forEach(ev => {
           ctrl.onEvent(ev.kind, ev.text ?? '', ev.meta ?? {});
         });
-        ctrl.finalize(m.content, false);
+        void ctrl.finalize(m.content, false);
       } else {
         const ctrl = render.appendAssistantMsg();
         ctrl.append(m.content);

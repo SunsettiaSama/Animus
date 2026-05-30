@@ -206,17 +206,6 @@ class AppState:
         for q in list(self.plan_subscribers):
             q.put_nowait(event)
 
-    # ── Private helpers ───────────────────────────────────────────────────────
-
-
-async def _close_websocket(websocket: Any) -> None:
-    from starlette.websockets import WebSocketDisconnect
-
-    try:
-        await websocket.close(code=1001, reason="server shutdown")
-    except (WebSocketDisconnect, RuntimeError, Exception):
-        pass
-
     def _init_paths(self) -> None:
         from config import paths
         from config.storage import StorageConfig
@@ -270,7 +259,6 @@ async def _close_websocket(websocket: Any) -> None:
         self.service_registry.register("searxng", self.searxng_manager)
         self.service_registry.register("sandbox", self.sandbox_manager)
 
-        # Sandbox config
         if os.path.exists(self.sandbox_config_yaml):
             self.sandbox_manager._cfg = SandboxConfig.from_yaml(self.sandbox_config_yaml)
         else:
@@ -282,7 +270,6 @@ async def _close_websocket(websocket: Any) -> None:
         self.tool_manager = ToolManager()
         self.kb_cfg       = KnowledgeConfig()
 
-        # ── Bot service ───────────────────────────────────────────────────────
         from config.infra.bot_config import BotConfig
         from infra.network.bot.service import BotService
 
@@ -290,6 +277,15 @@ async def _close_websocket(websocket: Any) -> None:
         transport = _build_transport(bot_cfg)
         self.bot_service = BotService(transport, self, bot_cfg)
         self.service_registry.register("bot", self.bot_service)
+
+
+async def _close_websocket(websocket: Any) -> None:
+    from starlette.websockets import WebSocketDisconnect
+
+    try:
+        await websocket.close(code=1001, reason="server shutdown")
+    except (WebSocketDisconnect, RuntimeError, Exception):
+        pass
 
 
 # ── Transport factory ─────────────────────────────────────────────────────────

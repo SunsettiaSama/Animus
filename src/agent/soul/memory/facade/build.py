@@ -85,6 +85,7 @@ def build_memory_service(
         associative_sigma=cfg.associative_sigma,
         hybrid_w_relevance=cfg.hybrid_w_relevance,
         hybrid_w_activation=cfg.hybrid_w_activation,
+        speak_line_max_content=cfg.speak_memory_line_max_content,
         query_submit=query_dispatcher.submit,
     )
     svc_holder: list[MemoryService] = []
@@ -193,6 +194,7 @@ def build_memory_service(
         session_buffer=session_buffer,
         session_channel=session_channel,
         session_channels=session_channels,
+        llm=llm,
     )
     svc_holder.append(svc)
     spread.schedule_cluster_rebuild()

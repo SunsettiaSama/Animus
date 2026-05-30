@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from infra.llm import BaseLLM
 
@@ -42,3 +42,26 @@ class ListEmbeddingAdapter:
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return [self._backend.embed(text) for text in texts]
+
+
+class SpeakDialogueExperiencePort(Protocol):
+    """SpeakHandler 访问对话体验栈的窄接口。"""
+
+    def state(self, session_id: str) -> Any | None: ...
+
+    def working_memory_text(self, session_id: str) -> str: ...
+
+
+class SpeakExperiencePort(Protocol):
+    """SpeakHandler 经 L1 注入的体验栈端口（避免 Handler 依赖 SoulService）。"""
+
+    @property
+    def dialogue(self) -> SpeakDialogueExperiencePort: ...
+
+    def close_dialogue(self, session_id: str) -> Any | None: ...
+
+
+class PresenceSnapshotPort(Protocol):
+    """Speak compose 读取当下态快照的窄接口（待收敛 C 类横向依赖）。"""
+
+    def snapshot(self, session_id: str = "tao") -> Any: ...

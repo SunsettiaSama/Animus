@@ -17,7 +17,7 @@ from agent.soul.memory.graph.query import QueryEngine
 from agent.soul.memory.graph.scored import ScoredUnit
 from agent.soul.memory.graph.seeds import SeedResolver
 from agent.soul.memory.graph.traversal import GraphTraversal
-from agent.soul.memory.graph.node_store import GraphNodeStore
+from agent.soul.memory.graph.keywords import extract_keywords
 from agent.soul.memory.ports import GraphEdgeStore, VectorIndexPort
 
 
@@ -44,6 +44,7 @@ class SpreadActivationService:
         associative_sigma: float = 0.15,
         hybrid_w_relevance: float = 0.6,
         hybrid_w_activation: float = 0.4,
+        speak_line_max_content: int = 320,
         enqueue: Callable[[Callable[[], None]], None] | None = None,
         query_submit: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
@@ -69,11 +70,16 @@ class SpreadActivationService:
         self._associative_sigma = associative_sigma
         self._hybrid_w_relevance = hybrid_w_relevance
         self._hybrid_w_activation = hybrid_w_activation
+        self._speak_line_max_content = max(80, int(speak_line_max_content))
         self._snapshots = ActivationSnapshotStore()
         self._point_store = PointEmergenceStore()
         self._enqueue = enqueue
         self._query_submit = query_submit
         self._point_ready_handlers: list[Callable[[PointEmergenceResult], None]] = []
+
+    def _render_lines(self, scored: list[ScoredUnit]) -> list[str]:
+        cap = self._speak_line_max_content
+        return [s.render_line(max_content=cap) for s in scored]
 
     def bind_enqueue(self, enqueue: Callable[[Callable[[], None]], None]) -> None:
         self._enqueue = enqueue
@@ -130,7 +136,7 @@ class SpreadActivationService:
         activated = self._spread_from_seeds(cue, seed_scores, max_hops=self._hot_max_hops)
         units = self._nodes.get_many([n.unit_id for n in activated])
         scored = [ScoredUnit(u, final_score=n.score) for u, n in zip(units, activated)]
-        lines = [s.render_line() for s in scored]
+        lines = self._render_lines(scored)
         unit_ids = [s.unit.id for s in scored]
         result = HotEmergenceResult(
             session_id=cue.session_id,
@@ -238,9 +244,26 @@ class SpreadActivationService:
         ordered = sorted(ranked.values(), key=lambda s: s.final_score, reverse=True)
         return ordered[:top_k]
 
+    def _merge_wander(self, cue: ActivationCue, result: PointEmergenceResult) -> PointEmergenceResult:
+        keywords = extract_keywords(self._cue_text(cue))
+        wandered = self._query.wander(n=3, focus_keywords=keywords or None)
+        if not wandered:
+            return result
+        seen = set(result.merged_unit_ids())
+        for scored in wandered:
+            uid = scored.unit.id
+            if uid in seen:
+                continue
+            seen.add(uid)
+            result.associative_lines.append(
+                scored.render_line(max_content=self._speak_line_max_content)
+            )
+            result.associative_unit_ids.append(uid)
+        return result
+
     def _run_point_query(self, cue: ActivationCue) -> PointEmergenceResult:
         precise = self._hybrid_precise(cue)
-        precise_lines = [s.render_line() for s in precise]
+        precise_lines = self._render_lines(precise)
         precise_ids = [s.unit.id for s in precise]
         result = PointEmergenceResult(
             session_id=cue.session_id,
@@ -251,21 +274,23 @@ class SpreadActivationService:
             associative_ready=False,
             cue_hash=cue_hash(cue.session_id, cue.user_text, cue.agent_text, cue.interactor_id),
         )
-        self._point_store.put(result)
-        self._push_point_snapshot(result)
-        self._notify_point_ready(result)
         assoc_result = self._apply_associative(cue, result)
-        self._notify_point_ready(assoc_result)
-        return assoc_result
+        final = self._merge_wander(cue, assoc_result)
+        final.associative_ready = True
+        self._point_store.put(final)
+        self._push_point_snapshot(final)
+        if final.merged_unit_ids():
+            self._notify_point_ready(final)
+        return final
 
     def _apply_associative(self, cue: ActivationCue, result: PointEmergenceResult) -> PointEmergenceResult:
         associative = self._hybrid_associative(cue)
         precise_scored = self._nodes.get_many(result.precise_unit_ids)
         precise = [ScoredUnit(u, final_score=1.0) for u in precise_scored]
         precise_ranked, associative_ranked = merge_hybrid_results(precise, associative)
-        result.precise_lines = [s.render_line() for s in precise_ranked]
+        result.precise_lines = self._render_lines(precise_ranked)
         result.precise_unit_ids = [s.unit.id for s in precise_ranked]
-        result.associative_lines = [s.render_line() for s in associative_ranked]
+        result.associative_lines = self._render_lines(associative_ranked)
         result.associative_unit_ids = [s.unit.id for s in associative_ranked]
         result.associative_ready = True
         self._point_store.put(result)

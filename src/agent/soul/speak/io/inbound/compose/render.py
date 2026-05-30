@@ -20,15 +20,22 @@ def render_presence(
     labels = (
         ("affect", "情感"),
         ("somatic", "身体"),
-        ("cognition", "认知"),
-        ("perception", "感知"),
     )
-    lines: list[str] = ["【当下态·状态】"]
+    lines: list[str] = [
+        "【当下态·状态】",
+        "以下为当下身心感知与思维，不含当前对话逐字记录。",
+    ]
     for key, label in labels:
         text = getattr(state, key).render()
         if text:
             lines.append(f"{label}：{text}")
-    if len(lines) == 1:
+    thinking = state.cognition.thinking.strip() if state.cognition is not None else ""
+    if thinking:
+        lines.append(f"认知：{thinking}")
+    perception_text = state.perception.render()
+    if perception_text:
+        lines.append(f"感知：{perception_text}")
+    if len(lines) <= 2:
         return ""
     return _truncate_text("\n".join(lines), max_chars)
 

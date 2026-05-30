@@ -17,7 +17,6 @@ class SpeakStatusInjected:
             block.strip()
             for block in (
                 self.presence,
-                self.dialogue_compressed,
                 self.interactor_portrait,
                 self.similar_memories,
             )

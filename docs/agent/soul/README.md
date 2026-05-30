@@ -44,6 +44,64 @@ SoulService
 
 只读 API（见 `access.READ_API_ACTIONS`）在 `idle` / `running` 均可访问；写入与演化仅在 `running` 下允许。
 
+### 双轨入口（Command vs Orchestration）
+
+| 轨道 | 代表 API | 用途 |
+|------|----------|------|
+| **Command** | `dispatch(SoulRequest)`、`speak_turn()` 等薄封装 | 可审计、可序列化的 domain×action；Heartbeat checklist 默认路径 |
+| **Orchestration** | `run_wander`、`ingest_presence_event`、`speak_run_turn()` | 跨域顺序编排或 L0 热路径；仍在 `SoulService` 上收束 |
+
+二者均为合法顶层 API；收束指 **调用方只依赖 `SoulService`**，而非「一切必须 dispatch」。
+
+### 调用层次（L0 / L1 / L2）
+
+| 层次 | 调用方 | 收束标准 |
+|------|--------|----------|
+| **L0** | WebUI、`TaoLoop`、`HeartbeatOrchestrator` | 只使用 `SoulService` 公开方法/属性；禁止 `_ensure_*`、`.handler.api` |
+| **L1** | `SoulService` | 创建域服务、`SoulWorkers`、`start()` 内跨域 IO 桥接线 |
+| **L2** | Handler → 本域 `*Service` → 子 Service | 不跨域 import 其他域 `service.py`；跨域经 L1 注入 Port |
+
+### Service 清单与收束（L2 域服务）
+
+| Service | 文件 | L1 入口 | L2 父级 |
+|---------|------|---------|---------|
+| `PersonaService` | `persona/service.py` | `PersonaHandler` | — |
+| `MemoryService` | `memory/facade/service.py` | `MemoryHandler` | — |
+| `LifeManager` / `LifeService` | `life/manager.py`, `life/service.py` | `LifeHandler` / worker | worker 由 LifeManager 持有 |
+| `SpeakService` | `speak/service.py` | `SpeakHandler` + `speak_run_turn` 门面 | — |
+| `PresenceService` | `presence/service.py` | `SoulService.presence`（无 Handler） | — |
+| `RuminationService` | `memory/rumination/service.py` | — | `MemoryService` |
+| `SleepService` | `memory/sleep/service.py` | — | `MemoryService` |
+| `SpreadActivationService` | `memory/emergence/spread/service.py` | — | `MemoryService.emergence` |
+| `SpeakSessionService` | `speak/session/service.py` | — | `SpeakService.session_manager` |
+| `HeartbeatCoreService` | `heartbeat/core_service.py` | `SoulService` 侧车 | — |
+
+### 旁路分类（A / B / C）
+
+| 类 | 含义 | 示例 |
+|----|------|------|
+| **A** | L1 合法：组合根编排或 `start()` 显式桥接 | `_wire_workers()`、`run_wander`、Memory↔Speak session 回调 |
+| **B** | L0 曾走私有通道；已收敛或待观察 | WebUI 原 `_ensure_speak_service().run_turn` → **`speak_run_turn`**；Tao 缓存 `.persona.service` / `.memory.api`（待门面化） |
+| **C** | 层次泄漏：子域横向依赖具体实现 | `SpeakService(presence=...)`、`SpeakPromptComposer`→presence 类型、`LifeExperienceStack`↔`PresenceService`、Heartbeat `domain=="presence"` 字符串分支 |
+
+### `ports.py` 与跨域缺口
+
+已定义：`LLMServicePort`、`EmbeddingPort`、`ExternalOpportunitySupplier`、`SpeakExperiencePort`、`SpeakDialogueExperiencePort`、`PresenceSnapshotPort`（后者供后续收敛 C 类）。
+
+| 跨域耦合 | 现状 | 建议 |
+|----------|------|------|
+| SpeakHandler → experience | 已收敛：`SpeakExperiencePort` + `SoulSpeakExperiencePort` | — |
+| Speak → Presence 构造注入 | C：`PresenceService` 具体类型 | 改为 `PresenceSnapshotPort` 注入 |
+| Life 体验栈 ↔ Presence | C：双向 bind | 仅 L1 `SoulService.start()` 接线 |
+| Memory ↔ Speak 回调 | A：经 `SoulService._ensure_speak_service` 注册 | 保持 |
+| Presence 无 `SoulDomain` | **架构决策**：Presence 仅 Orchestration API，不进 `SoulRequest` 总线；Heartbeat 走 `run_presence_*` | 文档定型，不新增 Handler |
+
+### L0 公开 Speak 门面（WebUI 热路径）
+
+- `speak_turn()` — 经 `dispatch`（Command）
+- `speak_run_turn()` — 直调 `SpeakService.run_turn`（Orchestration 热路径）
+- `speak_submit_user_input()`、`speak_is_pushing()`、`speak_session_trace_cache()`、`speak_initialized`
+
 ---
 
 ## 源码顶层

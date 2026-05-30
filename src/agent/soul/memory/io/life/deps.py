@@ -23,4 +23,4 @@ class LifeIODeps:
     session_compression: SessionMemoryChannel
     enqueue_write: Callable[[Callable[[], None]], None]
     agent_persona_narrative: Callable[[], str]
-    llm: BaseLLM
+    llm: BaseLLM | None = None

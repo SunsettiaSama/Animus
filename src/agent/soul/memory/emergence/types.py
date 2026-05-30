@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from agent.soul.memory.domain import ActivatedNode
+from agent.soul.memory.emergence.line_dedup import dedupe_memory_line_pairs
 
 
 @dataclass
@@ -27,15 +28,15 @@ class PointEmergenceResult:
     associative_ready: bool = False
     cue_hash: str = ""
 
+    def _merged_pairs(self) -> tuple[list[str], list[str]]:
+        lines = list(self.precise_lines) + list(self.associative_lines)
+        unit_ids = list(self.precise_unit_ids) + list(self.associative_unit_ids)
+        return dedupe_memory_line_pairs(lines, unit_ids)
+
     def merged_lines(self) -> list[str]:
-        return list(self.precise_lines) + list(self.associative_lines)
+        lines, _ = self._merged_pairs()
+        return lines
 
     def merged_unit_ids(self) -> list[str]:
-        seen: set[str] = set()
-        out: list[str] = []
-        for uid in self.precise_unit_ids + self.associative_unit_ids:
-            if uid in seen:
-                continue
-            seen.add(uid)
-            out.append(uid)
-        return out
+        _, unit_ids = self._merged_pairs()
+        return unit_ids

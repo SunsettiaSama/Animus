@@ -8,14 +8,16 @@ import pytest
 
 from config.agent.persona_config import PersonaConfig
 from config.soul.config import SoulConfig
+from config.soul.memory.infra_config import SoulMemoryInfraConfig
 from agent.soul.service import SoulService
+from infra.memory import MemoryInfraService
 
 
 class _MockLLM:
-    """最�?LLM 桩：返回 JSON 字符串，避免 MagicMock 污染 regex/json 解析�?""
+    """Minimal LLM stub: returns JSON strings, avoids MagicMock polluting parsers."""
 
     _DEFAULT_JSON = '{"intention":"rest","context":""}'
-    _CHAT_REPLY = "你好，我在这里�?
+    _CHAT_REPLY = "hello"
 
     def invoke(self, *args, **kwargs):
         return MagicMock(content=self._DEFAULT_JSON)
@@ -24,7 +26,7 @@ class _MockLLM:
         yield MagicMock(content="{}")
 
     def generate_messages(self, messages, **kwargs) -> str:
-        if any("你好" in str(getattr(m, "content", "")) for m in messages):
+        if any("\u4f60\u597d" in str(getattr(m, "content", "")) for m in messages):
             return self._CHAT_REPLY
         return self._DEFAULT_JSON
 
@@ -46,6 +48,15 @@ def mock_llm():
 
 
 @pytest.fixture
+def disabled_memory_infra():
+    return MemoryInfraService(
+        cfg=SoulMemoryInfraConfig(enabled=False),
+        embedding=None,
+        vectors=None,
+    )
+
+
+@pytest.fixture
 def persona_cfg(soul_temp_dir):
     return PersonaConfig(
         enabled=True,
@@ -55,11 +66,12 @@ def persona_cfg(soul_temp_dir):
 
 
 @pytest.fixture
-def soul_service(soul_temp_dir, persona_cfg, mock_llm):
+def soul_service(soul_temp_dir, persona_cfg, mock_llm, disabled_memory_infra):
     return SoulService(
         life_dir=os.path.join(soul_temp_dir, "life"),
         persona_cfg=persona_cfg,
         mysql_client=MagicMock(),
         primary_llm=mock_llm,
         cfg=SoulConfig(),
+        memory_infra=disabled_memory_infra,
     )

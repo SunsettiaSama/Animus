@@ -24,17 +24,13 @@ def build_module_sections(
 
     if inj.status.presence.strip():
         sections.append(("status.presence", "状态 · presence", inj.status.presence.strip()))
-    if inj.status.dialogue_compressed.strip():
-        sections.append(
-            ("status.dialogue_compressed", "状态 · 会话蒸馏摘要", inj.status.dialogue_compressed.strip())
-        )
     if inj.status.interactor_portrait.strip():
         sections.append(
             ("status.interactor_portrait", "状态 · 对话者画像", inj.status.interactor_portrait.strip())
         )
     if inj.status.similar_memories.strip():
         sections.append(
-            ("status.similar_memories", "状态 · 相似记忆注入块", inj.status.similar_memories.strip())
+            ("status.similar_memories", "状态 · 涌现记忆（长期）", inj.status.similar_memories.strip())
         )
 
     pull = bundle.meta.get("trace_pull")
@@ -47,6 +43,14 @@ def build_module_sections(
         sections.append(("system.share", "系统 · 分享意图", sys_p.share.strip()))
     if bundle.share_summary.strip():
         sections.append(("compose.share_summary", "compose · share_summary", bundle.share_summary.strip()))
+    if bundle.session_working_memory.strip():
+        sections.append(
+            (
+                "session.working_memory",
+                "会话 · 当前工作记忆",
+                bundle.session_working_memory.strip(),
+            )
+        )
     if sys_p.output_format.strip():
         sections.append(("system.output_format", "系统 · 输出格式", sys_p.output_format.strip()))
 
@@ -86,10 +90,6 @@ def _format_system_assembly_note(bundle: SpeakPromptBundle, assembled: str) -> s
         parts.append(f"persona.self_concept({len(bundle.injected.persona.self_concept.strip())})")
     if bundle.injected.status.presence.strip():
         parts.append(f"status.presence({len(bundle.injected.status.presence.strip())})")
-    if bundle.injected.status.dialogue_compressed.strip():
-        parts.append(
-            f"status.dialogue_compressed({len(bundle.injected.status.dialogue_compressed.strip())})"
-        )
     if bundle.injected.status.interactor_portrait.strip():
         parts.append(
             f"status.interactor_portrait({len(bundle.injected.status.interactor_portrait.strip())})"
@@ -100,6 +100,10 @@ def _format_system_assembly_note(bundle: SpeakPromptBundle, assembled: str) -> s
         )
     if bundle.system.share.strip():
         parts.append(f"system.share({len(bundle.system.share.strip())})")
+    if bundle.session_working_memory.strip():
+        parts.append(
+            f"session.working_memory({len(bundle.session_working_memory.strip())})"
+        )
     if bundle.system.output_format.strip():
         parts.append(f"system.output_format({len(bundle.system.output_format.strip())})")
     order = " → ".join(parts) if parts else "(空)"
@@ -121,12 +125,23 @@ def _append_pull_trace(sections: list[ModuleSection], pull: dict[str, Any]) -> N
         if spill_lines:
             body = "\n".join(f"- {line}" for line in spill_lines if str(line).strip())
             sections.append(("memory.pull.spill", "记忆 · 拉取溢出（未注入）", body))
+        social_lines = mem.get("social_prefetch_lines") or []
+        if social_lines:
+            body = "\n".join(f"- {line}" for line in social_lines if str(line).strip())
+            sections.append(("memory.pull.social_prefetch", "记忆 · Social 预取", body))
+        warm_lines = mem.get("warm_spread_lines") or []
+        if warm_lines:
+            body = "\n".join(f"- {line}" for line in warm_lines if str(line).strip())
+            sections.append(("memory.pull.warm_spread", "记忆 · 预热 spread", body))
         sections.append(
             (
                 "memory.pull.meta",
                 "记忆 · 拉取元数据",
                 f"inject_turn={mem.get('inject_turn_index')} "
                 f"inject_unit_ids={mem.get('inject_unit_ids')} "
+                f"sources={mem.get('sources')} "
+                f"keyword_wait_ms={mem.get('keyword_wait_ms')} "
+                f"merge_ratio={mem.get('merge_ratio')} "
                 f"spill_turn={mem.get('spill_turn_index')} "
                 f"spill_unit_ids={mem.get('spill_unit_ids')}",
             ),

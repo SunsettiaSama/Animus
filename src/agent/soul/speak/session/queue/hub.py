@@ -4,7 +4,14 @@ from collections.abc import Callable
 
 from .compose import SessionComposeQueue
 from .decision import QueueDecisionResult
-from .memory import MemoryQueueConsumeResult, MemoryQueueItem, SessionMemoryQueue
+from .memory import (
+    MemoryBufferItem,
+    MemoryBufferSource,
+    MemoryComposePullResult,
+    MemoryQueueConsumeResult,
+    MemoryQueueItem,
+    SessionMemoryBuffer,
+)
 from .portrait import PortraitQueueConsumeResult, PortraitQueueItem, SessionPortraitQueue
 from .share import SessionShareQueue
 from .interrupt import render_interrupt_system_block, summarize_suspended_compose
@@ -18,7 +25,7 @@ class SessionQueueHub:
     def __init__(self, *, memory_turn_gap: int = 3) -> None:
         self._compose_queue = SessionComposeQueue()
         self._user_queue = SessionUserQueue()
-        self._memory_queue = SessionMemoryQueue(max_turn_gap=memory_turn_gap)
+        self._memory_queue = SessionMemoryBuffer(max_turn_gap=memory_turn_gap)
         self._portrait_queue = SessionPortraitQueue(max_turn_gap=memory_turn_gap)
         self._share_queue = SessionShareQueue()
         self._runtimes: dict[str, SessionRuntime] = {}
@@ -48,7 +55,7 @@ class SessionQueueHub:
         return self._user_queue
 
     @property
-    def memory_queue(self) -> SessionMemoryQueue:
+    def memory_queue(self) -> SessionMemoryBuffer:
         return self._memory_queue
 
     @property
@@ -64,27 +71,30 @@ class SessionQueueHub:
     def pop_deferred_share_intent(self, session_id: str):
         return self._share_queue.pop_most_wanted(session_id)
 
-    def enqueue_memory(self, session_id: str, item: MemoryQueueItem) -> None:
-        self._memory_queue.enqueue(session_id, item)
+    def enqueue_memory(self, session_id: str, item: MemoryBufferItem) -> None:
+        self._memory_queue.enqueue_turn(session_id, item)
 
-    def consume_memory_for_compose(
-        self,
-        session_id: str,
-        current_turn_index: int,
-    ) -> MemoryQueueConsumeResult:
-        return self._memory_queue.consume_for_compose(session_id, current_turn_index)
+    def set_social_prefetch(self, session_id: str, item: MemoryBufferItem) -> None:
+        self._memory_queue.set_social_prefetch(session_id, item)
+
+    def set_warm_spread(self, session_id: str, item: MemoryBufferItem) -> None:
+        self._memory_queue.set_warm_spread(session_id, item)
 
     def pull_memory_for_compose(
         self,
         session_id: str,
         current_turn_index: int,
         *,
-        wait_ms: int = 0,
-    ) -> MemoryQueueConsumeResult:
+        keyword_wait_ms: int = 200,
+        budget: int = 5,
+        merge_ratio: float | None = None,
+    ) -> MemoryComposePullResult:
         return self._memory_queue.pull_for_compose(
             session_id,
             current_turn_index,
-            wait_ms=wait_ms,
+            keyword_wait_ms=keyword_wait_ms,
+            budget=budget,
+            merge_ratio=merge_ratio,
         )
 
     def enqueue_portrait(self, session_id: str, item: PortraitQueueItem) -> None:
