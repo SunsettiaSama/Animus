@@ -48,6 +48,36 @@ class SpeakAgentOutput:
     def text(self) -> str:
         return self.speak
 
+    @classmethod
+    def from_finish_meta(
+        cls,
+        meta: dict[str, Any],
+        *,
+        speak_fallback: str = "",
+    ) -> SpeakAgentOutput:
+        """从 stream finish 事件的 meta 还原解析结果（勿用 finish.text 重 parse）。"""
+        state = str(meta.get("session_state") or "finish")
+        if state not in ("finish", "append", "share", "recall"):
+            state = "finish"
+        blocks_raw = meta.get("blocks") or []
+        blocks = tuple(
+            SpeakTagBlock(kind=str(b.get("kind") or ""), content=str(b.get("content") or ""))
+            for b in blocks_raw
+            if isinstance(b, dict)
+        )
+        actions_raw = meta.get("actions") or []
+        return cls(
+            thought=str(meta.get("thought") or ""),
+            speak=str(meta.get("speak") or speak_fallback or ""),
+            actions=tuple(str(a) for a in actions_raw),
+            session_state=state,  # type: ignore[arg-type]
+            recall_query=str(meta.get("recall_query") or ""),
+            anchor_tool=str(meta.get("anchor_tool") or ""),
+            observe=str(meta.get("observe") or ""),
+            blocks=blocks,
+            raw=str(meta.get("raw") or ""),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "thought": self.thought,

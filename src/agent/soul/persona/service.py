@@ -77,3 +77,19 @@ class PersonaService:
         return self._manager.rebuild_profile(
             preserve_self_concept=preserve_self_concept,
         )
+
+    def sync_presence_expectation(
+        self,
+        *,
+        embedder=None,
+        tier_override: str = "",
+    ) -> dict[str, Any]:
+        """按当前 persona 为人设匹配 presence 分享档位并热更新阈值。"""
+        from agent.soul.presence.init_expectation import sync_presence_expectation_from_persona
+
+        override = tier_override.strip() or None
+        return sync_presence_expectation_from_persona(
+            self.snapshot(),
+            embedder=embedder,
+            tier_override=override,
+        )

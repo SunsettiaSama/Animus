@@ -18,8 +18,4 @@ def __getattr__(name: str):
         from .compose import InboundComposeGateway
 
         return InboundComposeGateway
-    if name == "SpeakSessionBridge":
-        from .session import SpeakSessionBridge
-
-        return SpeakSessionBridge
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

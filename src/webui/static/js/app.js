@@ -13,7 +13,8 @@
 import { S, set }                   from './state.js';
 import { http, PATHS, pollUntilReady } from './api.js';
 import * as settings                from './settings.js';
-import { getChannelId }             from './channel.js';
+import { getChannelId, requireChannelId } from './channel.js';
+import { ensureAccountReady, bindAccountGate } from './screens/account_gate.js';
 
 // Feature modules
 import * as llmMod                  from './modules/llm.js';
@@ -28,6 +29,7 @@ import * as infraMod                from './modules/infra.js';
 import * as benchMod                from './modules/benchmark.js';
 import * as botMod                  from './modules/bot.js';
 import * as knowledgeMod            from './modules/knowledge.js';
+import * as notifyMod               from './modules/notify.js';
 
 // Infrastructure
 import { bus }                      from './eventBus.js';
@@ -39,18 +41,29 @@ import { Inspector }                from './components/Inspector.js';
 import { initToast, showToast }     from './shared/toast.js';
 import { loadWorkstation, registerModules as regLanding,
          bindLanding }              from './screens/landing.js';
+import * as history                     from './history.js';
 import { startNew, handleSend, handleMicClick,
          updateReactBadge,
          initTTSHandler, initLifecycleListeners,
-         openKBPanel, registerModules as regWorkspace }
+         initSidebar, initSpeakDeliverySync, openKBPanel,
+         rebuildFromHistory, prepareConversationSwitch,
+         openProactiveSession,
+         registerModules as regWorkspace }
                                     from './screens/workspace.js';
 import { setAgentAvatar }           from './render.js';
+import { bindSpeakDeliverySetting } from './speak_delivery.js';
 
 // ── Module dependency injection ───────────────────────────────────────────────
 
 regLanding({ llmMod, reactMod, memoryMod, personaMod,
              voiceMod, schedulerMod, benchMod, botMod, infraMod });
 regWorkspace({ voiceMod, knowledgeMod });
+
+history.setCallbacks({
+  onLoad: msgs => rebuildFromHistory(msgs),
+  onToast: text => bus.emit('toast', text),
+  onBeforeSwitch: () => prepareConversationSwitch(),
+});
 
 // ── Module callbacks (all toast → bus) ───────────────────────────────────────
 
@@ -89,6 +102,15 @@ personaMod.setCallbacks({
     if (name) setAgentAvatar(name.charAt(0));
   },
 });
+
+notifyMod.setCallbacks({
+  onShow: _toast,
+  onHide: () => {},
+  onAgentProactiveSession: payload => {
+    openProactiveSession(payload).catch(e => showToast(String(e.message || e)));
+  },
+});
+notifyMod.connect();
 
 // ── Scheduler form helpers ────────────────────────────────────────────────────
 
@@ -169,7 +191,11 @@ function _bind() {
   on('btn-open-kb','click', openKBPanel);
 
   // Navigation
-  on('btn-go-home',     'click', () => { goHome(); loadWorkstation(); });
+  on('btn-go-home',     'click', () => {
+    goHome();
+    loadWorkstation();
+    history.renderRecentLanding(document.getElementById('landing-recent')).catch(() => {});
+  });
   on('plan-btn-home',   'click', () => { goHome(); loadWorkstation(); });
   on('bench-btn-home',  'click', () => { goHome(); loadWorkstation(); });
   on('sched-btn-home',  'click', () => { goHome(); loadWorkstation(); });
@@ -277,6 +303,9 @@ async function boot() {
   _bind();
   initTTSHandler();
   initLifecycleListeners();
+  initSidebar();
+  bindSpeakDeliverySetting();
+  initSpeakDeliverySync();
 
   // Determine initial backend state
   const status = await llmMod.fetchStatus().catch(() => null);
@@ -289,11 +318,19 @@ async function boot() {
   } else if (reactStatus?.status === 'initializing') {
     bus.emit('toast', 'ReAct initializing…');
     pollUntilReady()
-      .then(() => {
+      .then(async () => {
         set('reactReady', true);
         updateReactBadge();
         bus.emit('toast', 'ReAct ready');
         speakMod.fetchStatus().then(() => updateReactBadge()).catch(() => {});
+        const ready = await ensureAccountReady().catch(e => {
+          showToast(e.message);
+          return false;
+        });
+        if (ready) {
+          set('channelId', requireChannelId());
+          loadWorkstation();
+        }
       })
       .catch(() => {});
   }
@@ -317,8 +354,31 @@ async function boot() {
     await personaMod.updateWorkstationCard();
   });
 
-  set('channelId', getChannelId());
-  loadWorkstation();
+  bindAccountGate();
+  bus.on('account:selected', async () => {
+    set('channelId', requireChannelId());
+    loadWorkstation();
+    history.renderSidebar().catch(() => {});
+    history.renderRecentLanding(document.getElementById('landing-recent')).catch(() => {});
+  });
+
+  if (S.reactReady) {
+    const ready = await ensureAccountReady().catch(e => {
+      showToast(e.message);
+      return false;
+    });
+    if (ready) {
+      set('channelId', requireChannelId());
+      loadWorkstation();
+      history.renderSidebar().catch(() => {});
+      history.renderRecentLanding(document.getElementById('landing-recent')).catch(() => {});
+    }
+  } else {
+    set('channelId', getChannelId());
+    loadWorkstation();
+    history.renderSidebar().catch(() => {});
+    history.renderRecentLanding(document.getElementById('landing-recent')).catch(() => {});
+  }
 
   void botMod.updateWorkstationCard();
 }

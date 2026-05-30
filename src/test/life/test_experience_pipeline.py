@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from agent.soul.life.experience import LifeExperienceStack
-from agent.soul.life.experience.log import ExperienceLog
+from agent.soul.life.experience.unit_layer.manage.log import ExperienceLog
 from agent.soul.life.orchestrator import ExperienceOrchestrator
 from agent.soul.presence.service import PresenceService
-from agent.soul.life.experience.incident import LifeIncident
+from agent.soul.life.experience.ingest.incident import LifeIncident
 
 
 def test_pipeline_ingest_life_incident_updates_hot_storage(tmp_path):

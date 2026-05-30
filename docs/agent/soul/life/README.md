@@ -41,6 +41,10 @@ src/agent/soul/life/
 ├── ports.py                  # 跨层 Protocol
 ├── life_bridge.py            # LifeContextInput
 ├── narrative_context.py      # StoryWorldContextSupplier
+├── io/                       # 对外 I/O 边界
+│   ├── hub.py                # LifeIOHub（speak + memory）
+│   ├── speak/                # LifeSpeakIO — Speak 入站体验
+│   └── memory/               # LifeExperienceMemoryIO — Memory 出站擢升
 ├── experience/
 │   ├── stack.py              # LifeExperienceStack（共享编排器 + 双 pipeline）
 │   ├── orchestrator.py       # ingest / 擢升 / 折叠 / chronicle 路由
@@ -87,6 +91,26 @@ LifeExperienceStack
 └── bind_presence()       # ↔ PresenceService 双向直连
 ```
 
+### Life I/O（`io/`）
+
+```
+LifeIOHub
+├── speak: LifeSpeakIO          # Speak 入站体验
+└── memory: LifeExperienceMemoryIO  # → memory.io.life 正式落图
+```
+
+体验擢升路径：
+
+```
+ExperienceOrchestrator（显著性达标）
+  → promote_unit_to_memory(memory_port, unit)
+  → LifeExperienceMemoryIO.promote_unit()
+  → memory.io.life.LifeMemoryIO.submit_experience()
+  → ExperienceGraphIngest → 记忆图
+```
+
+会话闭合时 `close_dialogue_session` 仅擢升终局 `ExperienceUnit`，不再整合 SessionMemoryBuffer。
+
 对话 turn 经 `SpeakService.record_turn` → `stack.record_dialogue_turn()` → dialogue pipeline 直写 Presence → orchestrator ingest → memory / chronicle → `after_ingest` sync presence。
 
 ### 两条独立链路
@@ -121,7 +145,7 @@ LifeJournal.add_landmark()
 |---|---|---|
 | `LandmarkFiller` | 地标 → 情节文本 | `NullLandmarkFiller` |
 | `ExperienceCollapser` | 交会折叠 | `NullCollapser` |
-| `MemoryIngestPort` | 显著性擢升 → LTM | 由 `MemoryService` 实现 |
+| `MemoryIngestPort` | 体验擢升 → 记忆图 | 经 `life.io.memory.LifeExperienceMemoryIO` → `memory.io.life` |
 
 ---
 
@@ -156,5 +180,5 @@ LifeJournal.add_landmark()
 
 - [speak/README.md](../speak/README.md)（对话 turn 记账入口）
 - [presence/README.md](../presence/README.md)（bind_presence 同步）
-- [memory/README.md](../memory/README.md)（`ingest_experience`）
+- [memory/README.md](../memory/README.md)（`life_port.promote_unit` / `io/life`）
 - [heartbeat/README.md](../heartbeat/README.md)（landmark / wander 调度）

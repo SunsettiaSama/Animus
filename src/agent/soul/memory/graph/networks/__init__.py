@@ -1,4 +1,4 @@
-from agent.soul.memory.graph.networks.archival import ArchivalConfig, ExperienceArchiver
+from agent.soul.memory.graph.node.create.archive import ArchivalConfig, ExperienceArchiver
 from agent.soul.memory.graph.networks.block import MemoryBlock
 from agent.soul.memory.graph.networks.experience_block import (
     classify_experience,
@@ -6,7 +6,7 @@ from agent.soul.memory.graph.networks.experience_block import (
     read_experience_block,
     resolve_interactor_id,
 )
-from agent.soul.memory.graph.networks.forget import NetworkForgetEngine
+from agent.soul.memory.graph.node.maintain.forget import NodeForgetEngine
 from agent.soul.memory.graph.networks.store.mysql.edges import MySQLEdgeStore
 from agent.soul.memory.graph.networks.store.mysql.interactors import MySQLInteractorStore
 from agent.soul.memory.graph.networks.store.mysql.nodes import MySQLNodeStore
@@ -30,7 +30,7 @@ __all__ = [
     "MySQLEdgeStore",
     "MySQLInteractorStore",
     "MySQLNodeStore",
-    "NetworkForgetEngine",
+    "NodeForgetEngine",
     "IngestedSemanticVector",
     "SemanticVectorIndex",
     "NarrativeWriter",

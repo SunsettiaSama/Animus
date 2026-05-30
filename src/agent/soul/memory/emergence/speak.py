@@ -26,7 +26,7 @@ class SpeakEmergence:
     ) -> None:
         cue = ActivationCue(
             session_id=session_id,
-            interactor_id=interactor_id or session_id,
+            interactor_id=interactor_id.strip(),
             user_text=user_text,
             agent_text=agent_text,
         )

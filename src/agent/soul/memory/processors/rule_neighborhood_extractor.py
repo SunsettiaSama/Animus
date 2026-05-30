@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 
-from agent.soul.life.experience.unit import ExperienceUnit
+from agent.soul.life.experience.domain.unit import ExperienceUnit
 
 from .neighborhood_extractor import NeighborhoodCandidate, NeighborhoodExtractorPort
 

@@ -12,17 +12,23 @@ class SpeakOutputFormat:
     max_fragments: int = 6
 
     def render_prompt(self) -> str:
-        think = speak_tag("think")
-        speak = speak_tag("speak")
-        action = speak_tag("action")
-        recall = speak_tag("recall")
+        think = speak_tag("think", "…")
+        speak = speak_tag("speak", "…")
+        action = speak_tag("action", "…")
+        recall = speak_tag("recall", "检索词")
         finish = speak_tag("state", "finish")
         append = speak_tag("state", "append")
         share = speak_tag("state", "share")
         recall_state = speak_tag("state", "recall")
+        example = (
+            f"{speak_tag('think', '简短内部思考')}"
+            f"{speak_tag('speak', '对白')}"
+            f"{speak_tag('action', '动作')}"
+            f"{speak_tag('state', 'finish')}"
+        )
         lines = [
             "【输出格式】",
-            "使用方括号标签组织回复。每轮必须输出，不可省略：",
+            "使用成对方括号标签（开闭标签）组织回复，形如 [tag]内容[/tag]。每轮必须输出，不可省略：",
             f"1. {think} — 内部思考（必填，简短，不对用户展示）",
             (
                 f"2. {finish}、{append}、{share} 或 {recall_state} — 轮次状态（必填其一）："
@@ -48,6 +54,7 @@ class SpeakOutputFormat:
             "- 优先短句：每条 speak/action 尽量一句说完，避免长段堆砌",
             "",
             f"建议 think + speak + action + state 总片段不超过 {self.max_fragments} 段。",
-            "不要输出 JSON、XML、ReAct 或 <T>/<A>/<O> 标签。",
+            f"示例（结构参考，勿照抄文案）：{example}",
+            "禁止 [tag:内容] 冒号单行写法；禁止 JSON、HTML、ReAct 或 <T>/<A>/<O> 标签。",
         ]
         return "\n".join(lines)

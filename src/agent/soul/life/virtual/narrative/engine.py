@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from infra.llm import BaseLLM
 
-from ...experience.unit import ExperienceUnit
+from ...experience.domain.unit import ExperienceUnit
 from ..journal.dice import DiceResult
 from ..journal.item import Landmark
 

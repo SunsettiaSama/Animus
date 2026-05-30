@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from agent.soul.life.experience.unit import ExperienceUnit
+from agent.soul.life.experience.domain.unit import ExperienceUnit
 
 
 @dataclass

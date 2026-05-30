@@ -23,6 +23,7 @@ class SpeakPromptBundle:
     reply_style: SpeakReplyStyle = field(default_factory=SpeakReplyStyle)
     notes: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
+    social_blocks: list[str] = field(default_factory=list)
 
     @property
     def persona_traits(self) -> str:
@@ -51,6 +52,10 @@ class SpeakPromptBundle:
             parts.append(role)
         for block in self.injected.render_system_blocks():
             parts.append(block)
+        for block in self.social_blocks:
+            text = block.strip()
+            if text:
+                parts.append(text)
         share = self.system.share.strip()
         if share:
             parts.append(share)
@@ -58,6 +63,11 @@ class SpeakPromptBundle:
         if output_format:
             parts.append(output_format)
         return "\n\n".join(parts)
+
+    def module_sections(self, *, system_assembled: str | None = None) -> list[tuple[str, str, str]]:
+        from .trace_modules import build_module_sections
+
+        return build_module_sections(self, system_assembled=system_assembled)
 
     def summary_for_log(self) -> dict[str, Any]:
         return {

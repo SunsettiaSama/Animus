@@ -1,67 +1,85 @@
-from .builder import ExperienceBuilder
-from .collapser import ExperienceCollapser, NullCollapser
-from .log import ExperienceLog
-from .orchestrator import ExperienceOrchestrator, MemoryIngestPort
-from .stack import LifeExperienceStack
-from .unit import (
+from .dialogue import DialogueExperiencePipeline
+from .domain import (
+    AnchorUnitContext,
+    COLLISION_SOURCES,
     ExperienceAction,
     ExperienceActionKind,
     ExperienceFeeling,
     ExperienceSituation,
+    ExperienceSource,
     ExperienceUnit,
-)
-from .sources import (
-    COLLISION_SOURCES,
+    InteractionDirection,
     REALITY_SOURCES,
     VIRTUAL_SOURCES,
-    ExperienceSource,
+    VirtualUnitContext,
+    VirtualUnitTrigger,
     is_collision_source,
     is_reality_source,
     is_virtual_source,
-)
-from .virtual_codec import (
-    VirtualUnitContext,
-    VirtualUnitTrigger,
+    read_anchor_context,
     read_virtual_context,
+    stamp_anchor_context,
     stamp_virtual_context,
 )
-from .anchor_codec import (
-    AnchorUnitContext,
-    InteractionDirection,
-    read_anchor_context,
-    stamp_anchor_context,
+from .hub import LifeExperienceStack
+from .ingest import (
+    ExperienceBuilder,
+    IncidentIngestResult,
+    IncidentKind,
+    LifeExperiencePipeline,
+    LifeIncident,
+    supply_presence_bundle_from_life,
 )
-from .dialogue import DialogueExperiencePipeline
-from .pipeline import LifeExperiencePipeline
+from .unit_layer import ExperienceUnitLayer
+from .unit_layer.manage import (
+    ExperienceCollapser,
+    ExperienceLog,
+    ExperienceOrchestrator,
+    ExperienceUnitManager,
+    NullCollapser,
+)
+from .unit_layer.promote import promote_unit_to_memory
+from .unit_layer.promote.ports import MemoryIngestPort
+from .unit_layer.promote.policy import should_promote_to_memory
+from .unit_layer.create import build_unit_from_compression
 
 __all__ = [
-    "LifeExperienceStack",
+    "AnchorUnitContext",
+    "COLLISION_SOURCES",
     "DialogueExperiencePipeline",
-    "LifeExperiencePipeline",
-    "ExperienceBuilder",
-    "ExperienceCollapser",
-    "NullCollapser",
-    "ExperienceOrchestrator",
-    "MemoryIngestPort",
     "ExperienceAction",
     "ExperienceActionKind",
+    "ExperienceBuilder",
+    "ExperienceCollapser",
     "ExperienceFeeling",
-    "ExperienceSituation",
-    "ExperienceUnit",
     "ExperienceLog",
+    "ExperienceOrchestrator",
+    "ExperienceSituation",
     "ExperienceSource",
+    "ExperienceUnit",
+    "ExperienceUnitLayer",
+    "ExperienceUnitManager",
+    "IncidentIngestResult",
+    "IncidentKind",
+    "InteractionDirection",
+    "LifeExperiencePipeline",
+    "LifeExperienceStack",
+    "LifeIncident",
+    "MemoryIngestPort",
+    "NullCollapser",
     "REALITY_SOURCES",
     "VIRTUAL_SOURCES",
-    "COLLISION_SOURCES",
-    "is_reality_source",
-    "is_virtual_source",
-    "is_collision_source",
     "VirtualUnitContext",
     "VirtualUnitTrigger",
-    "read_virtual_context",
-    "stamp_virtual_context",
-    "AnchorUnitContext",
-    "InteractionDirection",
+    "build_unit_from_compression",
+    "is_collision_source",
+    "is_reality_source",
+    "is_virtual_source",
+    "promote_unit_to_memory",
     "read_anchor_context",
+    "read_virtual_context",
+    "should_promote_to_memory",
     "stamp_anchor_context",
+    "stamp_virtual_context",
+    "supply_presence_bundle_from_life",
 ]

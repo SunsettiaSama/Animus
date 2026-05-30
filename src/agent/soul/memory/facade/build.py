@@ -8,7 +8,7 @@ from agent.soul.memory.emergence.dispatcher import EmergenceQueryDispatcher
 from agent.soul.memory.facade.service import MemoryService
 from agent.soul.memory.graph.cluster import ClusterIndex
 from agent.soul.memory.graph.query import QueryEngine
-from agent.soul.memory.graph.networks.archival import ArchivalConfig, ExperienceArchiver
+from agent.soul.memory.graph.node.create.archive import ArchivalConfig, ExperienceArchiver
 from agent.soul.memory.graph.networks.event.network import EventMemoryNetwork
 from agent.soul.memory.graph.networks.semantic_index import SemanticVectorIndex
 from agent.soul.memory.graph.networks.social.network import SocialMemoryNetwork
@@ -20,7 +20,7 @@ from agent.soul.memory.graph.networks.store.mysql.session_channels import MySQLS
 from agent.soul.memory.graph.networks.writer import NarrativeWriter
 from agent.soul.memory.rumination import RuminationService, RuminationWriter
 from agent.soul.memory.retriever import MemoryRetriever
-from agent.soul.memory.session.buffer import SessionMemoryBuffer
+from agent.soul.memory.io.session import SessionMemoryBuffer, SessionMemoryChannel
 from agent.soul.memory.sleep import SleepConfig, SleepService
 from config.soul.memory.service_config import MemoryServiceConfig
 from infra.memory import MemoryInfraService
@@ -178,6 +178,7 @@ def build_memory_service(
         llm=llm,
         vectors=vectors,
     )
+    session_channel = SessionMemoryChannel(buffer=session_buffer)
     svc = MemoryService(
         social,
         event,
@@ -190,6 +191,7 @@ def build_memory_service(
         memory_infra=infra,
         query_dispatcher=query_dispatcher,
         session_buffer=session_buffer,
+        session_channel=session_channel,
         session_channels=session_channels,
     )
     svc_holder.append(svc)

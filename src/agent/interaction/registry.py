@@ -11,7 +11,7 @@ from .virtual_world.port import VirtualWorldPort
 
 @dataclass
 class InteractionRegistry:
-    """各交互形式占位端口的注册表（并列挂载，互不包含）。"""
+    """各模态 Port 注册表；当前无 Soul 侧自动填充，供未来多模态扩展或测试手动挂载。"""
 
     dialogue: DialoguePort | None = None
     virtual_world: VirtualWorldPort | None = None

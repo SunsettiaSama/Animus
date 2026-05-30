@@ -1,6 +1,6 @@
 # WebUI
 
-基于 FastAPI 的 Web 界面，以工作站仪表板为主页，统一展示所有子系统状态与配置入口；支持 Chat / ReAct 双模式对话，集成语音、调度器与历史管理等。
+基于 FastAPI 的 Web 界面，以栖灵控制台为主页，统一展示所有子系统状态与配置入口；支持 Chat / ReAct 双模式对话，集成语音、调度器与历史管理等。
 
 ## 文件结构
 
@@ -31,12 +31,12 @@
 | `src/webui/static/js/settings.js` | 设置弹窗 Tab 读写，委托各域模块 |
 | `src/webui/static/js/streaming.js` | `ChatSession` / `ReactSession` WebSocket 会话管理 |
 | `src/webui/static/js/render.js` | 消息区 DOM 操作 |
-| `src/webui/static/js/modules/llm.js` | LLM 配置 / 初始化 / 工作站卡片 |
-| `src/webui/static/js/modules/react.js` | ReAct 初始化 / 状态 / 工具 / 工作站卡片 |
-| `src/webui/static/js/modules/memory.js` | 记忆配置 / 蒸馏 / 工作站卡片 |
-| `src/webui/static/js/modules/persona.js` | 人格配置 / 工作站卡片 |
-| `src/webui/static/js/modules/voice.js` | TTS / STT 配置 / 工作站卡片 |
-| `src/webui/static/js/modules/scheduler.js` | 调度器任务 / 工作站卡片 |
+| `src/webui/static/js/modules/llm.js` | LLM 配置 / 初始化 / 控制台卡片 |
+| `src/webui/static/js/modules/react.js` | ReAct 初始化 / 状态 / 工具 / 控制台卡片 |
+| `src/webui/static/js/modules/memory.js` | 记忆配置 / 蒸馏 / 控制台卡片 |
+| `src/webui/static/js/modules/persona.js` | 人格配置 / 控制台卡片 |
+| `src/webui/static/js/modules/voice.js` | TTS / STT 配置 / 控制台卡片 |
+| `src/webui/static/js/modules/scheduler.js` | 调度器任务 / 控制台卡片 |
 | `src/webui/static/js/modules/infra.js` | vLLM / 沙盒 / 服务状态 |
 | `src/webui/static/js/modules/knowledge.js` | （遗留 UI）知识库面板 |
 | `src/webui/routers/flow.py` | Flow 模式编排控制（运行 / 状态 / SSE 流 / 快照 / 回滚 / 日志 / 暂停 / 跳步），`/api/flow/*` |
@@ -536,13 +536,13 @@ ctrl = appendReactMsg()        // 新建 ReAct 卡片，继续后续步骤
 
 ## 前端布局
 
-### 工作站主页（`#s-landing`）
+### 控制台主页（`#s-landing`）
 
-应用启动后默认显示工作站仪表板，包含五个顶层导航入口：
+应用启动后默认显示控制台仪表板，包含五个顶层导航入口：
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  ⚡ ReAct Workstation                    [↻ Refresh] [⚙]   │
+│  ⚡ 栖灵 Animus                          [↻ Refresh] [⚙]   │
 ├─────────────────────────────────────────────────────────────┤
 │  Infrastructure Services                                    │
 │  [vLLM ●] [SearXNG ●] [Sandbox ●] [TTS ●] [STT ●]         │
@@ -564,7 +564,7 @@ ctrl = appendReactMsg()        // 新建 ReAct 卡片，继续后续步骤
 
 | 屏幕 ID | 入口 | 说明 |
 |---|---|---|
-| `s-landing` | 应用启动 / Home 按钮 | 工作站仪表板 |
+| `s-landing` | 应用启动 / Home 按钮 | 控制台仪表板 |
 | `s-workspace` | New Chat / New ReAct Session | Chat & ReAct 对话区 |
 | `s-plan` | Plan Mode 按钮 | 多智能体编排可视化 |
 | `s-benchmark` | Benchmark Suite 按钮 | CI 性能基准套件 |
@@ -596,7 +596,7 @@ ctrl = appendReactMsg()        // 新建 ReAct 卡片，继续后续步骤
 | Scheduler & Crew | 任务总数 / pending / running；只读摘要 | — |
 | Benchmark | 通过率 / 场景数 / 最近运行场景；只读摘要 | — |
 
-#### 工作站数据加载
+#### 控制台数据加载
 
 进入主页时并行调用：
 
@@ -649,11 +649,11 @@ Settings 按钮（⚙）打开模态框，包含 6 个 Tab：
 | `vllm` | vLLM 服务器参数（host / port / tensor_parallel_size 等）|
 | `sandbox` | 代码沙盒参数（工作目录 / 超时 / 封锁模块列表等）|
 
-所有 Tab 点击模态框底部 **Save** 按钮保存；`vllm` 和 `sandbox` Tab 内也有独立的 Save 按钮。工作站主页各模块卡片的 Configure 按钮携带 tab 参数直接跳转到对应 Tab。
+所有 Tab 点击模态框底部 **Save** 按钮保存；`vllm` 和 `sandbox` Tab 内也有独立的 Save 按钮。控制台主页各模块卡片的 Configure 按钮携带 tab 参数直接跳转到对应 Tab。
 
 ### Plan 模式界面（`#s-plan`）
 
-点击工作站主页 **[📋 Plan Mode]** 卡片进入，独立于会话区，专为多智能体编排可视化设计。
+点击控制台主页 **[📋 Plan Mode]** 卡片进入，独立于会话区，专为多智能体编排可视化设计。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -705,7 +705,7 @@ Settings 按钮（⚙）打开模态框，包含 6 个 Tab：
 
 ### Benchmark Suite 界面（`#s-benchmark`）
 
-点击工作站主页 **[🧪 Benchmark Suite]** 进入，独立全屏。
+点击控制台主页 **[🧪 Benchmark Suite]** 进入，独立全屏。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -733,7 +733,7 @@ Settings 按钮（⚙）打开模态框，包含 6 个 Tab：
 
 ### Scheduler 界面（`#s-scheduler`）
 
-点击工作站主页 **[🗓 Scheduler]** 进入，独立全屏。
+点击控制台主页 **[🗓 Scheduler]** 进入，独立全屏。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐

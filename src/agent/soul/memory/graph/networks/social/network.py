@@ -1,15 +1,17 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Callable
 
-from agent.soul.life.experience.unit import ExperienceUnit
-from agent.soul.memory.domain.enums import EdgeType, EvolutionSource, MemoryNetwork, SocialNodeRole
+from agent.soul.life.experience.domain.unit import ExperienceUnit
+from agent.soul.memory.domain.enums import EdgeType, EvolutionSource, MemoryNetwork
 from agent.soul.memory.graph.networks.block import MemoryBlock
 from agent.soul.memory.graph.traversal import GraphTraversal
-from agent.soul.memory.graph.networks.archival import ExperienceArchiver
+from agent.soul.memory.graph.node.create.archive import ExperienceArchiver
+from agent.soul.memory.graph.node.create.persist import NodePersister
+from agent.soul.memory.graph.node.maintain.forget import NodeForgetEngine
+from agent.soul.memory.graph.node.modify.evolve import CoreEvolver
+from agent.soul.memory.graph.node.modify.merge import merge_neighborhood
 from agent.soul.memory.graph.networks.experience_block import ExperienceBlock, read_experience_block
-from agent.soul.memory.graph.networks.forget import NetworkForgetEngine
-from agent.soul.memory.graph.networks.social.core_evolution import CoreEvolver
 from agent.soul.memory.graph.networks.social.portrait import InteractorPortrait
 from agent.soul.memory.graph.networks.social.query import SocialQueryEngine
 from agent.soul.memory.graph.node_store import GraphNodeStore
@@ -36,7 +38,8 @@ class SocialMemoryNetwork:
         self._query = query or SocialQueryEngine(nodes, vectors=vectors)
         self._on_written = on_written
         self._archiver = archiver
-        self._forget = NetworkForgetEngine()
+        self._persister = NodePersister(nodes, vectors=vectors, on_written=on_written)
+        self._forget = NodeForgetEngine()
         self._traversal = GraphTraversal(edges)
         self._core_evolver = CoreEvolver()
 
@@ -62,12 +65,33 @@ class SocialMemoryNetwork:
         if agent_relation.strip():
             core.agent_relation = agent_relation.strip()
         core.focus = f"\u5bf9{profile.name or interactor_id}\u7684\u5370\u8c61"
-        return self._persist(core)
+        return self._persister.write(core)
 
     def set_agent_relation(self, interactor_id: str, relation: str) -> SocialCoreNode:
         core = self.ensure_core(interactor_id)
         core.agent_relation = relation.strip()
-        return self._persist(core)
+        return self._persister.write(core)
+
+    def merge_neighborhood(
+        self,
+        core: SocialCoreNode,
+        node: SocialNeighborhoodNode,
+    ) -> SocialNeighborhoodNode:
+        return merge_neighborhood(
+            nodes=self._nodes,
+            traversal=self._traversal,
+            persister=self._persister,
+            core=core,
+            node=node,
+        )
+
+    def write_node(
+        self,
+        node: SocialNeighborhoodNode | SocialCoreNode,
+        *,
+        embed: bool = True,
+    ) -> SocialNeighborhoodNode | SocialCoreNode:
+        return self._persister.write(node, embed=embed)
 
     def link_nodes(
         self,
@@ -105,7 +129,7 @@ class SocialMemoryNetwork:
             content=content,
             related_interactor_ids=[other_interactor_id],
         )
-        merged = self._merge_neighborhood(core_a, node)
+        merged = self.merge_neighborhood(core_a, node)
         self.link_nodes(merged.id, core_b.id, edge_type=EdgeType.related_to, bidirectional=True)
         self.link_nodes(core_a.id, merged.id, edge_type=EdgeType.about)
         return merged
@@ -127,7 +151,7 @@ class SocialMemoryNetwork:
             content=content,
             related_interactor_ids=list(related_interactor_ids or []),
         )
-        merged = self._merge_neighborhood(core, node)
+        merged = self.merge_neighborhood(core, node)
         for other_id in node.related_interactor_ids:
             other_core = self.ensure_core(other_id)
             self.link_nodes(merged.id, other_core.id, edge_type=EdgeType.related_to)
@@ -207,13 +231,14 @@ class SocialMemoryNetwork:
         core = self._core_evolver.evolve(core, delta=delta, source=source)
         if evidence_ids:
             core.meta = {**core.meta, "evidence_ids": list(evidence_ids)}
-        return self._persist(core)
+        return self._persister.write(core)
 
     def ingest_anchor_experience(
         self,
         unit: ExperienceUnit,
         *,
         block: ExperienceBlock | None = None,
+        agent_persona_narrative: str = "",
     ) -> list[SocialNeighborhoodNode]:
         block = block or read_experience_block(unit)
         existing = self._nodes.get_by_life_event_id(block.experience_id)
@@ -221,12 +246,14 @@ class SocialMemoryNetwork:
             return [existing]
 
         core = self.ensure_core(block.interactor_id)
-        archived = self._archiver.archive_anchor(block)
+        archived = self._archiver.archive_anchor(
+            block,
+            agent_persona_narrative=agent_persona_narrative,
+        )
         node = archived.node
-        merged = self._merge_neighborhood(core, node)
+        merged = self.merge_neighborhood(core, node)
         if archived.parent_node_id and archived.parent_node_id != merged.id:
             self._traversal.link_related_to(archived.parent_node_id, merged.id)
-        self._persist(merged)
         return [merged]
 
     def forget_scan(
@@ -254,56 +281,5 @@ class SocialMemoryNetwork:
             interactor_id=interactor_id,
             focus=f"\u5bf9{interactor_id}\u7684\u5370\u8c61",
         )
-        self._persist(core)
+        self._persister.write(core)
         return core
-
-    def _merge_neighborhood(
-        self,
-        core: SocialCoreNode,
-        node: SocialNeighborhoodNode,
-    ) -> SocialNeighborhoodNode:
-        label_key = node.label.strip().lower()
-        existing_nodes = self._nodes.list_by_interactor(
-            core.interactor_id,
-            SocialNodeRole.neighborhood,
-            limit=200,
-        )
-        for existing in existing_nodes:
-            if not isinstance(existing, SocialNeighborhoodNode):
-                continue
-            if existing.label.strip().lower() != label_key:
-                continue
-            if node.content.strip() and node.content not in existing.content:
-                existing.content = f"{existing.content}\n{node.content}".strip()
-                existing.focus = existing.label[:60] or existing.content[:60]
-            if node.related_interactor_ids:
-                merged_ids = list(
-                    dict.fromkeys(
-                        [*existing.related_interactor_ids, *node.related_interactor_ids]
-                    )
-                )
-                existing.related_interactor_ids = merged_ids
-            existing.meta = {**existing.meta, **node.meta}
-            self._persist(existing)
-            self._traversal.link_about(core.id, existing.id)
-            return existing
-
-        self._persist(node)
-        self._traversal.link_about(core.id, node.id)
-        return node
-
-    def _persist(
-        self,
-        node: SocialNeighborhoodNode | SocialCoreNode,
-    ) -> SocialNeighborhoodNode | SocialCoreNode:
-        embed_text = node.embed_text().strip()
-        node.embed_text_cache = embed_text
-        if self._vectors is not None and embed_text:
-            vector = self._vectors.embed_passage(embed_text)
-            node.embedding = vector
-            if vector:
-                self._vectors.upsert(node.id, embed_text, network=node.network)
-        self._nodes.put(node)
-        if self._on_written is not None:
-            self._on_written(node)
-        return node

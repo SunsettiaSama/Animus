@@ -1,9 +1,17 @@
-"""Agent 交互层 — Agent 与外界关系的顶层域。
+"""Agent 交互层 — 全模态「语义交互 + 连续性」抽象（与 Soul 域并列，非 Soul 子模块）。
 
-- ``core``：SemanticInteraction、连续性（全模态共性）
-- ``dialogue`` / ``virtual_world`` / ``drone`` / ``robot_dog``：并列交互形式
+子包：
+- ``core``：``SemanticInteraction``、连续性判断（embedding / LLM / 规则栈）
+- ``dialogue`` / ``virtual_world`` / ``drone`` / ``robot_dog``：各模态 Port 与 ``DialogueKernel``
 
-交互姿态层见 ``agent.posture``；当下态见 ``agent.soul.presence``。
+分层约定：
+- **结构态** → ``agent.posture``（对话线、场景）
+- **当下态** → ``agent.soul.presence``（情感、期待、冲动）
+- **对话编排** → ``agent.soul.speak``（compose、流式出站、session 队列）
+
+接线状态：
+- ``DialogueKernel`` 仅在 ``test/interaction`` 实例化；**未**接入 ``SoulService`` / ``SpeakService``
+- 若只维护 WebUI 对话，可忽略本包；接入多模态时再在 Soul 显式构造 Kernel 或合并进 Speak
 """
 
 from .core import (

@@ -38,6 +38,7 @@ from .queue import (
     UserInputItem,
 )
 from .service import SpeakSessionManager, SpeakSessionService
+from .manage import SessionSocialManager
 
 __all__ = [
     "ComposeQueueItem",
@@ -64,6 +65,7 @@ __all__ = [
     "SpeakFeelingChunk",
     "feeling_self_narration",
     "SpeakSessionLifecycleAdapter",
+    "SessionSocialManager",
     "SpeakSessionManager",
     "SpeakSessionRecord",
     "SpeakSessionRegistry",

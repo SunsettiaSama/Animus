@@ -358,3 +358,16 @@ def get_life_hot(hours: int | None = None):
         "count": len(units),
         "experiences": units,
     }
+
+
+class VisitorBindBody(BaseModel):
+    account_id: str
+    channel_id: str = ""
+
+
+@router.post("/api/soul/visitor/bind")
+def visitor_bind(body: VisitorBindBody):
+    soul, err = _soul_or_400()
+    if err is not None:
+        return err
+    return soul.bind_visitor(body.account_id, body.channel_id)

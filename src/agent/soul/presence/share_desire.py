@@ -27,19 +27,6 @@ SHARE_DESIRE_ORDER: dict[ShareDesire, int] = {
 }
 
 
-def _build_share_desire_weight() -> dict[ShareDesire, float]:
-    raw = share_desire_weights()
-    return {
-        ShareDesire.none: raw["none"],
-        ShareDesire.mild: raw["mild"],
-        ShareDesire.moderate: raw["moderate"],
-        ShareDesire.eager: raw["eager"],
-    }
-
-
-SHARE_DESIRE_WEIGHT: dict[ShareDesire, float] = _build_share_desire_weight()
-
-
 def parse_share_desire(
     value: str | ShareDesire | None,
     *,
@@ -56,7 +43,7 @@ def parse_share_desire(
 
 
 def share_desire_weight(desire: ShareDesire) -> float:
-    return SHARE_DESIRE_WEIGHT[desire]
+    return share_desire_weights()[desire.value]
 
 
 def max_share_desire(a: ShareDesire, b: ShareDesire) -> ShareDesire:
@@ -80,7 +67,7 @@ def share_desire_from_impulse(impulse_level: float) -> ShareDesire:
         return ShareDesire.eager
     if impulse_level >= OUTBOUND_THRESHOLD_MODERATE:
         return ShareDesire.moderate
-    if impulse_level >= SHARE_DESIRE_WEIGHT[ShareDesire.mild]:
+    if impulse_level >= share_desire_weight(ShareDesire.mild):
         return ShareDesire.mild
     return ShareDesire.none
 

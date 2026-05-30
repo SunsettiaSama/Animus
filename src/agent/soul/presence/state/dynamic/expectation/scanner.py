@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from config.soul.presence.config import PROACTIVE_OPEN_THRESHOLD, REPLY_URGE_THRESHOLD
+import config.soul.presence.config as presence_cfg
 
 from agent.soul.presence.share_desire import ShareDesire, share_desire_weight
 from agent.soul.presence.state.dynamic.kind import Expectation
@@ -60,15 +60,25 @@ def scan_expectation_thresholds(
     expectation: ExpectationState,
     interaction: PresenceInteraction,
     line_open: bool,
-    proactive_threshold: float = PROACTIVE_OPEN_THRESHOLD,
-    reply_threshold: float = REPLY_URGE_THRESHOLD,
+    proactive_threshold: float | None = None,
+    reply_threshold: float | None = None,
 ) -> ExpectationScanResult:
     """扫描 FSM 期待驱动：超阈值则标记 proactive 开聊或对话内追加（不构造 speak 请求）。"""
+    proactive = (
+        presence_cfg.PROACTIVE_OPEN_THRESHOLD
+        if proactive_threshold is None
+        else proactive_threshold
+    )
+    reply = (
+        presence_cfg.REPLY_URGE_THRESHOLD
+        if reply_threshold is None
+        else reply_threshold
+    )
     summary = expectation.share_queue.fold_summary() or expectation.reason.strip()
     if not summary:
         return ExpectationScanResult(session_id=session_id)
 
-    if line_open and expectation.wants_multi_reply(threshold=reply_threshold):
+    if line_open and expectation.wants_multi_reply(threshold=reply):
         package = _package_from_queue(expectation.share_queue, interaction, summary)
         share_desire = package.peak_share_desire or ShareDesire.mild
         payload = ExpectationScanPayload(
@@ -94,7 +104,7 @@ def scan_expectation_thresholds(
             notes=["proactive blocked by interaction expectation"],
         )
 
-    if expectation.at_proactive_threshold(threshold=proactive_threshold):
+    if expectation.at_proactive_threshold(threshold=proactive):
         package = _package_from_queue(expectation.share_queue, interaction, summary)
         share_desire = package.peak_share_desire or ShareDesire.mild
         if share_desire == ShareDesire.none:

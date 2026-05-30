@@ -14,7 +14,7 @@ def _collect(parser: IncrementalTagStreamParser, session_id: str, text: str):
 
 def test_incremental_announces_tag_before_speak():
     parser = IncrementalTagStreamParser()
-    events = _collect(parser, "webui", "[speak:你好呀。]")
+    events = _collect(parser, "webui", "[speak]????[/speak]")
     kinds = [event.kind for event in events]
     assert kinds[0] == "tag"
     assert events[0].meta["tag"] == "speak"
@@ -26,10 +26,10 @@ def test_incremental_announces_tag_before_speak():
 
 def test_incremental_alternating_tags():
     raw = (
-        "[think:嗯]"
-        "[action:微笑]"
-        "[speak:你好。]"
-        "[state:finish]"
+        "[think]?[/think]"
+        "[action]??[/action]"
+        "[speak]???[/speak]"
+        "[state]finish[/state]"
     )
     parser = IncrementalTagStreamParser()
     events = _collect(parser, "webui", raw)
@@ -40,11 +40,11 @@ def test_incremental_alternating_tags():
     assert any(event.kind == "state" for event in events)
 
 
-def test_incremental_l2_bracket_tags():
+def test_incremental_xml_bracket_tags():
     raw = (
-        "[action]从标本夹中抬起头"
-        "[speak]啊，怎么会不记得呢！"
-        "[state:finish]"
+        "[action]????????[/action]"
+        "[speak]??????????[/speak]"
+        "[state]finish[/state]"
     )
     parser = IncrementalTagStreamParser()
     events = _collect(parser, "webui", raw)
@@ -52,18 +52,18 @@ def test_incremental_l2_bracket_tags():
     assert tags == ["action", "speak", "state"]
     action_text = "".join(event.text or "" for event in events if event.kind == "action")
     speak_text = "".join(event.text or "" for event in events if event.kind == "speak")
-    assert "标本�? in action_text
-    assert "怎么会不记得" in speak_text
+    assert "???" in action_text
+    assert "??????" in speak_text
 
 
 def test_stream_generate_incremental_pipeline():
     class _FakeEngine:
         def stream(self, user_text, *, system="", context=""):
             raw = (
-                "[think:想一下]"
-                "[speak:第一句。]"
-                "[speak:第二句。]"
-                "[state:finish]"
+                "[think]???[/think]"
+                "[speak]????[/speak]"
+                "[speak]????[/speak]"
+                "[state]finish[/state]"
             )
             yield from raw
 

@@ -6,7 +6,7 @@ from agent.soul.memory.domain import (
     SocialCoreNode,
     SocialNeighborhoodNode,
 )
-from agent.soul.memory.graph.networks.social.core_evolution import CoreEvolver
+from agent.soul.memory.graph.node.modify.evolve import CoreEvolver
 from agent.soul.memory.graph.networks.social.portrait import InteractorPortrait
 
 

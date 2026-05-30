@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from agent.soul.life.anchor.presence_bundle import presence_bundle_from_unit
-from agent.soul.life.experience.log import ExperienceLog
-from agent.soul.life.experience.presence_supply import supply_presence_bundle_from_life
-from agent.soul.life.experience.unit import (
+from agent.soul.life.experience.unit_layer.manage.log import ExperienceLog
+from agent.soul.life.experience.ingest.presence import supply_presence_bundle_from_life
+from agent.soul.life.experience.domain.unit import (
     ExperienceAction,
     ExperienceActionKind,
     ExperienceFeeling,
@@ -47,7 +47,7 @@ def test_sync_life_bundle_updates_static_not_boundary_fsm():
     bundle = presence_bundle_from_unit(unit)
     sync = svc.sync_life_bundle(bundle)
     snap = svc.snapshot("tao")
-    assert "期待" in snap.state.affect.narrative or "想分�? in snap.state.cognition.thinking
+    assert "期待" in snap.state.affect.narrative or "想分�? in snap.state.cognition.thinking
     assert snap.expectation.value == "none"
     assert "static:" in " ".join(sync["static_notes"])
     assert svc.share_queue_size("tao") >= 1
@@ -57,7 +57,7 @@ def test_state_block_routes_through_life_sync():
     svc = PresenceService()
     notes = svc.apply_state_block(PresenceStateBlock.rumination(
         narratives={"thinking": "回忆起旧对话"},
-        meta={"wants_to_share": "true", "share_topic": "想聊聊刚才的�?, "share_desire": "mild"},
+        meta={"wants_to_share": "true", "share_topic": "想聊聊刚才的�?, "share_desire": "mild"},
     ))
     assert notes
     assert svc.share_queue_size("tao") == 1

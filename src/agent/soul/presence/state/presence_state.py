@@ -88,7 +88,11 @@ class PresenceState:
 
 @dataclass(frozen=True)
 class PresenceContext:
-    """对话结构上下文（来自 posture，不持久化）。"""
+    """单次 Presence 事件的附加上下文（不持久化）。
+
+    ``line_open``：由 ``PresenceService`` 根据 ``Expectation`` 在网关侧推导，
+    与 ``agent.posture`` FSM 无运行时耦合（命名沿用早期分层概念）。
+    """
 
     line_open: bool = False
     proactive_intent_id: str = ""

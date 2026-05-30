@@ -10,7 +10,7 @@ def render_share_system_prompt(state: ShareComposeState) -> str:
 
     lines = [
         "【分享意愿】",
-        "你有想要与用户分享的事情；若语境合适，可在回复中自然带入。",
+        "你有想与用户分享的事情；是否分享、何时分享由你自行决定（可用 state:share 或指向索引查阅详情）。",
     ]
     summary = state.summary.strip()
     if summary:

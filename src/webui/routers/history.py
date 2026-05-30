@@ -17,6 +17,10 @@ class SaveConvRequest(BaseModel):
     title: str
     mode: str = "react"
     messages: list = []
+    session_id: str = ""
+    channel_id: str = ""
+    agent_initiated: bool = False
+    proactive_unread: bool = False
     created_at: str = ""
     updated_at: str = ""
 
@@ -36,6 +40,10 @@ def list_history():
             "id":         c.get("id", fn[:-5]),
             "title":      c.get("title", "Untitled"),
             "mode":       c.get("mode", "chat"),
+            "session_id": c.get("session_id", ""),
+            "channel_id": c.get("channel_id", ""),
+            "agent_initiated": bool(c.get("agent_initiated", False)),
+            "proactive_unread": bool(c.get("proactive_unread", c.get("agent_initiated", False))),
             "updated_at": c.get("updated_at", ""),
         })
     return {"conversations": convs}

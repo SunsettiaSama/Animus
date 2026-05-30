@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from agent.react.tao import TaoLoop
-    from agent.soul.life.experience.stack import LifeExperienceStack
+    from agent.soul.life.experience.hub import LifeExperienceStack
 
 
 class PendingDialogueTurn(Protocol):

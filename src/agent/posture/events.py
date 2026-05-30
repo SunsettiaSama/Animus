@@ -1,3 +1,4 @@
+"""姿态 FSM 输入事件；由 ``InteractionPosture.dispatch`` 消费，主路径 Soul/Speak 不发送这些事件。"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

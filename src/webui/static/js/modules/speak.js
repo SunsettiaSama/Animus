@@ -24,6 +24,24 @@ export async function fetchStatus() {
   return data;
 }
 
+export async function getSessionTrace(sessionId) {
+  const sid = String(sessionId ?? '').trim();
+  if (!sid) return { enabled: false };
+  return http.get(PATHS.speak.trace(sid));
+}
+
+export async function setSessionTrace(sessionId, enabled) {
+  const sid = String(sessionId ?? '').trim();
+  if (!sid) throw new Error('missing session_id');
+  return http.post(PATHS.speak.traceSet, { session_id: sid, enabled: Boolean(enabled) });
+}
+
+export async function fetchSessionDebug(sessionId) {
+  const sid = String(sessionId ?? '').trim();
+  if (!sid) throw new Error('missing session_id');
+  return http.get(PATHS.speak.debug(sid));
+}
+
 export async function resetSession(sessionId) {
   const sid = String(sessionId ?? '').trim();
   if (!sid) {

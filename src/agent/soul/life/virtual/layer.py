@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from typing import Callable
@@ -20,7 +20,7 @@ from .journal.item import Landmark, LandmarkStatus
 from .journal.journal import LifeJournal
 from .journal.store import JournalStore
 from .narrative import NarrativeEngine
-from agent.soul.life.experience.virtual_codec import VirtualUnitContext, VirtualUnitTrigger
+from agent.soul.life.experience.domain.virtual_codec import VirtualUnitContext, VirtualUnitTrigger
 from .surprise.generator import NullSurpriseGenerator, SurpriseGenerator
 from .surprise.launcher import SurpriseLauncher
 

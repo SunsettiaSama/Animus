@@ -8,7 +8,8 @@ from .bundle import SpeakPromptBundle, SpeakTurnMode
 from .context import SpeakContextDistiller
 from .frame import PreparedComposeFrame
 from .injected import SpeakInjectedContext, collect_injected
-from agent.soul.speak.io.inbound.compose import SpeakStatusStore
+from agent.soul.speak.io.inbound.compose import SpeakStatusInjected, SpeakStatusStore
+from agent.soul.speak.io.inbound.compose.render import render_presence
 from .reply_style import SpeakReplyStyle
 from .share import ShareDesireComposer
 from .system import build_system_prompt
@@ -66,8 +67,8 @@ class SpeakPromptComposer:
         """后台预组装：persona / status / share → system（不含 user_text）。"""
         persona_snap = self._persona.get_persona_snapshot(session_id=session_id)
         presence_snap = self._presence.snapshot(session_id)
-        share_state = self._share.collect(presence_snap)
-        drive_eval = self._share.evaluate_drive(presence_snap)
+        share_state = self._share.collect(presence_snap, session_id=session_id)
+        drive_eval = self._share.evaluate_drive(presence_snap, session_id=session_id)
         style = reply_style or SpeakReplyStyle()
 
         dialogue_compressed = ""
@@ -102,15 +103,39 @@ class SpeakPromptComposer:
             reply_style=style,
         )
 
+    def refresh_status_for_turn(
+        self,
+        session_id: str,
+        status: SpeakStatusInjected,
+    ) -> SpeakStatusInjected:
+        """预组装 status 可能过时：compose 前刷新 presence 与蒸馏摘要。"""
+        dialogue_compressed = ""
+        if self._context is not None:
+            dialogue_compressed = self._context.prompt_block(session_id)
+        presence_snap = self._presence.snapshot(session_id)
+        presence = render_presence(presence_snap.state, max_chars=self._max_presence_chars)
+        return SpeakStatusInjected(
+            presence=presence.strip() or status.presence,
+            dialogue_compressed=dialogue_compressed.strip() or status.dialogue_compressed,
+            interactor_portrait=status.interactor_portrait,
+            similar_memories=status.similar_memories,
+        )
+
     def finalize(
         self,
         frame: PreparedComposeFrame,
         user_text: str,
+        *,
+        session_id: str | None = None,
     ) -> SpeakPromptBundle:
         """将预组装帧与本轮 user_text 合并为完整 bundle。"""
+        status = frame.status
+        sid = (session_id or frame.session_id).strip()
+        if sid:
+            status = self.refresh_status_for_turn(sid, status)
         injected = SpeakInjectedContext(
             persona=frame.persona,
-            status=frame.status,
+            status=status,
             user_text=user_text.strip(),
         )
         return SpeakPromptBundle(
@@ -134,7 +159,7 @@ class SpeakPromptComposer:
         reply_style: SpeakReplyStyle | None = None,
     ) -> SpeakPromptBundle:
         frame = self.prepare(session_id, mode=mode, reply_style=reply_style)
-        bundle = self.finalize(frame, user_text)
+        bundle = self.finalize(frame, user_text, session_id=session_id)
         bundle.meta["compose_source"] = "sync"
         return bundle
 
@@ -149,5 +174,6 @@ class SpeakPromptComposer:
         return self._share.reveal(
             presence_snap,
             pointer,
+            session_id=session_id,
             trigger_source=trigger_source,
         )

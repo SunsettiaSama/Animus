@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent.soul.memory.domain import EdgeType, EvolutionSource
-from agent.soul.memory.graph.networks.archival import ExperienceArchiver
+from agent.soul.memory.graph.node.create.archive import ExperienceArchiver
 from agent.soul.memory.graph.networks.social.network import SocialMemoryNetwork
 from agent.soul.memory.graph.networks.social.portrait import InteractorPortrait
 from agent.soul.memory.graph.networks.social.query import SocialQueryEngine

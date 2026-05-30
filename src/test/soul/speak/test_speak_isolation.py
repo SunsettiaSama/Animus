@@ -19,7 +19,6 @@ CORE_RELATIVE = (
     "io/inbound/bridge.py",
     "io/inbound/unit.py",
     "io/inbound/ports.py",
-    "io/inbound/session/bridge.py",
     "io/outbound/request.py",
     "io/outbound/deliver.py",
     "io/outbound/delivery.py",

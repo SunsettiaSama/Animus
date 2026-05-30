@@ -4,10 +4,7 @@ from dataclasses import dataclass, field
 
 from .queue import ShareIntentQueue
 
-from config.soul.presence.config import (
-    PROACTIVE_OPEN_THRESHOLD,
-    REPLY_URGE_THRESHOLD,
-)
+import config.soul.presence.config as presence_cfg
 
 
 @dataclass
@@ -68,15 +65,25 @@ class ExpectationState:
 
     def at_proactive_threshold(
         self,
-        threshold: float = PROACTIVE_OPEN_THRESHOLD,
+        threshold: float | None = None,
     ) -> bool:
-        return self.toward_user >= threshold
+        active = (
+            presence_cfg.PROACTIVE_OPEN_THRESHOLD
+            if threshold is None
+            else threshold
+        )
+        return self.toward_user >= active
 
     def wants_multi_reply(
         self,
-        threshold: float = REPLY_URGE_THRESHOLD,
+        threshold: float | None = None,
     ) -> bool:
-        return self.reply_urge >= threshold
+        active = (
+            presence_cfg.REPLY_URGE_THRESHOLD
+            if threshold is None
+            else threshold
+        )
+        return self.reply_urge >= active
 
     def render(self) -> str:
         parts: list[str] = []

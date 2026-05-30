@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ReAct Agent</title>
+  <title>栖灵 Animus</title>
   <link rel="stylesheet" href="/static/css/main.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -17,6 +17,22 @@
 <body>
 
 <!-- ══════════════════════════════════
+     ACCOUNT GATE (MVP)
+══════════════════════════════════ -->
+<div id="account-gate-overlay" class="account-gate hidden">
+  <div class="account-gate-card">
+    <h2>选择来访账号</h2>
+    <p class="account-gate-hint">账号与 Soul 记忆身份一一对应；无密码，本地选择即可。</p>
+    <div id="account-gate-list" class="account-gate-list"></div>
+    <div class="account-gate-create-row">
+      <input id="account-gate-name" type="text" placeholder="显示名称（如：荧）" maxlength="80" />
+      <button id="account-gate-create" type="button" class="btn-primary">创建并进入</button>
+    </div>
+    <button id="account-gate-refresh" type="button" class="btn-secondary">刷新列表</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
      LANDING SCREEN  (Workstation)
 ══════════════════════════════════ -->
 <div id="s-landing">
@@ -27,8 +43,8 @@
       <div class="ws-logo">
         <div class="logo-mark">⚡</div>
         <div>
-          <h1>ReAct Workstation</h1>
-          <p>Intelligent reasoning platform</p>
+          <h1>栖灵 Animus</h1>
+          <p>会成长、会记得、会主动出现的智能体</p>
         </div>
       </div>
       <div class="ws-topbar-actions">
@@ -159,6 +175,11 @@
       </div>
     </div>
 
+    <div class="ws-section" id="landing-recent-wrap">
+      <div class="ws-section-title">最近对话</div>
+      <div id="landing-recent"></div>
+    </div>
+
   </div>
 </div>
 
@@ -166,17 +187,34 @@
 <!-- ══════════════════════════════════
      WORKSPACE SCREEN
 ══════════════════════════════════ -->
-<div id="s-workspace" class="hidden workspace-single">
+<div id="s-workspace" class="hidden">
+
+  <aside id="sidebar">
+    <div class="sidebar-hdr">
+      <span class="logo-text">对话</span>
+      <div class="sidebar-hdr-actions">
+        <button id="btn-new-chat" class="icon-btn" title="新对话">＋</button>
+        <button id="btn-sidebar-toggle" class="sidebar-toggle-btn icon-btn" title="收起侧栏">◀</button>
+      </div>
+    </div>
+    <div id="sidebar-list"></div>
+  </aside>
 
   <div id="main-area">
     <div id="topbar">
       <div class="topbar-left">
+        <button id="btn-sidebar-open" class="icon-btn sidebar-open-btn" title="打开对话列表" aria-label="打开对话列表">☰</button>
         <button id="btn-go-home" class="icon-btn" title="Home">←</button>
+        <span id="tb-typing" class="tb-typing-wrap hidden" aria-hidden="true">
+          <span class="speak-typing-spinner"></span>
+        </span>
         <span id="tb-title">对话</span>
+        <span id="tb-proactive-dot" class="tb-proactive-dot" title="Agent 渴望与你互动"></span>
         <span id="tb-persona-badge" class="persona-badge hidden">🎭 Persona</span>
         <span id="tb-mem-loading" class="mem-loading-badge hidden"><span class="spin">⟳</span>加载记忆中…</span>
       </div>
       <div class="topbar-right">
+        <button id="btn-speak-trace" class="icon-btn" title="主进程打印本 session 提示词与记忆缓存">🪵</button>
         <button id="btn-open-kb" class="icon-btn" title="知识库">📚</button>
         <button id="btn-settings-topbar" class="icon-btn" title="Settings">⚙</button>
       </div>
@@ -798,6 +836,13 @@
             <span class="toggle-desc">关闭则使用 token_batch 模式</span>
           </div>
           <label class="switch"><input type="checkbox" id="s-soul-speak-segment" checked><span class="slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="toggle-title">逐字呈现</span>
+            <span class="toggle-desc">对白按输入节奏逐字显示，顶栏提示「对方正在输入」（仅存于本浏览器）</span>
+          </div>
+          <label class="switch"><input type="checkbox" id="s-speak-simulated"><span class="slider"></span></label>
         </div>
 
         <div class="section-divider">Presence</div>

@@ -18,6 +18,7 @@ const _cb = {
   onHide: () => {},
   onScheduledReply: (_taskName, _answer) => {},
   onAgentMessage: (_title, _message, _taskName) => {},
+  onAgentProactiveSession: (_payload) => {},
 };
 
 export function setCallbacks(cbs) { Object.assign(_cb, cbs); }
@@ -58,6 +59,11 @@ function _handleMessage(evt) {
 
   if (msg.type === 'agent_message') {
     _cb.onAgentMessage(msg.title ?? '', msg.message ?? '', msg.task_name ?? '');
+    return;
+  }
+
+  if (msg.type === 'agent_proactive_session') {
+    _cb.onAgentProactiveSession(msg);
     return;
   }
 

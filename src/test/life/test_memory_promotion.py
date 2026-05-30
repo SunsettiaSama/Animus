@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from agent.soul.life.experience.memory_promotion import (
+from agent.soul.life.experience.unit_layer.promote.policy import (
     matches_demote_narration,
     matches_promote_narration,
     should_promote_to_memory,
 )
-from agent.soul.life.experience.unit import (
+from agent.soul.life.experience.domain.unit import (
     ExperienceAction,
     ExperienceActionKind,
     ExperienceFeeling,

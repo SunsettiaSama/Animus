@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from ..anchor_codec import InteractionDirection
+from ..domain.anchor_codec import InteractionDirection
 from .session import DialogueSession, DialogueTurn
 from .working_memory import DialogueWorkingMemory, _utc_now
 

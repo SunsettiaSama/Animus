@@ -8,7 +8,7 @@ Soul 子系统在 ReAct 推理环之外承载 **持久记忆**、**调度心跳*
 
 | 文档 | 说明 |
 |---|---|
-| [memory/README.md](./memory/README.md) | `MemoryService`，STM/LTM，检索与冲刷 |
+| [memory/README.md](./memory/README.md) | `MemoryService`，记忆图（event/social），I/O 边界，涌现 / 反刍 / 睡眠 |
 | [heartbeat/README.md](./heartbeat/README.md) | `HeartbeatModule`、`HeartbeatOrchestrator` 与调度对接 |
 | [life/README.md](./life/README.md) | `LifeManager`、体验栈、虚拟层 / 锚点层 |
 | [persona/README.md](./persona/README.md) | `PersonaManager` / `PersonaService`，画像 / buffer / self_concept |
@@ -58,9 +58,10 @@ src/agent/soul/
 │   ├── api/             # life / memory / persona action → handler
 │   └── tao/             # BaseTaoHandler、Tao 工具与 Prompt 块
 ├── workers/             # SoulWorkers + DomainWorker
-├── memory/
+├── memory/              # 记忆图 + facade + io（session/life）+ emergence / rumination / sleep
 ├── heartbeat/
 ├── life/
+│   ├── io/              # LifeIOHub：speak 入站 + memory 出站
 │   ├── virtual/         # 虚拟叙事：journal / chronicle / surprise / narrative
 │   ├── anchor/          # 现实锚点：inbound digest / outbound / chronicle
 │   └── experience/      # LifeExperienceStack、dialogue/life pipeline

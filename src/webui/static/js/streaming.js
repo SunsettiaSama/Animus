@@ -139,11 +139,13 @@ export class SpeakSession extends BaseSession {
   constructor(genId, opts = {}) {
     super(PATHS.speak.run, genId);
     this._sessionId = opts.sessionId ?? 'webui';
+    this._channelId = opts.channelId ?? this._sessionId;
     this._onEvent = opts.onEvent ?? (() => {});
     this._onTurnFinish = opts.onTurnFinish ?? (() => {});
     this._onUserAck = opts.onUserAck ?? (() => {});
+    this._onTurnStart = opts.onTurnStart ?? (() => {});
     this._onError = opts.onError ?? (() => {});
-    this._turnResolvers = [];
+    this._deliveryMode = opts.deliveryMode === 'simulated' ? 'simulated' : 'stream';
     this._connected = false;
     this._aborted = false;
   }
@@ -156,6 +158,21 @@ export class SpeakSession extends BaseSession {
     if (opts.onEvent) this._onEvent = opts.onEvent;
     if (opts.onTurnFinish) this._onTurnFinish = opts.onTurnFinish;
     if (opts.onUserAck) this._onUserAck = opts.onUserAck;
+    if (opts.onTurnStart) this._onTurnStart = opts.onTurnStart;
+  }
+
+  setDeliveryMode(mode) {
+    this._deliveryMode = mode === 'simulated' ? 'simulated' : 'stream';
+  }
+
+  _wsPayload(extra = {}) {
+    return {
+      ...extra,
+      gen_id: this._genId,
+      session_id: this._sessionId,
+      channel_id: this._channelId,
+      delivery_mode: this._deliveryMode,
+    };
   }
 
   _send(payload) {
@@ -170,14 +187,17 @@ export class SpeakSession extends BaseSession {
     this._send({
       type: 'user_message',
       question: text,
-      gen_id: this._genId,
-      session_id: this._sessionId,
+      ...this._wsPayload(),
     });
     return true;
   }
 
   _handleMessage(msg) {
     if (msg.gen_id && msg.gen_id !== this._genId) return;
+
+    if (msg.type === 'turn_start') {
+      this._onTurnStart(msg);
+    }
 
     if (msg.type === 'speak_event') {
       this._onEvent(msg.kind, msg.text ?? '', msg.meta ?? {});
@@ -226,6 +246,7 @@ export class SpeakSession extends BaseSession {
 
     await this._open();
     this._connected = true;
+    this._turnResolvers = [];
     this._turnRejectors = [];
 
     this._ws.onmessage = evt => {
@@ -251,8 +272,7 @@ export class SpeakSession extends BaseSession {
     this._send({
       type: 'start',
       question: first,
-      gen_id: this._genId,
-      session_id: this._sessionId,
+      ...this._wsPayload(),
     });
 
     const result = await this._waitTurn();
@@ -268,8 +288,7 @@ export class SpeakSession extends BaseSession {
     this._send({
       type: 'user_message',
       question: text,
-      gen_id: this._genId,
-      session_id: this._sessionId,
+      ...this._wsPayload(),
     });
     const result = await this._waitTurn();
     if (result?.type === 'error') {

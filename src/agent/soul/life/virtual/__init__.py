@@ -1,4 +1,4 @@
-from .layer import VirtualLayer
+﻿from .layer import VirtualLayer
 from .journal import (
     DiceResult,
     JournalStore,
@@ -20,7 +20,7 @@ from .chronicle import (
     VirtualChronicleStore,
     virtual_entry_from_unit,
 )
-from agent.soul.life.experience.virtual_codec import (
+from agent.soul.life.experience.domain.virtual_codec import (
     VirtualUnitContext,
     VirtualUnitTrigger,
     read_virtual_context,

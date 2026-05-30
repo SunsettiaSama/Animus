@@ -7,6 +7,7 @@ from typing import Literal
 from .....tools.anchor import ANCHOR_ENABLED
 from ..events import SpeakStreamEvent
 from ..parse.tags import SpeakTagBlock
+from ..sanitize import sanitize_push_text, sanitize_stream_event
 from ..protocol.tags import FRONTEND_SUPPRESSED_TAGS
 from .segment import split_sentences
 
@@ -32,7 +33,7 @@ class SpeakTagFlushDispatcher:
 
     def _emit(self, session_id: str, event: SpeakStreamEvent) -> None:
         if self.emit_fn is not None:
-            self.emit_fn(session_id, event)
+            self.emit_fn(session_id, sanitize_stream_event(event))
 
     def flush_block(
         self,
@@ -52,7 +53,10 @@ class SpeakTagFlushDispatcher:
             if not segments:
                 segments = [block.content]
             for segment in segments:
-                event = SpeakStreamEvent(kind="speak", text=segment)
+                cleaned = sanitize_push_text(segment)
+                if not cleaned:
+                    continue
+                event = SpeakStreamEvent(kind="speak", text=cleaned)
                 self._emit(session_id, event)
                 yield event
             return
@@ -67,6 +71,9 @@ class SpeakTagFlushDispatcher:
             yield event
             return
 
-        event = SpeakStreamEvent(kind=kind, text=block.content)
+        cleaned = sanitize_push_text(block.content)
+        if not cleaned:
+            return
+        event = SpeakStreamEvent(kind=kind, text=cleaned)
         self._emit(session_id, event)
         yield event

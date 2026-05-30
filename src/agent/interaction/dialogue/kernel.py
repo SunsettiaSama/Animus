@@ -19,7 +19,11 @@ from agent.soul.presence import PresenceContext, PresenceEvent, PresenceService
 
 
 class DialogueKernel:
-    """对话模态内核：SemanticInteraction + posture 结构态 + Soul 当下态期待。"""
+    """对话模态内核：SemanticInteraction + posture 结构态 + Presence 当下态。
+
+    设计为 WebUI/Speak 之外的统一对话入口；当前仓库**无生产调用方**。
+    主路径请使用 ``SpeakService.run_turn`` + ``PresenceService``，勿假设本类已启动。
+    """
 
     def __init__(
         self,

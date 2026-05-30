@@ -22,6 +22,8 @@ class PersonaConfig:
     max_preference_topics: int = 10
     max_preference_chars: int = 400
     preference_update_every_n: int = 3
+    # 非空时跳过 embedding 解析，直接套用 presence 分享档位（如「中」）
+    expectation_tier_override: str = "中"
 
     @classmethod
     def from_dict(cls, d: dict, persona_dir: str = "") -> PersonaConfig:
@@ -43,4 +45,5 @@ class PersonaConfig:
             max_preference_topics=int(d.get("max_preference_topics", 10)),
             max_preference_chars=int(d.get("max_preference_chars", 400)),
             preference_update_every_n=int(d.get("preference_update_every_n", 3)),
+            expectation_tier_override=str(d.get("expectation_tier_override", "中")),
         )

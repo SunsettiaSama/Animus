@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -105,10 +106,64 @@ class AppState:
     # Private: protect _is_streaming / current_gen_id with a lock
     def __post_init__(self) -> None:
         self._streaming_lock: threading.Lock = threading.Lock()
+        self._shutdown_lock: threading.Lock = threading.Lock()
+        self._ws_lock: threading.Lock = threading.Lock()
+        self._shutting_down: bool = False
+        self._open_websockets: list[Any] = []
         self._is_streaming: bool = False
         self.react_init_event.set()   # initially "ready / idle"
         self._init_paths()
         self._init_infra()
+
+    @property
+    def shutting_down(self) -> bool:
+        with self._shutdown_lock:
+            return self._shutting_down
+
+    def register_websocket(self, websocket: Any) -> Callable[[], None]:
+        with self._ws_lock:
+            self._open_websockets.append(websocket)
+
+        def _unregister() -> None:
+            with self._ws_lock:
+                if websocket in self._open_websockets:
+                    self._open_websockets.remove(websocket)
+
+        return _unregister
+
+    def prepare_graceful_shutdown(self) -> None:
+        """在 uvicorn 等待长连接结束前调用，避免 shutdown 钩子过晚才解阻 SSE/WS。"""
+        with self._shutdown_lock:
+            if self._shutting_down:
+                return
+            self._shutting_down = True
+
+        loop = self.main_event_loop
+
+        def _unblock_sse() -> None:
+            self.plan_broadcast({"type": "done", "status": "shutdown", "answer": ""})
+            for q in list(self.reactive_ws_flow_queues):
+                q.put_nowait({"type": "done", "status": "shutdown", "answer": ""})
+            if self.notify_queue is not None:
+                self.notify_queue.put_nowait(None)
+
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(_unblock_sse)
+            with self._ws_lock:
+                sockets = list(self._open_websockets)
+            for ws in sockets:
+                loop.create_task(_close_websocket(ws))
+        else:
+            _unblock_sse()
+
+    def install_shutdown_signals(self) -> None:
+        """SIGINT/SIGTERM 时提前解阻长连接（Windows 下 SIGINT 有效）。"""
+
+        def _handler(_signum: int, _frame: object) -> None:
+            self.prepare_graceful_shutdown()
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, _handler)
 
     # ── Thread-safe streaming state ───────────────────────────────────────────
 
@@ -152,6 +207,15 @@ class AppState:
             q.put_nowait(event)
 
     # ── Private helpers ───────────────────────────────────────────────────────
+
+
+async def _close_websocket(websocket: Any) -> None:
+    from starlette.websockets import WebSocketDisconnect
+
+    try:
+        await websocket.close(code=1001, reason="server shutdown")
+    except (WebSocketDisconnect, RuntimeError, Exception):
+        pass
 
     def _init_paths(self) -> None:
         from config import paths

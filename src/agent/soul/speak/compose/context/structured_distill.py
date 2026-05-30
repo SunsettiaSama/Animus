@@ -3,16 +3,24 @@ from __future__ import annotations
 import json
 import re
 
-from agent.soul.memory.session.types import DialogueCompressionBlock
+from agent.soul.memory.io.session import DialogueCompressionBlock
 from agent.soul.speak.compose.context.chunk_types import DialogueContextChunk
 from agent.soul.speak.llm.engine import SpeakLLMEngine
 
-_STRUCTURED_SYSTEM = (
-    "你是会话体验压缩器。"
-    "根据给定的对话原文与此前压缩摘要，输出本轮体验的 JSON。"
-    "忠实转述已出现的事实与意图；emotion / valence / salience 反映 Agent 主观体验强度。"
-    "只输出 JSON，不要解释。"
-)
+def _structured_system(agent_persona_narrative: str = "") -> str:
+    base = (
+        "你是会话体验压缩器。"
+        "根据给定的对话原文与此前压缩摘要，输出本轮体验的 JSON。"
+        "忠实转述已出现的事实与意图；emotion / valence / salience 反映 Agent 主观体验强度。"
+        "只输出 JSON，不要解释。"
+    )
+    persona = agent_persona_narrative.strip()
+    if not persona:
+        return base
+    return (
+        f"{base}\n\n"
+        f"【Agent 人格锚点（压缩语气须与此一致）】\n{persona}"
+    )
 
 _SCHEMA_HINT = """\
 {
@@ -47,6 +55,8 @@ def _fallback_block(
     block_index: int,
     batch: list[DialogueContextChunk],
     prior: list[str],
+    *,
+    interactor_id: str = "",
 ) -> DialogueCompressionBlock:
     parts: list[str] = []
     if prior:
@@ -63,6 +73,7 @@ def _fallback_block(
         summary=summary or f"会话块 {block_index + 1}",
         transcript=_render_transcript(batch),
         salience=0.45,
+        interactor_id=interactor_id,
     )
 
 
@@ -73,9 +84,13 @@ def distill_compression_block(
     block_index: int,
     batch: list[DialogueContextChunk],
     prior: list[str],
+    agent_persona_narrative: str = "",
+    interactor_id: str = "",
 ) -> DialogueCompressionBlock:
     if llm is None:
-        return _fallback_block(session_id, block_index, batch, prior)
+        return _fallback_block(
+            session_id, block_index, batch, prior, interactor_id=interactor_id
+        )
 
     lines: list[str] = []
     if prior:
@@ -84,11 +99,13 @@ def distill_compression_block(
     lines.append(f"待压缩的最近 {len(batch)} 轮对话：")
     lines.append(_render_transcript(batch))
     lines.append(f"\n输出 schema：\n{_SCHEMA_HINT}")
-    raw = llm.generate("\n".join(lines), system=_STRUCTURED_SYSTEM)
+    raw = llm.generate("\n".join(lines), system=_structured_system(agent_persona_narrative))
     data = _extract_json(raw.text)
     summary = str(data.get("summary", "")).strip()
     if not summary:
-        return _fallback_block(session_id, block_index, batch, prior)
+        return _fallback_block(
+            session_id, block_index, batch, prior, interactor_id=interactor_id
+        )
     salience_raw = data.get("salience", 0.5)
     salience = float(salience_raw) if salience_raw is not None else 0.5
     salience = min(1.0, max(0.2, salience))
@@ -104,4 +121,5 @@ def distill_compression_block(
         valence_delta=valence_delta,
         arousal_delta=arousal_delta,
         transcript=_render_transcript(batch),
+        interactor_id=interactor_id,
     )

@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
 from ..events import SpeakStreamEvent
+from ..sanitize import sanitize_push_text
 
 
 @dataclass
@@ -22,8 +23,10 @@ class SpeakTokenBatchChannel:
         self._buffer.append(token)
         if len(self._buffer) < self.batch_size:
             return
-        chunk = "".join(self._buffer)
+        chunk = sanitize_push_text("".join(self._buffer))
         self._buffer.clear()
+        if not chunk:
+            return
         event = SpeakStreamEvent(kind="chunk", text=chunk)
         self._emit(session_id, event)
         yield event
@@ -31,8 +34,10 @@ class SpeakTokenBatchChannel:
     def drain(self, session_id: str) -> Iterator[SpeakStreamEvent]:
         if not self._buffer:
             return
-        chunk = "".join(self._buffer)
+        chunk = sanitize_push_text("".join(self._buffer))
         self._buffer.clear()
+        if not chunk:
+            return
         event = SpeakStreamEvent(kind="chunk", text=chunk)
         self._emit(session_id, event)
         yield event

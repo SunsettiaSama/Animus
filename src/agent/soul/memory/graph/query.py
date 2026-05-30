@@ -38,6 +38,35 @@ class QueryEngine:
         hl = self._recent_hl if unit.tier == MemoryTier.short_term else self._hl
         return unit.activation(now=now, half_life_days=hl)
 
+    @staticmethod
+    def _filter_interactor(
+        candidates: list[ScoredUnit],
+        interactor_id: str,
+    ) -> list[ScoredUnit]:
+        iid = interactor_id.strip()
+        if not iid:
+            return candidates
+        return [
+            s
+            for s in candidates
+            if (getattr(s.unit, "interactor_id", "") or "").strip() == iid
+        ]
+
+    @staticmethod
+    def _filter_interactor_relaxed(
+        candidates: list[ScoredUnit],
+        interactor_id: str,
+    ) -> list[ScoredUnit]:
+        """Event 网：命中 interactor 或历史空 interactor（渐进修复脏数据）。"""
+        iid = interactor_id.strip()
+        if not iid:
+            return candidates
+        return [
+            s
+            for s in candidates
+            if (uid := (getattr(s.unit, "interactor_id", "") or "").strip()) in ("", iid)
+        ]
+
     def recent(
         self,
         limit: int = 10,
@@ -79,6 +108,7 @@ class QueryEngine:
         memory_type: str | None = None,
         w_relevance: float = 0.6,
         w_activation: float = 0.4,
+        interactor_id: str = "",
     ) -> list[ScoredUnit]:
         now = datetime.now(timezone.utc)
         candidates: list[ScoredUnit] = []
@@ -98,6 +128,7 @@ class QueryEngine:
             candidates = [s for s in candidates if s.unit.valence == valence]
         if memory_type is not None:
             candidates = [s for s in candidates if s.unit.MEMORY_TYPE == memory_type]
+        candidates = self._filter_interactor_relaxed(candidates, interactor_id)
         for s in candidates:
             s.final_score = w_relevance * s.relevance + w_activation * s.activation
         candidates.sort(key=lambda s: s.final_score, reverse=True)
@@ -111,6 +142,7 @@ class QueryEngine:
         network: MemoryNetwork | None = None,
         w_relevance: float = 0.6,
         w_activation: float = 0.4,
+        interactor_id: str = "",
     ) -> list[ScoredUnit]:
         now = datetime.now(timezone.utc)
         candidates: list[ScoredUnit] = []
@@ -126,6 +158,7 @@ class QueryEngine:
             for u in self._nodes.list_recent(limit=top_k * 2, network=recent_network):
                 act = self._activation(u, now)
                 candidates.append(ScoredUnit(u, relevance=1.0, activation=act))
+        candidates = self._filter_interactor_relaxed(candidates, interactor_id)
         for s in candidates:
             s.final_score = w_relevance * s.relevance + w_activation * s.activation
         candidates.sort(key=lambda s: s.final_score, reverse=True)

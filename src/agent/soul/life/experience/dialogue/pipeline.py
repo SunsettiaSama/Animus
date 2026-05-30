@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from ..orchestrator import ExperienceOrchestrator
-from ..unit import ExperienceUnit
-from ..anchor_codec import InteractionDirection
+from ..domain.anchor_codec import InteractionDirection
+from ..domain.unit import ExperienceUnit
+from ..unit_layer.manage.orchestrator import ExperienceOrchestrator
 from .session import unit_from_dialogue_session
 from .state import DialogueState
 

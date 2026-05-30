@@ -357,6 +357,7 @@ class SpreadActivationService:
             top_k=self._point_top_k,
             w_relevance=self._hybrid_w_relevance,
             w_activation=self._hybrid_w_activation,
+            interactor_id=cue.interactor_id,
         )
 
     def _hybrid_associative(self, cue: ActivationCue) -> list[ScoredUnit]:
@@ -375,6 +376,7 @@ class SpreadActivationService:
             top_k=self._point_top_k,
             w_relevance=self._hybrid_w_relevance,
             w_activation=self._hybrid_w_activation,
+            interactor_id=cue.interactor_id,
         )
 
     @staticmethod

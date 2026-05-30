@@ -21,7 +21,7 @@ class PostureTransitionResult:
 
 
 class InteractionPosture:
-    """Agent 交互姿态层：session 全程持有对话/场景结构状态。"""
+    """按 session 持有 PostureFsmState；仅在被 ``DialogueKernel`` 或测试显式 dispatch 时更新。"""
 
     def __init__(self) -> None:
         self._sessions: dict[str, InteractionPostureSnapshot] = {}

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
@@ -43,8 +43,8 @@ from .transition.trigger import PresenceTriggerKind
 
 if TYPE_CHECKING:
     from agent.soul.life.anchor.presence_bundle import PresenceExperienceBundle
-    from agent.soul.life.experience.log import ExperienceLog
-    from agent.soul.life.experience.stack import LifeExperienceStack
+    from agent.soul.life.experience.unit_layer.manage.log import ExperienceLog
+    from agent.soul.life.experience.hub import LifeExperienceStack
 
 PresenceTriggerResult = GatewayResult
 
@@ -145,6 +145,16 @@ class PresenceService:
                 )
         self.gateway = PresenceGateway(self)
         self.interface = self.gateway
+        self._io_hub = None
+
+    @property
+    def io(self):
+        if self._io_hub is None:
+            raise RuntimeError("PresenceService 未 bind_io")
+        return self._io_hub
+
+    def bind_io(self, hub) -> None:
+        self._io_hub = hub
 
     def register_status_update_listener(
         self,
@@ -208,7 +218,7 @@ class PresenceService:
         hours: float | None = 2,
         tail: int = 12,
     ) -> dict[str, object]:
-        from agent.soul.life.experience.presence_supply import supply_presence_bundle_from_life
+        from agent.soul.life.experience.ingest.presence import supply_presence_bundle_from_life
 
         bundle = supply_presence_bundle_from_life(
             log, session_id, hours=hours, tail=tail,
@@ -225,7 +235,7 @@ class PresenceService:
 
     def apply_state_block(self, block: PresenceStateBlock) -> list[str]:
         """外部体验/反刍块 → 统一 life_sync 双链路。"""
-        from agent.soul.life.experience.presence_supply import presence_bundle_from_state_block
+        from agent.soul.life.experience.ingest.presence import presence_bundle_from_state_block
 
         sync = self.sync_life_bundle(presence_bundle_from_state_block(block))
         return list(sync.get("notes", []))
@@ -243,6 +253,20 @@ class PresenceService:
         snap = self.snapshot(session_id)
         self._notify_status_update(snap)
         return intent
+
+    def pop_top_share_intents(self, session_id: str, *, limit: int = 2) -> list:
+        """弹出 salience 最高的若干条（不全量 drain，供活跃会话延迟注入）。"""
+        session = self._session(session_id)
+        popped = []
+        for _ in range(max(0, limit)):
+            intent = session.state.expectation.share_queue.pop_most_wanted()
+            if intent is None:
+                break
+            popped.append(intent)
+        if popped:
+            self._persist(session_id)
+            self._notify_status_update(self.snapshot(session_id))
+        return popped
 
     def _notify_status_update(self, snap: PresenceSnapshot) -> None:
         for listener in self._status_update_listeners:

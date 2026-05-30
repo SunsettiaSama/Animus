@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from agent.soul.life.experience.compression import build_unit_from_compression
-from agent.soul.life.experience.memory_promotion import should_promote_to_memory
-from agent.soul.memory.session.buffer import _parse_valence
-from agent.soul.memory.session.types import DialogueCompressionBlock
+from agent.soul.life.experience.unit_layer.create import build_unit_from_compression
+from agent.soul.life.experience.unit_layer.promote.policy import should_promote_to_memory
+from agent.soul.memory.io.session.buffer import _parse_valence
+from agent.soul.memory.io.session import DialogueCompressionBlock
 from agent.soul.memory.domain import Valence
 from agent.soul.speak.compose.context.structured_distill import distill_compression_block
 from agent.soul.speak.compose.context.distiller import DialogueContextChunk

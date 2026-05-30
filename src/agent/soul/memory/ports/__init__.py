@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -17,7 +17,7 @@ from agent.soul.memory.domain import (
 from agent.soul.memory.graph.base_node import BaseNode
 
 if TYPE_CHECKING:
-    from agent.soul.life.experience.unit import ExperienceUnit
+    from agent.soul.life.experience.domain.unit import ExperienceUnit
     from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
     from agent.soul.memory.graph.networks.block import MemoryBlock
 

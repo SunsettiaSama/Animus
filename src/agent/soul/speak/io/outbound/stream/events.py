@@ -13,6 +13,7 @@ SpeakStreamKind = Literal[
     "anchor",
     "observe",
     "segment",
+    "agent_typing",
     "finish",
     "error",
 ]

@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from agent.adapters.fastapi_react import create_react_router
 from agent.adapters.fastapi_chat import create_chat_router
-from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe, soul, speak
+from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe, soul, speak, accounts
 from routers.infra import router as infra_router
 from state import get_state
 
@@ -57,6 +57,7 @@ for _r in [
     probe.router,
     soul.router,
     speak.router,
+    accounts.router,
 ]:
     app.include_router(_r)
 
@@ -198,6 +199,7 @@ def _startup():
         state.react_init_event.set()
         print(f"[webui] Startup init error: {exc}")
 
+    state.install_shutdown_signals()
     state.task_runner.submit("startup_init", _bg, on_error=_on_error)
     print("[webui] Background startup init submitted")
 
@@ -205,11 +207,7 @@ def _startup():
 @app.on_event("shutdown")
 def _shutdown():
     state = get_state()
-    # Unblock any open SSE /api/plan/stream connections so they exit before
-    # uvicorn forcefully cancels them (avoids CancelledError in the logs).
-    state.plan_broadcast({"type": "done", "status": "shutdown", "answer": ""})
-    if state.notify_queue is not None:
-        state.notify_queue.put_nowait(None)
+    state.prepare_graceful_shutdown()
     if state.scheduler_engine is not None:
         state.scheduler_engine.stop()
     if state.session_manager is not None:

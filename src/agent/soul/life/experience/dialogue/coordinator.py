@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent.soul.life.experience.stack import LifeExperienceStack
+    from agent.soul.life.experience.hub import LifeExperienceStack
 
 
 def _resolve_experience(

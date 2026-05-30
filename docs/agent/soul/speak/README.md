@@ -47,7 +47,7 @@ src/agent/soul/speak/
 │   │   ├── bridge.py         # SpeakDialogueBridge
 │   │   ├── compose/          # InboundComposeGateway（presence 更新触发 prepare）
 │   │   ├── memory/           # InboundMemoryGateway / RecallRequest
-│   │   └── session/          # SpeakSessionBridge
+│   │   # 会话 registry 见 speak/session/，经 SpeakService.session_registry 访问
 │   └── outbound/
 │       ├── router.py         # SpeakOutboundRouter（stream / presence / text）
 │       ├── deliver.py
@@ -120,7 +120,7 @@ presence.discharge / expectation scan
 |---|---|
 | **presence** | compose 注入当下态；status listener → InboundComposeGateway 预组装；drive 读 impulse / share |
 | **persona** | compose 注入 ProfileBlock / SelfConceptBlock（经 SoulService 快照） |
-| **memory** | recall handoff → InboundMemoryGateway |
+| **memory** | recall handoff → InboundMemoryGateway；压缩块 / 涌现 / 画像经 `memory.io.session` |
 | **life/experience** | `record_turn` → `LifeExperienceStack.record_dialogue_turn` |
 | **SoulService** | lazy wiring `_ensure_speak_service()`；`speak_turn()` 门面 |
 

@@ -35,3 +35,20 @@ __all__ = [
     "deliver_text",
     "ingest_question",
 ]
+
+
+def __getattr__(name: str):
+    if name == "SpeakIOHub":
+        from .hub import SpeakIOHub
+
+        return SpeakIOHub
+    if name == "SpeakInboundHub":
+        from .inbound.hub import SpeakInboundHub
+
+        return SpeakInboundHub
+    if name in ("SpeakOutboundHub", "SpeakOutboundStreamHub"):
+        from .outbound.hub import SpeakOutboundHub
+        from .outbound.stream_hub import SpeakOutboundStreamHub
+
+        return SpeakOutboundStreamHub if name == "SpeakOutboundStreamHub" else SpeakOutboundHub
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

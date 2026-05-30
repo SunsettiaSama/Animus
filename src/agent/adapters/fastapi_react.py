@@ -208,56 +208,52 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
     async def ws_react_run(websocket: WebSocket) -> None:
         state = get_state()
         await websocket.accept()
-
-        data = await websocket.receive_json()
-        question  = data.get("question", "")
-        gen_id    = data.get("gen_id", "")
-        raw_mode  = data.get("stream_mode", "flush")
-
-        bridge = WebUIBridge(state)
-
-        if not bridge.is_ready():
-            await websocket.send_json({"type": "error", "message": "ReAct not initialized."})
-            await websocket.close()
-            return
-
-        if not state.try_start_streaming(gen_id):
-            await websocket.send_json({"type": "error", "message": "Already streaming."})
-            await websocket.close()
-            return
-
-        # asyncio Queue 用于 flow 事件 fan-out（plan_broadcast 写入）
-        flow_q: asyncio.Queue = asyncio.Queue()
-        flow_detach = state.attach_reactive_ws_flow_queue(flow_q)
-
-        session = bridge.get_session()
-
-        async def _receive_client() -> None:
-            """后台协程：处理客户端上行消息（abort / approval）。"""
-            try:
-                while True:
-                    msg = await websocket.receive_json()
-                    mtype = msg.get("type")
-                    if mtype == "approval_response" and session is not None:
-                        session.resolve_approval(
-                            msg.get("request_id", ""),
-                            bool(msg.get("approved", False)),
-                        )
-                    elif mtype == "abort":
-                        if msg.get("gen_id") == state.current_gen_id and session is not None:
-                            session.abort()
-            except Exception:
-                pass
-
+        unregister_ws = state.register_websocket(websocket)
+        flow_detach = None
         try:
+            data = await websocket.receive_json()
+            question  = data.get("question", "")
+            gen_id    = data.get("gen_id", "")
+            raw_mode  = data.get("stream_mode", "flush")
+
+            bridge = WebUIBridge(state)
+
+            if not bridge.is_ready():
+                await websocket.send_json({"type": "error", "message": "ReAct not initialized."})
+                return
+
+            if not state.try_start_streaming(gen_id):
+                await websocket.send_json({"type": "error", "message": "Already streaming."})
+                return
+
+            flow_q: asyncio.Queue = asyncio.Queue()
+            flow_detach = state.attach_reactive_ws_flow_queue(flow_q)
+
+            session = bridge.get_session()
+
+            async def _receive_client() -> None:
+                """后台协程：处理客户端上行消息（abort / approval）。"""
+                try:
+                    while True:
+                        msg = await websocket.receive_json()
+                        mtype = msg.get("type")
+                        if mtype == "approval_response" and session is not None:
+                            session.resolve_approval(
+                                msg.get("request_id", ""),
+                                bool(msg.get("approved", False)),
+                            )
+                        elif mtype == "abort":
+                            if msg.get("gen_id") == state.current_gen_id and session is not None:
+                                session.abort()
+                except Exception:
+                    pass
+
             receive_task = asyncio.create_task(_receive_client())
 
-            # 主流：从 bridge 异步迭代器读取事件
             stream_done = False
             stream_iter = bridge.stream_user_turn(question, gen_id, raw_mode).__aiter__()
-            flow_none_pending = False
 
-            while not stream_done:
+            while not stream_done and not state.shutting_down:
                 # 同时监听主流和 flow 侧通道，哪个先来发哪个
                 stream_get = asyncio.ensure_future(stream_iter.__anext__())
                 flow_get   = asyncio.ensure_future(flow_q.get())
@@ -292,12 +288,13 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
                 await receive_task
             except (asyncio.CancelledError, Exception):
                 pass
-
         finally:
-            flow_detach()
-
-        state.set_streaming(False)
-        await websocket.close()
+            if flow_detach is not None:
+                flow_detach()
+            unregister_ws()
+            state.set_streaming(False)
+            if not state.shutting_down:
+                await websocket.close()
 
     # ── Session list（调试用）─────────────────────────────────────────────────
 

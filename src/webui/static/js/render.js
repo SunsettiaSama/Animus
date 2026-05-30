@@ -80,6 +80,19 @@ export function appendUserMsg(text) {
   return div;
 }
 
+export function appendProactiveBanner(bannerText, meta = {}) {
+  const el = _msgsEl();
+  if (!el) return null;
+  el.querySelector('.empty-state')?.remove();
+  const div = document.createElement('div');
+  div.className = 'proactive-session-banner';
+  div.dataset.proactiveIntentId = meta.proactiveIntentId ?? '';
+  div.innerHTML = `<span class="proactive-banner-text">${_esc(bannerText)}</span>`;
+  el.appendChild(div);
+  scrollBottom();
+  return div;
+}
+
 // ── Chat assistant message ────────────────────────────────────────────────────
 
 /**
@@ -1030,8 +1043,11 @@ function _mkSpeakDetail(label, content, opts = {}) {
 
 /**
  * Soul Speak 流式消息容器：按事件顺序逐条渲染，speak/action 各为独立 bubble。
+ * @param {{ deliveryMode?: 'stream'|'simulated' }} [opts]
  */
-export function appendSpeakStream() {
+export function appendSpeakStream(opts = {}) {
+  const deliveryMode = opts.deliveryMode === 'simulated' ? 'simulated' : 'stream';
+  const simulated = deliveryMode === 'simulated';
   const el = _msgsEl();
   if (!el) return null;
   el.querySelector('.empty-state')?.remove();
@@ -1068,6 +1084,48 @@ export function appendSpeakStream() {
   let _events = [];
   let _lastBubble = null;
   let _openBubble = null;
+  let _simAnimToken = 0;
+
+  function _splitSimChunks(text) {
+    const chunks = [];
+    let buf = '';
+    for (const ch of String(text ?? '')) {
+      buf += ch;
+      if (/[。！？；，、\n]/.test(ch) || buf.length >= 14) {
+        chunks.push(buf);
+        buf = '';
+      }
+    }
+    if (buf) chunks.push(buf);
+    return chunks.length ? chunks : [String(text ?? '')];
+  }
+
+  function _showTypingIndicator() {
+    if (!simulated) return;
+    setTitleBarTyping(true);
+  }
+
+  function _hideTypingIndicator() {
+    setTitleBarTyping(false);
+  }
+
+  async function _animateSimulatedSpeak(fullText) {
+    const text = String(fullText ?? '').trim();
+    if (!text) return;
+    _hideTypingIndicator();
+    const token = ++_simAnimToken;
+    const bubble = _ensureOpenBubble('speak');
+    bubble.classList.add('sim-typing-cursor');
+    for (const chunk of _splitSimChunks(text)) {
+      if (token !== _simAnimToken) return;
+      bubble.textContent += chunk;
+      scrollBottom();
+      await new Promise(r => setTimeout(r, 36 + Math.min(chunk.length * 22, 320)));
+    }
+    if (token !== _simAnimToken) return;
+    bubble.classList.remove('sim-typing-cursor', 'streaming');
+    _finalizeOpenBubble('speak');
+  }
 
   function _clearChunkPill() {
     if (!_chunkPill) return;
@@ -1104,28 +1162,47 @@ export function appendSpeakStream() {
     _openBubble = null;
   }
 
+  function _appendToOpenStream(kind, chunk) {
+    const piece = String(chunk ?? '');
+    if (!piece) return;
+    const bubble = _ensureOpenBubble(kind);
+    bubble.textContent += piece;
+    scrollBottom();
+  }
+
   function _handleStreamChunk(kind, text, meta = {}) {
     const phase = meta.phase;
-    if (phase === 'delta') {
-      const bubble = _ensureOpenBubble(kind);
-      bubble.textContent += text;
-      scrollBottom();
+    const chunk = String(text ?? '');
+
+    if (simulated && kind === 'speak' && phase === 'simulated') {
+      _animateSimulatedSpeak(chunk);
       return;
     }
-    if (phase === 'end') {
-      if (text) {
+
+    if (simulated && kind === 'speak') {
+      return;
+    }
+
+    const phaseNorm = phase;
+    if (phaseNorm === 'delta') {
+      _appendToOpenStream(kind, chunk);
+      return;
+    }
+    if (phaseNorm === 'end') {
+      if (chunk) {
         if (_openBubble && _openBubble.dataset.kind === kind) {
-          if (!_openBubble.textContent) _openBubble.textContent = text;
+          if (!_openBubble.textContent) _openBubble.textContent = chunk;
+          else if (!_openBubble.textContent.endsWith(chunk)) _openBubble.textContent += chunk;
         } else {
-          _appendChunkBubble(kind, text);
-          return;
+          _appendToOpenStream(kind, chunk);
         }
       }
       _finalizeOpenBubble(kind);
       scrollBottom();
       return;
     }
-    _appendChunkBubble(kind, text);
+    // segment 模式或 legacy speak 事件（无 phase）：同一轮内追加到同一 bubble
+    _appendToOpenStream(kind, chunk);
   }
 
   function _appendChunkBubble(kind, text) {
@@ -1241,12 +1318,19 @@ export function appendSpeakStream() {
     el,
     onEvent(kind, text, meta = {}) {
       switch (kind) {
+        case 'agent_typing':
+          if (!simulated) break;
+          if (meta.active) _showTypingIndicator();
+          else _hideTypingIndicator();
+          break;
         case 'tag':
           _clearChunkPill();
           if (meta.tag === 'think') {
-            _ensureChunkPill();
+            if (simulated) _showTypingIndicator();
+            else _ensureChunkPill();
           } else if (meta.tag === 'speak' || meta.tag === 'action') {
-            _ensureOpenBubble(meta.tag);
+            if (simulated && meta.tag === 'speak') _showTypingIndicator();
+            else _ensureOpenBubble(meta.tag);
           }
           break;
         case 'chunk':
@@ -1281,14 +1365,20 @@ export function appendSpeakStream() {
       }
     },
     finalize(answer, aborted = false) {
+      _hideTypingIndicator();
+      _simAnimToken += 1;
       _clearChunkPill();
       if (_openBubble) _finalizeOpenBubble(_openBubble.dataset.kind);
       if (_lastBubble) _lastBubble.classList.remove('streaming');
 
       const finalText = (_speakParts.join('') || String(answer ?? '')).trim();
       if (!_speakParts.length && finalText && !aborted) {
-        _appendChunkBubble('speak', finalText);
-        if (_lastBubble) _lastBubble.classList.remove('streaming');
+        if (simulated) {
+          _animateSimulatedSpeak(finalText);
+        } else {
+          _appendChunkBubble('speak', finalText);
+          if (_lastBubble) _lastBubble.classList.remove('streaming');
+        }
       }
 
       if (aborted) {
@@ -1302,7 +1392,50 @@ export function appendSpeakStream() {
       }
       scrollBottom();
     },
+    discardAgentTurn() {
+      _hideTypingIndicator();
+      _simAnimToken += 1;
+      div.remove();
+      _clearChunkPill();
+      _openBubble = null;
+      _lastBubble = null;
+      _speakParts = [];
+      _events = [];
+    },
     get speakText() { return _speakParts.join(''); },
     get events() { return _events; },
   };
+}
+
+/** 顶栏「对方正在输入」+ 转圈（逐字呈现模式）。 */
+export function setTitleBarTyping(active) {
+  const tb = document.getElementById('tb-title');
+  const spin = document.getElementById('tb-typing');
+  if (!tb) return;
+  if (active) {
+    if (!tb.dataset.savedTitle) {
+      tb.dataset.savedTitle = tb.textContent.trim() || '对话';
+    }
+    tb.textContent = '对方正在输入…';
+    tb.classList.add('tb-typing');
+    if (spin) {
+      spin.classList.remove('hidden');
+      spin.setAttribute('aria-hidden', 'false');
+    }
+    return;
+  }
+  tb.classList.remove('tb-typing');
+  if (spin) {
+    spin.classList.add('hidden');
+    spin.setAttribute('aria-hidden', 'true');
+  }
+  const saved = tb.dataset.savedTitle;
+  if (saved) {
+    tb.textContent = saved;
+    delete tb.dataset.savedTitle;
+  }
+}
+
+export function showSpeakTurnTyping() {
+  setTitleBarTyping(true);
 }

@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent.soul.life.experience.unit import ExperienceUnit
+    from agent.soul.life.experience.domain.unit import ExperienceUnit
 
 _PBX_PREFIX = "__pbx:"
 

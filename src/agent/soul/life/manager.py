@@ -244,6 +244,9 @@ class LifeManager:
         self._profile = self._profile_store.load()
         return self._profile
 
+    def sync_agent_persona_narrative(self, narrative: str) -> None:
+        self.worker.update_context(profile_narrative=narrative.strip())
+
     def recent_chronicle(self, *, days: int = 7, tail: int = 50) -> list[dict]:
         anchor = self._anchor.chronicle.recent_days(days)
         virtual = self._virtual_chronicle.recent_days(days)

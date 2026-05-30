@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from ...experience.unit import ExperienceUnit
-from ...experience.virtual_codec import VirtualUnitTrigger, read_virtual_context
+from ...experience.domain.unit import ExperienceUnit
+from ...experience.domain.virtual_codec import VirtualUnitTrigger, read_virtual_context
 from .entry import VirtualChronicleEntry, VirtualChronicleKind
 
 

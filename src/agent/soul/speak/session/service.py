@@ -25,6 +25,7 @@ from .queue import (
     SubmitUserInputResult,
     UserInputItem,
 )
+from .manage import SessionSocialManager
 
 if TYPE_CHECKING:
     from agent.soul.presence.service import PresenceService
@@ -57,6 +58,8 @@ class SpeakSessionService:
             registry=registry,
             reset_context=reset_context,
         )
+        self._social = SessionSocialManager(registry=self._bootstrap.registry)
+        self._wrap_queue_clear()
         self._holder = SessionHolder(
             self._bootstrap,
             semantic=semantic,
@@ -67,6 +70,19 @@ class SpeakSessionService:
             presence=presence,
             on_rotate=self._queues.clear_session,
         )
+
+    def _wrap_queue_clear(self) -> None:
+        original = self._queues.clear_session
+
+        def _clear(session_id: str) -> None:
+            self._social.clear_session(session_id)
+            original(session_id)
+
+        self._queues.clear_session = _clear  # type: ignore[method-assign]
+
+    @property
+    def social(self) -> SessionSocialManager:
+        return self._social
 
     @property
     def registry(self) -> SpeakSessionRegistry:
@@ -136,6 +152,29 @@ class SpeakSessionService:
     ) -> TurnRecordResult:
         return self._holder.record_turn(chunk, on_after=on_after)
 
+    def has_active_dialogue(self, session_id: str) -> bool:
+        if self.is_pushing(session_id):
+            return True
+        if self.user_queue.has_pending(session_id):
+            return True
+        if self.compose_queue.has_pending(session_id, mode="inbound"):
+            return True
+        if self.compose_queue.has_pending(session_id, mode="proactive"):
+            return True
+        record = self.registry.get(session_id)
+        if record.turn_index > 0 and not self.registry.is_temporally_expired(session_id):
+            return True
+        return False
+
+    def inject_deferred_share_intents(self, session_id: str, intents) -> int:
+        return self._queues.inject_deferred_share_intents(session_id, intents)
+
+    def deferred_share_intents(self, session_id: str):
+        return self._queues.deferred_share_intents(session_id)
+
+    def pop_deferred_share_intent(self, session_id: str):
+        return self._queues.pop_deferred_share_intent(session_id)
+
     def is_pushing(self, session_id: str) -> bool:
         return self._queues.is_pushing(session_id)
 
@@ -148,12 +187,28 @@ class SpeakSessionService:
         mode: str = "inbound",
         record: bool = True,
     ) -> SubmitUserInputResult:
+        self._social.on_user_message(session_id)
         return self._queues.submit_user_input(
             session_id,
             user_text,
             stream=stream,
             mode=mode,
             record=record,
+        )
+
+    def on_turn_complete(
+        self,
+        session_id: str,
+        *,
+        mode: str,
+        session_state: str,
+        answer: str,
+    ) -> None:
+        self._social.on_turn_complete(
+            session_id,
+            mode=mode,
+            session_state=session_state,
+            answer=answer,
         )
 
     def pop_pending_user_input(self, session_id: str) -> UserInputItem | None:
@@ -221,6 +276,24 @@ class SpeakSessionService:
 
     def consume_memory_for_compose(self, session_id: str, turn_index: int):
         return self._queues.consume_memory_for_compose(session_id, turn_index)
+
+    def pull_memory_for_compose(
+        self,
+        session_id: str,
+        turn_index: int,
+        *,
+        wait_ms: int = 0,
+    ):
+        return self._queues.pull_memory_for_compose(session_id, turn_index, wait_ms=wait_ms)
+
+    def pull_portrait_for_compose(
+        self,
+        session_id: str,
+        turn_index: int,
+        *,
+        wait_ms: int = 0,
+    ):
+        return self._queues.pull_portrait_for_compose(session_id, turn_index, wait_ms=wait_ms)
 
     def enqueue_interactor_portrait(
         self,

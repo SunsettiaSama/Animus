@@ -54,6 +54,7 @@ def build_conv_loop(
         return PersonaConfig(
             enabled=d.get("enabled", False),
             persona_dir=state.persona_dir,
+            expectation_tier_override=str(d.get("expectation_tier_override", "中")),
             max_profile_chars=d.get("max_profile_chars", 500),
             evolution_enabled=d.get("evolution_enabled", False),
             evolve_interval=d.get("evolve_interval", 1),

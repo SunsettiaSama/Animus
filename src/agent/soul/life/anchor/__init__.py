@@ -1,4 +1,4 @@
-from .layer import AnchorLayer, RealityAnchorLayer
+﻿from .layer import AnchorLayer, RealityAnchorLayer
 from .chronicle import (
     AnchorChronicleEntry,
     AnchorChronicleKind,
@@ -13,7 +13,7 @@ from .outbound import (
     ProactiveOutboundIntent,
     ProactiveOutboundPort,
 )
-from agent.soul.life.experience.anchor_codec import (
+from agent.soul.life.experience.domain.anchor_codec import (
     AnchorUnitContext,
     InteractionDirection,
     read_anchor_context,

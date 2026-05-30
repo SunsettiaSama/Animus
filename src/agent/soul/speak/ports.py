@@ -7,7 +7,7 @@ from .io.outbound.ports import SpeakOrchestratorPort, SpeakOutboundPort
 from .io.outbound.stream.ports import SpeakStreamPort
 
 if TYPE_CHECKING:
-    from .drive import SpeakDriveResult, SpeakDriveSnapshot
+    from .io.inbound.drive import SpeakDriveResult, SpeakDriveSnapshot
     from .llm.engine import SpeakLLMEngine, SpeakLLMResult
 
 

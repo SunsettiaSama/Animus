@@ -244,7 +244,7 @@
                └─ TaoLoop.post_process()（后台线程）
                     ├─ MemoryProcessor.commit()
                     │    └─ RecentHistoryMemory.append()  → .react/memory/medium_term.jsonl ✎
-                    ├─ MemoryService.ingest_turn（可选线程）→ Soul MySQL / Redis ✎
+                    ├─ Speak / Life I/O → MemoryService 记忆图（MySQL，可选 Qdrant）✎
                     ├─ _maybe_consolidate()（可选）→ LongTermMemory ✎
                     ├─ TraceStore.write()                 → .react/traces/ ✎
                     └─ PersonaManager.evolve()

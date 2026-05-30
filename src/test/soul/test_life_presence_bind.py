@@ -1,7 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from agent.soul.life.experience.stack import LifeExperienceStack
-from agent.soul.life.experience.unit import (
+from agent.soul.life.experience.hub import LifeExperienceStack
+from agent.soul.life.experience.domain.unit import (
     ExperienceAction,
     ExperienceActionKind,
     ExperienceFeeling,
@@ -21,11 +21,11 @@ def test_life_presence_bind_syncs_after_unit_ingest(tmp_path):
         situation=ExperienceSituation(
             session_id="tao",
             perception="窗外有风",
-            narration="注意到环境变�?,
+            narration="注意到环境变�?,
         ),
         action=ExperienceAction(
             kind=ExperienceActionKind.attending,
-            content="注意到环境变�?,
+            content="注意到环境变�?,
         ),
         feeling=ExperienceFeeling(
             salience=0.5,

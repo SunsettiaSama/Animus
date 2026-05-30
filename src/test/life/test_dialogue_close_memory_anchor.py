@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from agent.soul.life.anchor.chronicle import AnchorChronicleKind, AnchorChronicleStore
 from agent.soul.life.experience import LifeExperienceStack
-from agent.soul.life.experience.anchor_codec import read_anchor_context
+from agent.soul.life.experience.domain.anchor_codec import read_anchor_context
 from agent.soul.presence.service import PresenceService
 from agent.soul.presence.share_desire import StaticStatePatch
 from agent.soul.presence.state import PresenceEvent
@@ -38,14 +38,14 @@ def test_close_dialogue_ingests_memory_and_anchor_chronicle(tmp_path):
         StaticStatePatch(
             perception="用户问了天气",
             thinking="我在组织回答",
-            affect="有点开�?,
+            affect="有点开�?,
         ),
     )
     stack.dialogue.record_dialogue_turn(
         presence,
         session_id="tao",
-        user_text="今天天气怎样�?,
-        agent_text="今天晴，适合出门�?,
+        user_text="今天天气怎样�?,
+        agent_text="今天晴，适合出门�?,
         salience=0.5,
         salience_note="?????????",
     )

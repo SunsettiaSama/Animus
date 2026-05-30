@@ -58,7 +58,7 @@ TaoLoop.stream(question)
 | `_long_term` | `LongTermMemory \| None` | soul 包向量层；**默认不写入 Prompt**，供 `memory_recall` / consolidation |
 | `_milestone` | `MilestoneMemory \| None` | soul 包里程碑；同上 |
 | `_medium_term` | `RecentHistoryMemory \| None` | 中期 JSONL（`context/medium_term`）|
-| `_soul_memory` | `MemoryService \| None` | `cfg.db` 全启用时构造；ingest_turn + recall 工具后端 |
+| `_soul_memory` | `MemoryService \| None` | `cfg.db` 全启用时构造；`recall` 工具后端 + Speak/Life I/O 落图 |
 | `_persona` | `PersonaManager \| None` | 人格块（无 `bias_query` 钩子）|
 | `_life` | `LifeManager \| None` | 生活状态管理（心跳日志 + 日度综合）|
 | `_scheduler_engine` | `SchedulerEngine \| None` | 时钟触发任务引擎（`TaoConfig.scheduler` 非空时启用）|
@@ -94,8 +94,6 @@ TaoLoop.stream(question)
 
 ```
 processor.commit(question, answer)        → RecentHistoryMemory.append（JSONL）
-
-MemoryService.ingest_turn(...)（线程）   → 若 cfg.db 启用 Soul
 
 _maybe_consolidate()                     → 可选：窗口整合写入 legacy LongTermMemory
 

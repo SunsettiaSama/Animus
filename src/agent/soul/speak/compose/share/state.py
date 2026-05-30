@@ -53,10 +53,33 @@ def _build_event_views(queue: ShareIntentQueue) -> tuple[ShareEventView, ...]:
     )
 
 
-def collect_share_state(presence_snap) -> ShareComposeState:
-    """从 presence 快照读取分享队列并拼接摘要。"""
-    queue = _read_share_queue(presence_snap)
+def collect_share_state(
+    presence_snap,
+    *,
+    session_injected: ShareIntentQueue | None = None,
+) -> ShareComposeState:
+    """从 presence 快照读取分享队列；活跃会话可叠加 speak 侧延迟注入项。"""
+    presence_queue = _read_share_queue(presence_snap)
     interaction = presence_snap.interaction
+
+    if session_injected is not None and not session_injected.is_empty():
+        effective = session_injected.copy()
+        package = fold_share_queue(effective, interaction)
+        summary = package.summary.strip()
+        remaining = len(presence_queue.items)
+        if remaining > 0:
+            suffix = f"（另有 {remaining} 条仍在积累，本轮不必全部分享）"
+            summary = f"{summary}{suffix}" if summary else suffix.strip("（）")
+        share_desire = package.peak_share_desire or interaction.share_desire
+        wants_share = True
+        return ShareComposeState(
+            wants_share=wants_share,
+            summary=summary,
+            events=_build_event_views(effective),
+            package=package,
+        )
+
+    queue = presence_queue
     package = fold_share_queue(queue, interaction)
     summary = package.summary.strip()
     share_desire = interaction.share_desire

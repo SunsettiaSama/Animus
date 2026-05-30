@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..anchor_codec import AnchorUnitContext, InteractionDirection, stamp_anchor_context
-from ..sources import ExperienceSource
-from ..unit import (
+from ..domain.anchor_codec import AnchorUnitContext, InteractionDirection, stamp_anchor_context
+from ..domain.sources import ExperienceSource
+from ..domain.unit import (
     ExperienceAction,
     ExperienceActionKind,
     ExperienceFeeling,

@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 
-from agent.soul.life.experience.unit import (
+from agent.soul.life.experience.domain.unit import (
     ExperienceAction,
     ExperienceActionKind,
     ExperienceFeeling,
@@ -11,7 +11,7 @@ from agent.soul.life.experience.unit import (
 )
 from agent.soul.memory.domain import EdgeType, FactualMemory, MemoryEdge, MemoryNetwork
 from agent.soul.memory.graph.query import QueryEngine
-from agent.soul.memory.graph.networks.archival import ExperienceArchiver
+from agent.soul.memory.graph.node.create.archive import ExperienceArchiver
 from agent.soul.memory.graph.networks.writer import NarrativeWriter
 from agent.soul.memory.graph.networks.event.network import EventMemoryNetwork
 

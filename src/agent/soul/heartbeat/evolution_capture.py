@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from agent.soul.life.experience.incident import IncidentKind, LifeIncident
+from agent.soul.life.experience.ingest.incident import IncidentKind, LifeIncident
 
 if TYPE_CHECKING:
     from agent.soul.heartbeat.bridge import MemoryHeartbeatResult

@@ -59,5 +59,11 @@ export function bindLanding({ onStartReact }) {
     goScheduler();
     import('/static/js/modules/scheduler.js').then(m => m.init());
   });
-  document.getElementById('btn-refresh-ws')?.addEventListener('click', loadWorkstation);
+  document.getElementById('btn-refresh-ws')?.addEventListener('click', () => {
+    loadWorkstation();
+    import('../history.js').then(m => {
+      m.renderRecentLanding(document.getElementById('landing-recent'));
+      m.renderSidebar();
+    });
+  });
 }

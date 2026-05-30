@@ -14,5 +14,18 @@ SPEAK_TAG_NAMES: tuple[str, ...] = (
 FRONTEND_SUPPRESSED_TAGS: frozenset[str] = frozenset({"think"})
 
 
-def speak_tag(kind: str, content: str = "...") -> str:
-    return f"[{kind}:{content}]"
+def speak_tag_open(kind: str) -> str:
+    return f"[{kind}]"
+
+
+def speak_tag_close(kind: str) -> str:
+    return f"[/{kind}]"
+
+
+def speak_tag_pair(kind: str, inner: str = "...") -> str:
+    """成对 bracket 标签（XML 式），如 [speak]…[/speak]。"""
+    return f"{speak_tag_open(kind)}{inner}{speak_tag_close(kind)}"
+
+
+def speak_tag(kind: str, inner: str = "...") -> str:
+    return speak_tag_pair(kind, inner)

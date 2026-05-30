@@ -10,14 +10,28 @@ from ..io.outbound.stream.channel import SpeakStreamChannel
 from ..llm.engine import SpeakLLMEngine
 from .chunk import SpeakSubjectiveChunk, SpeakTurnChunk
 from .queue.types import InterruptContext
+from .prompt_trace import get_prompt_trace
 from .service import SpeakSessionService
+from .working_memory_text import format_agent_turn_for_working_memory
 
 if TYPE_CHECKING:
     from ..service import SpeakTurnResult
 
 _APPEND_CONTINUE_INSTRUCTION = (
-    "请继续完成本轮尚未说完的内容；输出仍需包含 think 与 state:finish（或 append）。"
+    "请继续完成本轮尚未说完的内容；输出仍需包含 [think]…[/think] 与 "
+    "[state]finish[/state]（或 [state]append[/state]）。"
 )
+
+
+def _parsed_from_stream_events(
+    events: list[SpeakStreamEvent],
+    parse: Callable[[str], SpeakAgentOutput],
+) -> SpeakAgentOutput:
+    finish = next((event for event in reversed(events) if event.kind == "finish"), None)
+    if finish is not None and finish.meta:
+        return SpeakAgentOutput.from_finish_meta(finish.meta, speak_fallback=finish.text)
+    raw = finish.text if finish is not None else ""
+    return parse(raw)
 
 
 @dataclass
@@ -36,6 +50,7 @@ class SessionTurnHost:
     continue_recall_handoff: Callable[..., tuple[str, list[SpeakStreamEvent], "SpeakAgentOutput"] | None] | None = None
     compose_from_queue: Callable[..., SpeakPromptBundle | None] | None = None
     parse_agent_output: Callable[[str], SpeakAgentOutput] | None = None
+    session_trace_cache: Callable[[str, int], dict] | None = None
 
 
 def _generate_with_outbound(
@@ -46,7 +61,12 @@ def _generate_with_outbound(
     system: str,
     stream: bool,
     on_partial: Callable[[str], None] | None = None,
-) -> tuple[str, list[SpeakStreamEvent]]:
+) -> tuple[SpeakAgentOutput, list[SpeakStreamEvent]]:
+    parse = host.parse_agent_output
+    from ..io.outbound.stream import parse_agent_output as default_parse
+
+    if parse is None:
+        parse = default_parse
     host.outbound_stream.begin_session(session_id)
     if stream:
         events = list(
@@ -58,10 +78,8 @@ def _generate_with_outbound(
                 context="",
             )
         )
-        answer = next(
-            (event.text for event in reversed(events) if event.kind == "finish"),
-            "",
-        )
+        finish = next((event for event in reversed(events) if event.kind == "finish"), None)
+        answer = finish.text if finish is not None else ""
         if on_partial is not None:
             spoken = ""
             for event in events:
@@ -70,14 +88,15 @@ def _generate_with_outbound(
                     on_partial(spoken)
             if answer.strip():
                 on_partial(answer.strip())
-        return answer, events
+        parsed = _parsed_from_stream_events(events, parse)
+        return parsed, events
 
     llm_result = host.llm.generate(user_text, system=system)
     answer = llm_result.text
     if on_partial is not None and answer.strip():
         on_partial(answer.strip())
     events = list(host.stream_pipeline.emit_parsed_output(session_id, answer))
-    return answer, events
+    return parse(answer), events
 
 
 def _resolve_handoff(
@@ -141,9 +160,11 @@ def run_session_turn(
     try:
         bundle = host.compose_bundle(session_id, user_text, mode=mode, turn_index=turn_index)
         all_events: list[SpeakStreamEvent] = []
-        answer = ""
         parsed: SpeakAgentOutput | None = None
-        llm_user_text = bundle.user_text or user_text
+        speak_parts: list[str] = []
+        memory_parts: list[str] = []
+        silence_policy: str | None = None
+        llm_user_text = str(bundle.meta.get("silence_break_user") or bundle.user_text or user_text)
 
         def _on_partial(partial: str) -> None:
             nonlocal partial_output
@@ -159,8 +180,23 @@ def run_session_turn(
                 system = f"{system}\n\n{manager.render_interrupt_block(interrupt_context)}"
             if round_idx > 0 and parsed is not None and parsed.session_state == "append":
                 system = f"{system}\n\n{_APPEND_CONTINUE_INSTRUCTION}"
+                if partial_output.strip():
+                    system = (
+                        f"{system}\n\n【已输出片段】\n{partial_output.strip()}"
+                    )
+                llm_user_text = "请接着说完，不要重复已输出内容。"
 
-            answer, events = _generate_with_outbound(
+            if host.session_trace_cache is not None:
+                get_prompt_trace().emit_compose(
+                    session_id,
+                    turn_index=turn_index,
+                    bundle=bundle,
+                    cache=host.session_trace_cache(session_id, turn_index),
+                    round_idx=round_idx,
+                    system_override=system,
+                )
+
+            parsed_round, events = _generate_with_outbound(
                 host,
                 session_id,
                 llm_user_text,
@@ -169,7 +205,14 @@ def run_session_turn(
                 on_partial=_on_partial,
             )
             all_events.extend(events)
-            parsed = parse(answer)
+            parsed = parsed_round
+            round_memory = format_agent_turn_for_working_memory(parsed.blocks)
+            if round_memory:
+                memory_parts.append(round_memory)
+            if parsed.speak.strip():
+                speak_parts.append(parsed.speak.strip())
+                partial_output = "\n".join(speak_parts)
+                manager.update_partial_output(session_id, partial_output)
 
             if interrupt_context is not None and parsed.session_state in ("share", "recall"):
                 notes.append(f"session_state: {parsed.session_state} suspended by interrupt")
@@ -186,10 +229,16 @@ def run_session_turn(
             )
             if handoff is not None:
                 handoff_answer, handoff_events, parsed = handoff
+                handoff_memory = format_agent_turn_for_working_memory(
+                    parsed.blocks,
+                    speak_fallback=handoff_answer,
+                )
+                if handoff_memory:
+                    memory_parts.append(handoff_memory)
                 if handoff_answer.strip():
-                    answer = handoff_answer
-                    manager.update_partial_output(session_id, answer)
-                    partial_output = answer.strip()
+                    manager.update_partial_output(session_id, handoff_answer)
+                    partial_output = handoff_answer.strip()
+                    speak_parts = [handoff_answer.strip()]
                 all_events.extend(handoff_events)
                 if parsed.session_state == "finish":
                     break
@@ -222,11 +271,37 @@ def run_session_turn(
             notes.append("session: push round limit reached")
 
         if parsed is None:
-            parsed = parse(answer)
+            parsed = SpeakAgentOutput()
 
-        answer_body = parsed.speak or answer.strip()
+        answer_body = "\n".join(speak_parts).strip() if speak_parts else (parsed.speak or "").strip()
+        memory_agent_text = "\n\n".join(part for part in memory_parts if part.strip()).strip()
+        if not memory_agent_text and parsed is not None:
+            memory_agent_text = format_agent_turn_for_working_memory(
+                parsed.blocks,
+                speak_fallback=answer_body,
+            )
+        if (
+            mode == "inbound"
+            and not answer_body.strip()
+            and parsed.session_state == "finish"
+            and not interrupt_context
+        ):
+            from .silence_policy import apply_empty_speak_policy
+
+            silence_policy, answer_body, silence_events = apply_empty_speak_policy(
+                session_id=session_id,
+                pipeline=host.stream_pipeline,
+                stream=stream,
+            )
+            all_events.extend(silence_events)
+            if silence_policy == "ellipsis":
+                notes.append("silence_policy: ellipsis")
+            else:
+                notes.append("silence_policy: hidden")
+
         recorded = False
-        if record and answer_body:
+        agent_text_for_memory = memory_agent_text or answer_body
+        if record and agent_text_for_memory.strip():
             memory_ids = list(bundle.meta.get("activated_memory_ids", []))
             spill = bundle.meta.get("memory_spill")
             if isinstance(spill, dict):
@@ -234,7 +309,7 @@ def run_session_turn(
             chunk = SpeakTurnChunk(
                 session_id=session_id,
                 user_text=user_text,
-                agent_text=answer_body,
+                agent_text=agent_text_for_memory,
                 subjective=SpeakSubjectiveChunk(prior_thought=parsed.thought),
                 activated_memory_ids=list(dict.fromkeys(memory_ids)),
             )
@@ -252,6 +327,23 @@ def run_session_turn(
                     agent_text=answer_body,
                 )
 
+        if host.session_trace_cache is not None:
+            get_prompt_trace().emit_turn_finish(
+                session_id,
+                turn_index=turn_index,
+                parsed=parsed,
+                answer=answer_body,
+                notes=notes,
+                cache=host.session_trace_cache(session_id, turn_index),
+            )
+
+        manager.on_turn_complete(
+            session_id,
+            mode=mode,
+            session_state=parsed.session_state,
+            answer=answer_body,
+        )
+
         return SpeakTurnResult(
             session_id=session_id,
             answer=answer_body,
@@ -264,6 +356,7 @@ def run_session_turn(
                 "session_state": parsed.session_state,
                 "interrupted": interrupt_context is not None,
                 "turn_index": turn_index,
+                "silence_policy": silence_policy,
             },
         )
     finally:

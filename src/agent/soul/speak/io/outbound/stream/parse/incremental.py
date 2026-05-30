@@ -7,6 +7,12 @@ from dataclasses import dataclass
 from .....tools.anchor import ANCHOR_ENABLED
 from ..events import SpeakStreamEvent
 from ..protocol.tags import FRONTEND_SUPPRESSED_TAGS, SPEAK_TAG_NAMES
+from ..sanitize import (
+    sanitize_push_text,
+    sanitize_stream_event,
+    split_before_close_tag,
+    split_hold_tag_suffix,
+)
 from .tags import (
     _TAG_ALTERNATION,
     _TAG_L1_OPEN_RE,
@@ -18,7 +24,6 @@ from .tags import (
 
 _TAG_NAMES_PATTERN = _TAG_ALTERNATION
 _TAG_OPEN_RE = _TAG_L1_OPEN_RE
-_SENTENCE_END_RE = re.compile(r"(?<=[。！？；\n])|(?<=[.!?;]\s)")
 
 _STREAM_KIND_BY_TAG = {
     "think": "thought",
@@ -39,6 +44,7 @@ class _ActiveTag:
     speak_emitted: int = 0
     streamed: bool = False
     bracket_layer: bool = False
+    hold_suffix: str = ""
 
 
 @dataclass
@@ -53,6 +59,7 @@ class IncrementalTagStreamParser:
     _plain_speak_open: bool = False
 
     def _emit(self, session_id: str, event: SpeakStreamEvent) -> SpeakStreamEvent:
+        event = sanitize_stream_event(event)
         if self.emit_fn is not None:
             self.emit_fn(session_id, event)
         return event
@@ -66,8 +73,9 @@ class IncrementalTagStreamParser:
 
     def flush(self, session_id: str) -> Iterator[SpeakStreamEvent]:
         if self._active is not None:
-            remainder = self._pending
+            remainder = self._active.hold_suffix + self._pending
             self._pending = ""
+            self._active.hold_suffix = ""
             if remainder:
                 self._active.content += remainder
                 yield from self._emit_tag_piece(session_id, self._active, remainder, closing=False)
@@ -75,17 +83,10 @@ class IncrementalTagStreamParser:
             self._active = None
             return
 
-        if self._pending.strip():
-            if self._saw_tag:
-                yield from self._emit_plain_speak(session_id, self._pending.strip())
-            else:
-                yield from self._emit_plain_speak_delta(session_id, self._pending)
-                yield self._emit(
-                    session_id,
-                    SpeakStreamEvent(kind="speak", text="", meta={"phase": "end", "tag": "speak"}),
-                )
-                self._plain_speak_open = False
-        elif self._plain_speak_open:
+        if self._pending:
+            yield from self._emit_plain_speak_delta(session_id, self._pending)
+            self._pending = ""
+        if self._plain_speak_open:
             yield self._emit(
                 session_id,
                 SpeakStreamEvent(kind="speak", text="", meta={"phase": "end", "tag": "speak"}),
@@ -119,9 +120,9 @@ class IncrementalTagStreamParser:
 
             if match is not None:
                 before = self._pending[: match.start()]
-                if before.strip():
-                    yield from self._emit_plain_speak(session_id, before.strip())
-                elif self._plain_speak_open:
+                if before:
+                    yield from self._emit_plain_speak_delta(session_id, before)
+                if self._plain_speak_open:
                     yield self._emit(
                         session_id,
                         SpeakStreamEvent(kind="speak", text="", meta={"phase": "end", "tag": "speak"}),
@@ -144,10 +145,7 @@ class IncrementalTagStreamParser:
                 self._pending = processable + self._pending
                 continue
 
-            if not self._saw_tag:
-                yield from self._emit_plain_speak_delta(session_id, processable)
-            elif processable.strip():
-                yield from self._emit_plain_speak(session_id, processable.strip())
+            yield from self._emit_plain_speak_delta(session_id, processable)
             break
 
     def _push_in_tag(self, session_id: str, token: str) -> Iterator[SpeakStreamEvent]:
@@ -157,20 +155,30 @@ class IncrementalTagStreamParser:
             return
         yield from self._push_in_tag_l1(session_id, token)
 
+    def _split_l1_close(self, buf: str, tag_kind: str) -> tuple[str, str] | None:
+        """L1 闭合：优先 [/tag]，避免 [state:finish[/state] 在首个 ] 处截断。"""
+        bracket = f"[/{tag_kind.lower()}]"
+        bracket_idx = buf.lower().find(bracket)
+        simple_idx = buf.find("]")
+        if bracket_idx >= 0 and (simple_idx < 0 or bracket_idx <= simple_idx):
+            return buf[:bracket_idx], buf[bracket_idx + len(bracket) :]
+        if simple_idx >= 0:
+            return buf[:simple_idx], buf[simple_idx + 1 :]
+        return None
+
     def _push_in_tag_l1(self, session_id: str, token: str) -> Iterator[SpeakStreamEvent]:
         assert self._active is not None
         buf = token
         while buf:
             active = self._active
             assert active is not None
-            close_idx = buf.find("]")
-            if close_idx < 0:
+            split = self._split_l1_close(buf, active.kind)
+            if split is None:
                 active.content += buf
                 yield from self._emit_tag_piece(session_id, active, buf, closing=False)
                 return
 
-            piece = buf[:close_idx]
-            buf = buf[close_idx + 1 :]
+            piece, buf = split
             if piece:
                 active.content += piece
                 yield from self._emit_tag_piece(session_id, active, piece, closing=False)
@@ -187,16 +195,39 @@ class IncrementalTagStreamParser:
         while self._pending:
             active = self._active
             assert active is not None
+            before_close, after_close = split_before_close_tag(self._pending)
+            if after_close or (before_close != self._pending):
+                if before_close:
+                    active.content += before_close
+                    yield from self._emit_tag_piece(session_id, active, before_close, closing=False)
+                self._pending = after_close
+                yield from self._close_active_tag(session_id, active)
+                self._active = None
+                if self._pending:
+                    yield from self._drain_outside(session_id)
+                return
+
             next_match = find_next_tag_opener(self._pending)
             if next_match is None:
-                hold = self._hold_incomplete_opener(self._pending)
-                if hold:
-                    processable, self._pending = self._pending[:-hold], self._pending[-hold:]
-                else:
-                    processable, self._pending = self._pending, ""
+                processable, hold = split_hold_tag_suffix(self._pending)
+                if not hold:
+                    opener_hold = self._hold_incomplete_opener(self._pending)
+                    if opener_hold:
+                        processable, hold = (
+                            self._pending[:-opener_hold],
+                            self._pending[-opener_hold:],
+                        )
+                    else:
+                        processable, hold = self._pending, ""
+                self._pending = hold
                 if processable:
                     active.content += processable
-                    yield from self._emit_tag_piece(session_id, active, processable, closing=False)
+                    yield from self._emit_tag_piece(
+                        session_id,
+                        active,
+                        processable,
+                        closing=False,
+                    )
                 return
 
             if next_match.start() > 0:
@@ -284,6 +315,11 @@ class IncrementalTagStreamParser:
         *,
         closing: bool,
     ) -> Iterator[SpeakStreamEvent]:
+        piece = active.hold_suffix + piece
+        active.hold_suffix = ""
+        emit_part, hold = split_hold_tag_suffix(piece)
+        active.hold_suffix = hold
+        piece = sanitize_push_text(emit_part)
         if not piece:
             return
         if active.kind == "speak":
@@ -296,7 +332,6 @@ class IncrementalTagStreamParser:
                     meta={"phase": "delta", "tag": "speak"},
                 ),
             )
-            yield from self._emit_completed_speak_sentences(session_id, active)
             return
         if active.kind == "action":
             active.streamed = True
@@ -308,40 +343,6 @@ class IncrementalTagStreamParser:
                     meta={"phase": "delta", "tag": "action"},
                 ),
             )
-
-    def _emit_completed_speak_sentences(
-        self,
-        session_id: str,
-        active: _ActiveTag,
-    ) -> Iterator[SpeakStreamEvent]:
-        tail = active.content[active.speak_emitted :]
-        if not tail.strip():
-            return
-
-        parts = [segment.strip() for segment in _SENTENCE_END_RE.split(tail) if segment.strip()]
-        if not parts:
-            return
-
-        ends_with_break = bool(re.search(r"[。！？；\n]$|[.!?;]$", active.content.rstrip()))
-        complete = parts if ends_with_break else parts[:-1]
-        if not complete:
-            return
-
-        offset = active.speak_emitted
-        for segment in complete:
-            start = active.content.find(segment, offset)
-            if start < 0:
-                continue
-            end = start + len(segment)
-            offset = end
-            while offset < len(active.content) and active.content[offset].isspace():
-                offset += 1
-            active.speak_emitted = offset
-
-        yield self._emit(
-            session_id,
-            SpeakStreamEvent(kind="speak", text="", meta={"phase": "end", "tag": "speak"}),
-        )
 
     def _emit_plain_speak(self, session_id: str, text: str) -> Iterator[SpeakStreamEvent]:
         if not text:

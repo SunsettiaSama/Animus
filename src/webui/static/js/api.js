@@ -32,6 +32,9 @@ export const PATHS = {
     status: '/api/speak/status',
     reset:  '/api/speak/reset',
     run:    '/ws/speak/run',
+    trace:  sid => `/api/speak/session/${encodeURIComponent(sid)}/trace`,
+    traceSet: '/api/speak/session/trace',
+    debug:  sid => `/api/speak/session/${encodeURIComponent(sid)}/debug`,
   },
   memory: {
     get:         '/api/memory',
@@ -41,6 +44,11 @@ export const PATHS = {
     clearPersona:'/api/react/persona/clear',
   },
   persona:   { get: '/api/persona', save: '/api/persona/save' },
+  accounts: {
+    list:   '/api/accounts',
+    create: '/api/accounts',
+    get:    id => `/api/accounts/${encodeURIComponent(id)}`,
+  },
   soul: {
     config:           '/api/soul/config',
     configSave:       '/api/soul/config/save',
@@ -53,6 +61,7 @@ export const PATHS = {
     memoryConfigSave: '/api/soul/memory/config/save',
     memoryInfra:      '/api/soul/memory/infra',
     memoryInfraSave:  '/api/soul/memory/infra/save',
+    visitorBind:      '/api/soul/visitor/bind',
   },
   scheduler: {
     tasks:          '/api/scheduler/tasks',

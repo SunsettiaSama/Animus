@@ -10,6 +10,22 @@ def push_notify(state: Any, task: str, message: str, done: bool = False) -> None
     state.main_event_loop.call_soon_threadsafe(state.notify_queue.put_nowait, item)
 
 
+def push_agent_proactive_session(state: Any, payload: dict) -> None:
+    """WebUI SSE：Agent 主动发起新会话。"""
+    if state.notify_queue is None or state.main_event_loop is None:
+        return
+    item = {"type": "agent_proactive_session", **payload}
+    state.main_event_loop.call_soon_threadsafe(state.notify_queue.put_nowait, item)
+
+
+def wire_soul_agent_initiated_notify(soul: Any, state: Any) -> None:
+    if soul is None:
+        return
+    soul.register_agent_initiated_handler(
+        lambda payload: push_agent_proactive_session(state, payload),
+    )
+
+
 def do_react_init(req: Any, state: Any) -> None:
     """在后台线程中构建 ConvLoop，注册到 SessionManager 的 webui 会话。"""
     from agent.react.factory import build_conv_loop
@@ -46,6 +62,7 @@ def do_react_init(req: Any, state: Any) -> None:
         soul = getattr(tl, "_soul", None)
         if soul is not None:
             state.agent_service.set_soul_service(soul)
+            wire_soul_agent_initiated_notify(soul, state)
 
     def _notify(task: str, message: str, done: bool) -> None:
         push_notify(state, task, message, done)

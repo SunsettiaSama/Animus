@@ -8,6 +8,7 @@ from .events import SpeakStreamEvent
 from .flush import SpeakFlushChannels, SpeakFlushMode
 from .parse import parse_agent_output
 from .parse.incremental import IncrementalTagStreamParser
+from .sanitize import sanitize_push_text
 
 
 @dataclass
@@ -79,7 +80,7 @@ class SpeakStreamPipeline:
         final = parsed.session_state not in ("append", "share", "recall")
         finish = SpeakStreamEvent(
             kind="finish",
-            text=parsed.speak,
+            text=sanitize_push_text(parsed.speak),
             final=final,
             meta=parsed.to_dict(),
         )
@@ -108,7 +109,7 @@ class SpeakStreamPipeline:
         final = parsed.session_state not in ("append", "share", "recall")
         finish = SpeakStreamEvent(
             kind="finish",
-            text=parsed.speak,
+            text=sanitize_push_text(parsed.speak),
             final=final,
             meta=parsed.to_dict(),
         )

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 from dataclasses import replace
@@ -16,7 +16,7 @@ from agent.soul.access import is_read_api_action
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
 from agent.soul.heartbeat.evolution import new_heartbeat_tick_id
 from agent.soul.heartbeat.orchestrator import HeartbeatOrchestrator
-from agent.soul.life.experience.incident import IncidentIngestResult, LifeIncident
+from agent.soul.life.experience.ingest.incident import IncidentIngestResult, LifeIncident
 from agent.soul.presence import (
     Expectation,
     ImpulseDischarge,
@@ -104,9 +104,14 @@ class SoulService:
         self._workers = SoulWorkers()
         self._presence_service: PresenceService | None = None
         self._experience_pipeline: Any = None
+        self._life_io_hub: Any = None
         self._speak_service: Any = None
+        self._account_service: Any = None
         self._story_world_context_supplier: StoryWorldContextSupplier | None = None
         self._external_opportunity_supplier: ExternalOpportunitySupplier | None = None
+        self._presence_speak_bridge: Any = None
+        self._presence_speak_wired = False
+        self._agent_initiated_handlers: list[Any] = []
 
     @property
     def config(self) -> SoulConfig:
@@ -155,6 +160,11 @@ class SoulService:
         return self._experience_pipeline
 
     @property
+    def life_io(self):
+        self._ensure_life_io()
+        return self._life_io_hub
+
+    @property
     def dialogue_experience(self):
         self._ensure_experience_pipeline()
         return self._experience_pipeline.dialogue
@@ -194,14 +204,16 @@ class SoulService:
     ) -> dict[str, Any]:
         """打开 dialogue 体验会话（Speak lifecycle 直连，不经 dispatch）。"""
         self._require_running()
-        self._ensure_experience_pipeline()
-        state = self.experience.dialogue.open_session(session_id)
-        self.hydrate_speak_channel(session_id)
+        from agent.soul.life.io.speak import DialogueSessionOpenInbound
+
+        ack = self.life_io.speak.open_dialogue_session(
+            DialogueSessionOpenInbound(session_id=session_id, trigger=trigger),
+        )
         return {
-            "ok": True,
-            "session_id": session_id,
-            "trigger": trigger,
-            "turn_count": len(state.session.turns),
+            "ok": ack.ok,
+            "session_id": ack.session_id,
+            "trigger": ack.trigger,
+            "turn_count": ack.turn_count,
         }
 
     def hydrate_speak_channel(self, session_id: str) -> str:
@@ -217,6 +229,71 @@ class SoulService:
             speak.bind_interactor(sid, bound)
         return bound
 
+    def align_speak_visitor(self, session_id: str, channel_id: str) -> str:
+        """WS 建连：渠道 ↔ interactor，并同步到当前 Speak session。"""
+        sid = session_id.strip()
+        cid = channel_id.strip() or sid
+        if not sid:
+            return ""
+        iid = self.hydrate_speak_channel(cid)
+        if iid:
+            self._ensure_speak_service().bind_interactor(sid, iid)
+        return iid
+
+    @property
+    def accounts(self):
+        return self._ensure_account_service()
+
+    def _ensure_account_service(self):
+        if self._account_service is not None:
+            return self._account_service
+        from infra.accounts import AccountService
+
+        def _on_registered(interactor_id: str, display_name: str, meta: dict) -> None:
+            if self.memory is not None and self.memory.api is not None:
+                self.memory.api.register_external_visitor(
+                    interactor_id,
+                    display_name,
+                    meta,
+                )
+
+        self._account_service = AccountService.build(
+            self._mysql_client,
+            on_visitor_registered=_on_registered,
+        )
+        return self._account_service
+
+    def bind_visitor(
+        self,
+        account_id: str,
+        channel_id: str,
+    ) -> dict[str, Any]:
+        """WebUI 选账号后：绑定渠道 ↔ interactor，并同步 Speak 注册表。"""
+        self._require_running()
+        accounts = self._ensure_account_service()
+        account = accounts.get(account_id)
+        if account is None:
+            raise ValueError(f"未知账号 account_id={account_id!r}")
+        iid = account.interactor_id
+        cid = channel_id.strip() or iid
+        if self.memory is not None and self.memory.api is not None:
+            self.memory.api.bind_session_channel(cid, iid)
+        speak = self._ensure_speak_service()
+        speak.bind_interactor(cid, iid)
+        if self.memory is not None and self.memory.api is not None:
+            self.memory.api.request_static_interactor_portrait(
+                interactor_id=iid,
+                session_id=cid,
+                turn_index=0,
+            )
+        return {
+            "ok": True,
+            "account_id": account.account_id,
+            "interactor_id": iid,
+            "channel_id": cid,
+            "display_name": account.display_name,
+        }
+
     def open_proactive_outbound(
         self,
         session_id: str,
@@ -226,18 +303,15 @@ class SoulService:
     ) -> dict[str, Any]:
         """标记 proactive outbound，期待用户回复（Speak lifecycle 直连）。"""
         self._require_running()
-        self._ensure_experience_pipeline()
-        self.experience.dialogue.open_outbound(
-            session_id,
-            message,
-            proactive_intent_id=proactive_intent_id,
+        from agent.soul.life.io.speak import ProactiveOutboundInbound
+
+        return self.life_io.speak.open_proactive_outbound(
+            ProactiveOutboundInbound(
+                session_id=session_id,
+                message=message,
+                proactive_intent_id=proactive_intent_id,
+            ),
         )
-        return {
-            "ok": True,
-            "session_id": session_id,
-            "message": message,
-            "proactive_intent_id": proactive_intent_id,
-        }
 
     def record_dialogue_turn(
         self,
@@ -278,17 +352,20 @@ class SoulService:
     def close_dialogue_interaction(self, session_id: str = "tao") -> dict[str, Any]:
         """会话闭合：life ↔ presence 经 experience stack 直连。"""
         self._require_running()
-        self._ensure_experience_pipeline()
-        unit = self.experience.close_dialogue(session_id)
-        if unit is None:
-            return {"ok": True, "session_id": session_id, "ingested": False}
+        from agent.soul.life.io.speak import DialogueSessionCloseInbound
+
+        ack = self.life_io.speak.close_dialogue_session(
+            DialogueSessionCloseInbound(session_id=session_id),
+        )
+        if not ack.ingested:
+            return {"ok": ack.ok, "session_id": ack.session_id, "ingested": False}
         return {
-            "ok": True,
-            "session_id": session_id,
+            "ok": ack.ok,
+            "session_id": ack.session_id,
             "ingested": True,
-            "source": unit.source,
-            "turn_index": unit.situation.turn_index,
-            "experience_id": unit.id,
+            "source": ack.source,
+            "turn_index": ack.turn_index,
+            "experience_id": ack.experience_id,
         }
 
     def speak_turn(
@@ -354,6 +431,10 @@ class SoulService:
         """注册 speak 出站回调（presence 主动 speak 完成后触发）。"""
         self.speak_outbound.register_after_presence(handler)
 
+    def register_agent_initiated_handler(self, handler: Any) -> None:
+        """Agent 主动开聊完成后通知（WebUI SSE 等）。"""
+        self._agent_initiated_handlers.append(handler)
+
     def set_story_world_context_supplier(
         self,
         supplier: StoryWorldContextSupplier | None,
@@ -387,11 +468,12 @@ class SoulService:
             ),
         )
         if result.impulse_discharge is not None:
-            self._emit_presence_speak(
+            self._handle_presence_speak_trigger(
+                event.session_id,
                 self._speak_request_from_discharge(
                     result.impulse_discharge,
                     session_id=event.session_id,
-                )
+                ),
             )
         return result
 
@@ -429,11 +511,12 @@ class SoulService:
                     "impulse_discharge": ing.impulse_discharge is not None,
                 }
                 if ing.impulse_discharge is not None:
-                    self._emit_presence_speak(
+                    self._handle_presence_speak_trigger(
+                        session_id,
                         self._speak_request_from_discharge(
                             ing.impulse_discharge,
                             session_id=session_id,
-                        )
+                        ),
                     )
                 detail["boundary"] = boundary_detail
             if scan:
@@ -464,6 +547,14 @@ class SoulService:
         self._require_running()
 
         def _run() -> dict[str, Any]:
+            if self._speak_has_active_dialogue(session_id):
+                defer = self._defer_share_to_active_session(session_id, limit=2)
+                return {
+                    "ok": defer.get("ok", False),
+                    "session_id": session_id,
+                    "deferred": defer,
+                    "reason": defer.get("reason", ""),
+                }
             discharge = self.presence.discharge_accumulated(
                 session_id=session_id,
                 source=source,
@@ -478,7 +569,7 @@ class SoulService:
                     "reason": "nothing to share",
                 }
             request = self._speak_request_from_discharge(discharge, session_id=session_id)
-            speak_result = self._emit_presence_speak(request)
+            speak_result = self._handle_presence_speak_trigger(session_id, request)
             return {
                 "ok": True,
                 "session_id": session_id,
@@ -505,8 +596,11 @@ class SoulService:
         self._ensure_life_handler()
         self._ensure_persona_handler()
         self._wire_workers()
+        self._sync_presence_expectation_from_persona()
+        self._sync_agent_persona_context()
         self._workers.start_all()
         self._ensure_speak_service().start()
+        self._ensure_account_service()
 
         self.life.api.load_profile()
         hb = self._ensure_heartbeat()
@@ -725,6 +819,17 @@ class SoulService:
         if not opportune:
             return {"checked": True, "opportune": False, "triggered": False}
 
+        if self._speak_has_active_dialogue(session_id):
+            defer = self._defer_share_to_active_session(session_id, limit=2)
+            return {
+                "checked": True,
+                "opportune": True,
+                "triggered": defer.get("ok", False),
+                "deferred": True,
+                "session_id": session_id,
+                "defer": defer,
+            }
+
         discharge = self.presence.discharge_accumulated(
             session_id=session_id,
             source="external_opportunity_scan",
@@ -733,8 +838,9 @@ class SoulService:
         )
         triggered = discharge is not None
         if discharge is not None:
-            self._emit_presence_speak(
-                self._speak_request_from_discharge(discharge, session_id=session_id)
+            self._handle_presence_speak_trigger(
+                session_id,
+                self._speak_request_from_discharge(discharge, session_id=session_id),
             )
         return {
             "checked": True,
@@ -765,8 +871,11 @@ class SoulService:
         }
         if speak_if_ready and scan.triggered and scan.payload is not None:
             request = self._speak_request_from_scan(scan.payload, session_id=session_id)
-            self._emit_presence_speak(request)
+            speak_result = self._handle_presence_speak_trigger(session_id, request)
             detail["speak_source"] = request.source
+            detail["speak"] = speak_result
+            if speak_result.get("deferred"):
+                detail["deferred"] = True
         return detail
 
     def run_presence_wake(self, session_id: str = "tao", *, force: bool = False) -> dict[str, Any]:
@@ -894,10 +1003,13 @@ class SoulService:
 
     def reload_persona_profile(self) -> dict[str, Any]:
         """热加载 persona_dir 下的 profile / built_profile / self_concept。"""
-        return self.dispatch(SoulRequest(
+        result = self.dispatch(SoulRequest(
             domain=SoulDomain.persona,
             action=PersonaAction.RELOAD_PROFILE,
         ))
+        if self._state == "running":
+            self._sync_agent_persona_context()
+        return result
 
     def rebuild_persona_profile(
         self,
@@ -1031,33 +1143,43 @@ class SoulService:
                 dialogue=self._experience_pipeline.dialogue,
             )
             self._experience_pipeline.bind_presence(self._presence_service)
+            self._ensure_life_io()
         return self._experience_pipeline
+
+    def _ensure_life_io(self):
+        from agent.soul.life.io import LifeExperienceMemoryIO, LifeIOHub, LifeSpeakIO
+
+        self._ensure_experience_pipeline()
+        if self._life_io_hub is None:
+            memory_io = None
+            if self.memory is not None and self.memory.api is not None:
+                memory_io = LifeExperienceMemoryIO(self.memory.api.life_io)
+            self._life_io_hub = LifeIOHub(
+                speak=LifeSpeakIO(self._experience_pipeline),
+                memory=memory_io,
+            )
+        return self._life_io_hub
+
+    def _reset_speak_session_context(self, session_id: str) -> None:
+        if self._speak_service is not None:
+            self._speak_service.reset_context(session_id)
 
     def _ensure_speak_service(self):
         if self._speak_service is None:
             from agent.soul.speak import SpeakService
+            from agent.soul.speak.io.outbound.life import (
+                SpeakLifeLifecycleBridge,
+                SpeakLifeOutboundBridge,
+            )
             from agent.soul.speak.llm.engine import SpeakLLMEngine
 
-            self._ensure_experience_pipeline()
-
-            def _record_dialogue_turn(**kwargs) -> None:
-                self._experience_pipeline.record_dialogue_turn(
-                    session_id=kwargs["session_id"],
-                    user_text=kwargs.get("user_text", kwargs.get("question", "")),
-                    agent_text=kwargs.get("agent_text", kwargs.get("answer", "")),
-                    salience=kwargs.get("salience", 0.3),
-                    salience_note=str(kwargs.get("salience_note", "")),
-                    emotion_label=kwargs.get("emotion_label", ""),
-                    valence_delta=kwargs.get("valence_delta", 0.0),
-                    arousal_delta=kwargs.get("arousal_delta", 0.0),
-                    activated_memory_ids=kwargs.get("activated_memory_ids"),
-                    proactive_intent_id=kwargs.get("proactive_intent_id", ""),
-                )
-
-            def _touch_dialogue(session_id: str) -> None:
-                state = self._experience_pipeline.dialogue.state(session_id)
-                if state is not None:
-                    state.touch()
+            self._ensure_life_io()
+            life_speak = self.life_io.speak
+            speak_life_out = SpeakLifeOutboundBridge(life_speak)
+            speak_life_lc = SpeakLifeLifecycleBridge(
+                life_speak,
+                reset_context=self._reset_speak_session_context,
+            )
 
             flush_mode = self._cfg.speak_stream_flush_mode
             if flush_mode not in {"segment", "token_batch"}:
@@ -1066,7 +1188,8 @@ class SoulService:
             self._speak_service = SpeakService(
                 presence=self._presence_service,
                 persona=self,
-                record_turn=_record_dialogue_turn,
+                life_outbound=speak_life_out,
+                life_lifecycle=speak_life_lc,
                 llm_engine=SpeakLLMEngine(
                     resolve_module_llm(
                         self._llm_service,
@@ -1081,24 +1204,71 @@ class SoulService:
                 embedder=self.resolve_embedding_port(),
                 context_distill_chunk_size=self._cfg.speak_context_distill_chunk_size,
                 memory_turn_gap=self._memory_cfg.memory_turn_proximity_max,
-                lifecycle=self,
-                touch_dialogue=_touch_dialogue,
+                compose_memory_wait_ms=self._memory_cfg.speak_compose_memory_wait_ms,
             )
-            from agent.soul.memory.session.types import DialogueCompressionBlock
+            from agent.soul.memory.io.session import CompressionBlockInbound, DialogueCompressionBlock
 
             def _on_compression_block(block: DialogueCompressionBlock) -> None:
-                pipeline = self._ensure_experience_pipeline()
-                interactor_id = block.session_id
-                bridge = getattr(self._speak_service, "_session_bridge", None)
-                if bridge is not None:
-                    resolved = bridge.registry.get_interactor(block.session_id)
-                    if resolved:
-                        interactor_id = resolved
-                pipeline.ingest_compression_block(block, interactor_id=interactor_id)
+                interactor_id = (block.interactor_id or "").strip()
+                if not interactor_id:
+                    interactor_id = (
+                        self._speak_service.session_registry.get_bound_interactor(
+                            block.session_id
+                        )
+                        or ""
+                    ).strip()
+
+                def _task() -> None:
+                    from agent.soul.memory.facade.persona_context import (
+                        build_agent_persona_narrative,
+                    )
+
+                    pipeline = self._ensure_experience_pipeline()
+                    llm = resolve_module_llm(
+                        self._llm_service,
+                        self._cfg.speak_llm_aux_name,
+                        self._primary_llm,
+                    )
+                    persona = build_agent_persona_narrative(self.get_persona_snapshot())
+                    pipeline.ingest_compression_block(
+                        block,
+                        interactor_id=interactor_id,
+                        llm=llm,
+                        agent_persona_narrative=persona,
+                    )
+
+                if self.memory is not None and self.memory.api is not None:
+                    self.memory.api.enqueue_background(_task)
+                else:
+                    _task()
 
             if self._speak_service._context is not None:
-                self._speak_service._context.set_on_block_ready(_on_compression_block)
 
+                def _resolve_distill_interactor(session_id: str) -> str:
+                    bound = self._speak_service.session_registry.get_bound_interactor(
+                        session_id
+                    )
+                    if bound:
+                        return bound.strip()
+                    if self.memory is not None and self.memory.api is not None:
+                        return (
+                            self.memory.api.resolve_channel_interactor(session_id) or ""
+                        ).strip()
+                    return ""
+
+                self._speak_service._context.set_resolve_interactor(
+                    _resolve_distill_interactor
+                )
+                self._speak_service._context.set_on_block_ready(_on_compression_block)
+                from agent.soul.memory.facade.persona_context import (
+                    build_agent_persona_narrative,
+                )
+
+                self._speak_service._context.set_agent_persona_provider(
+                    lambda: build_agent_persona_narrative(self.get_persona_snapshot()),
+                )
+
+            from agent.soul.memory.io.session import DialogueTurnInbound
             from agent.soul.speak.io.inbound.memory import (
                 PointQueryRequest,
                 RecallRequest,
@@ -1119,18 +1289,27 @@ class SoulService:
                 )
 
             def _point_query_for_speak(request: PointQueryRequest) -> None:
-                self.memory.api.request_speak_point_query(
-                    session_id=request.session_id,
-                    interactor_id=request.interactor_id,
-                    turn_index=request.turn_index,
-                    user_text=request.user_text,
-                    agent_text=request.agent_text,
+                self.memory.api.session_io.submit_dialogue_turn(
+                    DialogueTurnInbound(
+                        session_id=request.session_id,
+                        turn_index=request.turn_index,
+                        user_text=request.user_text,
+                        agent_text=request.agent_text,
+                        interactor_id=request.interactor_id,
+                        channel_id=request.session_id,
+                        want_dynamic_event=True,
+                    )
                 )
 
-            def _pull_similar_for_speak(session_id: str, turn_index: int) -> SimilarMemoryPullResult:
-                consumed = self._speak_service.session_manager.consume_memory_for_compose(
+            def _pull_similar_for_speak(
+                session_id: str,
+                turn_index: int,
+                wait_ms: int,
+            ) -> SimilarMemoryPullResult:
+                consumed = self._speak_service.session_manager.pull_memory_for_compose(
                     session_id,
                     turn_index,
+                    wait_ms=wait_ms,
                 )
                 return SimilarMemoryPullResult(
                     inject=SimilarMemoryBlock(
@@ -1151,12 +1330,16 @@ class SoulService:
             )
 
             def _portrait_query_for_speak(request: InteractorPortraitRequest) -> None:
-                self.memory.api.request_speak_interactor_portrait(
-                    session_id=request.session_id,
-                    turn_index=request.turn_index,
-                    user_text=request.user_text,
-                    agent_text=request.agent_text,
-                    hinted_interactor_id=request.hinted_interactor_id,
+                self.memory.api.session_io.submit_dialogue_turn(
+                    DialogueTurnInbound(
+                        session_id=request.session_id,
+                        turn_index=request.turn_index,
+                        user_text=request.user_text,
+                        agent_text=request.agent_text,
+                        interactor_id=request.hinted_interactor_id,
+                        channel_id=request.session_id,
+                        want_dynamic_portrait=True,
+                    )
                 )
 
             def _on_interactor_portrait_ready(result) -> None:
@@ -1165,20 +1348,35 @@ class SoulService:
                     sid = result.session_id.strip()
                     self._speak_service.bind_interactor(sid, iid)
                     self.memory.api.bind_session_channel(sid, iid)
+                from agent.soul.speak.compose.interactor_portrait import (
+                    render_interactor_portrait_for_prompt,
+                )
+
+                portrait_text = ""
+                if result.interactor_id.strip():
+                    portrait_text = render_interactor_portrait_for_prompt(
+                        name=result.display_name,
+                        core_traits=list(result.core_traits),
+                        portrait_body=result.portrait_body,
+                        agent_relation=result.agent_relation,
+                        recent_impression=result.recent_impression,
+                    )
                 self._speak_service.session_manager.enqueue_interactor_portrait(
                     result.session_id,
                     turn_index=result.turn_index,
                     interactor_id=result.interactor_id,
-                    portrait_text=result.portrait_text,
+                    portrait_text=portrait_text,
                 )
 
             def _pull_portrait_for_speak(
                 session_id: str,
                 turn_index: int,
+                wait_ms: int,
             ) -> InteractorPortraitPullResult:
-                consumed = self._speak_service.session_manager.consume_portrait_for_compose(
+                consumed = self._speak_service.session_manager.pull_portrait_for_compose(
                     session_id,
                     turn_index,
+                    wait_ms=wait_ms,
                 )
                 return InteractorPortraitPullResult(
                     portrait_text=consumed.portrait_text,
@@ -1198,10 +1396,15 @@ class SoulService:
             self._speak_service.attach_memory_recall(_recall_for_speak)
             self._speak_service.attach_memory_point_query(_point_query_for_speak)
             self._speak_service.attach_memory_pull_similar(_pull_similar_for_speak)
-            self.memory.api.on_interactor_portrait_ready(_on_interactor_portrait_ready)
+            self.memory.api.session_io.on_dynamic_portrait_ready(
+                _on_interactor_portrait_ready
+            )
+            self.memory.api.session_io.on_static_portrait_ready(
+                _on_interactor_portrait_ready
+            )
             self._speak_service.attach_memory_portrait_query(_portrait_query_for_speak)
             self._speak_service.attach_memory_pull_portrait(_pull_portrait_for_speak)
-            self.memory.api.on_point_emergence_ready(_on_point_emergence_ready)
+            self.memory.api.session_io.on_dynamic_event_ready(_on_point_emergence_ready)
         return self._speak_service
 
     def _relay_presence_status_to_speak(self, snap) -> None:
@@ -1273,8 +1476,159 @@ class SoulService:
             presence_narrative=narrative,
         )
 
+    def _ensure_presence_speak_io(self) -> None:
+        if self._presence_speak_wired:
+            return
+        self._ensure_presence_service()
+        self._ensure_speak_service()
+        from agent.soul.presence.io.hub import PresenceIOHub
+        from agent.soul.presence.io.speak import PresenceSpeakIO
+        from agent.soul.speak.io.inbound.presence import SpeakPresenceInboundBridge
+
+        self._presence_speak_bridge = SpeakPresenceInboundBridge(
+            self,
+            on_agent_initiated=self._notify_agent_initiated,
+        )
+        self._presence_service.bind_io(
+            PresenceIOHub(speak=PresenceSpeakIO(self._presence_speak_bridge)),
+        )
+        self._ensure_speak_service().io.inbound.attach_presence(
+            self._presence_speak_bridge,
+        )
+        self._presence_speak_wired = True
+
+    def _notify_agent_initiated(self, payload: dict[str, Any]) -> None:
+        for handler in self._agent_initiated_handlers:
+            handler(payload)
+
+    def _candidate_speak_session_ids(self, session_id: str) -> list[str]:
+        base = session_id.strip() or "tao"
+        ids: list[str] = []
+        for sid in (base, "webui"):
+            if sid and sid not in ids:
+                ids.append(sid)
+        channel = self.hydrate_speak_channel(base)
+        if channel and channel not in ids:
+            ids.append(channel)
+        if self._speak_service is not None:
+            bound = self._speak_service.session_registry.get_bound_interactor(base)
+            if bound and bound not in ids:
+                ids.append(bound)
+        return ids
+
+    def _find_active_speak_session_id(self, session_id: str) -> str | None:
+        self._ensure_speak_service()
+        speak = self._speak_service
+        for sid in self._candidate_speak_session_ids(session_id):
+            if speak.session_manager.has_active_dialogue(sid):
+                return sid
+            dlg = self.dialogue_experience.state(sid)
+            if dlg is not None and dlg.session.turns:
+                return sid
+        return None
+
+    def _speak_has_active_dialogue(self, session_id: str) -> bool:
+        return self._find_active_speak_session_id(session_id) is not None
+
+    def _intents_from_speak_request(
+        self,
+        request: SpeakRequest,
+        *,
+        limit: int = 2,
+    ) -> list:
+        package = request.package
+        if package is not None and package.entries:
+            ordered = sorted(package.entries, key=lambda item: item.salience, reverse=True)
+            return list(ordered[: max(1, limit)])
+        return self.presence.pop_top_share_intents(
+            request.session_id.strip() or "tao",
+            limit=limit,
+        )
+
+    def _defer_share_to_active_session(
+        self,
+        presence_session_id: str,
+        *,
+        limit: int = 2,
+        intents: list | None = None,
+    ) -> dict[str, Any]:
+        """活跃会话中：从 presence 弹出 1–2 条最想分享的，注入 speak 延迟队列。"""
+        presence_sid = presence_session_id.strip() or "tao"
+        speak_sid = self._find_active_speak_session_id(presence_sid) or presence_sid
+        resolved = intents
+        if resolved is None:
+            resolved = self.presence.pop_top_share_intents(presence_sid, limit=limit)
+        else:
+            resolved = list(resolved[: max(1, limit)])
+        if not resolved:
+            return {
+                "ok": False,
+                "deferred": False,
+                "session_id": speak_sid,
+                "presence_session_id": presence_sid,
+                "reason": "share queue empty",
+            }
+        speak = self._ensure_speak_service()
+        injected = speak.session_manager.inject_deferred_share_intents(speak_sid, resolved)
+        from agent.soul.speak.io.inbound.compose.request import ComposePrepareRequest
+
+        speak.io.inbound.compose.request_prepare(
+            ComposePrepareRequest(session_id=speak_sid),
+        )
+        return {
+            "ok": True,
+            "deferred": True,
+            "session_id": speak_sid,
+            "presence_session_id": presence_sid,
+            "injected": injected,
+        }
+
+    def _handle_presence_speak_trigger(
+        self,
+        session_id: str,
+        request: SpeakRequest,
+    ) -> dict[str, Any]:
+        if self._speak_has_active_dialogue(session_id):
+            intents = self._intents_from_speak_request(request, limit=2)
+            defer = self._defer_share_to_active_session(
+                session_id,
+                limit=2,
+                intents=intents,
+            )
+            defer["skipped_proactive"] = True
+            defer["source"] = request.source
+            return defer
+        return self._emit_presence_speak(request)
+
     def _emit_presence_speak(self, request: SpeakRequest) -> dict[str, Any]:
-        return self.speak_outbound.emit_presence(request)
+        self._ensure_presence_speak_io()
+        speak = self._ensure_speak_service()
+        channel_id = (
+            speak.session_registry.get_bound_interactor(request.session_id) or ""
+        ).strip() or request.session_id.strip()
+        ack = self.presence.io.speak.initiate_from_speak_request(
+            request,
+            channel_id=channel_id,
+        )
+        result = {
+            "ok": ack.ok,
+            "session_id": ack.session_id,
+            "channel_id": ack.channel_id,
+            "message": ack.message,
+            "wait_reply": request.wait_reply,
+            "append": ack.append,
+            "source": request.source,
+            "expectation": request.expectation.value,
+            "blocked": ack.blocked,
+            "agent_initiated": ack.agent_initiated,
+            "proactive_intent_id": ack.proactive_intent_id,
+            "ui": dict(ack.ui),
+        }
+        if not ack.ok and ack.reason:
+            result["reason"] = ack.reason
+        for handler in self.speak_outbound._after_presence_handlers:
+            handler(request)
+        return result
 
     def _ensure_speak_outbound_router(self) -> SpeakOutboundRouter:
         if self._speak_outbound_router is None:
@@ -1303,15 +1657,63 @@ class SoulService:
             lambda: self.persona.service.record_cluster_signals(candidates)
         ).result()
 
+    def _sync_presence_expectation_from_persona(self) -> dict[str, Any] | None:
+        if not self._persona_cfg.enabled:
+            from agent.soul.presence.init_expectation import apply_expectation_tier
+            from agent.soul.presence.init_expectation.tier import parse_expectation_tier, ExpectationTier
+
+            tier = parse_expectation_tier(self._persona_cfg.expectation_tier_override)
+            if tier is None:
+                tier = ExpectationTier.medium
+            apply_expectation_tier(tier)
+            if self._speak_service is not None:
+                self._speak_service.refresh_share_expectation_thresholds()
+            return {"tier": tier.value, "source": "persona_disabled_override"}
+        self._ensure_persona_handler()
+        detail = self.persona.service.sync_presence_expectation(
+            embedder=self.resolve_embedding_port(),
+            tier_override=self._persona_cfg.expectation_tier_override,
+        )
+        if self._speak_service is not None:
+            self._speak_service.refresh_share_expectation_thresholds()
+        return detail
+
+    def _sync_agent_persona_context(self) -> None:
+        from agent.soul.memory.facade.persona_context import build_agent_persona_narrative
+
+        self._sync_presence_expectation_from_persona()
+        snap = self.get_persona_snapshot()
+        narrative = build_agent_persona_narrative(snap)
+
+        self._ensure_memory_handler()
+        self.memory.api.set_agent_persona_provider(
+            lambda: build_agent_persona_narrative(self.get_persona_snapshot()),
+        )
+
+        if self._life_handler is not None:
+            self.life.api.sync_agent_persona_narrative(narrative)
+
+        if self._speak_service is not None and self._speak_service._context is not None:
+            self._speak_service._context.set_agent_persona_provider(
+                lambda: build_agent_persona_narrative(self.get_persona_snapshot()),
+            )
+
     def _wire_workers(self) -> None:
         self._workers.register_life(self.life.api.worker)
         self.memory.set_worker(self._workers.memory)
         self.persona.set_worker(self._workers.persona)
         self.persona.set_memory_port(self.memory.api)
         self.persona.set_embedder(self.memory.api.drift_embedder())
-        self.life.api.set_memory_port(self.memory.api)
+        from agent.soul.life.io import LifeExperienceMemoryIO
+
+        life_memory = LifeExperienceMemoryIO(self.memory.api.life_io)
+        self.life.api.set_memory_port(life_memory)
         self.life.api.set_story_world_context_supplier(
             self._story_world_context_supplier
         )
         self._ensure_experience_pipeline()
-        self._experience_pipeline.life.set_memory_port(self.memory.api)
+        self._experience_pipeline.orchestrator._memory_port = life_memory
+        self._experience_pipeline.life.set_memory_port(life_memory)
+        self._ensure_life_io()
+        if self._life_io_hub is not None:
+            self._life_io_hub.memory = life_memory

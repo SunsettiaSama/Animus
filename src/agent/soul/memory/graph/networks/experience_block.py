@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from agent.soul.life.experience.anchor_codec import read_anchor_context
-from agent.soul.life.experience.sources import REALITY_SOURCES
-from agent.soul.life.experience.unit import ExperienceUnit
+from agent.soul.life.experience.domain.anchor_codec import read_anchor_context
+from agent.soul.life.experience.domain.sources import REALITY_SOURCES
+from agent.soul.life.experience.domain.unit import ExperienceUnit
 
 from .types import ExperienceBlock, ExperienceKind
 
@@ -21,13 +21,11 @@ def resolve_interactor_id(unit: ExperienceUnit) -> str:
         interactor = (ctx.interactor_id or "").strip()
         if interactor:
             return interactor
-        session_id = (ctx.session_id or "").strip()
-        if session_id:
-            return session_id
-    session_id = (unit.situation.session_id or "").strip()
-    if session_id:
-        return session_id
-    return unit.id[:8]
+        if classify_experience(unit) == ExperienceKind.anchor:
+            session_id = (ctx.session_id or "").strip()
+            if session_id:
+                return session_id
+    return ""
 
 
 def experience_raw_text(unit: ExperienceUnit) -> str:
@@ -41,7 +39,7 @@ def experience_raw_text(unit: ExperienceUnit) -> str:
 
 def read_experience_block(unit: ExperienceUnit) -> ExperienceBlock:
     kind = classify_experience(unit)
-    interactor_id = resolve_interactor_id(unit) if kind == ExperienceKind.anchor else ""
+    interactor_id = resolve_interactor_id(unit)
     raw = experience_raw_text(unit)
     if not raw:
         raw = unit.id[:8]

@@ -4,7 +4,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from agent.soul.memory.session.types import DialogueCompressionBlock
+from agent.soul.memory.io.session import DialogueCompressionBlock
 from agent.soul.speak.llm.engine import SpeakLLMEngine
 
 from .chunk_types import DialogueContextChunk
@@ -49,6 +49,8 @@ class SpeakContextDistiller:
         self._submit = submit or _default_submit
         self._sessions: dict[str, _SessionDistillState] = {}
         self._on_block_ready: Callable[[DialogueCompressionBlock], None] | None = None
+        self._agent_persona_provider: Callable[[], str] | None = None
+        self._resolve_interactor: Callable[[str], str] | None = None
 
     @property
     def chunk_size(self) -> int:
@@ -62,6 +64,12 @@ class SpeakContextDistiller:
         handler: Callable[[DialogueCompressionBlock], None] | None,
     ) -> None:
         self._on_block_ready = handler
+
+    def set_agent_persona_provider(self, provider: Callable[[], str] | None) -> None:
+        self._agent_persona_provider = provider
+
+    def set_resolve_interactor(self, resolver: Callable[[str], str] | None) -> None:
+        self._resolve_interactor = resolver
 
     def reset_session(self, session_id: str) -> None:
         state = self._sessions.pop(session_id, None)
@@ -120,6 +128,10 @@ class SpeakContextDistiller:
                 "session_id": session_id,
                 "distilled_count": len(state.distilled),
                 "buffer_count": len(state.buffer),
+                "buffer_chunks": [
+                    {"user": c.user_text, "agent": c.agent_text}
+                    for c in state.buffer
+                ],
                 "pending_jobs": len(state.queued_batches),
                 "distilling": state.distilling,
                 "distilled": list(state.distilled),
@@ -144,14 +156,47 @@ class SpeakContextDistiller:
         from .structured_distill import distill_compression_block
 
         block_index = len(prior)
+        from ...session.prompt_trace import get_prompt_trace
+        from .structured_distill import _SCHEMA_HINT, _render_transcript, _structured_system
+
+        trace = get_prompt_trace()
+        trace_enabled = trace.is_enabled(session_id)
+        distill_user = ""
+        if trace_enabled:
+            distill_user_lines: list[str] = []
+            if prior:
+                distill_user_lines.append("此前压缩摘要：")
+                distill_user_lines.extend(f"- {line}" for line in prior)
+            distill_user_lines.append(f"待压缩的最近 {len(batch)} 轮对话：")
+            distill_user_lines.append(_render_transcript(batch))
+            distill_user_lines.append(f"\n输出 schema：\n{_SCHEMA_HINT}")
+            distill_user = "\n".join(distill_user_lines)
+
+        persona = ""
+        if self._agent_persona_provider is not None:
+            persona = self._agent_persona_provider().strip()
+        interactor_id = ""
+        if self._resolve_interactor is not None:
+            interactor_id = (self._resolve_interactor(session_id) or "").strip()
         block = distill_compression_block(
             self._llm,
             session_id=session_id,
             block_index=block_index,
             batch=batch,
             prior=prior,
+            agent_persona_narrative=persona,
+            interactor_id=interactor_id,
         )
         sentence = normalize_one_sentence(block.summary)
+
+        if trace_enabled:
+            trace.emit_submodule_llm(
+                session_id,
+                submodule="distiller.compression",
+                system=_structured_system(persona),
+                user=distill_user,
+                response_preview=block.summary,
+            )
 
         with state.lock:
             if sentence:

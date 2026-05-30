@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 
@@ -71,7 +71,7 @@ def feeling_self_narration(feeling: SpeakFeelingChunk) -> str:
 
 
 def _estimate_salience(text: str) -> float:
-    from agent.soul.life.experience.memory_promotion import salience_score_from_narration
+    from agent.soul.life.experience.unit_layer.promote.policy import salience_score_from_narration
 
     return salience_score_from_narration(text)
 

@@ -1,5 +1,7 @@
+from .compose_bridge import InboundMemoryComposeBridge
 from .gateway import InboundMemoryGateway
 from .ports import MemoryPointQueryPort, MemoryRecallPort, MemorySimilarPullPort
+from .recall import RecallHandoffResult, perform_recall_handoff, render_recall_full_text
 from .request import (
     InteractorPortraitPullResult,
     InteractorPortraitRequest,
@@ -11,7 +13,11 @@ from .request import (
 )
 
 __all__ = [
+    "InboundMemoryComposeBridge",
     "InboundMemoryGateway",
+    "RecallHandoffResult",
+    "perform_recall_handoff",
+    "render_recall_full_text",
     "MemoryPointQueryPort",
     "MemoryRecallPort",
     "MemorySimilarPullPort",

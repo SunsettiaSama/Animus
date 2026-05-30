@@ -10,25 +10,19 @@ from .compose.composer import SpeakPromptComposer
 from .compose.context import SpeakContextDistiller
 from .compose.runner import SpeakComposeRunner
 from .compose.reply_style import SpeakReplyStyle
-from .compose.interactor_portrait import render_interactor_portrait_inject
 from .compose.recall import perform_recall_handoff
-from .drive import SpeakDriveBridge, SpeakDriveResult, SpeakDriveSnapshot
+from .compose.share import ShareDesireComposer
+from config.soul.presence.config import PROACTIVE_OPEN_THRESHOLD
+from .io.hub import SpeakIOHub
 from .io.inbound import SpeakDialogueBridge, SpeakIngestResult, SpeakInboundPort, ingest_question
 from .io.inbound.compose.gateway import InboundComposeGateway
 from .io.inbound.compose.request import ComposePrepareRequest
-from .io.inbound.memory import (
-    InboundMemoryGateway,
-    InteractorPortraitPullResult,
-    InteractorPortraitRequest,
-    PointQueryRequest,
-    RecallRequest,
-    RecallResult,
-    SimilarMemoryBlock,
-    SimilarMemoryPullResult,
-)
-from .io.inbound.session.bridge import SpeakSessionBridge
+from .io.inbound.drive import SpeakDriveBridge, SpeakDriveResult, SpeakDriveSnapshot
+from .io.inbound.memory import InboundMemoryGateway, SimilarMemoryPullResult
 from .session import SpeakSessionManager, SpeakSessionService
 from .session.queue import QueueDecisionRunner, UserInputItem
+from .session.manage import SilenceBreakTurnSpec
+from .session.prompt_trace import get_prompt_trace
 from .session.turn import SessionTurnHost, run_session_turn
 from .session import SpeakFeelingChunk, SpeakSubjectiveChunk, SpeakTurnChunk
 from .session.lifecycle import SPEAK_SESSION_IDLE_SEC, SpeakSessionRegistry
@@ -50,6 +44,10 @@ from .io.outbound.stream import (
     SpeakStreamPort,
     parse_agent_output,
 )
+from .io.outbound.hub import SpeakOutboundHub
+from .io.outbound.life import SpeakLifeLifecycleBridge, SpeakLifeOutboundBridge
+from .io.outbound.stream_hub import SpeakOutboundStreamHub
+from .io.inbound.hub import SpeakInboundHub
 from .io.outbound.stream.flush import SpeakFlushMode
 from .ports import SpeakDrivePort, SpeakToolPort
 
@@ -75,7 +73,12 @@ class SpeakTurnResult:
 
 
 class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
-    """Soul 对话编排：字块组装 → LLM → 流式推送 → 记账。"""
+    """Soul 对话编排：字块组装 → LLM → 流式推送 → 记账。
+
+    出入站经 ``self.io``（``SpeakIOHub``）；会话真逻辑在 ``session_manager`` / ``session_registry``。
+    不使用 ``agent.interaction.DialogueKernel`` / ``agent.posture``。
+    Life 体验注入经 ``io.outbound.life`` → ``life.io.speak``。
+    """
 
     def __init__(
         self,
@@ -84,7 +87,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         persona=None,
         inbound: SpeakInboundPort | None = None,
         outbound: SpeakOutboundPort | None = None,
-        record_turn: Callable[..., None] | None = None,
+        life_outbound: SpeakLifeOutboundBridge | None = None,
         dialogue_bridge: SpeakDialogueBridge | None = None,
         llm_engine: SpeakLLMEngine | None = None,
         composer: SpeakPromptComposer | None = None,
@@ -99,16 +102,15 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         share_threshold: float | None = None,
         session_idle_sec: float | None = None,
         lifecycle=None,
-        touch_dialogue: Callable[[str], None] | None = None,
+        life_lifecycle: SpeakLifeLifecycleBridge | None = None,
         context_distiller: SpeakContextDistiller | None = None,
         context_distill_chunk_size: int = 4,
         memory_turn_gap: int = 3,
+        compose_memory_wait_ms: int = 100,
     ) -> None:
         self._presence = presence
         self._persona = persona
         self._compose_runner = SpeakComposeRunner()
-        self._inbound_compose = InboundComposeGateway(self._compose_runner)
-        self._inbound_memory = InboundMemoryGateway()
         self._memory_turn_gap = memory_turn_gap
         self._inbound = inbound
         self._outbound = outbound
@@ -116,10 +118,18 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._llm = llm_engine or SpeakLLMEngine()
         self._queue_decision_runner = QueueDecisionRunner(llm=self._llm)
         self._tool = tool_port
-        self._drive = SpeakDriveBridge(presence, share_threshold=share_threshold)
-        on_dialogue = record_turn
-        self._dialogue_bridge = dialogue_bridge or SpeakDialogueBridge(
-            on_dialogue_turn=on_dialogue,
+        self._life_outbound = life_outbound
+        if dialogue_bridge is not None:
+            self._dialogue_bridge = dialogue_bridge
+        elif life_outbound is not None:
+            self._dialogue_bridge = SpeakDialogueBridge(life=life_outbound)
+        else:
+            raise RuntimeError("SpeakService 需要 life_outbound 或 dialogue_bridge")
+        session_lifecycle = life_lifecycle if life_lifecycle is not None else lifecycle
+        touch_dialogue = (
+            life_outbound.touch_dialogue
+            if life_outbound is not None
+            else None
         )
         if context_distiller is not None:
             self._context = context_distiller
@@ -130,18 +140,6 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             )
         else:
             self._context = None
-        if composer is not None:
-            self._composer = composer
-        elif persona is not None and presence is not None:
-            self._composer = SpeakPromptComposer(
-                persona,
-                presence,
-                share_threshold=share_threshold or self._drive.share_threshold,
-                context_distiller=self._context,
-                status_store=self._inbound_compose.status_store,
-            )
-        else:
-            self._composer = None
         self._semantic = semantic_boundary or self._build_semantic_boundary(
             embedder,
             semantic_distance_threshold,
@@ -151,7 +149,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             presence=presence,
             semantic=self._semantic,
             idle_sec=idle,
-            inner_lifecycle=lifecycle,
+            inner_lifecycle=session_lifecycle,
             touch_dialogue=touch_dialogue,
             registry=session_registry,
             reset_context=self.reset_context,
@@ -165,13 +163,48 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._queue_decision_runner.set_complete_handler(
             self._session_manager.on_queue_decision_complete,
         )
-        self._session_bridge = SpeakSessionBridge(self, manager=self._session_manager)
-        self._inbound_compose.attach_scheduler(self._on_compose_prepare_request)
-        self._outbound_stream = SpeakStreamChannel()
-        self._stream = stream_pipeline or SpeakStreamPipeline(
-            flush_mode=flush_mode,
-            emit_fn=self._outbound_stream.emit,
+        self._bind_session_social()
+        self._inbound_hub = SpeakInboundHub(
+            compose_runner=self._compose_runner,
+            session_manager=self._session_manager,
+            share_threshold=share_threshold,
+            presence=presence,
+            on_compose_prepare=self._on_compose_prepare_request,
+            compose_memory_wait_ms=compose_memory_wait_ms,
         )
+        stream_hub = SpeakOutboundStreamHub(
+            flush_mode=flush_mode,
+            pipeline=stream_pipeline,
+        )
+        self._outbound_hub = SpeakOutboundHub(
+            stream_hub,
+            life=life_outbound,
+        )
+        self._io = SpeakIOHub(self._inbound_hub, self._outbound_hub)
+        self._inbound_compose = self._io.inbound.compose
+        self._inbound_memory = self._io.inbound.memory
+        self._memory_compose = self._io.inbound.memory_compose
+        self._drive = self._io.inbound.drive
+        self._outbound_stream = self._io.outbound.stream.channel
+        self._stream = self._io.outbound.stream.pipeline
+        if composer is not None:
+            self._composer = composer
+        elif persona is not None and presence is not None:
+            threshold = share_threshold if share_threshold is not None else PROACTIVE_OPEN_THRESHOLD
+            share_composer = ShareDesireComposer(
+                proactive_threshold=threshold,
+                session_share_reader=lambda sid: self._session_manager.deferred_share_intents(sid),
+            )
+            self._composer = SpeakPromptComposer(
+                persona,
+                presence,
+                share_threshold=threshold,
+                share_composer=share_composer,
+                context_distiller=self._context,
+                status_store=self._inbound_compose.status_store,
+            )
+        else:
+            self._composer = None
         self._compose_runner.set_frame_ready_handler(
             lambda frame, mode: self._session_manager.on_compose_ready(frame, mode=mode),
         )
@@ -187,6 +220,56 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 embedder,
                 distance_threshold=threshold,
             ),
+        )
+
+    def _bind_session_social(self) -> None:
+        social = self._session_manager.social
+        social.bind_dialogue_supplier(
+            lambda sid: self._context.prompt_block(sid) if self._context is not None else "",
+        )
+        social.bind_activity(
+            is_active=self._session_manager.has_active_dialogue,
+            is_pushing=self._session_manager.is_pushing,
+        )
+        social.silence.set_llm(self._llm)
+        social.set_silence_break_handler(self._execute_silence_break)
+
+    def _apply_social_compose(
+        self,
+        bundle: SpeakPromptBundle,
+        session_id: str,
+        user_text: str,
+        *,
+        mode: SpeakTurnMode,
+        turn_index: int,
+    ) -> SpeakPromptBundle:
+        self._session_manager.social.enrich_bundle(
+            bundle,
+            session_id=session_id,
+            turn_index=turn_index,
+            user_text=user_text,
+            mode=mode,
+        )
+        return bundle
+
+    def _execute_silence_break(self, spec: SilenceBreakTurnSpec) -> None:
+        session_id = spec.session_id.strip()
+        if not session_id:
+            return
+        if self._session_manager.is_pushing(session_id):
+            return
+        if self._session_manager.user_queue.has_pending(session_id):
+            return
+        if not self._session_manager.has_active_dialogue(session_id):
+            return
+        self._session_manager.social.arm_silence_break(spec)
+        stream = self._outbound_stream.port is not None
+        self.run_turn(
+            session_id,
+            spec.user_text(),
+            stream=stream,
+            mode="inbound",
+            record=True,
         )
 
     @property
@@ -208,11 +291,17 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def start(self) -> None:
         self._compose_runner.start()
         self._queue_decision_runner.start()
+        self._session_manager.social.silence.start_worker()
         self._schedule_compose_prepare("tao")
 
     def stop(self) -> None:
+        self._session_manager.social.silence.stop_worker()
         self._queue_decision_runner.stop()
         self._compose_runner.stop()
+
+    @property
+    def life_outbound(self) -> SpeakLifeOutboundBridge | None:
+        return self._life_outbound
 
     @property
     def stream_pipeline(self) -> SpeakStreamPipeline:
@@ -224,23 +313,27 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
 
     @property
     def session_registry(self) -> SpeakSessionRegistry:
-        return self._session_bridge.registry
+        return self._session_manager.registry
 
     @property
     def inbound_compose(self) -> InboundComposeGateway:
         return self._inbound_compose
 
     @property
+    def io(self) -> SpeakIOHub:
+        return self._io
+
+    @property
     def inbound_memory(self) -> InboundMemoryGateway:
         return self._inbound_memory
 
     @property
-    def session_manager(self) -> SpeakSessionService:
-        return self._session_manager
+    def memory_compose(self):
+        return self._memory_compose
 
     @property
-    def session_bridge(self) -> SpeakSessionBridge:
-        return self._session_bridge
+    def session_manager(self) -> SpeakSessionService:
+        return self._session_manager
 
     @property
     def drive_bridge(self) -> SpeakDriveBridge:
@@ -254,6 +347,48 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def context_distiller(self) -> SpeakContextDistiller | None:
         return self._context
 
+    def set_session_prompt_trace(self, session_id: str, enabled: bool) -> dict[str, object]:
+        trace = get_prompt_trace()
+        trace.set_session(session_id, enabled)
+        return {
+            "session_id": session_id.strip(),
+            "enabled": trace.is_enabled(session_id),
+            "global": trace.global_enabled,
+        }
+
+    def get_session_prompt_trace(self, session_id: str) -> dict[str, object]:
+        trace = get_prompt_trace()
+        return {
+            "session_id": session_id.strip(),
+            "enabled": trace.is_enabled(session_id),
+            "global": trace.global_enabled,
+            "traced_sessions": trace.enabled_sessions(),
+        }
+
+    def session_trace_cache(
+        self,
+        session_id: str,
+        *,
+        turn_index: int | None = None,
+    ) -> dict[str, object]:
+        resolved_turn = (
+            turn_index
+            if turn_index is not None
+            else self.session_registry.current_turn_index(session_id)
+        )
+        record = self.session_registry.get(session_id)
+        distill: dict[str, object] = {}
+        if self._context is not None:
+            distill = self._context.snapshot(session_id)
+        return {
+            "session_id": session_id,
+            "turn_index": resolved_turn,
+            "generation": record.generation,
+            "bound_interactor": self.session_registry.get_bound_interactor(session_id),
+            "distiller": distill,
+            "queues": self._session_manager._queues.debug_snapshot(session_id),
+        }
+
     def reset_context(self, session_id: str) -> None:
         self._inbound_compose.reset_session(session_id)
         self._session_manager.clear_compose(session_id)
@@ -261,22 +396,22 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             self._context.reset_session(session_id)
 
     def attach_memory_recall(self, recall_fn) -> None:
-        self._inbound_memory.attach_recall(recall_fn)
+        self._io.inbound.attach_memory_ports(recall_fn=recall_fn)
 
     def attach_memory_point_query(self, point_query_fn) -> None:
-        self._inbound_memory.attach_point_query(point_query_fn)
+        self._io.inbound.attach_memory_ports(point_query_fn=point_query_fn)
 
     def attach_memory_pull_similar(self, pull_similar_fn) -> None:
-        self._inbound_memory.attach_pull_similar(pull_similar_fn)
+        self._io.inbound.attach_memory_ports(pull_similar_fn=pull_similar_fn)
 
     def attach_memory_portrait_query(self, portrait_query_fn) -> None:
-        self._inbound_memory.attach_portrait_query(portrait_query_fn)
+        self._io.inbound.attach_memory_ports(portrait_query_fn=portrait_query_fn)
 
     def attach_memory_pull_portrait(self, pull_portrait_fn) -> None:
-        self._inbound_memory.attach_pull_portrait(pull_portrait_fn)
+        self._io.inbound.attach_memory_ports(pull_portrait_fn=pull_portrait_fn)
 
     def bind_interactor(self, session_id: str, interactor_id: str) -> None:
-        self._session_bridge.registry.bind_interactor(session_id, interactor_id)
+        self.session_registry.bind_interactor(session_id, interactor_id)
 
     def _on_compose_prepare_request(self, request: ComposePrepareRequest) -> None:
         if self._composer is None:
@@ -321,8 +456,19 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         """接收 presence 推送，由 inbound compose 写入状态并请求预组装。"""
         self._inbound_compose.on_presence_status_update(snap)
 
+    def refresh_share_expectation_thresholds(self) -> None:
+        """presence 档位热更新后，同步 speak drive / compose 的 proactive 阈值。"""
+        from config.soul.presence.config import PROACTIVE_OPEN_THRESHOLD
+
+        threshold = PROACTIVE_OPEN_THRESHOLD
+        if self._composer is not None:
+            self._composer._share._threshold = threshold
+        if self._inbound_hub is not None:
+            self._inbound_hub.drive.share_threshold = threshold
+            self._inbound_hub.drive._share._threshold = threshold
+
     def set_stream_port(self, port: SpeakStreamPort | None) -> None:
-        self._outbound_stream.bind(port)
+        self._io.outbound.bind_stream_port(port)
 
     def set_tool_port(self, port: SpeakToolPort | None) -> None:
         self._tool = port
@@ -373,116 +519,6 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._session_manager.open(session_id)
         return self._llm.generate_stream(user_text, system=system, context=context)
 
-    @staticmethod
-    def _render_similar_memories(lines: list[str]) -> str:
-        cleaned = [line.strip() for line in lines if line.strip()]
-        if not cleaned:
-            return ""
-        body = "\n".join(f"- {line}" for line in cleaned)
-        return f"【可能相关的记忆】\n{body}"
-
-    def _request_similar_memories(
-        self,
-        session_id: str,
-        *,
-        turn_index: int,
-        user_text: str,
-        agent_text: str = "",
-    ) -> None:
-        interactor_id = self._session_bridge.registry.get_interactor(session_id)
-        self._inbound_memory.request_point_query(
-            PointQueryRequest(
-                session_id=session_id,
-                interactor_id=interactor_id,
-                turn_index=turn_index,
-                user_text=user_text,
-                agent_text=agent_text,
-            ),
-        )
-
-    def _pull_similar_memories(self, session_id: str, turn_index: int) -> SimilarMemoryPullResult:
-        return self._inbound_memory.pull_similar_memories(session_id, turn_index)
-
-    def _apply_similar_memories(self, bundle: SpeakPromptBundle, pulled: SimilarMemoryPullResult) -> None:
-        inject_block = self._render_similar_memories(pulled.inject.lines)
-        if inject_block:
-            bundle.injected.status.similar_memories = inject_block
-        if pulled.inject.unit_ids:
-            bundle.meta.setdefault("activated_memory_ids", [])
-            bundle.meta["activated_memory_ids"].extend(pulled.inject.unit_ids)
-        if pulled.spilled.lines or pulled.spilled.unit_ids:
-            bundle.meta["memory_spill"] = {
-                "turn_index": pulled.spilled.turn_index,
-                "lines": list(pulled.spilled.lines),
-                "unit_ids": list(pulled.spilled.unit_ids),
-            }
-
-    def _request_interactor_portrait(
-        self,
-        session_id: str,
-        *,
-        turn_index: int,
-        user_text: str,
-        agent_text: str = "",
-    ) -> None:
-        bound = self._session_bridge.registry.get_bound_interactor(session_id)
-        self._inbound_memory.request_interactor_portrait(
-            InteractorPortraitRequest(
-                session_id=session_id,
-                turn_index=turn_index,
-                user_text=user_text,
-                agent_text=agent_text,
-                hinted_interactor_id=bound,
-            ),
-        )
-
-    def _pull_interactor_portrait(
-        self,
-        session_id: str,
-        turn_index: int,
-    ) -> InteractorPortraitPullResult:
-        return self._inbound_memory.pull_interactor_portrait(session_id, turn_index)
-
-    def _apply_interactor_portrait(
-        self,
-        bundle: SpeakPromptBundle,
-        pulled: InteractorPortraitPullResult,
-    ) -> None:
-        block = render_interactor_portrait_inject(pulled.portrait_text)
-        if block:
-            bundle.injected.status.interactor_portrait = block
-        if pulled.interactor_id:
-            bundle.meta["resolved_interactor_id"] = pulled.interactor_id
-        if pulled.turn_index:
-            bundle.meta["interactor_portrait_turn_index"] = pulled.turn_index
-
-    def _refresh_interactor_portrait_on_bundle(
-        self,
-        session_id: str,
-        bundle: SpeakPromptBundle,
-        turn_index: int,
-    ) -> None:
-        pulled = self._pull_interactor_portrait(session_id, turn_index)
-        if pulled.portrait_text.strip():
-            self._apply_interactor_portrait(bundle, pulled)
-
-    def _refresh_similar_memories_after_turn(
-        self,
-        session_id: str,
-        *,
-        turn_index: int,
-        user_text: str,
-        agent_text: str,
-    ) -> None:
-        if not user_text.strip() and not agent_text.strip():
-            return
-        self._request_similar_memories(
-            session_id,
-            turn_index=turn_index,
-            user_text=user_text,
-            agent_text=agent_text,
-        )
-
     def _compose_bundle(
         self,
         session_id: str,
@@ -494,20 +530,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         resolved_turn = (
             turn_index
             if turn_index is not None
-            else self._session_bridge.registry.current_turn_index(session_id)
+            else self.session_registry.current_turn_index(session_id)
         )
-        self._request_similar_memories(
+        pulled, portrait_pulled = self._memory_compose.pull_compose_context(
             session_id,
-            turn_index=resolved_turn,
             user_text=user_text,
-        )
-        self._request_interactor_portrait(
-            session_id,
             turn_index=resolved_turn,
-            user_text=user_text,
         )
-        pulled = self._pull_similar_memories(session_id, resolved_turn)
-        portrait_pulled = self._pull_interactor_portrait(session_id, resolved_turn)
 
         if self._composer is None:
             from .compose.injected import SpeakInjectedContext
@@ -558,24 +587,51 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 ),
                 reply_style=self._reply_style,
             )
-            self._apply_similar_memories(bundle, pulled)
-            self._apply_interactor_portrait(bundle, portrait_pulled)
-            return bundle
+            self._memory_compose.apply_compose_context(
+                bundle,
+                similar=pulled,
+                portrait=portrait_pulled,
+            )
+            return self._apply_social_compose(
+                bundle,
+                session_id,
+                user_text,
+                mode=mode,
+                turn_index=resolved_turn,
+            )
 
         queued = self._session_manager.pop_compose(session_id, mode=mode)
         if queued is not None:
-            bundle = self._composer.finalize(queued.frame, user_text)
+            bundle = self._composer.finalize(queued.frame, user_text, session_id=session_id)
             bundle.meta["compose_source"] = "session_queue"
-            self._apply_similar_memories(bundle, pulled)
-            self._apply_interactor_portrait(bundle, portrait_pulled)
-            return bundle
+            self._memory_compose.apply_compose_context(
+                bundle,
+                similar=pulled,
+                portrait=portrait_pulled,
+            )
+            return self._apply_social_compose(
+                bundle,
+                session_id,
+                user_text,
+                mode=mode,
+                turn_index=resolved_turn,
+            )
 
         frame = self._compose_runner.take_ready_frame(session_id, mode=mode)
         if frame is not None:
-            bundle = self._composer.finalize(frame, user_text)
-            self._apply_similar_memories(bundle, pulled)
-            self._apply_interactor_portrait(bundle, portrait_pulled)
-            return bundle
+            bundle = self._composer.finalize(frame, user_text, session_id=session_id)
+            self._memory_compose.apply_compose_context(
+                bundle,
+                similar=pulled,
+                portrait=portrait_pulled,
+            )
+            return self._apply_social_compose(
+                bundle,
+                session_id,
+                user_text,
+                mode=mode,
+                turn_index=resolved_turn,
+            )
 
         bundle = self._composer.compose(
             session_id,
@@ -584,9 +640,18 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             reply_style=self._reply_style,
         )
         bundle.meta["compose_source"] = "sync_fallback"
-        self._apply_similar_memories(bundle, pulled)
-        self._apply_interactor_portrait(bundle, portrait_pulled)
-        return bundle
+        self._memory_compose.apply_compose_context(
+            bundle,
+            similar=pulled,
+            portrait=portrait_pulled,
+        )
+        return self._apply_social_compose(
+            bundle,
+            session_id,
+            user_text,
+            mode=mode,
+            turn_index=resolved_turn,
+        )
 
     _SHARE_HANDOFF_INSTRUCTION = (
         "请基于以上分享详情，向用户自然分享；输出仍需包含 think 与 state:finish（或 append）。"
@@ -608,17 +673,20 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         queued = self._session_manager.pop_compose(session_id, mode=mode)
         if queued is None:
             return None
-        bundle = self._composer.finalize(queued.frame, user_text)
+        bundle = self._composer.finalize(queued.frame, user_text, session_id=session_id)
         bundle.meta["compose_source"] = "session_queue"
         resolved_turn = (
             turn_index
             if turn_index is not None
-            else self._session_bridge.registry.current_turn_index(session_id)
+            else self.session_registry.current_turn_index(session_id)
         )
-        pulled = self._pull_similar_memories(session_id, resolved_turn)
-        portrait_pulled = self._pull_interactor_portrait(session_id, resolved_turn)
-        self._apply_similar_memories(bundle, pulled)
-        self._apply_interactor_portrait(bundle, portrait_pulled)
+        pulled = self._memory_compose.pull_similar_memories(session_id, resolved_turn)
+        portrait_pulled = self._memory_compose.pull_interactor_portrait(session_id, resolved_turn)
+        self._memory_compose.apply_compose_context(
+            bundle,
+            similar=pulled,
+            portrait=portrait_pulled,
+        )
         return bundle
 
     def _generate_turn(
@@ -629,30 +697,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         system: str,
         stream: bool,
     ) -> tuple[str, list[SpeakStreamEvent]]:
-        self._outbound_stream.begin_session(session_id)
-        if stream:
-            events = list(
-                self._stream.stream_generate(
-                    self._llm,
-                    session_id,
-                    user_text,
-                    system=system,
-                    context="",
-                )
-            )
-            answer = next(
-                (event.text for event in reversed(events) if event.kind == "finish"),
-                "",
-            )
-            return answer, events
-
-        llm_result = self._llm.generate(
+        return self._io.outbound.stream.generate_turn(
+            self._llm,
+            session_id,
             user_text,
             system=system,
+            stream=stream,
         )
-        answer = llm_result.text
-        events = list(self._stream.emit_parsed_output(session_id, answer))
-        return answer, events
 
     def _continue_share_handoff(
         self,
@@ -667,7 +718,11 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             notes.append("share handoff: no presence/composer")
             return None
 
-        handoff = self._composer.share.pop_handoff(self._presence, session_id)
+        handoff = self._composer.share.pop_handoff(
+            self._presence,
+            session_id,
+            pop_deferred=self._session_manager.pop_deferred_share_intent,
+        )
         if not handoff.ok:
             notes.append(f"share handoff: {handoff.reason}")
             return None
@@ -702,7 +757,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             return None
 
         handoff = perform_recall_handoff(
-            self._inbound_memory,
+            self._io.inbound.memory,
             session_id=session_id,
             query=query,
         )
@@ -795,18 +850,19 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         host = SessionTurnHost(
             compose_bundle=self._compose_bundle,
             begin_turn=self._session_manager.begin_turn,
-            refresh_similar_memories=self._refresh_similar_memories_after_turn,
-            refresh_interactor_portrait=self._refresh_interactor_portrait_on_bundle,
+            refresh_similar_memories=self._memory_compose.refresh_similar_memories_after_turn,
+            refresh_interactor_portrait=self._memory_compose.refresh_interactor_portrait_on_bundle,
             llm=self._llm,
             stream_pipeline=self._stream,
             outbound_stream=self._outbound_stream,
             record_turn=self.record_turn,
             schedule_compose=lambda sid: self._schedule_compose_prepare(sid, mode=item.mode),
-            resolve_interactor_id=lambda sid: self._session_bridge.registry.get_interactor(sid),
+            resolve_interactor_id=lambda sid: self.session_registry.get_bound_interactor(sid),
             continue_share_handoff=self._continue_share_handoff,
             continue_recall_handoff=self._continue_recall_handoff,
             compose_from_queue=self._compose_from_queue,
             parse_agent_output=parse_agent_output,
+            session_trace_cache=lambda sid, ti: self.session_trace_cache(sid, turn_index=ti),
         )
         result = run_session_turn(
             self._session_manager,

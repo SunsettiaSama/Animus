@@ -9,3 +9,8 @@ class InteractorPortraitSpeakResult:
     turn_index: int
     interactor_id: str
     portrait_text: str
+    display_name: str = ""
+    core_traits: tuple[str, ...] = ()
+    portrait_body: str = ""
+    agent_relation: str = ""
+    recent_impression: str = ""

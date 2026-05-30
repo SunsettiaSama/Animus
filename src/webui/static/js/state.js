@@ -40,12 +40,15 @@ export const S = {
   /** Per-generation UUID, used to validate abort signals. */
   genId:       '',
 
-  /** @deprecated 单会话模式不再使用多会话历史 */
+  /** 前端历史线程 ID（/api/history 主键，展示用）。 */
   convId:      null,
 
   convTitle:   '对话',
 
-  /** 唯一通信渠道 ID（localStorage 持久化，传入 Soul/Memory）。 */
+  /** 后端 Speak session_id（与 convId 配对，存于历史 JSON）。 */
+  sessionId:   null,
+
+  /** 记忆渠道 ID（localStorage，多线程共享，WS channel_id）。 */
   channelId:   '',
 
   /** True when ReAct backend is ready. */
@@ -59,6 +62,11 @@ export const S = {
 
   /** Active conversation mode: 'speak' | 'react' | 'plan' | 'chat'. */
   convMode:    'speak',
+
+  /** 当前线程是否为 Agent 主动发起的会话（右上角红点）。 */
+  proactiveUrge: false,
+  /** Agent 主动会话尚未回复（控制顶栏红点 / 列表未读）。 */
+  proactiveUnread: false,
 
   /** Active persona name, or null. */
   personaName: null,

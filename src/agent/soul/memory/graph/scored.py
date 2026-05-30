@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from agent.soul.memory.domain import MemoryTier, Valence
+from agent.soul.memory.domain.labels import memory_kind_prompt_label
 from agent.soul.memory.graph.base_node import BaseNode
 
 
@@ -16,7 +17,8 @@ class ScoredUnit:
     source: str = "memory"
 
     def render_line(self, max_content: int = 80) -> str:
-        line = f"[{self.unit.MEMORY_TYPE}] {self.unit.focus}"
+        kind = memory_kind_prompt_label(self.unit.MEMORY_TYPE)
+        line = f"[{kind}] {self.unit.focus}"
         for attr in (
             "fact",
             "reconstructed_fact",

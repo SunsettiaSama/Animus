@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent.soul.memory.domain.enums import SocialNodeRole
-from agent.soul.memory.graph.networks.archival import ExperienceArchiver
+from agent.soul.memory.graph.node.create.archive import ExperienceArchiver
 from agent.soul.memory.graph.networks.social.interactor_resolve import (
     probe_interactor_core,
     render_interactor_portrait_block,

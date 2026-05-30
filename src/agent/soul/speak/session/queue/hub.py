@@ -6,6 +6,7 @@ from .compose import SessionComposeQueue
 from .decision import QueueDecisionResult
 from .memory import MemoryQueueConsumeResult, MemoryQueueItem, SessionMemoryQueue
 from .portrait import PortraitQueueConsumeResult, PortraitQueueItem, SessionPortraitQueue
+from .share import SessionShareQueue
 from .interrupt import render_interrupt_system_block, summarize_suspended_compose
 from .types import InterruptContext, SessionRuntime, SubmitUserInputResult, SpeakTurnMode
 from .user import SessionUserQueue, UserInputItem
@@ -19,6 +20,7 @@ class SessionQueueHub:
         self._user_queue = SessionUserQueue()
         self._memory_queue = SessionMemoryQueue(max_turn_gap=memory_turn_gap)
         self._portrait_queue = SessionPortraitQueue(max_turn_gap=memory_turn_gap)
+        self._share_queue = SessionShareQueue()
         self._runtimes: dict[str, SessionRuntime] = {}
         self._schedule_compose: Callable[[str, str], None] | None = None
         self._schedule_queue_decision: Callable[[str, InterruptContext, int], None] | None = None
@@ -49,6 +51,19 @@ class SessionQueueHub:
     def memory_queue(self) -> SessionMemoryQueue:
         return self._memory_queue
 
+    @property
+    def share_queue(self) -> SessionShareQueue:
+        return self._share_queue
+
+    def inject_deferred_share_intents(self, session_id: str, intents) -> int:
+        return self._share_queue.enqueue_batch(session_id, intents)
+
+    def deferred_share_intents(self, session_id: str):
+        return self._share_queue.as_intent_queue(session_id)
+
+    def pop_deferred_share_intent(self, session_id: str):
+        return self._share_queue.pop_most_wanted(session_id)
+
     def enqueue_memory(self, session_id: str, item: MemoryQueueItem) -> None:
         self._memory_queue.enqueue(session_id, item)
 
@@ -59,6 +74,19 @@ class SessionQueueHub:
     ) -> MemoryQueueConsumeResult:
         return self._memory_queue.consume_for_compose(session_id, current_turn_index)
 
+    def pull_memory_for_compose(
+        self,
+        session_id: str,
+        current_turn_index: int,
+        *,
+        wait_ms: int = 0,
+    ) -> MemoryQueueConsumeResult:
+        return self._memory_queue.pull_for_compose(
+            session_id,
+            current_turn_index,
+            wait_ms=wait_ms,
+        )
+
     def enqueue_portrait(self, session_id: str, item: PortraitQueueItem) -> None:
         self._portrait_queue.enqueue(session_id, item)
 
@@ -68,6 +96,19 @@ class SessionQueueHub:
         current_turn_index: int,
     ) -> PortraitQueueConsumeResult:
         return self._portrait_queue.consume_for_compose(session_id, current_turn_index)
+
+    def pull_portrait_for_compose(
+        self,
+        session_id: str,
+        current_turn_index: int,
+        *,
+        wait_ms: int = 0,
+    ) -> PortraitQueueConsumeResult:
+        return self._portrait_queue.pull_for_compose(
+            session_id,
+            current_turn_index,
+            wait_ms=wait_ms,
+        )
 
     def is_pushing(self, session_id: str) -> bool:
         runtime = self._runtime(session_id)
@@ -303,10 +344,35 @@ class SessionQueueHub:
         typed_mode: SpeakTurnMode = "inbound" if mode == "inbound" else "proactive"
         return self._compose_queue.pop(session_id, mode=typed_mode)
 
+    def debug_snapshot(self, session_id: str) -> dict[str, object]:
+        runtime = self._runtimes.get(session_id)
+        phase = "idle"
+        partial = ""
+        suspended = 0
+        if runtime is not None:
+            with runtime.lock:
+                phase = runtime.phase
+                partial = runtime.partial_agent_output
+                suspended = len(runtime.suspended_compose)
+        return {
+            "session_id": session_id,
+            "push_phase": phase,
+            "partial_agent_output_chars": len(partial),
+            "partial_agent_output_preview": partial[:300],
+            "suspended_compose_count": suspended,
+            "memory_queue": self._memory_queue.peek_session(session_id),
+            "portrait_queue": self._portrait_queue.peek_session(session_id),
+            "share_queue": self._share_queue.peek_session(session_id),
+            "compose_pending_inbound": self._compose_queue.has_pending(session_id, mode="inbound"),
+            "compose_pending_proactive": self._compose_queue.has_pending(session_id, mode="proactive"),
+            "user_queue_pending": self._user_queue.has_pending(session_id),
+        }
+
     def clear_session(self, session_id: str) -> None:
         self._compose_queue.clear_session(session_id)
         self._memory_queue.clear_session(session_id)
         self._portrait_queue.clear_session(session_id)
+        self._share_queue.clear_session(session_id)
         runtime = self._runtimes.get(session_id)
         if runtime is not None:
             with runtime.lock:
