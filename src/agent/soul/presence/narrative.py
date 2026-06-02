@@ -8,36 +8,33 @@ def compose_self_narrative(
     state: PresenceState,
     interaction: PresenceInteraction,
 ) -> str:
-    """将当下态各维度与分享队列折叠为一段第一人称自我叙述。"""
-    if state.is_empty() and interaction.impulse_level <= 0.0:
-        share_summary = state.expectation.share_queue.fold_summary()
-        if not share_summary:
-            return ""
-
-    lines: list[str] = ["此刻我的状态是这样的："]
-    body = state.render()
-    if body:
-        lines.append(body)
+    """折叠为面向 Speak 的连贯叙述：优先 recent_portrait，不含字段式当下态。"""
+    portrait = state.recent_portrait.narrative.strip()
+    lines: list[str] = []
+    if portrait:
+        lines.append(portrait)
 
     exp = state.expectation
     share_summary = exp.share_queue.fold_summary()
     if share_summary:
-        lines.append(f"**想与用户分享** {share_summary}")
+        lines.append(f"你还想跟用户分享：{share_summary}")
 
     if interaction.impulse_reason.strip():
         lines.append(
-            f"**说话冲动** {interaction.impulse_reason.strip()} "
-            f"（强度 {interaction.impulse_level:.2f}）"
+            f"你心里有股想说话的冲动——{interaction.impulse_reason.strip()}",
         )
 
     if exp.toward_user > 0.0:
-        tail = f"：{exp.reason}" if exp.reason.strip() else ""
-        lines.append(f"**想见用户** 期待值 {exp.toward_user:.2f}{tail}")
+        tail = f"，因为{exp.reason}" if exp.reason.strip() else ""
+        lines.append(f"你想见用户{tail}")
 
     if exp.reply_urge > 0.0:
-        lines.append(f"**还想多说几句** 回复欲望 {exp.reply_urge:.2f}")
+        lines.append("你还想再多说几句")
 
     if interaction.expectation.value != "none":
-        lines.append(f"**会话期待** {interaction.expectation.value}")
+        lines.append(f"你对这场对话的期待是「{interaction.expectation.value}」")
+
+    if not lines and interaction.impulse_level <= 0.0 and not share_summary:
+        return ""
 
     return "\n".join(lines)

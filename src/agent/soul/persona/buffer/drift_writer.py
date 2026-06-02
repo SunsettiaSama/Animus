@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from infra.llm import BaseLLM
 from agent.soul.persona.profile.profile import PersonaProfile
 from agent.soul.persona.self_concept.concept import BeliefStrength, SelfConcept, SelfConceptDelta
+from agent.soul.voice_rules import YOU_VOICE_RULES
 
 from .clustering import DriftClusterConfig, DriftUnitCluster
 
@@ -24,37 +25,40 @@ def _extract_json(raw: str) -> dict:
     return json.loads(m2.group(0))
 
 
-_CLUSTER_SYSTEM = """\
+_CLUSTER_SYSTEM = f"""\
 你是 Agent 的自我叙事层，正在对一组相关记忆做簇内蒸馏。
+{YOU_VOICE_RULES}
 只输出 JSON，不要 markdown 代码块。"""
 
 _CLUSTER_SCHEMA = """{
   "theme": "簇主题（简短）",
-  "insight": "第一人称，2-4句，描述这组记忆对我意味着什么",
-  "adds": [{"content": "我...", "strength": "emerging"}],
+  "insight": "第二人称「你」，2-4句：客观概括这组记忆发生了什么，句末少许它对你的意味",
+  "adds": [{"content": "你...", "strength": "emerging"}],
   "upgrades": [{"match": "信念关键词", "to": "established"}],
   "removes": ["待弱化的信念关键词"]
 }"""
 
-_MERGE_SYSTEM = """\
+_MERGE_SYSTEM = f"""\
 你是 Agent 的自我叙事层，正在把两个局部自我洞察合并为一段更上层的叙事片段。
+{YOU_VOICE_RULES}
 只输出 JSON，不要 markdown 代码块。"""
 
 _MERGE_SCHEMA = """{
-  "insight": "合并后的第一人称叙事片段（3-6句）",
+  "insight": "合并后的「你」述叙事片段（3-6句），客观为主、少许感受",
   "adds": [],
   "upgrades": [],
   "removes": []
 }"""
 
-_REVISE_SYSTEM = """\
+_REVISE_SYSTEM = f"""\
 你是 Agent 的自我叙事修订层。给定当前自我画像、蒸馏草稿与信念候选，
 产出相对当前 self_concept 的最小变更（无变化则对应字段留空）。
+{YOU_VOICE_RULES}
 只输出 JSON，不要 markdown 代码块。"""
 
 _REVISE_SCHEMA = """{
-  "narrative": "修订后的自我叙事摘要（100-280字；若草稿不足以改变则空字符串）",
-  "adds": [{"content": "我...", "strength": "emerging"}],
+  "narrative": "修订后的自我叙事摘要（100-280字，全文「你」；客观为主、少许感受；不足则空字符串）",
+  "adds": [{"content": "你...", "strength": "emerging"}],
   "upgrades": [{"match": "信念关键词", "to": "established"}],
   "removes": ["待弱化或移除的信念关键词"]
 }"""
@@ -166,7 +170,7 @@ class DriftDistillWriter:
         upg_text = json.dumps(belief_candidates["upgrades"], ensure_ascii=False)
         rm_text = json.dumps(belief_candidates["removes"], ensure_ascii=False)
         prompt = (
-            f"【基本性格】\n{profile.render()}\n\n"
+            f"【基本性格】\n{profile.render_catalog()}\n\n"
             f"【当前自我叙事】\n{concept.narrative or '（暂无）'}\n\n"
             f"【当前信念】\n{self._beliefs_block(concept)}\n\n"
             f"【本月蒸馏草稿】（{month_draft.month}）\n{month_draft.insight}\n\n"

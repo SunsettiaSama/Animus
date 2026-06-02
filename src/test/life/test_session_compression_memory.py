@@ -1,34 +1,34 @@
-ï»¿from __future__ import annotations
+from __future__ import annotations
 
 from agent.soul.life.experience.unit_layer.create import build_unit_from_compression
 from agent.soul.life.experience.unit_layer.promote.policy import should_promote_to_memory
 from agent.soul.memory.io.session.buffer import _parse_valence
 from agent.soul.memory.io.session import DialogueCompressionBlock
 from agent.soul.memory.domain import Valence
-from agent.soul.speak.compose.context.structured_distill import distill_compression_block
-from agent.soul.speak.compose.context.distiller import DialogueContextChunk
+from agent.soul.speak.orchestrator.guidance.context.structured_distill import distill_compression_block
+from agent.soul.speak.orchestrator.guidance.context.chunk_types import DialogueContextChunk
 
 
 def test_compression_unit_carries_session_and_block_index():
     block = DialogueCompressionBlock(
         session_id="sess-1",
         block_index=2,
-        summary="è¿™è½®å¯¹è¯è®©æˆ‘å°è±¡æ·±åˆ»",
-        emotion_label="ä¸“æ³¨",
+        summary="ÕâÂÖ¶Ô»°ÈÃÎÒÓ¡ÏóÉî¿Ì",
+        emotion_label="×¨×¢",
         salience=0.72,
-        transcript="ç”¨æˆ·ï¼šä½ å¥½\næˆ‘ï¼šä½ å¥½",
+        transcript="ÓÃ»§£ºÄãºÃ\nÎÒ£ºÄãºÃ",
     )
     unit = build_unit_from_compression(block, interactor_id="alice")
     assert unit.situation.session_id == "sess-1"
     assert unit.situation.turn_index == 3
-    assert "å°è±¡æ·±åˆ»" in unit.feeling.salience_note
+    assert "Ó¡ÏóÉî¿Ì" in unit.feeling.salience_note
 
 
 def test_compression_block_promotes_via_regex_when_explicit():
     block = DialogueCompressionBlock(
         session_id="sess-1",
         block_index=0,
-        summary="æ„å¤–å˜æ•…ï¼Œä¹…ä¹…ä¸èƒ½å¹³é™",
+        summary="ÒâÍâ±ä¹Ê£¬¾Ã¾Ã²»ÄÜÆ½¾²",
         salience=0.8,
     )
     unit = build_unit_from_compression(block)
@@ -37,7 +37,7 @@ def test_compression_block_promotes_via_regex_when_explicit():
 
 def test_structured_distill_fallback_without_llm():
     batch = [
-        DialogueContextChunk(user_text="ä»Šå¤©å¤©æ°”ä¸é”™", agent_text="æ˜¯çš„"),
+        DialogueContextChunk(user_text="½ñÌìÌìÆø²»´í", agent_text="ÊÇµÄ"),
     ]
     block = distill_compression_block(
         None,

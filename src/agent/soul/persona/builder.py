@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from infra.llm import BaseLLM
 from agent.soul.persona.profile.profile import PersonaProfile
 from agent.soul.persona.self_concept.concept import Belief, BeliefStrength, SelfConcept
+from agent.soul.voice_rules import YOU_VOICE_RULES
 
 _BUILT_PROFILE_FILENAME = "built_profile.json"
 
@@ -74,16 +75,18 @@ _PROFILE_SCHEMA = """\
 
 # ── 第二链：BuiltProfile → 初始 SelfConcept ────────────────────────────────────
 
-_SC_SYSTEM = """\
+_SC_SYSTEM = f"""\
 你是一个自我认知初始化系统。给定一份已规范化的 AI 人格画像，\
 从中提炼出角色的初始自我认知：自我信念与起源叙事。
 
+{YOU_VOICE_RULES}
+
 字段说明：
-- beliefs：3-6 条第一人称自我信念，具体、可验证
+- beliefs：3-6 条「你」的自我信念，具体、可验证
   必须来自画像中已有的特质、动机或价值观，不要凭空发明
-  格式："我倾向于..."、"我擅长..."、"我相信..."
-- narrative：第一人称起源叙事，60-120 字
-  描述"我是谁、我从哪里来、我为何如此"，语气真实、内省，不空洞
+  格式："你倾向于..."、"你擅长..."、"你相信..."
+- narrative：起源叙事，60-120 字
+  客观写清你是谁、从哪来、为何如此（全文「你」），句末可少许内省感受
 
 规则：
 - 信念不带强度标签，强度由系统统一赋予
@@ -92,10 +95,10 @@ _SC_SYSTEM = """\
 _SC_SCHEMA = """\
 {
   "beliefs": [
-    "我倾向于...",
-    "我擅长..."
+    "你倾向于...",
+    "你擅长..."
   ],
-  "narrative": "作为...，我..."
+  "narrative": "你是...，你..."
 }"""
 
 
@@ -150,7 +153,7 @@ class ProfileBuilder:
 
     def _build_profile(self, raw_profile: PersonaProfile) -> PersonaProfile:
         prompt = (
-            f"【原始人格描述】\n{raw_profile.render()}\n\n"
+            f"【原始人格描述】\n{raw_profile.render_catalog()}\n\n"
             f"请规范化并补全以下 JSON 画像：\n{_PROFILE_SCHEMA}"
         )
         raw = self._llm.generate_messages(
@@ -182,7 +185,7 @@ class ProfileBuilder:
 
     def _build_self_concept(self, built_profile: PersonaProfile) -> SelfConcept:
         prompt = (
-            f"【规范化人格画像】\n{built_profile.render()}\n\n"
+            f"【规范化人格画像】\n{built_profile.render_catalog()}\n\n"
             f"请从以上画像中提炼初始自我认知，输出以下 JSON：\n{_SC_SCHEMA}"
         )
         raw = self._llm.generate_messages(

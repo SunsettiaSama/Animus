@@ -1,4 +1,3 @@
-from infra.db import MySQLClient, RedisClient
 from infra.base_service import BaseServiceManager
 from infra.node_runtime import NodeRuntimeManager
 from infra.sandbox import SandboxManager
@@ -14,6 +13,18 @@ from infra.network.bot import BotService
 from infra.llm import BaseLLM, LLM, LLMHandle, LLMService
 
 VLLMServerManager = OfficialVLLMManager    # backward-compat alias
+
+def __getattr__(name: str):
+    if name == "MySQLClient":
+        from infra.db import MySQLClient
+
+        return MySQLClient
+    if name == "RedisClient":
+        from infra.db import RedisClient
+
+        return RedisClient
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "MySQLClient",

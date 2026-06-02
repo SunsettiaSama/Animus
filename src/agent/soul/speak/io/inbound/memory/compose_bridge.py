@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from agent.soul.speak.compose.bundle import SpeakPromptBundle
-from agent.soul.speak.compose.interactor_portrait import render_interactor_portrait_inject
 from agent.soul.memory.emergence.line_dedup import dedupe_memory_line_pairs
-from agent.soul.speak.compose.memory import render_similar_memories_block
-from agent.soul.speak.session.prompt_trace import get_prompt_trace
+from agent.soul.speak.orchestrator.guidance.memory.candidates import (
+    build_recall_candidates_from_pull,
+    format_recall_candidates,
+)
+from agent.soul.speak.orchestrator.guidance.memory.pick_weights import RecallPickWeightPort
+from agent.soul.speak.orchestrator.guidance.memory import (
+    format_interactor_preview,
+    render_interactor_portrait_inject,
+)
+from agent.soul.speak.orchestrator.prompt_trace import get_prompt_trace
 
 from .gateway import InboundMemoryGateway
 from .request import (
@@ -21,7 +27,7 @@ GetBoundInteractor = Callable[[str], str]
 
 
 class InboundMemoryComposeBridge:
-    """Memory 检索结果入站：双通道（关键字 + 涌现）与 compose 注入。"""
+    """Memory 入站：画像/涌现记忆写入 guidance 候选，供引导规划器决策。"""
 
     def __init__(
         self,
@@ -32,6 +38,7 @@ class InboundMemoryComposeBridge:
         memory_budget: int = 5,
         portrait_wait_ms: int = 100,
         merge_ratio: float | None = None,
+        recall_pick_weights: RecallPickWeightPort | None = None,
     ) -> None:
         self._gateway = gateway
         self._get_bound_interactor = get_bound_interactor
@@ -39,6 +46,7 @@ class InboundMemoryComposeBridge:
         self._memory_budget = max(1, memory_budget)
         self._portrait_wait_ms = max(0, portrait_wait_ms)
         self._merge_ratio = merge_ratio
+        self._recall_pick_weights = recall_pick_weights
 
     @property
     def gateway(self) -> InboundMemoryGateway:
@@ -122,6 +130,8 @@ class InboundMemoryComposeBridge:
         self,
         session_id: str,
         turn_index: int,
+        *,
+        user_text: str = "",
     ) -> SimilarMemoryPullResult:
         return self._gateway.pull_similar_memories(
             session_id,
@@ -129,11 +139,12 @@ class InboundMemoryComposeBridge:
             keyword_wait_ms=self._keyword_wait_ms,
             budget=self._memory_budget,
             merge_ratio=self._merge_ratio,
+            user_text=user_text,
         )
 
     def apply_similar_memories(
         self,
-        bundle: SpeakPromptBundle,
+        bundle,
         pulled: SimilarMemoryPullResult,
     ) -> None:
         merged_lines, merged_ids = dedupe_memory_line_pairs(
@@ -144,9 +155,15 @@ class InboundMemoryComposeBridge:
             + list(pulled.warm_spread_unit_ids)
             + list(pulled.inject.unit_ids),
         )
-        inject_block = render_similar_memories_block(merged_lines)
-        if inject_block:
-            bundle.injected.status.similar_memories = inject_block
+        recall_candidates = build_recall_candidates_from_pull(
+            pulled,
+            session_id=bundle.session_id,
+            pick_weights=self._recall_pick_weights,
+        )
+        preview = format_recall_candidates(recall_candidates)
+        if preview:
+            bundle.guidance.recall_preview = preview
+            bundle.meta["guidance_recall_candidates"] = recall_candidates
 
         all_ids = merged_ids
         if all_ids:
@@ -208,16 +225,20 @@ class InboundMemoryComposeBridge:
 
     def apply_interactor_portrait(
         self,
-        bundle: SpeakPromptBundle,
+        bundle,
         pulled: InteractorPortraitPullResult,
     ) -> None:
         block = render_interactor_portrait_inject(pulled.portrait_text)
-        if block:
-            bundle.injected.status.interactor_portrait = block
+        preview = format_interactor_preview(block or pulled.portrait_text)
+        if preview:
+            bundle.guidance.interactor_portrait = preview
         if pulled.interactor_id:
             bundle.meta["resolved_interactor_id"] = pulled.interactor_id
         if pulled.turn_index:
             bundle.meta["interactor_portrait_turn_index"] = pulled.turn_index
+        snippets = getattr(pulled, "neighborhood_snippets", ()) or ()
+        if snippets:
+            bundle.meta["interactor_neighborhood_snippets"] = list(snippets)
         if get_prompt_trace().is_enabled(bundle.session_id):
             trace_pull = bundle.meta.setdefault("trace_pull", {})
             if isinstance(trace_pull, dict):
@@ -225,6 +246,7 @@ class InboundMemoryComposeBridge:
                     "portrait_text": pulled.portrait_text,
                     "interactor_id": pulled.interactor_id,
                     "turn_index": pulled.turn_index,
+                    "neighborhood_snippets": list(snippets),
                 }
 
     def refresh_similar_memories_after_turn(
@@ -247,7 +269,7 @@ class InboundMemoryComposeBridge:
     def refresh_interactor_portrait_on_bundle(
         self,
         session_id: str,
-        bundle: SpeakPromptBundle,
+        bundle,
         turn_index: int,
     ) -> None:
         pulled = self.pull_interactor_portrait(session_id, turn_index)
@@ -260,30 +282,38 @@ class InboundMemoryComposeBridge:
         *,
         user_text: str,
         turn_index: int,
+        ledger=None,
     ) -> tuple[SimilarMemoryPullResult, InteractorPortraitPullResult]:
-        self.request_emergence_query(
-            session_id,
-            turn_index=turn_index,
-            user_text=user_text,
-        )
-        self.request_keyword_query(
-            session_id,
-            turn_index=turn_index,
-            user_text=user_text,
-        )
-        self.request_interactor_portrait(
-            session_id,
-            turn_index=turn_index,
-            user_text=user_text,
-        )
+        if ledger is not None:
+            if not ledger.emergence_requested:
+                self.request_emergence_query(
+                    session_id,
+                    turn_index=turn_index,
+                    user_text=user_text,
+                )
+                ledger.emergence_requested = True
+            if not ledger.keyword_requested:
+                self.request_keyword_query(
+                    session_id,
+                    turn_index=turn_index,
+                    user_text=user_text,
+                )
+                ledger.keyword_requested = True
+            if not ledger.portrait_requested:
+                self.request_interactor_portrait(
+                    session_id,
+                    turn_index=turn_index,
+                    user_text=user_text,
+                )
+                ledger.portrait_requested = True
         return (
-            self.pull_similar_memories(session_id, turn_index),
+            self.pull_similar_memories(session_id, turn_index, user_text=user_text),
             self.pull_interactor_portrait(session_id, turn_index),
         )
 
     def apply_compose_context(
         self,
-        bundle: SpeakPromptBundle,
+        bundle,
         *,
         similar: SimilarMemoryPullResult,
         portrait: InteractorPortraitPullResult,

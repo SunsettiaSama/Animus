@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Callable
 
 from .compose import SessionComposeQueue
@@ -14,23 +16,43 @@ from .memory import (
 )
 from .portrait import PortraitQueueConsumeResult, PortraitQueueItem, SessionPortraitQueue
 from .share import SessionShareQueue
-from .interrupt import render_interrupt_system_block, summarize_suspended_compose
-from .types import InterruptContext, SessionRuntime, SubmitUserInputResult, SpeakTurnMode
+from agent.soul.speak.orchestrator.guidance.interrupt import render_interrupt_system_block
+
+from .interrupt import summarize_suspended_compose
+from ..pacing import SessionUtterancePacing, UtteranceHoldPreset
+from .types import BrewLine, InterruptContext, SessionRuntime, SubmitUserInputResult, SpeakTurnMode
 from .user import SessionUserQueue, UserInputItem
+
+try:
+    from agent.soul.speak.orchestrator.memory import MemoryWarmBuffer
+except ImportError:
+    MemoryWarmBuffer = None  # type: ignore[misc, assignment]
 
 
 class SessionQueueHub:
     """队列与会话推送态：compose / user 队列、插队、异步决策。"""
 
-    def __init__(self, *, memory_turn_gap: int = 3) -> None:
+    def __init__(
+        self,
+        *,
+        memory_turn_gap: int = 3,
+        brew_queue_max: int = 3,
+        typing_idle_ms: int = 3000,
+    ) -> None:
         self._compose_queue = SessionComposeQueue()
         self._user_queue = SessionUserQueue()
-        self._memory_queue = SessionMemoryBuffer(max_turn_gap=memory_turn_gap)
+        self._memory_turn_gap = memory_turn_gap
+        self._brew_queue_max = max(1, brew_queue_max)
+        self._typing_idle_ms_default = max(500, typing_idle_ms)
+        self._memory_resolve: Callable[[str], SessionMemoryBuffer] | None = None
+        self._fallback_memory = SessionMemoryBuffer(max_turn_gap=memory_turn_gap)
         self._portrait_queue = SessionPortraitQueue(max_turn_gap=memory_turn_gap)
         self._share_queue = SessionShareQueue()
         self._runtimes: dict[str, SessionRuntime] = {}
         self._schedule_compose: Callable[[str, str], None] | None = None
         self._schedule_queue_decision: Callable[[str, InterruptContext, int], None] | None = None
+        self._on_typing_start: Callable[[str], None] | None = None
+        self._on_typing_idle: Callable[[str], None] | None = None
 
     def bind_compose_scheduler(self, schedule_compose: Callable[[str, str], None]) -> None:
         self._schedule_compose = schedule_compose
@@ -41,10 +63,200 @@ class SessionQueueHub:
     ) -> None:
         self._schedule_queue_decision = schedule_decision
 
+    def bind_memory_warm_buffer(
+        self,
+        resolver: Callable[[str], SessionMemoryBuffer],
+    ) -> None:
+        self._memory_resolve = resolver
+
+    def _memory_for(self, session_id: str) -> SessionMemoryBuffer:
+        if self._memory_resolve is not None:
+            return self._memory_resolve(session_id)
+        return self._fallback_memory
+
     def _runtime(self, session_id: str) -> SessionRuntime:
         if session_id not in self._runtimes:
-            self._runtimes[session_id] = SessionRuntime(session_id=session_id)
+            self._runtimes[session_id] = SessionRuntime(
+                session_id=session_id,
+                typing_idle_ms=self._typing_idle_ms_default,
+            )
         return self._runtimes[session_id]
+
+    def utterance_pacing(self, session_id: str) -> SessionUtterancePacing:
+        return self._runtime(session_id).pacing
+
+    def set_utterance_hold(
+        self,
+        session_id: str,
+        *,
+        enabled: bool,
+        hold_ms: UtteranceHoldPreset = 3000,
+    ) -> SessionUtterancePacing:
+        """Deprecated：映射为 typing_idle_ms，不再阻塞 compose。"""
+        runtime = self._runtime(session_id)
+        runtime.pacing.enabled = False
+        runtime.pacing.hold_ms = 5000 if hold_ms == 5000 else 3000
+        runtime.typing_idle_ms = runtime.pacing.hold_ms
+        _ = enabled
+        return runtime.pacing
+
+    def bind_typing_start(self, handler: Callable[[str], None]) -> None:
+        self._on_typing_start = handler
+
+    def bind_typing_idle(self, handler: Callable[[str], None]) -> None:
+        self._on_typing_idle = handler
+
+    def push_phase(self, session_id: str) -> str:
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            return runtime.phase
+
+    def wait_typing_idle(self, session_id: str, *, timeout: float = 120.0) -> bool:
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            if runtime.typing_idle and not runtime.typing_active:
+                return True
+        return runtime.typing_idle_event.wait(timeout=timeout)
+
+    def wait_typing_idle_handoff(self, session_id: str, *, timeout: float = 120.0) -> bool:
+        """等待 typing_idle 后导演决策 + 酝酿出队完成。"""
+        runtime = self._runtime(session_id)
+        return runtime.typing_idle_handoff.wait(timeout=timeout)
+
+    def is_typing_without_idle(self, session_id: str) -> bool:
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            return runtime.typing_active and not runtime.typing_idle
+
+    def merge_pending_user_text(self, session_id: str, text: str) -> str:
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            return runtime.merge_pending_user_text(text)
+
+    def set_pending_turn(
+        self,
+        session_id: str,
+        *,
+        stream: bool,
+        record: bool,
+        mode: SpeakTurnMode,
+    ) -> None:
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            runtime.pending_stream = stream
+            runtime.pending_record = record
+            runtime.pending_mode = mode
+
+    def pop_pending_turn(self, session_id: str) -> tuple[str, bool, bool, SpeakTurnMode] | None:
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            text = runtime.pending_user_text.strip()
+            if not text:
+                return None
+            payload = (
+                text,
+                runtime.pending_stream,
+                runtime.pending_record,
+                runtime.pending_mode,
+            )
+            runtime.pending_user_text = ""
+            runtime.pending_stream = False
+            return payload
+
+    def on_typing_pulse(
+        self,
+        session_id: str,
+        *,
+        typing: bool,
+        draft: str = "",
+    ) -> dict[str, object]:
+        runtime = self._runtime(session_id)
+        notes: list[str] = []
+        fire_start = False
+        with runtime.lock:
+            was_active = runtime.typing_active
+            runtime.draft_user_text = draft.strip() if draft else runtime.draft_user_text
+            if typing:
+                runtime.typing_active = True
+                runtime.typing_idle = False
+                runtime.typing_idle_event.clear()
+                runtime.typing_idle_handoff.clear()
+                runtime.last_typing_at = time.monotonic()
+                if not was_active:
+                    fire_start = True
+                    notes.append("typing: start edge")
+            else:
+                runtime.typing_active = False
+                notes.append("typing: pulse false (debounce idle)")
+            self._reschedule_idle_timer_locked(runtime)
+
+        if fire_start and self._on_typing_start is not None:
+            self._on_typing_start(session_id)
+        snap = self._runtime(session_id)
+        with snap.lock:
+            return {**snap.snapshot_typing(), "notes": notes}
+
+    def enqueue_brew(self, session_id: str, text: str, *, reason: str = "") -> bool:
+        line = text.strip()
+        if not line:
+            return False
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            if len(runtime.brew_queue) >= self._brew_queue_max:
+                runtime.brew_queue.pop(0)
+            runtime.brew_queue.append(BrewLine(text=line[:40], reason=reason))
+            return True
+
+    def flush_brew(self, session_id: str) -> list[str]:
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            lines = [item.text for item in runtime.brew_queue if item.text.strip()]
+            runtime.brew_queue.clear()
+            return lines
+
+    def brew_queue_snapshot(self, session_id: str) -> dict[str, object]:
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            return {
+                "depth": len(runtime.brew_queue),
+                "lines": [item.text for item in runtime.brew_queue],
+            }
+
+    def _reschedule_idle_timer_locked(self, runtime: SessionRuntime) -> None:
+        if runtime.idle_timer is not None:
+            runtime.idle_timer.cancel()
+            runtime.idle_timer = None
+        if not runtime.typing_active and runtime.last_typing_at <= 0:
+            runtime.typing_idle = True
+            return
+        delay_sec = max(0.5, runtime.typing_idle_ms / 1000.0)
+        runtime.idle_timer = threading.Timer(
+            delay_sec,
+            self._fire_typing_idle,
+            args=(runtime.session_id,),
+        )
+        runtime.idle_timer.daemon = True
+        runtime.idle_timer.start()
+
+    def _fire_typing_idle(self, session_id: str) -> None:
+        runtime = self._runtimes.get(session_id.strip())
+        if runtime is None:
+            return
+        with runtime.lock:
+            elapsed_ms = int((time.monotonic() - runtime.last_typing_at) * 1000)
+            if runtime.typing_active:
+                return
+            if runtime.last_typing_at > 0 and elapsed_ms < runtime.typing_idle_ms:
+                self._reschedule_idle_timer_locked(runtime)
+                return
+            runtime.typing_idle = True
+            runtime.draft_user_text = ""
+            runtime.typing_idle_handoff.clear()
+            runtime.typing_idle_event.set()
+        if self._on_typing_idle is not None:
+            self._on_typing_idle(session_id)
+        elif runtime.on_typing_idle is not None:
+            runtime.on_typing_idle(session_id)
 
     @property
     def compose_queue(self) -> SessionComposeQueue:
@@ -55,8 +267,12 @@ class SessionQueueHub:
         return self._user_queue
 
     @property
+    def memory_turn_gap(self) -> int:
+        return self._memory_turn_gap
+
+    @property
     def memory_queue(self) -> SessionMemoryBuffer:
-        return self._memory_queue
+        return self._fallback_memory
 
     @property
     def share_queue(self) -> SessionShareQueue:
@@ -72,13 +288,13 @@ class SessionQueueHub:
         return self._share_queue.pop_most_wanted(session_id)
 
     def enqueue_memory(self, session_id: str, item: MemoryBufferItem) -> None:
-        self._memory_queue.enqueue_turn(session_id, item)
+        self._memory_for(session_id).enqueue_turn(session_id, item)
 
     def set_social_prefetch(self, session_id: str, item: MemoryBufferItem) -> None:
-        self._memory_queue.set_social_prefetch(session_id, item)
+        self._memory_for(session_id).set_social_prefetch(session_id, item)
 
     def set_warm_spread(self, session_id: str, item: MemoryBufferItem) -> None:
-        self._memory_queue.set_warm_spread(session_id, item)
+        self._memory_for(session_id).set_warm_spread(session_id, item)
 
     def pull_memory_for_compose(
         self,
@@ -88,8 +304,19 @@ class SessionQueueHub:
         keyword_wait_ms: int = 200,
         budget: int = 5,
         merge_ratio: float | None = None,
+        user_text: str = "",
     ) -> MemoryComposePullResult:
-        return self._memory_queue.pull_for_compose(
+        memory = self._memory_for(session_id)
+        if MemoryWarmBuffer is not None and isinstance(memory, MemoryWarmBuffer):
+            return memory.pull_for_compose(
+                session_id,
+                current_turn_index,
+                keyword_wait_ms=keyword_wait_ms,
+                budget=budget,
+                merge_ratio=merge_ratio,
+                user_text=user_text,
+            )
+        return memory.pull_for_compose(
             session_id,
             current_turn_index,
             keyword_wait_ms=keyword_wait_ms,
@@ -370,7 +597,7 @@ class SessionQueueHub:
             "partial_agent_output_chars": len(partial),
             "partial_agent_output_preview": partial[:300],
             "suspended_compose_count": suspended,
-            "memory_queue": self._memory_queue.peek_session(session_id),
+            "memory_queue": self._memory_for(session_id).peek_session(session_id),
             "portrait_queue": self._portrait_queue.peek_session(session_id),
             "share_queue": self._share_queue.peek_session(session_id),
             "compose_pending_inbound": self._compose_queue.has_pending(session_id, mode="inbound"),
@@ -380,16 +607,23 @@ class SessionQueueHub:
 
     def clear_session(self, session_id: str) -> None:
         self._compose_queue.clear_session(session_id)
-        self._memory_queue.clear_session(session_id)
+        self._memory_for(session_id).clear_session(session_id)
+        if self._memory_resolve is not None:
+            self._fallback_memory.clear_session(session_id)
         self._portrait_queue.clear_session(session_id)
         self._share_queue.clear_session(session_id)
-        runtime = self._runtimes.get(session_id)
+        runtime = self._runtimes.pop(session_id, None)
         if runtime is not None:
             with runtime.lock:
+                if runtime.idle_timer is not None:
+                    runtime.idle_timer.cancel()
+                    runtime.idle_timer = None
                 runtime.suspended_compose.clear()
                 runtime.interrupt = None
                 runtime.queue_decision = None
                 runtime.queue_decision_pending = False
                 runtime.queue_decision_token += 1
                 runtime.queue_decision_event.set()
+                runtime.brew_queue.clear()
+                runtime.pending_user_text = ""
         self._user_queue.clear_session(session_id)

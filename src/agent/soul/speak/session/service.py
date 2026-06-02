@@ -27,6 +27,7 @@ from .queue import (
 )
 from .manage import SessionSocialManager
 from .queue.memory import MemoryBufferItem, MemoryBufferSource
+from agent.soul.speak.orchestrator.guidance.control import GuidanceControlService
 
 if TYPE_CHECKING:
     from agent.soul.presence.service import PresenceService
@@ -50,8 +51,16 @@ class SpeakSessionService:
         registry: SpeakSessionRegistry | None = None,
         reset_context: Callable[[str], None] | None = None,
         memory_turn_gap: int = 3,
+        guidance_control: GuidanceControlService | None = None,
+        brew_queue_max: int = 3,
+        typing_idle_ms: int = 3000,
     ) -> None:
-        self._queues = SessionQueueHub(memory_turn_gap=memory_turn_gap)
+        self._queues = SessionQueueHub(
+            memory_turn_gap=memory_turn_gap,
+            brew_queue_max=brew_queue_max,
+            typing_idle_ms=typing_idle_ms,
+        )
+        self._guidance_control = guidance_control
         self._bootstrap = SessionBootstrap(
             idle_sec=idle_sec,
             inner_lifecycle=inner_lifecycle,
@@ -77,6 +86,8 @@ class SpeakSessionService:
 
         def _clear(session_id: str) -> None:
             self._social.clear_session(session_id)
+            if self._guidance_control is not None:
+                self._guidance_control.clear_control_arc(session_id)
             original(session_id)
 
         self._queues.clear_session = _clear  # type: ignore[method-assign]
@@ -120,6 +131,23 @@ class SpeakSessionService:
         schedule_decision: Callable[[str, InterruptContext, int], None],
     ) -> None:
         self._queues.bind_queue_decision_scheduler(schedule_decision)
+
+    def utterance_pacing(self, session_id: str):
+        return self._queues.utterance_pacing(session_id)
+
+    def set_utterance_hold(
+        self,
+        session_id: str,
+        *,
+        enabled: bool,
+        hold_ms: int = 3000,
+    ):
+        preset = 5000 if hold_ms >= 5000 else 3000
+        return self._queues.set_utterance_hold(
+            session_id,
+            enabled=enabled,
+            hold_ms=preset,
+        )
 
     def open(
         self,
@@ -211,6 +239,11 @@ class SpeakSessionService:
             session_state=session_state,
             answer=answer,
         )
+        if self._guidance_control is not None:
+            self._guidance_control.on_turn_complete(
+                session_id,
+                session_state=session_state,
+            )
 
     def pop_pending_user_input(self, session_id: str) -> UserInputItem | None:
         return self._queues.pop_pending_user_input(session_id)
@@ -318,6 +351,7 @@ class SpeakSessionService:
         keyword_wait_ms: int = 200,
         budget: int = 5,
         merge_ratio: float | None = None,
+        user_text: str = "",
     ):
         return self._queues.pull_memory_for_compose(
             session_id,
@@ -325,6 +359,7 @@ class SpeakSessionService:
             keyword_wait_ms=keyword_wait_ms,
             budget=budget,
             merge_ratio=merge_ratio,
+            user_text=user_text,
         )
 
     def pull_portrait_for_compose(

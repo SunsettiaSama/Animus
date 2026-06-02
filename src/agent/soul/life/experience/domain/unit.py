@@ -98,12 +98,29 @@ class ExperienceFeeling:
 
     `valence_delta` / `arousal_delta` 即时连续产生，供心跳漂移和记忆激活使用。
     `emotion_label` 即时填充：体验发生时由调用方直接给出命名情绪，不依赖事后回填。
+    `mood_span` / `linger_days` 供 Presence 时段情绪与 Speak 近期经历燃料。
     """
     valence_delta: float = 0.0   # 负值 = 向负向漂移，正值 = 向正向漂移
     arousal_delta: float = 0.0   # 负值 = 平静化，正值 = 唤醒增强
     salience:      float = 0.0   # 显著性标量（由自叙投影，供记账与展示）
     emotion_label: str   = ""    # 命名情绪，惰性回填
     salience_note: str   = ""    # agent 显著性/感受自叙原文（擢升判定主依据）
+    mood_span: str = ""          # 「你」+时段情绪自然语言
+    linger_days: float = 0.0     # 建议持续天数（Presence 可裁剪）
+    subjective_narrative: str = ""  # 你+时间；客观为主，可略多感受（可选专块）
+
+    def effective_mood_span(self) -> str:
+        if self.mood_span.strip():
+            return self.mood_span.strip()
+        label = self.emotion_label.strip()
+        if label:
+            return f"接下来一段时间你会带着{label}的情绪"
+        return ""
+
+    def effective_subjective_narrative(self) -> str:
+        if self.subjective_narrative.strip():
+            return self.subjective_narrative.strip()
+        return self.salience_note.strip()
 
     def to_dict(self) -> dict:
         return {
@@ -112,6 +129,9 @@ class ExperienceFeeling:
             "salience":      self.salience,
             "emotion_label": self.emotion_label,
             "salience_note": self.salience_note,
+            "mood_span": self.mood_span,
+            "linger_days": self.linger_days,
+            "subjective_narrative": self.subjective_narrative,
         }
 
     @classmethod
@@ -122,6 +142,9 @@ class ExperienceFeeling:
             salience=float(d.get("salience", 0.0)),
             emotion_label=d.get("emotion_label", ""),
             salience_note=d.get("salience_note", ""),
+            mood_span=str(d.get("mood_span", "")),
+            linger_days=float(d.get("linger_days", 0.0) or 0.0),
+            subjective_narrative=str(d.get("subjective_narrative", "")),
         )
 
 

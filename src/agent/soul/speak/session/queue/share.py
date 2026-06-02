@@ -71,6 +71,16 @@ class SessionShareQueue:
             self._queues.pop(session_id, None)
         return item.to_intent()
 
+    def pop_at(self, session_id: str, index: int) -> ShareIntent | None:
+        queue = self._queues.get(session_id)
+        if not queue or index < 0 or index >= len(queue):
+            return None
+        item = queue[index]
+        del queue[index]
+        if not queue:
+            self._queues.pop(session_id, None)
+        return item.to_intent()
+
     def peek_session(self, session_id: str) -> list[dict[str, object]]:
         queue = self._queues.get(session_id)
         if not queue:

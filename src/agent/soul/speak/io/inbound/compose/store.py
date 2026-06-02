@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .render import render_presence
+from .render import render_presence_fuel_for_agent
 
 
 @dataclass
@@ -35,11 +35,11 @@ def apply_presence_status_update(
     store: SpeakStatusStore,
     snap,
     *,
-    max_presence_chars: int = 600,
+    max_presence_chars: int = 350,
 ) -> None:
-    """将 presence 快照渲染并写入 inbound 状态层缓存。"""
+    """将 presence 近期经历燃料写入 inbound 状态层缓存。"""
     session_id = getattr(snap, "session_id", "tao")
     store.update_presence(
         session_id,
-        render_presence(snap.state, max_chars=max_presence_chars),
+        render_presence_fuel_for_agent(snap.state, max_chars=max_presence_chars),
     )

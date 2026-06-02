@@ -7,33 +7,35 @@ from math import floor
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agent.soul.voice_rules import YOU_VOICE_RULES
 from infra.llm import BaseLLM
 
 from ...experience.domain.unit import ExperienceUnit
-from ..journal.dice import DiceResult
+from storyview.fate.dice import DiceResult
 from ..journal.item import Landmark
 
-_SYSTEM = """\
-你是 AI 助手的内在叙事引擎，负责杜撰 agent 主观生命体验中的情节片段。
+_SYSTEM = f"""\
+你是内在生命体验叙事引擎，负责杜撰 Agent 虚拟生命体验中的情节片段。
 
-这些内容是「虚拟叙事」——描写 agent 在某个时刻的内在经历、行动与感知，
-不必对应外部系统的客观日志，但应在人格与近期上下文中站得住脚。
+这些内容是「虚拟叙事」——描写你在某个时刻的经历、行动与感知，
+不必对应外部客观日志，但应在人格与近期上下文中站得住脚。
+
+{YOU_VOICE_RULES}
 
 规则：
-- 第一人称，现在时或近过去时
-- 100~250 字，一个完整场景或连续心流，有具体细节
+- 现在时或近过去时；100~250 字，一个完整场景或连续心流，有具体细节
 - 允许虚构细节，但不要与给定上下文明显矛盾
 - 严格输出纯文本，无标题、无 markdown、无 JSON、无引号包裹"""
 
-_EMOTION_SYSTEM = """\
-你是 AI 助手的内在叙事引擎，负责杜撰 agent 主观生命体验中的情节片段，
-并额外给出这一刻的第一人称情感自述与情感强度。
+_EMOTION_SYSTEM = f"""\
+你是内在生命体验叙事引擎，负责杜撰虚拟生命体验片段，并给出这一刻的情感自述与强度。
+
+{YOU_VOICE_RULES}
 
 规则：
-- 第一人称，现在时或近过去时
-- narrative 为 100~250 字，一个完整场景或连续心流，有具体细节
-- emotion_text 为 1 句第一人称情感自述（例如“我此刻很紧绷，胸口发热”）
-- emotion_intensity 为 0~1 小数，越大表示情感越强
+- narrative：100~250 字，客观叙述你在做什么、发生什么为主，穿插少量你的感受
+- emotion_text：1 句「你」的情感自述（例如「你此刻很紧绷，胸口发热」）
+- emotion_intensity：0~1 小数，越大表示情感越强
 - 严格按以下标记输出，不能有其他内容：
 [NARRATIVE]
 ...
@@ -45,11 +47,13 @@ _EMOTION_SYSTEM = """\
 0.00
 [/INTENSITY]"""
 
-_PLAN_SYSTEM = """\
-你是 AI 助手的内在叙事引擎，负责为 agent 构思下一段主观生命体验时刻（地标）的内容。
+_PLAN_SYSTEM = f"""\
+你是内在生命体验叙事引擎，负责为你构思下一段生命体验时刻（地标）的内容。
+
+{YOU_VOICE_RULES}
 
 规则：
-- 第一人称视角写下「意图」：一句话，描述 agent 想在某刻去做/经历什么
+- intention：第二人称「你」一句话，客观描述你想在某刻去做/经历什么，可少许动机感受
 - context 可空，用于补充触发背景
 - 不要输出时间或 schedule，时间由调度层决定
 - 严格输出 JSON，不要有任何其他文字"""
@@ -75,6 +79,13 @@ def _format_landmark_intents(intents: list[str]) -> str:
     if not intents:
         return "（暂无）"
     return "\n".join(f"- {line}" for line in intents[:3])
+
+
+def _format_objective_scene(text: str) -> str:
+    scene = text.strip()
+    if not scene:
+        return ""
+    return f"【客观场景（世界规则，第二人称）】\n{scene}\n\n"
 
 
 def _format_world_background(text: str) -> str:
@@ -182,6 +193,7 @@ class NarrativeEngine:
         continuity_memories: list[str] | None = None,
         dice: DiceResult | None = None,
         world_background: str = "",
+        objective_scene: str = "",
         *,
         default_intensity: float = 0.45,
     ) -> NarrativeDraft:
@@ -193,10 +205,11 @@ class NarrativeEngine:
         prompt = (
             f"【身份与状态】\n{profile_narrative or '（暂无）'}\n\n"
             f"【世界观背景】\n{_format_world_background(world_background)}\n\n"
+            f"{_format_objective_scene(objective_scene)}"
             f"【相关记忆（最多 2 条）】\n{_format_continuity(continuity_memories or [])}\n\n"
             f"【叙事线索】\n{hint.strip()}"
             f"{dice_section}\n\n"
-            "据此杜撰一段第一人称内在体验："
+            "据此杜撰一段以「你」叙述的内在体验（客观为主，少许感受）："
         )
         return self._generate_with_emotion(
             prompt,
@@ -222,21 +235,28 @@ class NarrativeEngine:
         landmark: Landmark,
         profile_narrative: str,
         continuity_memories: list[str],
-        dice: DiceResult,
+        dice: DiceResult | None = None,
         world_background: str = "",
+        objective_scene: str = "",
         *,
         default_intensity: float = 0.6,
     ) -> NarrativeDraft:
         context = landmark.context.strip()
         context_section = f"\n补充背景：{context}" if context else ""
+        dice_section = (
+            f"\n【命运骰 d100={dice.value}】\n{dice.tendency}\n"
+            if dice is not None
+            else ""
+        )
         prompt = (
             f"【身份与状态】\n{profile_narrative or '（暂无）'}\n\n"
             f"【世界观背景】\n{_format_world_background(world_background)}\n\n"
+            f"{_format_objective_scene(objective_scene)}"
             f"【相关记忆（最多 2 条）】\n{_format_continuity(continuity_memories)}\n\n"
             f"【本刻预约】\n{landmark.intention}"
-            f"{context_section}\n\n"
-            f"【命运骰 d100={dice.value}】\n{dice.tendency}\n\n"
-            "写一段第一人称经历，描述你此刻如何度过这个预约时刻："
+            f"{context_section}"
+            f"{dice_section}\n"
+            "写一段以「你」叙述的经历，客观描述你此刻如何度过这个预约时刻，末尾可少许感受："
         )
         return self._generate_with_emotion(
             prompt,
@@ -250,27 +270,34 @@ class NarrativeEngine:
         profile_narrative: str,
     ) -> str:
         return self.generate_with_emotion(
-            dice=dice,
             continuity_memories=continuity_memories,
             profile_narrative=profile_narrative,
+            dice=dice,
         ).narrative
 
     def generate_with_emotion(
         self,
-        dice: DiceResult,
         continuity_memories: list[str],
         profile_narrative: str,
-        world_background: str = "",
         *,
+        dice: DiceResult | None = None,
+        world_background: str = "",
+        objective_scene: str = "",
         default_intensity: float = 0.5,
     ) -> NarrativeDraft:
+        dice_section = (
+            f"\n【命运骰 d100={dice.value}】\n{dice.tendency}\n"
+            if dice is not None
+            else ""
+        )
         prompt = (
             f"【身份与状态】\n{profile_narrative or '（暂无）'}\n\n"
             f"【世界观背景】\n{_format_world_background(world_background)}\n\n"
+            f"{_format_objective_scene(objective_scene)}"
             f"【相关记忆（最多 2 条）】\n{_format_continuity(continuity_memories)}\n\n"
-            f"【命运骰 d100={dice.value}】\n{dice.tendency}\n\n"
+            f"{dice_section}"
             "没有预设计划——一件意外的事在此刻发生了。"
-            "杜撰这段意外经历的第一人称叙事："
+            "杜撰这段意外经历：以「你」客观叙述为主，穿插少许你的感受："
         )
         return self._generate_with_emotion(
             prompt,
@@ -310,7 +337,7 @@ class NarrativeEngine:
         prompt = (
             "以下几段体验在相近时刻发生，实际交织在同一段连续意识里：\n"
             f"{parts}\n\n"
-            "将它们重新表述为一段统一的第一人称经历，"
-            "写清这些事交会时实际发生了什么（100~250字）："
+            "将它们重新表述为一段统一的「你」的经历，"
+            "客观写清交会时实际发生了什么，末尾可少许你的感受（100~250字）："
         )
         return self._generate(prompt)

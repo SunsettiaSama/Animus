@@ -109,4 +109,11 @@ class PersonaHandler:
             month = str(payload.get("month", ""))
             return svc.run_monthly_drift(force=force, month=month)
 
+        if action == PersonaAction.ENSURE_DISTILL:
+            force = bool(payload.get("force", False))
+            return svc.ensure_distill(force=force)
+
+        if action == PersonaAction.GET_DISTILL:
+            return svc.get_distill()
+
         raise ValueError(f"unknown persona api action: {action!r}")

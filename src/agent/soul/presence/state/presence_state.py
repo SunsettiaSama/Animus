@@ -7,6 +7,7 @@ from .static.cognition import CognitionState
 from .static.perception import PerceptionState
 from .static.somatic import SomaticState
 from .dynamic.expectation.state import ExpectationState
+from .lingering import LingeringMood, RecentExperiencePortrait
 
 PRESENCE_DIMENSIONS: tuple[str, ...] = (
     "affect",
@@ -34,6 +35,10 @@ class PresenceState:
     cognition: CognitionState = field(default_factory=CognitionState)
     perception: PerceptionState = field(default_factory=PerceptionState)
     expectation: ExpectationState = field(default_factory=ExpectationState)
+    lingering_moods: list[LingeringMood] = field(default_factory=list)
+    recent_portrait: RecentExperiencePortrait = field(
+        default_factory=RecentExperiencePortrait,
+    )
 
     def copy(self) -> PresenceState:
         return PresenceState(
@@ -42,6 +47,8 @@ class PresenceState:
             cognition=self.cognition.copy(),
             perception=self.perception.copy(),
             expectation=self.expectation.copy(),
+            lingering_moods=[LingeringMood.from_dict(m.to_dict()) for m in self.lingering_moods],
+            recent_portrait=RecentExperiencePortrait.from_dict(self.recent_portrait.to_dict()),
         )
 
     def reset_affect(self) -> None:
@@ -70,6 +77,8 @@ class PresenceState:
             "cognition": self.cognition.to_dict(),
             "perception": self.perception.to_dict(),
             "expectation": self.expectation.to_dict(),
+            "lingering_moods": [m.to_dict() for m in self.lingering_moods],
+            "recent_portrait": self.recent_portrait.to_dict(),
         }
 
     @classmethod
@@ -77,12 +86,16 @@ class PresenceState:
         perception_raw = d.get("perception")
         if perception_raw is None and d.get("environment"):
             perception_raw = d.get("environment")
+        portrait_raw = d.get("recent_portrait") or {}
+        lingering_raw = d.get("lingering_moods") or []
         return cls(
             affect=AffectState.from_dict(d.get("affect") or {}),
             somatic=SomaticState.from_dict(d.get("somatic") or {}),
             cognition=CognitionState.from_dict(d.get("cognition") or {}),
             perception=PerceptionState.from_dict(perception_raw or {}),
             expectation=ExpectationState.from_dict(d.get("expectation") or {}),
+            lingering_moods=[LingeringMood.from_dict(x) for x in lingering_raw],
+            recent_portrait=RecentExperiencePortrait.from_dict(portrait_raw),
         )
 
 

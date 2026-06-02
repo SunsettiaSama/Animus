@@ -43,6 +43,8 @@ def run_dynamic_portrait(
     portrait_body = ""
     agent_relation = ""
     recent_impression = ""
+    portrait_text = ""
+    neighborhood_snippets: tuple[str, ...] = ()
     if isinstance(core, SocialCoreNode):
         display_name = core.portrait.name.strip()
         core_traits = tuple(
@@ -53,15 +55,29 @@ def run_dynamic_portrait(
         changelog = core.trait_changelog.strip()
         if changelog:
             recent_impression = changelog.splitlines()[-1].strip()
+        ranked = deps.social.gather_neighborhood_context(
+            interactor_id,
+            query=query,
+            top_k=4,
+        )
+        neighborhood_snippets = tuple(text for text, _score in ranked)
+        portrait_text = deps.social.build_interactor_portrait_narrative(
+            interactor_id,
+            core,
+            query=query,
+            user_text=user,
+            top_k=4,
+        )
 
     return InteractorPortraitSpeakResult(
         session_id=inbound.session_id.strip(),
         turn_index=inbound.turn_index,
         interactor_id=interactor_id,
-        portrait_text="",
+        portrait_text=portrait_text,
         display_name=display_name,
         core_traits=core_traits,
         portrait_body=portrait_body,
         agent_relation=agent_relation,
         recent_impression=recent_impression,
+        neighborhood_snippets=neighborhood_snippets,
     )

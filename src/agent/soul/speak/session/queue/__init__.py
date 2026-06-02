@@ -8,7 +8,9 @@ from .decision import (
     render_queue_decision_user,
 )
 from .hub import SessionQueueHub
-from .interrupt import render_interrupt_system_block, summarize_suspended_compose
+from agent.soul.speak.orchestrator.guidance.interrupt import render_interrupt_system_block
+
+from .interrupt import summarize_suspended_compose
 from .types import InterruptContext, SessionRuntime, SpeakPushPhase, SpeakTurnMode, SubmitUserInputResult
 from .user import SessionUserQueue, UserInputItem
 

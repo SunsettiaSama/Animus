@@ -23,6 +23,7 @@ READ_API_ACTIONS: frozenset[tuple[str, str]] = frozenset({
     (SoulDomain.speak.value, SpeakAction.EVALUATE_DRIVE),
     (SoulDomain.speak.value, SpeakAction.WORKING_MEMORY),
     (SoulDomain.speak.value, SpeakAction.DIALOGUE_STATE),
+    (SoulDomain.speak.value, SpeakAction.DIRECTOR_SNAPSHOT),
 })
 
 

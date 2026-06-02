@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Callable
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.soul.memory.emotion_intensity import infer_emotion_intensity
+from agent.soul.voice_rules import YOU_VOICE_RULES
 from agent.soul.memory.unit import MemoryTier, NarrativeMemory, Valence
 from agent.soul.memory.graph.node_store import GraphNodeStore
 
@@ -15,17 +16,18 @@ if TYPE_CHECKING:
     from agent.soul.memory.unit import MemoryUnit
 
 
-_SYSTEM = """\
-You are a memory narrative system. Weave factual/reconstructive fragments into one coherent first-person narrative memory.
+_SYSTEM = f"""\
+你是记忆叙事编织系统：将多条事实/重构碎片织成一段连贯叙事记忆。
+{YOU_VOICE_RULES}
 
-Rules:
-- focus: core theme, <=12 chars
-- narrative: first-person paragraph, 100-300 chars
-- emotion: named emotion string
+输出字段：
+- focus: 核心主题，<=12 字
+- narrative: 你+时间的客观叙述为主（100~300 字），穿插少量你的感受
+- emotion: 情绪名
 - valence: "positive" | "negative" | "mixed" | "neutral"
 - base_activation: 0.4~1.0
 
-Output valid JSON only."""
+只输出合法 JSON，不要解释。"""
 
 _SCHEMA = """\
 {
@@ -128,7 +130,7 @@ class NarrativeWriter:
             f"{emotion_section}"
             f"[chapter] {chapter}\n\n"
             f"[fragments x{len(source_units)}]\n{memories_text}\n\n"
-            f"Output narrative JSON:\n{_SCHEMA}"
+            f"输出叙事 JSON：\n{_SCHEMA}"
         )
         raw = self._llm.generate_messages(
             [SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)]

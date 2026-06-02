@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from agent.soul.speak.io.outbound.stream import SpeakStreamEvent
 from state import get_state
 
-from agent.soul.speak.session.prompt_trace import get_prompt_trace
+from agent.soul.speak.orchestrator.prompt_trace import get_prompt_trace
 
 from webui.speak_typing_sim import SimulatedTypingStreamPort
 
@@ -290,6 +290,39 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                 elif delivery_mode == "stream" and isinstance(port, SimulatedTypingStreamPort):
                     port = port.inner
                 soul.bind_speak_stream_port(port)
+                soul.speak_set_delivery_mode(delivery_mode)
+
+            if msg_type == "typing_pulse":
+                typing = bool(msg.get("typing", False))
+                draft = str(msg.get("draft", ""))
+                snap = await asyncio.to_thread(
+                    soul.speak_on_typing_pulse,
+                    session_id,
+                    typing=typing,
+                    draft=draft,
+                )
+                await websocket.send_json({
+                    "type": "typing_ack",
+                    "gen_id": gen_id,
+                    "session_id": session_id,
+                    "snapshot": snap,
+                })
+                continue
+
+            if msg_type == "set_typing_idle_ms":
+                raw_ms = msg.get("typing_idle_ms", 3000)
+                ms = int(raw_ms) if str(raw_ms).isdigit() else 3000
+                idle_ms = await asyncio.to_thread(
+                    soul.speak_set_typing_idle_ms,
+                    session_id,
+                    ms=ms,
+                )
+                await websocket.send_json({
+                    "type": "typing_idle_ms",
+                    "gen_id": gen_id,
+                    "typing_idle_ms": idle_ms,
+                })
+                continue
 
             if msg_type == "abort" and msg.get("gen_id") == gen_id:
                 port.close()
@@ -302,6 +335,8 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
 
             if msg_type not in ("start", "user_message"):
                 continue
+
+            soul.speak_set_delivery_mode(delivery_mode)
 
             question = str(msg.get("question", "")).strip()
             if not question:

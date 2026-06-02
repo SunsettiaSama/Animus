@@ -6,14 +6,16 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.soul.life.experience.domain.unit import ExperienceUnit
+from agent.soul.voice_rules import YOU_VOICE_RULES
 
 from .types import DialogueCompressionBlock, SessionBlockRecord
 
-_SYSTEM = """\
+_SYSTEM = f"""\
 你是记忆整合器。根据一次对话中多段压缩摘要与会话闭合信息，生成一段可长期保留的社交记忆叙述。
+{YOU_VOICE_RULES}
 只输出 JSON，不要解释。字段：
 - focus: 一句话主题（≤24字）
-- subjective_statement: Agent 主观感受与关系变化（≤120字）
+- subjective_statement: 尽量客观复述对话与关系变化（≤120字），句末可少许「你」的感受
 - label: 片段标签（≤12字）
 - emotion: 情绪词
 - valence: positive | negative | mixed | neutral

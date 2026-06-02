@@ -5,8 +5,8 @@ import time
 from unittest.mock import MagicMock
 
 from agent.soul.presence.share_desire import ShareDesire
-from agent.soul.speak.compose import SpeakPromptComposer
-from agent.soul.speak.compose.context import (
+from agent.soul.speak.orchestrator import SpeakOrchestrator
+from agent.soul.speak.orchestrator.guidance.context import (
     SpeakContextDistiller,
     normalize_one_sentence,
     render_dialogue_compressed,
@@ -65,15 +65,14 @@ def _mock_presence_snap():
 
 def test_compose_uses_working_memory_block_not_status_dialogue():
     persona = MagicMock()
-    persona.get_persona_snapshot.return_value = {
-        "profile": {"name": "A"},
-        "self_concept": {},
-    }
+    from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
+
+    persona.get_persona_snapshot.return_value = persona_snapshot_with_distill(name="A")
     presence = MagicMock()
     presence.snapshot.return_value = _mock_presence_snap()
 
     distiller = SpeakContextDistiller(chunk_size=2, distill_fn=lambda batch, prior: "")
-    composer = SpeakPromptComposer(persona, presence, context_distiller=distiller)
+    composer = SpeakOrchestrator(persona, presence, context_distiller=distiller)
 
     bundle_before = composer.compose("tao", "new question", generation=1)
     assert "\u3010\u5f53\u524d\u4f1a\u8bdd\u00b7\u5de5\u4f5c\u8bb0\u5fc6\u3011" not in bundle_before.build_system()
@@ -89,7 +88,7 @@ def test_compose_uses_working_memory_block_not_status_dialogue():
     system = bundle_after.build_system()
     assert "\u3010\u5f53\u524d\u4f1a\u8bdd\u00b7\u5de5\u4f5c\u8bb0\u5fc6\u3011" in system
     assert "two turns of small talk" in system
-    assert bundle_after.injected.status.dialogue_compressed == ""
+    assert bundle_after.scene.dialogue_compressed == ""
 
 
 def test_async_compose_does_not_wait_for_pending_distill():

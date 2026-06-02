@@ -20,6 +20,7 @@ class BaseSession {
   }
 
   close() {
+    this.stopTypingPulse();
     if (this._ws && !this._closed) {
       this._closed = true;
       if (this._ws.readyState === WebSocket.OPEN) {
@@ -27,6 +28,38 @@ class BaseSession {
       }
       this._ws.close();
     }
+  }
+
+  startTypingPulse(getDraft) {
+    if (typeof getDraft === 'function') {
+      this._getDraft = getDraft;
+    }
+    this.stopTypingPulse();
+    this._typingPulseTimer = setInterval(() => {
+      if (!this.isConnected()) return;
+      const draft = String(this._getDraft() ?? '').trim();
+      this._send({
+        type: 'typing_pulse',
+        typing: draft.length > 0,
+        draft,
+        ...this._wsPayload(),
+      });
+    }, SPEAK_TYPING_PULSE_MS);
+  }
+
+  stopTypingPulse() {
+    if (this._typingPulseTimer) {
+      clearInterval(this._typingPulseTimer);
+      this._typingPulseTimer = null;
+    }
+  }
+
+  sendTypingIdleMs() {
+    this._send({
+      type: 'set_typing_idle_ms',
+      typing_idle_ms: this._typingIdleMs,
+      ...this._wsPayload(),
+    });
   }
 }
 
@@ -135,6 +168,8 @@ export function clearCurrent() {
 /**
  * Soul Speak 长连接：单条 WebSocket 可多轮输入；流式过程中可 sendUserMessage。
  */
+export const SPEAK_TYPING_PULSE_MS = 500;
+
 export class SpeakSession extends BaseSession {
   constructor(genId, opts = {}) {
     super(PATHS.speak.run, genId);
@@ -146,6 +181,9 @@ export class SpeakSession extends BaseSession {
     this._onTurnStart = opts.onTurnStart ?? (() => {});
     this._onError = opts.onError ?? (() => {});
     this._deliveryMode = opts.deliveryMode === 'simulated' ? 'simulated' : 'stream';
+    this._typingIdleMs = opts.typingIdleMs === 5000 ? 5000 : 3000;
+    this._getDraft = opts.getDraft ?? (() => '');
+    this._typingPulseTimer = null;
     this._connected = false;
     this._aborted = false;
   }
@@ -274,6 +312,8 @@ export class SpeakSession extends BaseSession {
       question: first,
       ...this._wsPayload(),
     });
+    this.sendTypingIdleMs();
+    this.startTypingPulse(this._getDraft);
 
     const result = await this._waitTurn();
     if (result?.type === 'error') {
@@ -297,7 +337,45 @@ export class SpeakSession extends BaseSession {
     return result;
   }
 
+  startTypingPulse(getDraft) {
+    if (typeof getDraft === 'function') {
+      this._getDraft = getDraft;
+    }
+    this.stopTypingPulse();
+    this._typingPulseTimer = setInterval(() => {
+      if (!this.isConnected()) return;
+      const draft = String(this._getDraft() ?? '').trim();
+      this._send({
+        type: 'typing_pulse',
+        typing: draft.length > 0,
+        draft,
+        ...this._wsPayload(),
+      });
+    }, SPEAK_TYPING_PULSE_MS);
+  }
+
+  stopTypingPulse() {
+    if (this._typingPulseTimer) {
+      clearInterval(this._typingPulseTimer);
+      this._typingPulseTimer = null;
+    }
+  }
+
+  sendTypingIdleMs() {
+    this._send({
+      type: 'set_typing_idle_ms',
+      typing_idle_ms: this._typingIdleMs,
+      ...this._wsPayload(),
+    });
+  }
+
+  close() {
+    this.stopTypingPulse();
+    super.close();
+  }
+
   abort() {
+    this.stopTypingPulse();
     this._aborted = true;
     this._send({ type: 'abort', gen_id: this._genId });
   }

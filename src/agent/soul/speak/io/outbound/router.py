@@ -30,7 +30,8 @@ class SpeakOutboundRouter:
 
     def bind_stream(self, port: SpeakStreamPort | None) -> None:
         """挂载流式出站 port（run_turn / generate_stream 事件经此抛出）。"""
-        self._soul._ensure_speak_service().set_stream_port(port)
+        speak = self._soul._ensure_speak_service()
+        speak.set_stream_port(port)
 
     @property
     def stream_port(self) -> SpeakStreamPort | None:

@@ -63,7 +63,7 @@ class BeliefStrength(str, Enum):
 class Belief:
     """一条自我信念。
 
-    content    — 第一人称陈述，如"我擅长分解复杂问题"
+    content    — 第二人称陈述（面向角色 LLM），如"你擅长分解复杂问题"
     strength   — BeliefStrength 枚举：emerging / established / core
     source     — 来源标记："build"（初始）| "evolver"（演化产生）
     updated_at — 最近一次调整的 UTC 时间
@@ -113,7 +113,7 @@ class SelfConceptDelta:
     narrative  — 新叙事摘要（主输出）；空字符串表示本次不更新
     upgrades   — 信念升级：{"match": "关键词", "to": "established"}
                  match 用于在现有 beliefs 中做内容匹配，无需 ID
-    adds       — 新增信念：{"content": "我...", "strength": "emerging"}
+    adds       — 新增信念：{"content": "你...", "strength": "emerging"}
     removes    — 待移除信念的关键词列表（内容匹配）
     """
     narrative: str = ""
@@ -273,6 +273,57 @@ class SelfConcept:
         return [
             b.content for b in self.top_beliefs(k=2, min_strength=BeliefStrength.established)
         ]
+
+    def render_for_role_llm(
+        self,
+        *,
+        top_k: int = 3,
+        min_strength: BeliefStrength = BeliefStrength.established,
+        warn_main_portrait: bool = False,
+        caller: str = "",
+    ) -> str:
+        """面向角色 LLM 的自叙正文：第二人称「你」。"""
+        if self.is_empty():
+            return ""
+        if warn_main_portrait:
+            from agent.soul.persona.portrait import warn_main_portrait_usage
+
+            warn_main_portrait_usage(caller or "SelfConcept.render_for_role_llm")
+
+        parts: list[str] = ["【你的自我认知】"]
+        if self._narrative.strip():
+            narrative = self._narrative.strip()
+            if narrative.startswith("我"):
+                narrative = "你" + narrative[1:]
+            parts.append(narrative)
+
+        grouped: dict[str, list[str]] = {
+            BeliefStrength.core.value: [],
+            BeliefStrength.established.value: [],
+            BeliefStrength.emerging.value: [],
+        }
+        for belief in self.top_beliefs(k=top_k * 2, min_strength=min_strength):
+            text = belief.content.strip()
+            if text.startswith("我"):
+                text = "你" + text[1:]
+            grouped[belief.strength.value].append(text)
+
+        if grouped[BeliefStrength.core.value]:
+            parts.append("你的核心信念：")
+            parts.extend(f"- {text}" for text in grouped[BeliefStrength.core.value][:top_k] if text)
+        if grouped[BeliefStrength.established.value]:
+            parts.append("你已确立的信念：")
+            parts.extend(
+                f"- {text}"
+                for text in grouped[BeliefStrength.established.value][:top_k]
+                if text
+            )
+        emerging = grouped[BeliefStrength.emerging.value][:top_k]
+        if emerging:
+            parts.append("你正在形成的认识：")
+            parts.extend(f"- {text}" for text in emerging if text)
+
+        return "\n".join(parts)
 
     # ── Serialization ─────────────────────────────────────────────────────────
 

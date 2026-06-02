@@ -1,29 +1,33 @@
-"""Session 内 agent 主动说话两套机制：initiative 提示 + silence_break 打破沉默。"""
+"""Session ? agent ?????????initiative ?? + silence_break ?????"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
-from agent.soul.speak.compose.bundle import SpeakPromptBundle
+from agent.soul.speak.orchestrator import SpeakPromptBundle
+from agent.soul.speak.orchestrator.assemble import finish_turn_bundle
+from agent.soul.speak.orchestrator.guidance.social import (
+    INITIATIVE_PROMPT,
+    render_silence_break_block,
+)
 from agent.soul.speak.llm.engine import SpeakLLMEngine
 from agent.soul.speak.session.manage.coordinator import SessionSocialManager
 from agent.soul.speak.session.manage.initiative import TurnInitiativeManager
 from agent.soul.speak.session.manage.silence_break import SilenceBreakManager
 from agent.soul.speak.session.manage.types import SilenceBreakTurnSpec
-from agent.soul.speak.session.manage.initiative import _INITIATIVE_PROMPT
 
 
 class _BreakSilenceLLM:
     def generate_messages(self, messages):
         return (
-            "[think]用户可能在忙，适合轻问一句[/think]"
+            "[think]?????????????[/think]"
             "[state]break_silence[/state]"
         )
 
 
 class _HoldSilenceLLM:
     def generate_messages(self, messages):
-        return "[think]不宜打扰[/think][state]hold[/state]"
+        return "[think]????[/think][state]hold[/state]"
 
 
 def _registry_mock(*, generation: int = 1, turn_index: int = 3):
@@ -41,9 +45,9 @@ def test_initiative_injects_hint_on_inbound_turn():
         max_user_chars=500,
     )
     initiative._rng = lambda: 0.0
-    hint = initiative.evaluate("s1", turn_index=3, user_text="你好", mode="inbound")
+    hint = initiative.evaluate("s1", turn_index=3, user_text="??", mode="inbound")
     assert hint is not None
-    assert _INITIATIVE_PROMPT in hint.text
+    assert INITIATIVE_PROMPT in hint.text
 
 
 def test_initiative_skipped_for_proactive_mode():
@@ -52,7 +56,7 @@ def test_initiative_skipped_for_proactive_mode():
     assert initiative.evaluate("s1", turn_index=5, user_text="hi", mode="proactive") is None
 
 
-def test_enrich_bundle_injects_initiative_into_social_blocks():
+def test_finish_turn_bundle_injects_initiative_into_social_blocks():
     initiative = TurnInitiativeManager(
         cooldown_turns=0,
         hint_probability=1.0,
@@ -61,18 +65,19 @@ def test_enrich_bundle_injects_initiative_into_social_blocks():
     initiative._rng = lambda: 0.0
     social = SessionSocialManager(registry=_registry_mock(), initiative=initiative)
     bundle = SpeakPromptBundle(session_id="s1")
-    social.enrich_bundle(
+    finish_turn_bundle(
         bundle,
+        social=social,
         session_id="s1",
         turn_index=4,
-        user_text="聊聊架构",
+        user_text="????",
         mode="inbound",
     )
-    assert any(_INITIATIVE_PROMPT in block for block in bundle.social_blocks)
+    assert any(INITIATIVE_PROMPT in block for block in bundle.guidance.social_blocks)
     assert any("initiative:" in note for note in bundle.notes)
 
 
-def test_enrich_bundle_prefers_silence_break_over_initiative():
+def test_finish_turn_bundle_prefers_silence_break_over_initiative():
     initiative = TurnInitiativeManager(
         cooldown_turns=0,
         hint_probability=1.0,
@@ -83,22 +88,23 @@ def test_enrich_bundle_prefers_silence_break_over_initiative():
     spec = SilenceBreakTurnSpec(
         session_id="s1",
         elapsed_sec=95.0,
-        angle="轻问在不在",
-        thought="用户可能在忙",
+        angle="?????",
+        thought="??????",
     )
     social.arm_silence_break(spec)
     bundle = SpeakPromptBundle(session_id="s1")
-    social.enrich_bundle(
+    finish_turn_bundle(
         bundle,
+        social=social,
         session_id="s1",
         turn_index=4,
-        user_text="聊聊架构",
+        user_text="????",
         mode="inbound",
     )
     assert bundle.meta.get("silence_break") is True
     assert bundle.meta.get("silence_break_user")
-    assert any("打破沉默" in block for block in bundle.social_blocks)
-    assert not any(_INITIATIVE_PROMPT in block for block in bundle.social_blocks)
+    assert any("????" in block for block in bundle.guidance.social_blocks)
+    assert not any(INITIATIVE_PROMPT in block for block in bundle.guidance.social_blocks)
 
 
 def test_silence_break_timer_invokes_handler_when_llm_accepts():
@@ -124,7 +130,7 @@ def test_silence_break_timer_invokes_handler_when_llm_accepts():
 
     assert len(handled) == 1
     assert handled[0].session_id == "tao"
-    assert "打破沉默" in handled[0].system_block
+    assert "????" in render_silence_break_block(handled[0])
 
 
 def test_silence_break_skips_when_llm_holds():
@@ -179,5 +185,5 @@ def test_on_turn_complete_schedules_silence_only_after_inbound_finish():
     assert fired == []
     social.on_turn_complete("tao", mode="inbound", session_state="append", answer="hi")
     assert fired == []
-    social.on_turn_complete("tao", mode="inbound", session_state="finish", answer="好的")
+    social.on_turn_complete("tao", mode="inbound", session_state="finish", answer="??")
     assert fired == ["tao"]

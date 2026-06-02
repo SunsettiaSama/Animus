@@ -86,6 +86,11 @@ class ShareIntentQueue:
         best_index = max(range(len(self.items)), key=lambda i: self.items[i].salience)
         return self.items.pop(best_index)
 
+    def pop_at(self, index: int) -> ShareIntent | None:
+        if index < 0 or index >= len(self.items):
+            return None
+        return self.items.pop(index)
+
     def is_empty(self) -> bool:
         return not self.items
 

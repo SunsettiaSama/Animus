@@ -17,6 +17,7 @@ from agent.soul.memory.emotion_intensity import infer_emotion_intensity
 
 from agent.soul.memory.graph.networks.experience_block import ExperienceBlock
 from agent.soul.memory.graph.networks.types import ArchivePlacement, ArchiveResult, ExperienceKind, SemanticCandidate
+from agent.soul.voice_rules import YOU_VOICE_RULES
 
 if TYPE_CHECKING:
     from infra.llm import BaseLLM
@@ -25,13 +26,14 @@ if TYPE_CHECKING:
     from agent.soul.memory.ports import VectorIndexPort
 
 
-_SYSTEM = """\
+_SYSTEM = f"""\
 你是记忆归档系统：把 Life 体验单元写入记忆图。
-归档须与给定的 Agent 人格锚点一致，用该角色的第一人称主观语气归纳；
+{YOU_VOICE_RULES}
+归档须与给定的人格锚点一致；
 勿写成泛化 AI、系统助手或「数据流/界面」式元叙事，除非体验原文明确如此。
 
 输出字段：
-- subjective_statement: 主观陈述，<=80 字，第一人称
+- subjective_statement: 尽量客观复述体验要点（<=80 字），句末可少许「你」的感受
 - focus: 核心主题，<=12 字
 - label: 社交补充标签，<=12 字（仅 anchor 类）
 - parent_node_id: 语义父节点 id，无则 "none"

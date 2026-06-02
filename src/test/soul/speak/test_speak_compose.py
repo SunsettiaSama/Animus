@@ -3,62 +3,54 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from agent.soul.presence.share_desire import ShareDesire
-from agent.soul.speak.compose import (
+from agent.soul.speak.orchestrator import (
     ShareDesireComposer,
-    SpeakInjectedContext,
-    SpeakPersonaInjected,
-    SpeakPromptComposer,
-    SpeakStatusInjected,
-    SpeakSystemPrompt,
+    SpeakOrchestrator,
+    SpeakGuidanceLayer,
+    SpeakPersonaLayer,
+    SpeakSceneLayer,
+    SpeakSystemLayer,
     collect_share_state,
 )
 from agent.soul.presence.state.dynamic.expectation.queue import ShareIntent, ShareIntentQueue
+from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 
 
 def test_compose_persona_and_presence_fields_separated():
     persona = MagicMock()
-    persona.get_persona_snapshot.return_value = {
-        "profile": {
-            "name": "小A",
-            "core_traits": ["温和", "好奇"],
-            "values": ["真诚"],
-        },
-        "self_concept": {
-            "narrative": "我在学习如何更好地陪伴用户�?,
-            "beliefs": [
-                {"content": "认真倾听很重�?, "strength": "established"},
-            ],
-        },
-    }
+    persona.get_persona_snapshot.return_value = persona_snapshot_with_distill(
+        name="?A",
+        dialogue="??????\n??/???????\n??????????",
+    )
     presence = MagicMock()
     snap = MagicMock()
-    snap.state.affect.render.return_value = "平静"
+    snap.state.affect.render.return_value = "??"
     snap.state.somatic.render.return_value = ""
-    snap.state.cognition.render.return_value = "在想如何回答"
-    snap.state.perception.render.return_value = "用户刚发来问�?
+    snap.state.cognition.render.return_value = "??????"
+    snap.state.perception.render.return_value = "???????"
     snap.state.expectation.to_dict.return_value = {"share_queue": {"items": []}}
     snap.interaction.impulse_reason = ""
     snap.interaction.share_desire = ShareDesire.none
     presence.snapshot.return_value = snap
 
-    bundle = SpeakPromptComposer(persona, presence).compose("tao", "你好")
+    bundle = SpeakOrchestrator(persona, presence).compose("tao", "??")
     system = bundle.build_system()
 
-    assert isinstance(bundle.injected, SpeakInjectedContext)
-    assert isinstance(bundle.injected.persona, SpeakPersonaInjected)
-    assert isinstance(bundle.injected.status, SpeakStatusInjected)
-    assert isinstance(bundle.system, SpeakSystemPrompt)
-    assert "【人物画像】小A" in system
-    assert "【自我认知�? in system
-    assert "【当下态·状态�? in system
-    assert "情感：平�? in system
-    assert "【分享意愿�? not in system
+    assert isinstance(bundle.persona, SpeakPersonaLayer)
+    assert isinstance(bundle.scene, SpeakSceneLayer)
+    assert isinstance(bundle.system, SpeakSystemLayer)
+    assert isinstance(bundle.guidance, SpeakGuidanceLayer)
+    assert "??????" in system
+    assert "????" in system
+    assert "????????" in system
+    assert "?????" in system
+    assert "??????" not in system
     assert "presence_self_narrative" not in system
 
 
 def test_compose_injects_share_desire_and_summary():
     persona = MagicMock()
-    persona.get_persona_snapshot.return_value = {"profile": {"name": "小A"}, "self_concept": {}}
+    persona.get_persona_snapshot.return_value = persona_snapshot_with_distill(name="?A")
     presence = MagicMock()
     snap = MagicMock()
     snap.state.affect.render.return_value = ""
@@ -67,20 +59,20 @@ def test_compose_injects_share_desire_and_summary():
     snap.state.perception.render.return_value = ""
     snap.state.expectation.to_dict.return_value = {
         "share_queue": ShareIntentQueue(
-            items=[ShareIntent(topic="今天的架构进�?, share_desire=ShareDesire.moderate)],
+            items=[ShareIntent(topic="???????", share_desire=ShareDesire.moderate)],
         ).to_dict(),
     }
     snap.interaction.impulse_reason = ""
     snap.interaction.share_desire = ShareDesire.moderate
     presence.snapshot.return_value = snap
 
-    bundle = SpeakPromptComposer(persona, presence).compose("tao", "你好")
+    bundle = SpeakOrchestrator(persona, presence).compose("tao", "??")
     system = bundle.build_system()
 
     assert bundle.wants_share is True
-    assert "【分享意愿�? in system
-    assert "分享摘要�? in system
-    assert "架构进展" in system
+    assert "??????" in system
+    assert "????" in system
+    assert "????" in system
     assert "[0]" in system
 
 

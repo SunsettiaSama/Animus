@@ -8,6 +8,8 @@ from agent.soul.memory.graph.scored import ScoredUnit
 from agent.soul.memory.graph.node_store import GraphNodeStore
 from agent.soul.memory.ports import VectorIndexPort
 
+from .time_weight import event_time_weight
+
 
 class SocialQueryEngine:
     """Social 网络混合检索：向量相似度 + 激活衰减。"""
@@ -17,12 +19,14 @@ class SocialQueryEngine:
         nodes: GraphNodeStore,
         *,
         half_life_days: float = 30.0,
+        event_time_half_life_days: float = 60.0,
         vectors: VectorIndexPort | None = None,
         w_relevance: float = 0.6,
         w_activation: float = 0.4,
     ) -> None:
         self._nodes = nodes
         self._hl = half_life_days
+        self._event_time_hl = event_time_half_life_days
         self._vectors = vectors
         self._w_relevance = w_relevance
         self._w_activation = w_activation
@@ -55,8 +59,7 @@ class SocialQueryEngine:
                 act = self._activation(unit, now)
                 rel = self._text_overlap(query, unit.embed_text())
                 candidates.append(ScoredUnit(unit, relevance=rel, activation=act))
-        for scored in candidates:
-            scored.final_score = self._w_relevance * scored.relevance + self._w_activation * scored.activation
+        self._apply_final_scores(candidates, now)
         candidates.sort(key=lambda s: s.final_score, reverse=True)
         return candidates[:top_k]
 
@@ -87,8 +90,7 @@ class SocialQueryEngine:
                 rel = 1.0
             act = self._activation(unit, now)
             candidates.append(ScoredUnit(unit, relevance=rel, activation=act))
-        for scored in candidates:
-            scored.final_score = self._w_relevance * scored.relevance + self._w_activation * scored.activation
+        self._apply_final_scores(candidates, now)
         candidates.sort(key=lambda s: s.final_score, reverse=True)
         return candidates[:top_k]
 
@@ -102,6 +104,19 @@ class SocialQueryEngine:
         if self._vectors is not None and self._vectors.embed_query(query.strip()):
             return self.hybrid(query, top_k, interactor_id=interactor_id)
         return self.hybrid_with_stored_embeddings(query, top_k, interactor_id=interactor_id)
+
+    def _apply_final_scores(self, candidates: list[ScoredUnit], now: datetime) -> None:
+        for scored in candidates:
+            base = (
+                self._w_relevance * scored.relevance
+                + self._w_activation * scored.activation
+            )
+            tw = event_time_weight(
+                scored.unit,
+                now,
+                half_life_days=self._event_time_hl,
+            )
+            scored.final_score = base * tw
 
     def _activation(self, unit, now: datetime) -> float:
         hl = self._hl if unit.tier != MemoryTier.short_term else 3.0

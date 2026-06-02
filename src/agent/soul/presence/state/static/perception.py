@@ -7,7 +7,7 @@ from .narrative import compose_narrative, normalize_narrative
 
 @dataclass
 class PerceptionState:
-    """对环境的感知：第一人称自叙。"""
+    """对环境的感知：第二人称「你」自叙。"""
 
     narrative: str = ""
 
@@ -41,7 +41,7 @@ class PerceptionState:
         ]
         parts: list[str] = []
         if scene:
-            parts.append(f"我感知到{scene}")
+            parts.append(f"你感知到{scene}")
         if stimuli:
             parts.append("周围有" + "、".join(stimuli))
         return cls(narrative=compose_narrative(*parts))

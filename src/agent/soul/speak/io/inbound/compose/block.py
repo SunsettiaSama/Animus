@@ -8,15 +8,19 @@ class SpeakStatusInjected:
     """状态层外部注入：随事件与对话演进，由 inbound compose 交给 compose。"""
 
     presence: str = ""
+    instant_mood: str = ""
     dialogue_compressed: str = ""
     interactor_portrait: str = ""
     similar_memories: str = ""
+    world_scene: str = ""
 
     def render_blocks(self) -> list[str]:
         blocks = [
             block.strip()
             for block in (
+                self.world_scene,
                 self.presence,
+                self.instant_mood,
                 self.interactor_portrait,
                 self.similar_memories,
             )

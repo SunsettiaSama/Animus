@@ -7,7 +7,7 @@ from .narrative import normalize_narrative
 
 @dataclass
 class SomaticState:
-    """生理状态：第一人称自叙。"""
+    """生理状态：第二人称「你」自叙。"""
 
     narrative: str = ""
 

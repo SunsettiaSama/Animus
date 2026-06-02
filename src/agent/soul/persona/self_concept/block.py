@@ -36,19 +36,15 @@ class SelfConceptBlock(PromptBlock):
         if self._concept.is_empty():
             return None
 
-        parts: list[str] = ["---", "## 自我认知"]
-
-        if self._concept.narrative:
-            parts.append(self._concept.narrative)
-
-        top = self._concept.top_beliefs(k=self._top_k, min_strength=self._min_strength)
-        if top:
-            parts.append("核心信念：")
-            for b in top:
-                label = _STRENGTH_LABEL.get(b.strength, "")
-                parts.append(f"- {b.content}{label}")
-
-        text = "\n".join(parts)
+        text = self._concept.render_for_role_llm(
+            top_k=self._top_k,
+            min_strength=self._min_strength,
+            warn_main_portrait=True,
+            caller="SelfConceptBlock",
+        )
+        if not text:
+            return None
+        text = f"---\n{text}"
         if self._max_chars > 0 and len(text) > self._max_chars:
             text = text[: self._max_chars]
         return text

@@ -1,6 +1,10 @@
 from .block import SpeakStatusInjected
 from .collect import collect_status_injected
-from .render import render_presence, render_presence_static
+from .render import (
+    render_presence,
+    render_presence_fuel_for_agent,
+    render_presence_static,
+)
 from .request import ComposePrepareRequest
 from .store import SpeakStatusStore, apply_presence_status_update
 
@@ -12,6 +16,7 @@ __all__ = [
     "apply_presence_status_update",
     "collect_status_injected",
     "render_presence",
+    "render_presence_fuel_for_agent",
     "render_presence_static",
 ]
 

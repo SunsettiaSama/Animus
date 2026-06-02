@@ -12,6 +12,11 @@ from agent.soul.memory.emergence.line_dedup import (
     dedupe_memory_line_pairs,
     memory_line_body_key,
 )
+from agent.soul.speak.orchestrator.guidance.memory.pick_weights import (
+    PICK_PENALTY_FACTOR,
+    PICK_WEIGHT_DEFAULT,
+    PICK_WEIGHT_FLOOR,
+)
 
 MemoryBufferSource = Literal["emergence", "keyword", "social_prefetch", "warm_spread"]
 
@@ -63,8 +68,33 @@ class SessionMemoryBuffer:
         self._turn_queues: dict[str, deque[MemoryBufferItem]] = {}
         self._social_prefetch: dict[str, MemoryBufferItem] = {}
         self._warm_spread: dict[str, MemoryBufferItem] = {}
+        self._consumed_unit_ids: dict[str, set[str]] = {}
+        self._recall_pick_multiplier: dict[str, dict[str, float]] = {}
         self._waiters: dict[str, threading.Condition] = {}
         self._waiters_lock = threading.Lock()
+
+    def mark_unit_consumed(self, session_id: str, unit_id: str) -> None:
+        uid = unit_id.strip()
+        if not uid:
+            return
+        self._consumed_unit_ids.setdefault(session_id, set()).add(uid)
+
+    def recall_pick_weight(self, session_id: str, unit_id: str) -> float:
+        uid = unit_id.strip()
+        if not uid:
+            return PICK_WEIGHT_DEFAULT
+        return self._recall_pick_multiplier.get(session_id, {}).get(uid, PICK_WEIGHT_DEFAULT)
+
+    def record_recall_pick(self, session_id: str, unit_id: str) -> None:
+        uid = unit_id.strip()
+        if not uid:
+            return
+        table = self._recall_pick_multiplier.setdefault(session_id, {})
+        prev = table.get(uid, PICK_WEIGHT_DEFAULT)
+        table[uid] = max(PICK_WEIGHT_FLOOR, prev * PICK_PENALTY_FACTOR)
+
+    def _is_consumed(self, session_id: str, unit_id: str) -> bool:
+        return unit_id.strip() in self._consumed_unit_ids.get(session_id, set())
 
     def _condition(self, session_id: str) -> threading.Condition:
         with self._waiters_lock:
@@ -267,6 +297,8 @@ class SessionMemoryBuffer:
         sources: list[str] = []
 
         def _try_inject(line: str, uid: str, source: str) -> bool:
+            if self._is_consumed(session_id, uid):
+                return False
             added_lines, added_ids = dedupe_memory_line_pairs(
                 [line],
                 [uid],
@@ -305,6 +337,8 @@ class SessionMemoryBuffer:
         for line, uid in zip(pool_lines, pool_ids):
             if len(inject_lines) >= budget:
                 break
+            if self._is_consumed(session_id, uid):
+                continue
             _try_inject(line, uid, "emergence")
 
         if len(inject_lines) < budget:
@@ -371,6 +405,8 @@ class SessionMemoryBuffer:
         self._turn_queues.pop(session_id, None)
         self._social_prefetch.pop(session_id, None)
         self._warm_spread.pop(session_id, None)
+        self._consumed_unit_ids.pop(session_id, None)
+        self._recall_pick_multiplier.pop(session_id, None)
         with self._waiters_lock:
             cond = self._waiters.pop(session_id, None)
         if cond is not None:

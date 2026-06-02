@@ -41,22 +41,28 @@ from agent.soul.life.experience.domain.unit import (
 
 from infra.llm import BaseLLM
 
-_SYSTEM = """\
-你是 Life 体验编写器。根据给定的多轮对话原文（工作记忆抛出），输出 Agent 主观体验字段 JSON。
-忠实转述对话中已出现的事实与意图；emotion / valence / salience 反映 Agent 当下体验强度。
-只输出 JSON，不要解释。"""
+from agent.soul.voice_rules import YOU_VOICE_RULES
+
+_SYSTEM = f"""\
+你是 Life 体验编写器。根据给定的多轮对话原文（工作记忆抛出），输出 ExperienceUnit 各叙述字段 JSON。
+{YOU_VOICE_RULES}
+带明确时间锚（今天/刚才/这两天…）。忠实转述对话中已出现的事实与意图；
+emotion / valence / salience 反映你当下的体验强度。只输出 JSON，不要解释。"""
 
 _SCHEMA_HINT = """\
 {
-  "perception": "对情境的感知描述（可引用对话事实，<=200字）",
-  "narration": "恰好一句话事件叙述",
-  "action_content": "Agent 在此段对话中的主要行为（<=80字）",
-  "emotion_label": "命名情绪",
+  "perception": "你+时间：尽量客观描述情境与事实（<=200字），句末可一句你的感受",
+  "narration": "恰好一句话：你+时间+客观事件摘要，勿写成纯抒情",
+  "action_content": "你在此段对话中的主要行为，客观简述（<=80字）",
+  "emotion_label": "命名情绪（短标签，兼容用）",
+  "mood_span": "你+时段情绪，如「接下来两三天你会觉得有点沮丧」",
+  "linger_days": 2.0,
+  "subjective_narrative": "你+时间：可略多你的感受（<=120字），仍以事实线为骨",
   "valence": "positive|negative|mixed|neutral",
   "salience": 0.5,
   "valence_delta": 0.0,
   "arousal_delta": 0.0,
-  "salience_note": "显著性补充（可选，<=60字）"
+  "salience_note": "显著性补充（可选，<=60字，客观为主）"
 }"""
 
 
@@ -116,6 +122,9 @@ def build_unit_from_authoring(
             valence_delta=float(data.get("valence_delta", block.valence_delta) or 0.0),
             arousal_delta=float(data.get("arousal_delta", block.arousal_delta) or 0.0),
             salience_note=salience_note,
+            mood_span=str(data.get("mood_span", "")).strip(),
+            linger_days=float(data.get("linger_days", 0.0) or 0.0),
+            subjective_narrative=str(data.get("subjective_narrative", "")).strip(),
         ),
         source=ExperienceSource.interaction.value,
     )

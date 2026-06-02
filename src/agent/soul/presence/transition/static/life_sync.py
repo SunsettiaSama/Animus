@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agent.soul.life.anchor.presence_bundle import PresenceExperienceBundle
 
+from ...lingering import apply_bundle_lingering
 from ...state import PresenceState
 from ...state.static import normalize_narrative
 
@@ -10,25 +11,18 @@ def apply_static_bundle(
     state: PresenceState,
     bundle: PresenceExperienceBundle,
 ) -> list[str]:
-    """life 当下体验 → 五维静态自叙（不影响 interaction FSM）。"""
+    """life 当下体验 → 静态自叙（perception/cognition）；时段情绪写入 lingering，不刷 Speak 可见 affect。"""
     notes: list[str] = []
 
     if bundle.perception.strip():
         state.perception.narrative = normalize_narrative(bundle.perception)
         notes.append("static: perception ← life")
-    if bundle.narration.strip():
-        state.cognition.thinking = normalize_narrative(bundle.narration)
+    narration = bundle.subjective_narrative.strip() or bundle.narration.strip()
+    if narration:
+        state.cognition.thinking = normalize_narrative(narration)
         notes.append("static: thinking ← life narration")
-    if bundle.emotion_label.strip():
-        state.affect.narrative = normalize_narrative(bundle.emotion_label)
-        notes.append("static: affect ← emotion_label")
-    elif bundle.narration.strip() and not state.affect.narrative.strip():
-        state.affect.append(bundle.narration[:80])
-        notes.append("static: affect ← narration hint")
 
-    if bundle.rumination_hint.strip() and bundle.rumination_hint not in state.affect.narrative:
-        state.affect.append(bundle.rumination_hint[:120])
-        notes.append("static: affect ← rumination")
+    notes.extend(apply_bundle_lingering(state, bundle))
 
     if bundle.valence_delta != 0.0 or bundle.arousal_delta != 0.0:
         somatic_bits: list[str] = []

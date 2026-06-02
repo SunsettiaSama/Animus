@@ -204,6 +204,53 @@ class SocialMemoryNetwork:
 
         return render_interactor_portrait_block(interactor_id, core)
 
+    def gather_neighborhood_context(
+        self,
+        interactor_id: str,
+        *,
+        query: str = "",
+        top_k: int = 4,
+    ) -> tuple[tuple[str, float], ...]:
+        from .neighborhood_context import gather_weighted_neighborhood_context
+
+        return gather_weighted_neighborhood_context(
+            self,
+            interactor_id,
+            query=query,
+            top_k=top_k,
+            event_time_half_life_days=self._query._event_time_hl,
+        )
+
+    def build_interactor_portrait_narrative(
+        self,
+        interactor_id: str,
+        core: SocialCoreNode,
+        *,
+        query: str = "",
+        user_text: str = "",
+        top_k: int = 4,
+    ) -> str:
+        from .portrait_narrative import render_interactor_opening_narrative
+
+        ranked = self.gather_neighborhood_context(
+            interactor_id,
+            query=query,
+            top_k=top_k,
+        )
+        snippets = tuple(text for text, _score in ranked)
+        changelog = core.trait_changelog.strip()
+        recent_impression = ""
+        if changelog:
+            recent_impression = changelog.splitlines()[-1].strip()
+        return render_interactor_opening_narrative(
+            interactor_id=interactor_id,
+            core=core,
+            neighborhood_snippets=snippets,
+            user_text=user_text,
+            agent_relation=core.agent_relation.strip(),
+            recent_impression=recent_impression,
+        )
+
     def recall(
         self,
         query: str,

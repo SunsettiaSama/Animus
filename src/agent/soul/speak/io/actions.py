@@ -12,3 +12,7 @@ class SpeakAction:
     EVALUATE_DRIVE = "evaluate_drive"
     WORKING_MEMORY = "working_memory"
     DIALOGUE_STATE = "dialogue_state"
+    TYPING_PULSE = "typing_pulse"
+    SET_DELIVERY_MODE = "set_delivery_mode"
+    DIRECTOR_SNAPSHOT = "director_snapshot"
+    ENQUEUE_BREW = "enqueue_brew"

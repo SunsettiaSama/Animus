@@ -21,6 +21,9 @@ class PresenceExperienceBundle:
     narration: str = ""
     prior_thought: str = ""
     emotion_label: str = ""
+    mood_span: str = ""
+    linger_days: float = 0.0
+    subjective_narrative: str = ""
     salience: float = 0.0
     valence_delta: float = 0.0
     arousal_delta: float = 0.0
@@ -41,6 +44,9 @@ class PresenceExperienceBundle:
             "narration": self.narration,
             "prior_thought": self.prior_thought,
             "emotion_label": self.emotion_label,
+            "mood_span": self.mood_span,
+            "linger_days": self.linger_days,
+            "subjective_narrative": self.subjective_narrative,
             "salience": self.salience,
             "valence_delta": self.valence_delta,
             "arousal_delta": self.arousal_delta,
@@ -63,6 +69,9 @@ class PresenceExperienceBundle:
             narration=str(d.get("narration", "")),
             prior_thought=str(d.get("prior_thought", "")),
             emotion_label=str(d.get("emotion_label", "")),
+            mood_span=str(d.get("mood_span", "")),
+            linger_days=float(d.get("linger_days", 0.0) or 0.0),
+            subjective_narrative=str(d.get("subjective_narrative", "")),
             salience=float(d.get("salience", 0.0)),
             valence_delta=float(d.get("valence_delta", 0.0)),
             arousal_delta=float(d.get("arousal_delta", 0.0)),
@@ -119,6 +128,10 @@ def presence_bundle_from_unit(unit: ExperienceUnit) -> PresenceExperienceBundle:
     wants_share = salience >= 0.45 and bool(narration)
     share_desire = "eager" if salience >= 0.7 else "moderate" if salience >= 0.5 else "mild"
 
+    subjective = unit.feeling.effective_subjective_narrative()
+    if not subjective:
+        subjective = unit.situation.narration.strip()
+
     return PresenceExperienceBundle(
         session_id=unit.situation.session_id or "tao",
         source=unit.source,
@@ -127,6 +140,9 @@ def presence_bundle_from_unit(unit: ExperienceUnit) -> PresenceExperienceBundle:
         narration=narration,
         prior_thought=unit.situation.prior_thought.strip(),
         emotion_label=unit.feeling.emotion_label.strip(),
+        mood_span=unit.feeling.effective_mood_span(),
+        linger_days=float(unit.feeling.linger_days or 0.0),
+        subjective_narrative=subjective,
         salience=salience,
         valence_delta=unit.feeling.valence_delta,
         arousal_delta=unit.feeling.arousal_delta,
@@ -167,6 +183,9 @@ def merge_presence_bundles(bundles: list[PresenceExperienceBundle]) -> PresenceE
         narration="\n".join(parts_narration)[:800],
         prior_thought=peak.prior_thought,
         emotion_label=peak.emotion_label,
+        mood_span=peak.mood_span or next((b.mood_span for b in bundles if b.mood_span.strip()), ""),
+        linger_days=max((b.linger_days for b in bundles), default=0.0),
+        subjective_narrative=peak.subjective_narrative or peak.narration,
         salience=peak.salience,
         valence_delta=peak.valence_delta,
         arousal_delta=peak.arousal_delta,

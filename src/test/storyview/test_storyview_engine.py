@@ -1,36 +1,31 @@
 from __future__ import annotations
 
-from storyview import NarrativeBrief, StoryWorldview, StoryviewNarrativeEngine
+from storyview import StoryWorldview
 from storyview.bridge import StoryWorldContextBridge
+from storyview.types import ScenePacket
 
 
-def test_default_worldview_renders():
-    wv = StoryWorldview.default()
-    text = wv.render()
-    assert "虚实交界" in text
-    assert "不可违背" in text
+class _FakePort:
+    def __init__(self) -> None:
+        self._packet = ScenePacket(
+            event_id="e1",
+            world_id="default",
+            scene_text="你看见一扇半开的门。",
+        )
+
+    def last_scene(self, world_id: str):
+        return self._packet
+
+    def render_background(self, world_id: str, *, query: str = "", purpose: str = "") -> str:
+        return StoryWorldview.default().render() + (f"\n\n当前叙事关注：{query}" if query else "")
 
 
-def test_engine_background_without_llm():
-    engine = StoryviewNarrativeEngine(llm=None)
-    bg = engine.render_background(query="雨夜窗前")
-    assert "虚实交界" in bg
-    assert "雨夜窗前" in bg
-
-
-def test_engine_fallback_narrate():
-    engine = StoryviewNarrativeEngine(llm=None)
-    beat = engine.narrate(NarrativeBrief(hint="整理旧笔记"))
-    assert "整理旧笔记" in beat.text
-    assert beat.emotion_label
-
-
-def test_bridge_implements_background_supplier():
-    engine = StoryviewNarrativeEngine(llm=None)
-    bridge = StoryWorldContextBridge(engine)
+def test_bridge_includes_scene():
+    bridge = StoryWorldContextBridge(_FakePort(), world_id="default")
 
     class _Purpose:
         value = "fill"
 
     text = bridge.background(_Purpose(), query="午后")
+    assert "你看见一扇半开的门" in text
     assert "午后" in text

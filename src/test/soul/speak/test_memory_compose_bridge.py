@@ -1,17 +1,17 @@
-"""Speak 侧记忆 compose 拉取 / 注入链路诊断。"""
+"""Speak ??�?compose ?? / ??????�?""
 from __future__ import annotations
 
 import threading
 import time
 
-from agent.soul.speak.compose.bundle import SpeakPromptBundle
+from agent.soul.speak.orchestrator import SpeakPromptBundle
 from agent.soul.speak.io.inbound.memory.compose_bridge import InboundMemoryComposeBridge
 from agent.soul.speak.io.inbound.memory.gateway import InboundMemoryGateway
 from agent.soul.speak.io.inbound.memory.request import (
     SimilarMemoryBlock,
     SimilarMemoryPullResult,
 )
-from agent.soul.speak.session.prompt_trace import get_prompt_trace
+from agent.soul.speak.orchestrator.prompt_trace import get_prompt_trace
 from agent.soul.speak.session.queue.memory import MemoryBufferItem, SessionMemoryBuffer
 from agent.soul.speak.session.service import SpeakSessionService
 
@@ -85,7 +85,7 @@ def test_pull_compose_context_waits_for_keyword():
             "s-wait",
             MemoryBufferItem(
                 turn_index=2,
-                lines=("关键字命中",),
+                lines=("????�?,),
                 unit_ids=("u-kw",),
                 source="keyword",
             ),
@@ -94,12 +94,12 @@ def test_pull_compose_context_waits_for_keyword():
     threading.Thread(target=delayed_enqueue, daemon=True).start()
     similar, _ = bridge.pull_compose_context(
         "s-wait",
-        user_text="慢点，别急",
+        user_text="????�?,
         turn_index=2,
     )
 
     assert "u-kw" in similar.inject.unit_ids
-    assert "关键字命中" in similar.inject.lines
+    assert "????�? in similar.inject.lines
 
 
 def test_pull_compose_context_includes_social_prefetch_slot():
@@ -108,7 +108,7 @@ def test_pull_compose_context_includes_social_prefetch_slot():
         "s-social",
         MemoryBufferItem(
             turn_index=0,
-            lines=("社交记忆",),
+            lines=("????",),
             unit_ids=("u-social",),
             source="social_prefetch",
         ),
@@ -117,7 +117,7 @@ def test_pull_compose_context_includes_social_prefetch_slot():
         "s-social",
         MemoryBufferItem(
             turn_index=2,
-            lines=("关键字",),
+            lines=("??�?,),
             unit_ids=("u-kw",),
             source="keyword",
         ),
@@ -127,12 +127,12 @@ def test_pull_compose_context_includes_social_prefetch_slot():
     bundle = SpeakPromptBundle(session_id="s-social")
     similar, _ = bridge.pull_compose_context(
         "s-social",
-        user_text="你好",
+        user_text="??",
         turn_index=2,
     )
     bridge.apply_similar_memories(bundle, similar)
 
-    assert "社交记忆" in bundle.injected.status.similar_memories
+    assert "????" in bundle.guidance.recall_preview
     assert "u-social" in bundle.meta.get("activated_memory_ids", [])
 
 
@@ -143,10 +143,10 @@ def test_empty_pull_writes_no_similar_block():
     get_prompt_trace().set_session("s-empty", True)
     similar, _ = bridge.pull_compose_context(
         "s-empty",
-        user_text="慢点，别急",
+        user_text="????�?,
         turn_index=2,
     )
     bridge.apply_similar_memories(bundle, similar)
 
     assert similar.inject.unit_ids == []
-    assert bundle.injected.status.similar_memories == ""
+    assert bundle.guidance.recall_preview == ""

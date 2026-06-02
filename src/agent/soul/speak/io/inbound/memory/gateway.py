@@ -72,15 +72,17 @@ class InboundMemoryGateway:
         keyword_wait_ms: int = 200,
         budget: int = 5,
         merge_ratio: float | None = None,
+        user_text: str = "",
     ) -> SimilarMemoryPullResult:
         if self._pull_similar_fn is None:
             return SimilarMemoryPullResult()
         return self._pull_similar_fn(
             session_id,
             turn_index,
-            keyword_wait_ms,
-            budget,
-            merge_ratio,
+            keyword_wait_ms=keyword_wait_ms,
+            budget=budget,
+            merge_ratio=merge_ratio,
+            user_text=user_text,
         )
 
     def attach_portrait_query(

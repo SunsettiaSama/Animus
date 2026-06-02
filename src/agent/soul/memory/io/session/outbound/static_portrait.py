@@ -21,6 +21,8 @@ def load_static_core_portrait(
     portrait_body = ""
     agent_relation = ""
     recent_impression = ""
+    portrait_text = ""
+    neighborhood_snippets: tuple[str, ...] = ()
     if iid:
         direct = deps.social._nodes.get_core_for_interactor(iid)
         if isinstance(direct, SocialCoreNode):
@@ -33,14 +35,23 @@ def load_static_core_portrait(
             changelog = direct.trait_changelog.strip()
             if changelog:
                 recent_impression = changelog.splitlines()[-1].strip()
+            ranked = deps.social.gather_neighborhood_context(iid, top_k=4)
+            neighborhood_snippets = tuple(text for text, _score in ranked)
+            portrait_text = deps.social.build_interactor_portrait_narrative(
+                iid,
+                direct,
+                user_text="",
+                top_k=4,
+            )
     return InteractorPortraitSpeakResult(
         session_id=sid,
         turn_index=turn_index,
         interactor_id=iid,
-        portrait_text="",
+        portrait_text=portrait_text,
         display_name=display_name,
         core_traits=core_traits,
         portrait_body=portrait_body,
         agent_relation=agent_relation,
         recent_impression=recent_impression,
+        neighborhood_snippets=neighborhood_snippets,
     )

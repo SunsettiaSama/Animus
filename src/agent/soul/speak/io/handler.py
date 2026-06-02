@@ -10,6 +10,7 @@ from infra.llm import BaseLLM
 
 from .actions import SpeakAction
 from ..session import SpeakFeelingChunk, SpeakSubjectiveChunk
+from ..llm.director_engine import SpeakDirectorLLMEngine
 from ..service import SpeakService
 
 if TYPE_CHECKING:
@@ -20,6 +21,7 @@ class SpeakHandler:
     """Speak API Handler：会话记账 + experience 穿透 + LLM 生成。"""
 
     DEFAULT_AUX_NAME = "speak"
+    DEFAULT_DIRECTOR_AUX_NAME = "speak_director"
 
     def __init__(
         self,
@@ -28,12 +30,14 @@ class SpeakHandler:
         experience: SpeakExperiencePort,
         llm_service: LLMServicePort | None = None,
         llm_aux_name: str = DEFAULT_AUX_NAME,
+        director_aux_name: str = DEFAULT_DIRECTOR_AUX_NAME,
         primary_llm: BaseLLM | None = None,
     ) -> None:
         self._get_speak_service = get_speak_service
         self._experience = experience
         self._llm_service = llm_service
         self._llm_aux_name = llm_aux_name
+        self._director_aux_name = director_aux_name
         self._primary_llm = primary_llm
 
     def resolve_llm(self) -> BaseLLM | None:
@@ -43,12 +47,22 @@ class SpeakHandler:
             self._primary_llm,
         )
 
+    def resolve_director_llm(self) -> BaseLLM | None:
+        return resolve_module_llm(
+            self._llm_service,
+            self._director_aux_name,
+            self._primary_llm,
+        )
+
     @property
     def api(self) -> SpeakService:
         service = self._get_speak_service()
         llm = self.resolve_llm()
         if llm is not None and service.llm_engine.llm is None:
             service.llm_engine.set_llm(llm)
+        director_llm = self.resolve_director_llm()
+        if director_llm is not None and not service._director_llm.available:
+            service._director_llm._engine.set_llm(director_llm)
         return service
 
     def handle(self, action: str, payload: dict[str, Any]) -> Any:
@@ -100,6 +114,29 @@ class SpeakHandler:
 
         if action == SpeakAction.DIALOGUE_STATE:
             return self._dialogue_state(payload)
+
+        if action == SpeakAction.TYPING_PULSE:
+            return self.api.on_typing_pulse(
+                payload["session_id"],
+                typing=bool(payload.get("typing", False)),
+                draft=str(payload.get("draft", "")),
+            )
+
+        if action == SpeakAction.SET_DELIVERY_MODE:
+            mode = str(payload.get("mode", "stream"))
+            self.api.set_delivery_mode(mode)
+            return {"ok": True, "delivery_mode": self.api._delivery_mode}
+
+        if action == SpeakAction.DIRECTOR_SNAPSHOT:
+            return self.api.director_snapshot(payload["session_id"])
+
+        if action == SpeakAction.ENQUEUE_BREW:
+            return self.api.enqueue_proactive_brew(
+                payload["session_id"],
+                str(payload.get("text", "")),
+                reason=str(payload.get("reason", "api")),
+                flush_if_idle=bool(payload.get("flush_if_idle", True)),
+            )
 
         raise ValueError(f"unknown speak action: {action!r}")
 

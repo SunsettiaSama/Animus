@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
+from agent.soul.life.experience.domain.anchor_codec import AnchorUnitContext  # noqa: F401
+from agent.soul.life.experience.domain.unit import ExperienceUnit  # noqa: F401
 from agent.soul.memory.domain import EdgeType, EvolutionSource
 from agent.soul.memory.graph.node.create.archive import ExperienceArchiver
 from agent.soul.memory.graph.networks.social.network import SocialMemoryNetwork
@@ -100,3 +104,31 @@ def test_core_evolver_appends_trait_changelog():
     )
     assert evolved.trait_version == 2
     assert "更愿意分享情绪" in evolved.trait_changelog
+
+
+def test_social_recall_prefers_recent_neighborhood():
+    nodes = _MemStore()
+    edges = _EdgeStore()
+    social = SocialMemoryNetwork(
+        nodes,
+        edges,
+        _InteractorStore(),
+        ExperienceArchiver(_FakeLLM({}), nodes),
+        query=SocialQueryEngine(nodes, event_time_half_life_days=30.0),
+    )
+    social.register_core_portrait(
+        "alice",
+        {"name": "Alice", "core_traits": ["细心"]},
+    )
+    now = datetime.now(timezone.utc)
+    old = social.add_supplement("alice", label="旧事", content="旧事旧事旧事")
+    old.created_at = now - timedelta(days=200)
+    nodes.put(old)
+    recent = social.add_supplement("alice", label="近况", content="近况近况近况")
+    recent.created_at = now - timedelta(days=2)
+    nodes.put(recent)
+    ranked = social.gather_neighborhood_context("alice", query="近况", top_k=2)
+    assert ranked
+    assert ranked[0][0] == "近况近况近况"
+
+

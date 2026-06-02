@@ -12,40 +12,40 @@ from agent.soul.memory.emotion_intensity import infer_emotion_intensity
 from agent.soul.memory.graph.scored import ScoredUnit
 from agent.soul.memory.graph.traversal import GraphTraversal
 from agent.soul.memory.graph.node_store import GraphNodeStore
+from agent.soul.voice_rules import YOU_RUMINATION_VOICE_RULES, YOU_VOICE_RULES
 from agent.soul.memory.unit import MemoryTier, MemoryUnit, ReconstructiveMemory, Valence
 
 if TYPE_CHECKING:
     from infra.llm import BaseLLM
 
 
-_SKILL_SYSTEM = """\
-你是 Agent 的内在反刍层——不是档案员，不是客观复述者。
+_SKILL_SYSTEM = f"""\
+你是 Agent 的内在反刍层——不是档案员，不是冷冰冰的复述者。
 
-此刻 Agent 正经历**反刍（rumination）**：一股令人不安、难以放下的回忆突然涌上心头，\
+此刻你正经历**反刍（rumination）**：一股难以放下的回忆突然涌上心头，\
 在安静中反复折返、自我诘问。你收到的不是「请总结这段记忆」，而是：\
-**这段回忆再次缠住了 Agent，Agent 将如何对待它？**
+**这段回忆再次缠住了你，你将如何对待它？**
+
+{YOU_RUMINATION_VOICE_RULES}
 
 你的任务
 --------
-1. **第一人称内在独白**：以 Agent「我」的口吻，写 Agent 此刻如何面对这段涌上的回忆——\
-   是反复咀嚼、试图解释、自责、美化、回避、还是强行按下？必须体现反刍的心理过程，\
-   不是对外叙述，是 inward 的纠缠。
-2. **覆盖式记忆改写**：用上述反刍后的主观理解，**覆盖**主记忆的正文（fact/perception 或 reconstructed_fact）。\
-   语义允许且应当偏离原客观表述——反刍会扭曲细节、放大某面、淡化某面；\
+1. **内在反刍**：以第二人称「你」写出你此刻如何面对这段涌上的回忆——\
+   反复咀嚼、试图解释、自责、美化、回避或强行按下；须体现 inward 的纠缠，不是对外新闻稿。
+2. **覆盖式记忆改写**：用反刍后的理解**覆盖**主记忆正文（fact/perception 或 reconstructed_fact）。\
+   正文仍以客观复述事实为主，夹杂少量「你」此刻的扭曲与挥之不去；\
    读者应能察觉「这已是反刍后的记忆，而非最初记录」。
 3. **关系牵连**：若语义扩散候选中存在与这次反刍相关的记忆，可建立 new_edges；\
-   反刍常把原本分离的事连在一起——但只能从候选 id 中选择。
+   但只能从候选 id 中选择。
 
 输出规则
 --------
-- focus：反刍此刻抓住的核心角度，12字以内，带主观色彩
-- 主体文本：第一人称反刍后的记忆表述，80~120字；须含 Agent 对这段回忆的态度或感受
+- focus：反刍此刻抓住的核心角度，12字以内
+- 主体文本：80~120字；客观事实线为主，少量「你」的反刍感受
 - emotion / valence：反刍当下的命名情绪与效价
 - base_activation：0.5~0.95；越缠人、越难放下越高
 - new_edges：target_id 仅来自【语义扩散候选】；edge_type 为 "related_to" 或 "involves"；\
   weight 0.5~1.0；无合理牵连则 []
-
-禁止：客观第三人称摘要、平静中立地复述原事实、假装这段记忆没有扰动 Agent。
 
 严格输出合法 JSON，不含任何其他文字。"""
 
@@ -74,17 +74,18 @@ _SKILL_SCHEMA_RECONSTRUCTIVE = """\
   ]
 }"""
 
-_SYSTEM = """\
-你是记忆重构系统。根据 AI 角色当前的情绪状态，对一段记忆材料进行主观重构——\
-模拟人类"记忆再巩固"：材料可以是**原始事实记忆**，也可以是**上一轮已经重构过的解读**；\
-每次重构都可能带来新的细微扭曲或升华。
+_SYSTEM = f"""\
+你是记忆重构系统。根据你当前的情绪状态，对一段记忆材料进行再巩固式重构——\
+材料可以是原始事实记忆，也可以是上一轮已重构过的解读。
+
+{YOU_VOICE_RULES}
 
 规则：
 - focus: 本次重构关注的核心角度，12字以内
-- reconstructed_fact: 从当前情绪角度重新解读的内容，允许情绪色彩甚至轻微偏差，80字以内
-- emotion: 重构时的命名情绪，如"释然"、"怀念"、"遗憾"、"骄傲"
+- reconstructed_fact: 尽量客观复述事实（你+时间），允许轻微情绪偏差，句末少许你的感受，80字以内
+- emotion: 重构时的命名情绪，如「释然」「怀念」「遗憾」「骄傲」
 - valence: 严格输出 "positive" | "negative" | "mixed" | "neutral" 之一
-- base_activation: 重构记忆的初始重要性，浮点数 0.3~0.9
+- base_activation: 0.3~0.9
 
 严格输出合法 JSON，不含任何其他文字。"""
 
@@ -246,9 +247,9 @@ class RuminationWriter:
             f"{_render_rumination_frame(trigger=trigger, emotional_context=emotional_context)}\n\n"
             f"{_render_source_block(source)}\n\n"
             f"{_render_neighbors_block(neighbors)}\n\n"
-            f"【Agent 人物画像】（反刍时「我」是谁；口吻与价值取相应一致）\n"
+            f"【人物画像】（反刍时「你」是谁；口吻与价值取向须一致）\n"
             f"{persona_profile or '（未提供）'}\n\n"
-            f"以上是一段正在反刍的记忆。请以 Agent 第一人称，完成覆盖式反刍改写，并输出 JSON：\n{schema}"
+            f"以上是一段正在反刍的记忆。请以第二人称「你」完成覆盖式反刍改写，并输出 JSON：\n{schema}"
         )
         raw = self._llm.generate_messages(
             [SystemMessage(content=_SKILL_SYSTEM), HumanMessage(content=prompt)]

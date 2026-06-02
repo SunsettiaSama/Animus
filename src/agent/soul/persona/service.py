@@ -78,6 +78,24 @@ class PersonaService:
             preserve_self_concept=preserve_self_concept,
         )
 
+    def ensure_distill(self, *, force: bool = False) -> dict[str, Any]:
+        result = self._manager.ensure_distill(force=force)
+        pack = result.pack
+        return {
+            "ok": pack is not None and bool(pack.dialogue_text()),
+            "refreshed": result.refreshed,
+            "reason": result.reason,
+            "portrait_revision": self._manager.portrait_revision(),
+            "persona_distill": pack.to_dict() if pack is not None else {},
+        }
+
+    def get_distill(self) -> dict[str, Any]:
+        snap = self._manager.snapshot()
+        return {
+            "portrait_revision": self._manager.portrait_revision(),
+            "persona_distill": snap.get("persona_distill") or {},
+        }
+
     def sync_presence_expectation(
         self,
         *,

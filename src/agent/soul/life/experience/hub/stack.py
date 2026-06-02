@@ -68,6 +68,7 @@ class LifeExperienceStack:
         if unit.source == "collision":
             return
         session_id = unit.situation.session_id or "tao"
+        self._presence.on_unit_ingested(unit, self.log)
         self._presence.pull_and_sync_from_life(self.log, session_id)
 
     def sync_presence(

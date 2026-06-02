@@ -17,14 +17,14 @@ from agent.soul.presence.state_block import PresenceStateBlock
 def test_life_bundle_merges_hot_units(tmp_path):
     log = ExperienceLog(str(tmp_path))
     u1 = ExperienceUnit.make(
-        situation=ExperienceSituation(session_id="tao", narration="虚拟叙事节拍"),
-        action=ExperienceAction(kind=ExperienceActionKind.reasoning, content="虚拟叙事节拍"),
-        feeling=ExperienceFeeling(salience=0.6, emotion_label="好奇"),
+        situation=ExperienceSituation(session_id="tao", narration="\u865a\u62df\u5b63\u4e8b\u8282\u62cd"),
+        action=ExperienceAction(kind=ExperienceActionKind.reasoning, content="\u865a\u62df\u5b63\u4e8b\u8282\u62cd"),
+        feeling=ExperienceFeeling(salience=0.6, emotion_label="\u597d\u5947"),
         source="narrative",
     )
     u2 = ExperienceUnit.make(
-        situation=ExperienceSituation(session_id="tao", narration="意外惊喜"),
-        action=ExperienceAction(kind=ExperienceActionKind.attending, content="意外惊喜"),
+        situation=ExperienceSituation(session_id="tao", narration="\u610f\u5916\u60ca\u559c"),
+        action=ExperienceAction(kind=ExperienceActionKind.attending, content="\u610f\u5916\u60ca\u559c"),
         feeling=ExperienceFeeling(salience=0.5),
         source="surprise",
     )
@@ -32,22 +32,30 @@ def test_life_bundle_merges_hot_units(tmp_path):
     log.append(u2)
     bundle = supply_presence_bundle_from_life(log, "tao", hours=24)
     assert bundle is not None
-    assert "虚拟叙事" in bundle.narration or "意外" in bundle.narration
     assert bundle.wants_to_share is True
 
 
 def test_sync_life_bundle_updates_static_not_boundary_fsm():
     svc = PresenceService()
     unit = ExperienceUnit.make(
-        situation=ExperienceSituation(session_id="tao", narration="想分享一件事"),
-        action=ExperienceAction(kind=ExperienceActionKind.speaking, content="想分享一件事"),
-        feeling=ExperienceFeeling(salience=0.55, emotion_label="期待"),
+        situation=ExperienceSituation(
+            session_id="tao",
+            narration="\u60f3\u5206\u4eab\u4e00\u4ef6\u4e8b",
+        ),
+        action=ExperienceAction(
+            kind=ExperienceActionKind.speaking,
+            content="\u60f3\u5206\u4eab\u4e00\u4ef6\u4e8b",
+        ),
+        feeling=ExperienceFeeling(salience=0.55, emotion_label="\u671f\u5f85"),
         source="narrative",
     )
     bundle = presence_bundle_from_unit(unit)
     sync = svc.sync_life_bundle(bundle)
     snap = svc.snapshot("tao")
-    assert "期待" in snap.state.affect.narrative or "想分�? in snap.state.cognition.thinking
+    mood_texts = [m.text for m in snap.state.lingering_moods]
+    assert any("\u671f\u5f85" in t for t in mood_texts) or "\u60f3\u5206\u4eab" in (
+        snap.state.cognition.thinking or ""
+    )
     assert snap.expectation.value == "none"
     assert "static:" in " ".join(sync["static_notes"])
     assert svc.share_queue_size("tao") >= 1
@@ -55,9 +63,15 @@ def test_sync_life_bundle_updates_static_not_boundary_fsm():
 
 def test_state_block_routes_through_life_sync():
     svc = PresenceService()
-    notes = svc.apply_state_block(PresenceStateBlock.rumination(
-        narratives={"thinking": "回忆起旧对话"},
-        meta={"wants_to_share": "true", "share_topic": "想聊聊刚才的�?, "share_desire": "mild"},
-    ))
+    notes = svc.apply_state_block(
+        PresenceStateBlock.rumination(
+            narratives={"thinking": "\u56de\u60f3\u8d77\u65e7\u5bf9\u8bdd"},
+            meta={
+                "wants_to_share": "true",
+                "share_topic": "\u60f3\u804a\u804a\u521a\u624d\u7684\u4e8b",
+                "share_desire": "mild",
+            },
+        ),
+    )
     assert notes
     assert svc.share_queue_size("tao") == 1

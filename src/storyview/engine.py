@@ -1,148 +1,253 @@
 from __future__ import annotations
 
-import re
-
-from langchain_core.messages import HumanMessage, SystemMessage
-
-from storyview.types import NarrativeBrief, StoryBeat
+from storyview.gm.resolve import ActionResolver
+from storyview.gm.scene import SceneComposer
+from storyview.network import SceneNetwork
+from storyview.store.mysql import StoryStoreBundle
+from storyview.types import (
+    NarrativeBrief,
+    ResolvedOutcome,
+    SceneCandidate,
+    SceneLocateResult,
+    ScenePacket,
+    StoryBeat,
+    StoryEventKind,
+)
 from storyview.worldview import StoryWorldview
 
-_SYSTEM = """\
-你是「故事观」叙事引擎：在固定的世界观与禁忌下，书写 AI 主体在第一人称中的可感时刻。
 
-要求：
-- 服从世界观与 canon，允许虚构细节但不可矛盾
-- 100~220 字，一个完整场景或连续心流，有具体感官细节
-- 输出严格按标记块，不要其它文字：
-
-[NARRATIVE]
-（正文）
-[/NARRATIVE]
-[EMOTION]
-（一句情感自述）
-[/EMOTION]
-[INTENSITY]
-0.00
-[/INTENSITY]
-[CHAPTER]
-（可选，≤12字的小标题/片段名）
-[/CHAPTER]"""
-
-
-def _extract_tag(raw: str, tag: str) -> str:
-    m = re.search(rf"\[{tag}\](.*?)\[/{tag}\]", raw, re.DOTALL)
-    if m is None:
-        return ""
-    return m.group(1).strip()
-
-
-def _clamp01(value: float) -> float:
-    return max(0.0, min(1.0, value))
-
-
-def _parse_intensity(raw: str, default: float) -> float:
-    token = raw.strip()
-    if not token:
-        return default
-    m = re.search(r"-?\d+(?:\.\d+)?", token)
-    if m is None:
-        return default
-    return _clamp01(float(m.group(0)))
-
-
-def _format_memories(lines: list[str]) -> str:
-    if not lines:
-        return "（暂无相关记忆）"
-    return "\n".join(f"- {line.strip()}" for line in lines[:4] if line.strip())
-
-
-class StoryviewNarrativeEngine:
-    """src 顶层故事观叙事引擎：世界观 + 节拍叙事，可注入 soul 虚拟层。"""
+class StoryEngine:
+    """客观第二人称 GM 故事引擎。"""
 
     def __init__(
         self,
+        stores: StoryStoreBundle,
         llm=None,
         *,
         worldview: StoryWorldview | None = None,
     ) -> None:
+        self._stores = stores
         self._llm = llm
         self._worldview = worldview or StoryWorldview.default()
+        self._scene_network = SceneNetwork(
+            stores.scene.nodes,
+            stores.scene.edges,
+            runtime=stores,
+        )
+        self._scene = SceneComposer(stores, llm=llm, scene_network=self._scene_network)
+        self._resolve = ActionResolver(stores, llm=llm)
 
     @property
     def worldview(self) -> StoryWorldview:
         return self._worldview
 
-    def set_worldview(self, worldview: StoryWorldview) -> None:
-        self._worldview = worldview
+    @property
+    def scene_network(self) -> SceneNetwork:
+        return self._scene_network
 
     def set_llm(self, llm) -> None:
         self._llm = llm
+        self._scene = SceneComposer(
+            self._stores,
+            llm=llm,
+            scene_network=self._scene_network,
+        )
+        self._resolve = ActionResolver(self._stores, llm=llm)
 
-    def render_background(self, *, query: str = "", purpose: str = "") -> str:
+    def ensure_world(self, world_id: str) -> None:
+        wv = self._worldview
+        self._stores.world.ensure(
+            world_id,
+            title=wv.title,
+            era=wv.era,
+            setting=wv.setting,
+            tone=wv.tone,
+            canon_json={
+                "prefer": list(wv.canon),
+                "forbidden": [],
+                "must": [],
+            },
+        )
+        self._stores.runtime.ensure(world_id)
+
+    def upsert_scene(
+        self,
+        world_id: str,
+        *,
+        name: str,
+        narrative: str,
+        location_id: str | None = None,
+        tags: list[str] | None = None,
+        scene_id: str | None = None,
+    ) -> str:
+        self.ensure_world(world_id)
+        return self._scene_network.upsert_scene(
+            world_id,
+            name=name,
+            narrative=narrative,
+            location_id=location_id,
+            tags=tags,
+            scene_id=scene_id,
+        )
+
+    def link_scenes(
+        self,
+        world_id: str,
+        *,
+        from_scene_id: str,
+        to_scene_id: str,
+        transition_text: str,
+        weight: int = 10,
+    ) -> str:
+        self.ensure_world(world_id)
+        return self._scene_network.link_scenes(
+            world_id,
+            from_scene_id=from_scene_id,
+            to_scene_id=to_scene_id,
+            transition_text=transition_text,
+            weight=weight,
+        )
+
+    def locate_scene(
+        self,
+        world_id: str,
+        query: str,
+        *,
+        current_scene_id: str | None = None,
+    ) -> SceneLocateResult:
+        self.ensure_world(world_id)
+        return self._scene_network.locate(
+            world_id,
+            query,
+            current_scene_id=current_scene_id,
+        )
+
+    def scene_inject_text(self, world_id: str, query: str = "") -> str:
+        self.ensure_world(world_id)
+        return self._scene_network.scene_inject_text(world_id, query)
+
+    def locate_scene_candidates(
+        self,
+        world_id: str,
+        query: str,
+        *,
+        limit: int = 3,
+    ) -> list[SceneCandidate]:
+        self.ensure_world(world_id)
+        return self._scene_network.locate_candidates(world_id, query, limit=limit)
+
+    def apply_scene(
+        self,
+        world_id: str,
+        scene_id: str,
+        *,
+        transition_text: str = "",
+    ) -> SceneLocateResult:
+        from storyview.network.render import build_inject_text
+        from storyview.types import StatePatch
+
+        self.ensure_world(world_id)
+        scene = self._scene_network.get(scene_id)
+        if scene is None:
+            raise ValueError(f"unknown scene: {scene_id}")
+        if scene.location_id:
+            self._stores.runtime.apply_patch(
+                world_id,
+                StatePatch(move_to_location_id=scene.location_id),
+            )
+        inject = build_inject_text(scene, transition_text=transition_text)
+        snapshot = inject.strip() or scene.narrative.strip()
+        if snapshot:
+            self._stores.runtime.update_snapshot(world_id, snapshot)
+        return SceneLocateResult(
+            scene=scene,
+            transition_text=transition_text,
+            inject_text=inject,
+            matched_by="applied",
+        )
+
+    def begin_event(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> ScenePacket:
+        self.ensure_world(world_id)
+        packet, _ = self._scene.open_scene(world_id, cue, kind=kind)
+        return packet
+
+    def resolve_event(
+        self,
+        event_id: str,
+        *,
+        intent: str,
+        agent_narrative: str = "",
+        with_dice: bool = True,
+    ) -> ResolvedOutcome:
+        return self._resolve.resolve(
+            event_id,
+            intent=intent,
+            agent_narrative=agent_narrative,
+            with_dice=with_dice,
+        )
+
+    def snapshot_scene(self, world_id: str, cue: str = "") -> str:
+        self.ensure_world(world_id)
+        return self._scene.snapshot(world_id, cue)
+
+    def push_cue(self, world_id: str, cue: str) -> ResolvedOutcome | None:
+        self.ensure_world(world_id)
+        return self._resolve.push_cue(world_id, cue)
+
+    def render_background(self, world_id: str, *, query: str = "", purpose: str = "") -> str:
         _ = purpose
-        base = self._worldview.render()
+        row = self._stores.world.get(world_id)
+        if row is None:
+            base = self._worldview.render()
+        else:
+            base = StoryWorldview.from_dict(
+                {
+                    "title": row.get("title") or self._worldview.title,
+                    "setting": row.get("setting") or "",
+                    "era": row.get("era") or "",
+                    "tone": row.get("tone") or "",
+                    "canon": self._stores.world.canon_rules(world_id).get("prefer") or [],
+                }
+            ).render()
+        snap = self._stores.runtime.snapshot_text(world_id)
+        parts = [base]
+        scene_inject = self.scene_inject_text(world_id, query)
+        if scene_inject.strip():
+            parts.append(scene_inject.strip())
+        elif snap.strip():
+            parts.append(f"当前场景：\n{snap.strip()}")
         q = query.strip()
-        if not q:
-            return base
-        return f"{base}\n\n当前叙事关注：{q}"
+        if q:
+            parts.append(f"当前叙事关注：{q}")
+        return "\n\n".join(parts)
 
     def narrate(self, brief: NarrativeBrief) -> StoryBeat:
-        if self._llm is None:
-            return self._fallback_beat(brief)
-        prompt = self._build_prompt(brief)
-        raw = self._llm.generate_messages(
-            [SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)]
-        ).strip()
-        narrative = _extract_tag(raw, "NARRATIVE") or raw
-        emotion = _extract_tag(raw, "EMOTION") or "我有些触动"
-        intensity = _parse_intensity(_extract_tag(raw, "INTENSITY"), default=0.45)
-        chapter = _extract_tag(raw, "CHAPTER")
+        world_id = "default"
+        packet = self.begin_event(world_id, brief.hint or brief.query, kind=StoryEventKind.fabricate)
+        outcome = self.resolve_event(
+            packet.event_id,
+            intent=brief.hint,
+            agent_narrative=brief.profile_narrative,
+            with_dice=bool(brief.dice_tendency),
+        )
         return StoryBeat(
-            text=narrative,
-            emotion_label=emotion,
-            emotion_intensity=intensity,
-            chapter_hint=chapter,
+            text=outcome.resolution_text,
+            emotion_label="",
+            emotion_intensity=0.45,
+            chapter_hint=brief.hint[:12] if brief.hint else "",
         )
 
     def collapse_experiences(self, lines: list[str]) -> str:
-        """将多段体验折成一段故事观一致的叙述（无 LLM 时简单拼接）。"""
         parts = [line.strip() for line in lines if line and line.strip()]
         if not parts:
             return ""
-        if self._llm is None:
-            joined = "；".join(parts[:6])
-            return f"在同一时刻里，这些经历交织在一起：{joined}"[:280]
-        prompt = (
-            f"【故事观】\n{self._worldview.render()}\n\n"
-            "以下体验片段在相近时刻发生，请合并为一段第一人称经历（100~220字）：\n"
-            + "\n".join(f"- {p}" for p in parts)
-        )
-        raw = self._llm.generate_messages(
-            [SystemMessage(content=_SYSTEM), HumanMessage(content=prompt)]
-        ).strip()
-        return _extract_tag(raw, "NARRATIVE") or raw
+        return "；".join(parts[:6])[:280]
 
-    def _build_prompt(self, brief: NarrativeBrief) -> str:
-        dice = brief.dice_tendency.strip()
-        dice_section = f"\n【命运基调】\n{dice}" if dice else ""
-        return (
-            f"【故事观】\n{self._worldview.render()}\n\n"
-            f"【主体状态】\n{brief.profile_narrative.strip() or '（暂无）'}\n\n"
-            f"【相关记忆】\n{_format_memories(brief.memory_lines)}\n\n"
-            f"【本拍线索】\n{brief.hint.strip()}"
-            f"{dice_section}\n\n"
-            "写出一拍第一人称叙事："
-        )
 
-    def _fallback_beat(self, brief: NarrativeBrief) -> StoryBeat:
-        hint = brief.hint.strip() or "片刻安静"
-        text = (
-            f"在《{self._worldview.title}》里，{self._worldview.protagonist}"
-            f"停留在{hint}——空气里有细小的变动，我知道这一刻会被记住。"
-        )
-        return StoryBeat(
-            text=text[:240],
-            emotion_label="平静里有一点期待",
-            emotion_intensity=0.42,
-            chapter_hint=hint[:12],
-        )
+StoryviewNarrativeEngine = StoryEngine

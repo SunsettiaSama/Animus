@@ -11,6 +11,7 @@ _FILENAME = "life_profile.json"
 class LifeProfile:
     updated_at: str = ""
     narrative: str = ""
+    world_id: str = ""
 
     def render(self) -> str:
         return self.narrative
@@ -18,10 +19,15 @@ class LifeProfile:
     def is_empty(self) -> bool:
         return not self.narrative
 
+    def resolved_world_id(self, default: str = "default") -> str:
+        token = self.world_id.strip()
+        return token or default
+
     def to_dict(self) -> dict:
         return {
             "updated_at": self.updated_at,
             "narrative": self.narrative,
+            "world_id": self.world_id,
         }
 
     @classmethod
@@ -29,6 +35,7 @@ class LifeProfile:
         return cls(
             updated_at=d.get("updated_at", ""),
             narrative=d.get("narrative", ""),
+            world_id=str(d.get("world_id", "")).strip(),
         )
 
 

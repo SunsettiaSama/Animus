@@ -24,6 +24,7 @@ from .buffer import (
     current_month,
 )
 from .self_concept import SelfConcept, SelfConceptBlock, SelfConceptStore
+from .distill import DistillEnsureResult, PersonaDistillPack, ensure_distill
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class PersonaManager:
         self._drift_updater = MonthlyDriftUpdater()
         self._memory_port: MemoryDriftUnitPort | None = None
         self._embedder: EmbedderBackend | None = None
+        self._distill_pack: PersonaDistillPack | None = None
 
     @property
     def profile(self) -> PersonaProfile:
@@ -120,8 +122,29 @@ class PersonaManager:
             return f"{query} {sc_keywords}"
         return query
 
+    def ensure_distill(self, *, force: bool = False) -> DistillEnsureResult:
+        if self._worker is not None:
+            return self._worker.submit(
+                lambda: self._ensure_distill_impl(force=force)
+            ).result()
+        return self._ensure_distill_impl(force=force)
+
+    def _ensure_distill_impl(self, *, force: bool = False) -> DistillEnsureResult:
+        result = ensure_distill(
+            persona_dir=self._cfg.persona_dir,
+            profile=self._profile,
+            self_concept=self._self_concept,
+            attention_keywords=self._self_concept.query_bias_keywords(),
+            source_revision=self.portrait_revision(),
+            llm=self._llm,
+            force=force,
+        )
+        self._distill_pack = result.pack
+        return result
+
     def snapshot(self) -> dict:
-        return {
+        distill_result = self._ensure_distill_impl()
+        data = {
             "profile": self._profile.to_dict(),
             "buffer": {
                 **self._buffer.summary(),
@@ -131,6 +154,9 @@ class PersonaManager:
             "self_concept": self._self_concept.to_dict(),
             "attention_keywords": self._self_concept.query_bias_keywords(),
         }
+        if distill_result.pack is not None:
+            data["persona_distill"] = distill_result.pack.to_dict()
+        return data
 
     def buffer_snapshot(self, *, include_signals: bool = False) -> dict:
         data = self.snapshot()["buffer"]
@@ -215,11 +241,14 @@ class PersonaManager:
             return {"ok": True, "applied": False, "reason": "empty_delta"}
         self._self_concept.apply_delta(delta)
         self._sc_store.save(self._self_concept)
+        distill = self._ensure_distill_impl()
         return {
             "ok": True,
             "applied": True,
             "reason": "self_concept_drifted",
             "portrait_revision": self.portrait_revision(),
+            "persona_distill_refreshed": distill.refreshed,
+            "persona_distill_reason": distill.reason,
         }
 
     def _clear_buffer_impl(self) -> None:
@@ -243,12 +272,15 @@ class PersonaManager:
         _buffer_state = self._buffer_store.load_state()
         self._buffer = _buffer_state.buffer
         self._buffer_meta = _buffer_state.meta
+        distill = self._ensure_distill_impl()
         return {
             "ok": True,
             "applied": True,
             "reason": "reload_profile",
             "profile_source": "built" if built is not None else "raw",
             "portrait_revision": self.portrait_revision(),
+            "persona_distill_refreshed": distill.refreshed,
+            "persona_distill_reason": distill.reason,
         }
 
     def rebuild_profile(self, *, preserve_self_concept: bool = False) -> dict:
@@ -277,6 +309,7 @@ class PersonaManager:
         if preserve_self_concept:
             self._self_concept = self._sc_store.load()
 
+        distill = self._ensure_distill_impl()
         return {
             "ok": True,
             "applied": True,
@@ -285,6 +318,8 @@ class PersonaManager:
             "self_concept_reset": not preserve_self_concept,
             "built_at": result.profile.built_at,
             "portrait_revision": self.portrait_revision(),
+            "persona_distill_refreshed": distill.refreshed,
+            "persona_distill_reason": distill.reason,
         }
 
     def portrait_for_narrative(
@@ -294,19 +329,31 @@ class PersonaManager:
         compact: bool = False,
     ) -> str:
         if compact:
-            narrative = self._self_concept.narrative.strip()
-            text = narrative or self._profile.render()
+            text = self._self_concept.render_for_role_llm(
+                top_k=2,
+                warn_main_portrait=True,
+                caller="PersonaManager.portrait_for_narrative",
+            )
+            if not text.strip():
+                text = self._profile.render(
+                    warn_main_portrait=True,
+                    caller="PersonaManager.portrait_for_narrative",
+                )
         else:
-            trait_hint = ""
-            if self._profile.core_traits:
-                trait_hint = "、".join(self._profile.core_traits[:4])
-            head = f"【{self._profile.name}】"
-            if trait_hint:
-                head += f" {trait_hint}"
-            parts = [head]
-            narrative = self._self_concept.narrative.strip()
-            if narrative:
-                parts.append(narrative)
+            parts: list[str] = []
+            profile_text = self._profile.render(
+                warn_main_portrait=True,
+                caller="PersonaManager.portrait_for_narrative",
+            )
+            if profile_text.strip():
+                parts.append(profile_text)
+            concept_text = self._self_concept.render_for_role_llm(
+                top_k=2,
+                warn_main_portrait=True,
+                caller="PersonaManager.portrait_for_narrative",
+            )
+            if concept_text.strip():
+                parts.append(concept_text)
             text = "\n\n".join(parts)
         if max_chars > 0 and len(text) > max_chars:
             text = text[-max_chars:]

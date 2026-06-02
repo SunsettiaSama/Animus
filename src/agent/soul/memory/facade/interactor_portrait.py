@@ -14,3 +14,4 @@ class InteractorPortraitSpeakResult:
     portrait_body: str = ""
     agent_relation: str = ""
     recent_impression: str = ""
+    neighborhood_snippets: tuple[str, ...] = ()

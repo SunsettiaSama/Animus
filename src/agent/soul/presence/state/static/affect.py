@@ -7,7 +7,7 @@ from .narrative import compose_narrative, normalize_narrative
 
 @dataclass
 class AffectState:
-    """情感：第一人称自叙。"""
+    """情感：第二人称「你」自叙。"""
 
     narrative: str = ""
 
@@ -44,7 +44,7 @@ class AffectState:
             parts.append(mood)
         valence = normalize_narrative(str(d.get("valence", "")))
         if valence:
-            parts.append(f"我感到{valence}")
+            parts.append(f"你感到{valence}")
         for anchor in d.get("anchors", []):
             if not isinstance(anchor, dict):
                 continue

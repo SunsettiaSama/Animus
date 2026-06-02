@@ -4,23 +4,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..compose.bundle import SpeakPromptBundle, SpeakTurnMode
+from ..orchestrator import SpeakPromptBundle, SpeakTurnMode
+from ..orchestrator.assemble import build_turn_system, resolve_llm_user_text
+from ..orchestrator.prompt_trace import get_prompt_trace
 from ..io.outbound.stream import SpeakAgentOutput, SpeakStreamEvent, SpeakStreamPipeline
 from ..io.outbound.stream.channel import SpeakStreamChannel
 from ..llm.engine import SpeakLLMEngine
 from .chunk import SpeakSubjectiveChunk, SpeakTurnChunk
 from .queue.types import InterruptContext
-from .prompt_trace import get_prompt_trace
 from .service import SpeakSessionService
 from .working_memory_text import format_agent_turn_for_working_memory
 
 if TYPE_CHECKING:
     from ..service import SpeakTurnResult
-
-_APPEND_CONTINUE_INSTRUCTION = (
-    "请继续完成本轮尚未说完的内容；输出仍需包含 [think]…[/think] 与 "
-    "[state]finish[/state]（或 [state]append[/state]）。"
-)
 
 
 def _parsed_from_stream_events(
@@ -51,6 +47,8 @@ class SessionTurnHost:
     compose_from_queue: Callable[..., SpeakPromptBundle | None] | None = None
     parse_agent_output: Callable[[str], SpeakAgentOutput] | None = None
     session_trace_cache: Callable[[str, int], dict] | None = None
+    on_turn_start: Callable[[str, str, int], None] | None = None
+    before_compose_bundle: Callable[[str, str], None] | None = None
 
 
 def _generate_with_outbound(
@@ -155,16 +153,21 @@ def run_session_turn(
     turn_index = host.begin_turn(session_id)
     notes.append(f"session: turn_index={turn_index}")
 
+    if host.on_turn_start is not None:
+        host.on_turn_start(session_id, user_text, turn_index)
+
     manager.begin_push(session_id, user_text)
     partial_output = ""
     try:
+        if host.before_compose_bundle is not None:
+            host.before_compose_bundle(session_id, user_text)
         bundle = host.compose_bundle(session_id, user_text, mode=mode, turn_index=turn_index)
         all_events: list[SpeakStreamEvent] = []
         parsed: SpeakAgentOutput | None = None
         speak_parts: list[str] = []
         memory_parts: list[str] = []
         silence_policy: str | None = None
-        llm_user_text = str(bundle.meta.get("silence_break_user") or bundle.user_text or user_text)
+        llm_user_text = resolve_llm_user_text(bundle, user_text)
 
         def _on_partial(partial: str) -> None:
             nonlocal partial_output
@@ -175,16 +178,19 @@ def run_session_turn(
         for round_idx in range(max_rounds):
             if host.refresh_interactor_portrait is not None:
                 host.refresh_interactor_portrait(session_id, bundle, turn_index)
-            system = bundle.build_system()
-            if interrupt_context is not None:
-                system = f"{system}\n\n{manager.render_interrupt_block(interrupt_context)}"
-            if round_idx > 0 and parsed is not None and parsed.session_state == "append":
-                system = f"{system}\n\n{_APPEND_CONTINUE_INSTRUCTION}"
-                if partial_output.strip():
-                    system = (
-                        f"{system}\n\n【已输出片段】\n{partial_output.strip()}"
-                    )
-                llm_user_text = "请接着说完，不要重复已输出内容。"
+            system = build_turn_system(
+                bundle,
+                interrupt_context=interrupt_context,
+                round_idx=round_idx,
+                partial_output=partial_output,
+                parsed=parsed,
+            )
+            llm_user_text = resolve_llm_user_text(
+                bundle,
+                user_text,
+                round_idx=round_idx,
+                parsed=parsed,
+            )
 
             if host.session_trace_cache is not None:
                 get_prompt_trace().emit_compose(

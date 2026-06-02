@@ -2,17 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 from ..lifecycle.hold.registry import SpeakSessionRegistry
 from .enter_greeting import EnterGreetingHandler, EnterGreetingManager
 from .initiative import TurnInitiativeManager
 from .silence_break import SilenceBreakHandler, SilenceBreakManager
 from .types import EnterGreetingTurnSpec, InitiativeHint, SilenceBreakTurnSpec
-
-if TYPE_CHECKING:
-    from ...compose.bundle import SpeakPromptBundle
-
 
 @dataclass
 class SessionSocialManager:
@@ -80,43 +75,6 @@ class SessionSocialManager:
             user_text=user_text,
             mode=mode,
         )
-
-    def enrich_bundle(
-        self,
-        bundle: SpeakPromptBundle,
-        *,
-        session_id: str,
-        turn_index: int,
-        user_text: str,
-        mode: str = "inbound",
-    ) -> None:
-        armed_greeting = self.enter_greeting.pop_armed_turn(session_id)
-        if armed_greeting is not None:
-            bundle.social_blocks.append(armed_greeting.system_block)
-            bundle.notes.append(
-                f"enter_greeting: armed elapsed={int(armed_greeting.elapsed_sec)}s"
-            )
-            bundle.meta["enter_greeting"] = True
-            bundle.meta["enter_greeting_user"] = armed_greeting.user_text()
-            return
-
-        armed = self.silence.pop_armed_turn(session_id)
-        if armed is not None:
-            bundle.social_blocks.append(armed.system_block)
-            bundle.notes.append(f"silence_break: armed elapsed={int(armed.elapsed_sec)}s")
-            bundle.meta["silence_break"] = True
-            bundle.meta["silence_break_user"] = armed.user_text()
-            return
-
-        hint = self.evaluate_initiative(
-            session_id,
-            turn_index=turn_index,
-            user_text=user_text,
-            mode=mode,
-        )
-        if hint is not None:
-            bundle.social_blocks.append(hint.text)
-            bundle.notes.append(hint.note)
 
     def on_turn_complete(
         self,

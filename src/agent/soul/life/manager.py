@@ -164,6 +164,17 @@ class LifeManager:
     ) -> None:
         self._virtual.set_story_world_context_supplier(supplier)
 
+    def set_story_port(self, port) -> None:
+        self._virtual.set_story_port(port)
+
+    def bind_story_world(self, world_id: str) -> None:
+        token = world_id.strip() or "default"
+        self._profile.world_id = token
+        self._virtual.set_world_id(token)
+
+    def save_profile(self) -> None:
+        self._profile_store.save(self._profile)
+
     def stop(self) -> None:
         self._life_service.stop()
 
@@ -242,6 +253,8 @@ class LifeManager:
 
     def load_profile(self) -> LifeProfile:
         self._profile = self._profile_store.load()
+        if self._profile.world_id.strip():
+            self._virtual.set_world_id(self._profile.resolved_world_id())
         return self._profile
 
     def sync_agent_persona_narrative(self, narrative: str) -> None:

@@ -5,19 +5,9 @@ import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .types import InitiativeHint
+from ...orchestrator.guidance.social import INITIATIVE_PROMPT as _INITIATIVE_PROMPT
 
-# NOTE: 被动轮内的可选延展；非 agent 主导型主动提问（见 SessionSocialManager）。
-_INITIATIVE_PROMPT = (
-    "【对话节奏·可选主动】\n"
-    "你不必只做被动应答。除回答用户外，若还适合做一句极短的承接、反问或轻量延展，"
-    "可在 think 里先判断「本轮是否要主动多开口一句」。\n"
-    "- 用户刚抛出明确新话题时：优先简明应答，不必强行主动。\n"
-    "- 若仅应答即可：speak 保持简短，[state]finish。\n"
-    "- 若适合轻量主动：speak 末尾可加一句自然追问或话题延展（仍保持短，勿抢话）。\n"
-    "- 若确有分享冲动且待分享队列非空：可用 [state]share。\n"
-    "勿每轮都主动；克制比话多更重要。"
-)
+from .types import InitiativeHint
 
 
 def _env_float(name: str, default: float) -> float:

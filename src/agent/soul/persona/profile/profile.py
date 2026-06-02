@@ -53,54 +53,70 @@ class PersonaProfile:
 
     # ── Rendering ─────────────────────────────────────────────────────────────
 
-    def render(self) -> str:
-        parts = [f"【人物画像】{self.name}"]
+    def render(self, *, warn_main_portrait: bool = False, caller: str = "") -> str:
+        """面向角色 LLM 的主画像正文：第二人称「你」。
+
+        warn_main_portrait=True 时向终端打印告警（主画像非 Speak 子画像）。
+        蒸馏/build 等上游读档请用 render_catalog()。
+        """
+        if warn_main_portrait:
+            from agent.soul.persona.portrait import warn_main_portrait_usage
+
+            warn_main_portrait_usage(caller or "PersonaProfile.render")
+        return self._render_you_voice()
+
+    def render_catalog(self) -> str:
+        """供 build / 蒸馏读档的完整画像说明（第二人称，不触发主画像告警）。"""
+        return self._render_you_voice()
+
+    def _render_you_voice(self) -> str:
+        parts = [f"【你是谁】你是{self.name}。"]
 
         if self.background_facts:
-            parts.append("▌事实背景")
+            parts.append("▌你的事实背景")
             parts.extend(f"  - {f}" for f in self.background_facts)
 
-        trait_lines = []
+        trait_lines: list[str] = []
         if self.core_traits:
-            trait_lines.append("  " + "、".join(self.core_traits))
+            trait_lines.append("  你的核心特质：" + "、".join(self.core_traits))
         if self.interpersonal_style:
-            trait_lines.append(f"  人际风格：{self.interpersonal_style}")
+            trait_lines.append(f"  你与人相处：{self.interpersonal_style}")
         if self.emotional_expressiveness:
-            trait_lines.append(f"  情感表达：{self.emotional_expressiveness}")
+            trait_lines.append(f"  你的情感表达：{self.emotional_expressiveness}")
         if trait_lines:
             parts.append("▌核心特质")
             parts.extend(trait_lines)
 
-        value_lines = []
+        value_lines: list[str] = []
         if self.values:
-            value_lines.append("  " + "、".join(self.values))
+            value_lines.append("  你看重：" + "、".join(self.values))
         if self.ethical_stances:
             value_lines.extend(f"  · {s}" for s in self.ethical_stances)
         if value_lines:
             parts.append("▌价值观")
             parts.extend(value_lines)
 
-        cog_lines = []
+        cog_lines: list[str] = []
         if self.cognitive_style:
-            cog_lines.append(f"  思维方式：{self.cognitive_style}")
+            cog_lines.append(f"  你的思维方式：{self.cognitive_style}")
         if self.reasoning_pattern:
-            cog_lines.append(f"  推理偏好：{self.reasoning_pattern}")
+            cog_lines.append(f"  你的推理偏好：{self.reasoning_pattern}")
         if cog_lines:
             parts.append("▌认知结构")
             parts.extend(cog_lines)
 
-        mot_lines = []
+        mot_lines: list[str] = []
         if self.core_motivation:
-            mot_lines.append(f"  核心驱动：{self.core_motivation}")
+            mot_lines.append(f"  你的核心驱动：{self.core_motivation}")
         if self.avoidance_pattern:
-            mot_lines.append(f"  规避模式：{self.avoidance_pattern}")
+            mot_lines.append(f"  你倾向于规避：{self.avoidance_pattern}")
         if mot_lines:
             parts.append("▌动机")
             parts.extend(mot_lines)
 
-        boundary_lines = []
+        boundary_lines: list[str] = []
         if self.stress_response:
-            boundary_lines.append(f"  压力应对：{self.stress_response}")
+            boundary_lines.append(f"  你在压力下：{self.stress_response}")
         if self.boundaries:
             boundary_lines.extend(f"  · {b}" for b in self.boundaries)
         if boundary_lines:

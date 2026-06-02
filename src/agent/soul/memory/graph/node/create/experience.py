@@ -16,10 +16,10 @@ from agent.soul.memory.graph.networks.types import ExperienceKind
 from infra.llm import BaseLLM
 
 _ROUTE_SYSTEM = """\
-你是记忆路由系统。根据 Life 体验单元原文，判断应写入哪类长期记忆图：
+你是记忆路由系统。根据 Life 体验单元原文（叙述字段统一第二人称「你」），判断应写入哪类长期记忆图：
 
 - event：客观发生的事件、场景、事实片段（与「某次发生了什么」相关）
-- social：与特定交互者相关的主观关系、印象、称呼、特质、互动感受
+- social：与特定交互者相关的关系、印象、称呼、特质、互动感受（可含少量「你」的感受）
 
 只输出 JSON，不要解释。"""
 

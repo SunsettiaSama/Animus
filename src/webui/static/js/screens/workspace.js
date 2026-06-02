@@ -37,11 +37,17 @@ function _speakStreamOpts() {
   return { deliveryMode: getSpeakDeliveryMode() };
 }
 
+function _msgDraft() {
+  return document.getElementById('msg-input')?.value ?? '';
+}
+
 function _speakSessionOpts(genId, streamCtrl) {
   return {
     sessionId: S.sessionId || S.convId || getChannelId(),
     channelId: S.channelId || getChannelId(),
     deliveryMode: getSpeakDeliveryMode(),
+    typingIdleMs: 3000,
+    getDraft: _msgDraft,
     onEvent: (kind, text, meta) => streamCtrl?.onEvent(kind, text, meta),
     onTurnStart: () => {
       if (isSimulatedDelivery()) render.showSpeakTurnTyping();

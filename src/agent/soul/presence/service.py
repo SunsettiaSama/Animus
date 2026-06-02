@@ -40,9 +40,11 @@ from .transition import (
 )
 from .transition.ports import TransitionHandler
 from .transition.trigger import PresenceTriggerKind
+from infra.llm import BaseLLM
 
 if TYPE_CHECKING:
     from agent.soul.life.anchor.presence_bundle import PresenceExperienceBundle
+    from agent.soul.life.experience.domain.unit import ExperienceUnit
     from agent.soul.life.experience.unit_layer.manage.log import ExperienceLog
     from agent.soul.life.experience.hub import LifeExperienceStack
 
@@ -134,6 +136,8 @@ class PresenceService:
         self._sessions: dict[str, PresenceSession] = {}
         self._status_update_listeners: list[PresenceStatusUpdateListener] = []
         self._life_experience: LifeExperienceStack | None = None
+        self._unit_ingest_counters: dict[str, int] = {}
+        self._unit_distill_writer = None
         if self._store is not None:
             for sid, stored in self._store.load_sessions().items():
                 self._sessions[sid] = PresenceSession(
@@ -166,6 +170,11 @@ class PresenceService:
     def bind_life_experience(self, stack: LifeExperienceStack) -> None:
         """Presence ↔ Life 双向绑定：pull_and_sync 从 stack.log 读取热体验。"""
         self._life_experience = stack
+
+    def bind_unit_distill_llm(self, llm: BaseLLM) -> None:
+        from .unit_distill import PresenceUnitDistillWriter
+
+        self._unit_distill_writer = PresenceUnitDistillWriter(llm)
 
     @property
     def life_experience(self) -> LifeExperienceStack | None:
@@ -209,6 +218,48 @@ class PresenceService:
             "dynamic_notes": list(sync.dynamic_notes) if sync else [],
             "notes": list(result.notes),
         }
+
+    def on_unit_ingested(
+        self,
+        unit: ExperienceUnit,
+        log: ExperienceLog | None = None,
+    ) -> None:
+        """单条 unit 入库：时段情绪 + 按批次蒸馏近期经历画像。"""
+        from config.soul.presence.config import (
+            UNIT_DISTILL_BATCH_K,
+            UNIT_DISTILL_MAX_CHARS,
+        )
+
+        from .lingering import apply_unit_lingering
+        from .unit_distill.queue import select_distill_batch
+
+        session_id = unit.situation.session_id or "tao"
+        session = self._session(session_id)
+        apply_unit_lingering(session.state, unit)
+
+        counter = self._unit_ingest_counters.get(session_id, 0) + 1
+        self._unit_ingest_counters[session_id] = counter
+        batch_k = UNIT_DISTILL_BATCH_K
+
+        if (
+            counter % batch_k == 0
+            and log is not None
+            and self._unit_distill_writer is not None
+        ):
+            portrait_state = session.state.recent_portrait
+            batch = select_distill_batch(
+                log,
+                session_id,
+                batch_k=batch_k,
+                last_distilled_unit_id=portrait_state.last_distilled_unit_id,
+            )
+            if batch:
+                session.state.recent_portrait = self._unit_distill_writer.distill_batch(
+                    batch,
+                    max_chars=UNIT_DISTILL_MAX_CHARS,
+                )
+
+        self._persist(session_id)
 
     def pull_and_sync_from_life(
         self,
@@ -267,6 +318,16 @@ class PresenceService:
             self._persist(session_id)
             self._notify_status_update(self.snapshot(session_id))
         return popped
+
+    def consume_share_at(self, session_id: str, queue_index: int) -> bool:
+        """按队列下标移除一条分享意图（guidance 规划抛出后消费）。"""
+        session = self._session(session_id)
+        intent = session.state.expectation.share_queue.pop_at(queue_index)
+        if intent is None:
+            return False
+        self._persist(session_id)
+        self._notify_status_update(self.snapshot(session_id))
+        return True
 
     def _notify_status_update(self, snap: PresenceSnapshot) -> None:
         for listener in self._status_update_listeners:

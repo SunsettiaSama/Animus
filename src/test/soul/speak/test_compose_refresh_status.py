@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent.soul.speak.compose.composer import SpeakPromptComposer
-from agent.soul.speak.compose.context.distiller import SpeakContextDistiller
-from agent.soul.speak.io.inbound.compose import SpeakStatusInjected
+from agent.soul.speak.orchestrator.bundle import SpeakPromptBundle
+from agent.soul.speak.orchestrator.guidance.context import SpeakContextDistiller
+from agent.soul.speak.orchestrator.orchestrator import SpeakOrchestrator
+from agent.soul.speak.orchestrator.persona import SpeakPersonaLayer
+from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 
 
 @dataclass
@@ -19,23 +21,24 @@ class _Presence:
 
 class _Persona:
     def get_persona_snapshot(self, *, session_id: str = "tao") -> dict:
-        return {}
+        return persona_snapshot_with_distill()
 
 
-def test_refresh_status_for_turn_keeps_presence_only():
+def test_refresh_persona_for_turn_does_not_carry_memory_on_persona():
     distiller = SpeakContextDistiller(chunk_size=4)
     state = distiller._session("s1")
     with state.lock:
-        state.distilled.append("荧与莉奈娅谈到船与探险队。")
+        state.distilled.append("recent dialogue")
 
-    composer = SpeakPromptComposer(
+    orchestrator = SpeakOrchestrator(
         _Persona(),
         _Presence(),
         context_distiller=distiller,
     )
-    refreshed = composer.refresh_status_for_turn(
+    orchestrator.prepare("s1")
+    refreshed = orchestrator.refresh_persona_for_turn(
         "s1",
-        SpeakStatusInjected(similar_memories="【涌现记忆·长期】\n- old"),
+        SpeakPersonaLayer(dialogue_compressed="stale compressed"),
     )
     assert refreshed.dialogue_compressed == ""
-    assert refreshed.similar_memories.startswith("【涌现记忆·长期】")
+    assert refreshed.self_narrative.strip()

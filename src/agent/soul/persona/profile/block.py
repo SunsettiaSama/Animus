@@ -25,7 +25,10 @@ class ProfileBlock(PromptBlock):
         self._max_chars = max_chars
 
     def render(self) -> str | None:
-        return _trunc(self._profile.render(), self._max_chars)
+        return _trunc(
+            self._profile.render(warn_main_portrait=True, caller="ProfileBlock"),
+            self._max_chars,
+        )
 
 
 class SkillsBlock(PromptBlock):
@@ -51,7 +54,7 @@ class SkillsBlock(PromptBlock):
 
 
 class ReflectionBlock(PromptBlock):
-    """自省块 —— 注入 Agent 第一人称自我感知表述（IROTE 机制）。"""
+    """自省块 —— 注入 Agent 第二人称「你」自我感知表述（IROTE 机制）。"""
 
     def __init__(
         self,

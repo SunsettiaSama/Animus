@@ -14,7 +14,8 @@ from ..narrative_context import (
     StoryWorldContextSupplier,
 )
 from .chronicle import VirtualChronicleStore
-from .journal.dice import DiceResult, roll_d100
+from storyview.port import StoryPort
+from storyview.types import StoryEventKind
 from .journal.filler import LandmarkFiller, NullLandmarkFiller
 from .journal.item import Landmark, LandmarkStatus
 from .journal.journal import LifeJournal
@@ -58,6 +59,8 @@ class VirtualLayer:
         self._world_background = ""
         self._context_supplier: NarrativeContextSupplier | None = None
         self._world_context_supplier: StoryWorldContextSupplier | None = None
+        self._story_port: StoryPort | None = None
+        self._world_id: str = "default"
 
     @property
     def builder(self) -> ExperienceBuilder:
@@ -122,6 +125,31 @@ class VirtualLayer:
     ) -> None:
         self._world_context_supplier = supplier
 
+    def set_story_port(self, port: StoryPort | None) -> None:
+        self._story_port = port
+
+    def set_world_id(self, world_id: str) -> None:
+        self._world_id = world_id.strip() or "default"
+
+    @property
+    def world_id(self) -> str:
+        return self._world_id
+
+    def _require_story_port(self) -> StoryPort:
+        if self._story_port is None:
+            raise RuntimeError("StoryPort not wired — start SoulService with story engine")
+        return self._story_port
+
+    def _open_story_scene(
+        self,
+        cue: str,
+        kind: StoryEventKind | str,
+    ):
+        port = self._require_story_port()
+        packet = port.begin_event(self._world_id, cue, kind=kind)
+        self.apply_world_background(packet.scene_text)
+        return packet
+
     def apply_narrative_context(
         self,
         portrait: str,
@@ -183,6 +211,10 @@ class VirtualLayer:
         if context.strip():
             query = f"{query} {context.strip()}"
         self.ensure_narrative_context(NarrativePurpose.fabricate, query=query)
+        objective_scene = ""
+        if self._story_port is not None:
+            packet = self._open_story_scene(query, StoryEventKind.fabricate)
+            objective_scene = packet.scene_text
 
         plan_seed = f"我刚为自己预约了一个体验时刻：{intention.strip() or '一个新的地标'}"
         if context.strip():
@@ -199,6 +231,7 @@ class VirtualLayer:
                 profile_narrative=self._profile_narrative,
                 continuity_memories=self._continuity_memories,
                 world_background=self._world_background,
+                objective_scene=objective_scene,
                 default_intensity=0.35,
             )
             narrative_hint = draft.narrative
@@ -296,7 +329,10 @@ class VirtualLayer:
             query = f"{query} {lm.context.strip()}"
         self.ensure_narrative_context(NarrativePurpose.fill, query=query)
         lm.mark_processing()
-        dice = roll_d100()
+        port = self._require_story_port()
+        packet = port.begin_event(self._world_id, query, kind=StoryEventKind.landmark)
+        self.apply_world_background(packet.scene_text)
+        objective_scene = packet.scene_text
         narrative = ""
         emotion_text = ""
         emotion_intensity = 0.6
@@ -306,8 +342,8 @@ class VirtualLayer:
                 landmark=lm,
                 profile_narrative=self._profile_narrative,
                 continuity_memories=self._continuity_memories,
-                dice=dice,
                 world_background=self._world_background,
+                objective_scene=objective_scene,
                 default_intensity=0.6,
             )
             narrative = draft.narrative
@@ -315,12 +351,15 @@ class VirtualLayer:
             emotion_intensity = draft.emotion_intensity
             emotion_strength = draft.emotion_strength
         else:
-            narrative = self._filler.fill(
-                landmark=lm,
-                profile_narrative=self._profile_narrative,
-                continuity_memories=self._continuity_memories,
-                dice=dice,
-            )
+            narrative = lm.intention
+        outcome = port.resolve_event(
+            packet.event_id,
+            intent=lm.intention,
+            agent_narrative=narrative,
+            with_dice=True,
+        )
+        dice_value = outcome.dice_value
+        dice_tendency = outcome.dice_tendency
         unit = self.record_story_beat(
             narrative_hint=narrative,
             salience=0.6,
@@ -329,19 +368,21 @@ class VirtualLayer:
             virtual_ctx=VirtualUnitContext(
                 trigger=VirtualUnitTrigger.landmark,
                 landmark_id=lm.id,
-                dice_value=dice.value,
-                dice_tendency=dice.tendency,
+                dice_value=dice_value,
+                dice_tendency=dice_tendency,
             ),
         )
         lm.mark_done(
             narrative=narrative,
             experience_id=unit.id,
-            dice_value=dice.value,
-            dice_tendency=dice.tendency,
+            dice_value=dice_value,
+            dice_tendency=dice_tendency,
         )
         self.save_journal()
         return {
             "hint": narrative,
+            "scene_text": objective_scene,
+            "resolution_text": outcome.resolution_text,
             "salience": 0.6,
             "trigger": "landmark",
             "intention": lm.intention,
@@ -349,6 +390,9 @@ class VirtualLayer:
             "emotion_text": emotion_text,
             "emotion_intensity": emotion_intensity,
             "emotion_strength": emotion_strength,
+            "dice_value": dice_value,
+            "dice_tendency": dice_tendency,
+            "deviation": outcome.deviation,
         }
 
     def tick_surprise(self, elapsed_sec: float) -> dict:
@@ -358,17 +402,24 @@ class VirtualLayer:
                 "probability": round(self._surprise_launcher.probability, 3),
             }
         self.ensure_narrative_context(NarrativePurpose.surprise)
-        dice = roll_d100()
+        port = self._require_story_port()
+        packet = port.begin_event(
+            self._world_id,
+            "意外事件",
+            kind=StoryEventKind.surprise,
+        )
+        self.apply_world_background(packet.scene_text)
+        objective_scene = packet.scene_text
         narrative = ""
         emotion_text = ""
         emotion_intensity = 0.5
         emotion_strength = "明显触动"
         if self._narrative is not None:
             draft = self._narrative.generate_with_emotion(
-                dice=dice,
                 continuity_memories=self._continuity_memories,
                 profile_narrative=self._profile_narrative,
                 world_background=self._world_background,
+                objective_scene=objective_scene,
                 default_intensity=0.5,
             )
             narrative = draft.narrative
@@ -376,15 +427,17 @@ class VirtualLayer:
             emotion_intensity = draft.emotion_intensity
             emotion_strength = draft.emotion_strength
         else:
-            narrative = self._surprise_generator.generate(
-                dice=dice,
-                continuity_memories=self._continuity_memories,
-                profile_narrative=self._profile_narrative,
-            )
+            narrative = "一件意外的事发生了。"
+        outcome = port.resolve_event(
+            packet.event_id,
+            intent="意外降临",
+            agent_narrative=narrative,
+            with_dice=True,
+        )
         unit = self.record_surprise(
             narrative_hint=narrative,
-            dice_value=dice.value,
-            dice_tendency=dice.tendency,
+            dice_value=outcome.dice_value,
+            dice_tendency=outcome.dice_tendency,
             salience=0.5,
         )
         return {
@@ -392,11 +445,15 @@ class VirtualLayer:
             "probability": round(self._surprise_launcher.probability, 3),
             "experience_id": unit.id,
             "narrative": narrative,
+            "scene_text": objective_scene,
+            "resolution_text": outcome.resolution_text,
             "salience": 0.5,
             "share_desire": "eager",
             "emotion_text": emotion_text,
             "emotion_intensity": emotion_intensity,
             "emotion_strength": emotion_strength,
+            "dice_value": outcome.dice_value,
+            "dice_tendency": outcome.dice_tendency,
         }
 
     def process_wander_experience(
@@ -410,6 +467,10 @@ class VirtualLayer:
         if hint:
             self.ensure_narrative_context(NarrativePurpose.fabricate, query=hint)
             portrait = self._profile_narrative
+            objective_scene = ""
+            if self._story_port is not None:
+                packet = self._open_story_scene(hint, StoryEventKind.wander)
+                objective_scene = packet.scene_text
             narrative_hint = (
                 f"心跳反刍线索：{hint}"
             )
@@ -422,6 +483,7 @@ class VirtualLayer:
                     profile_narrative=portrait,
                     continuity_memories=self._continuity_memories,
                     world_background=self._world_background,
+                    objective_scene=objective_scene,
                     default_intensity=min(result.signal.intensity * 0.6, 0.8),
                 )
                 narrative_hint = draft.narrative
@@ -458,6 +520,10 @@ class VirtualLayer:
             )
             self.ensure_narrative_context(NarrativePurpose.fabricate, query=seed)
             portrait = self._profile_narrative
+            objective_scene = ""
+            if self._story_port is not None:
+                packet = self._open_story_scene(seed, StoryEventKind.wander)
+                objective_scene = packet.scene_text
             narrative_hint = (
                 seed
             )
@@ -470,6 +536,7 @@ class VirtualLayer:
                     profile_narrative=portrait,
                     continuity_memories=self._continuity_memories,
                     world_background=self._world_background,
+                    objective_scene=objective_scene,
                     default_intensity=result.signal.intensity,
                 )
                 narrative_hint = draft.narrative
