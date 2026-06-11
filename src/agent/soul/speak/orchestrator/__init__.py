@@ -37,20 +37,17 @@ from .io import (
     PersonaComposeRequest,
     SceneUpdateRequest,
 )
+from .director import ComposeDirector, DirectorPlan
 from .orchestrator import PersonaQueryPort, PresenceReadPort, SpeakOrchestrator
+from .runner import SpeakComposeRunner
 from .assemble import (
     APPEND_CONTINUE_INSTRUCTION,
-    apply_story_scene,
     build_turn_system,
-    finish_turn_bundle,
     resolve_llm_user_text,
 )
-from .compose_slots import (
-    KNOWN_COMPOSE_BLOCKS,
-    NarrativeSlot,
-    TurnComposeAssembly,
-)
-from .turn_assembler import TurnComposeAssembler
+from .blocks.core.types import VERSIONED_BLOCKS as KNOWN_COMPOSE_BLOCKS
+from .blocks.core.types import BlockSlot as NarrativeSlot, TurnBlockAssembly as TurnComposeAssembly
+from .scene import apply_story_scene
 from .prompt_trace import SpeakPromptTrace, get_prompt_trace
 from .persona import (
     IDENTITY_HARD_MAX_CHARS,
@@ -94,6 +91,8 @@ from .system import (
 )
 
 __all__ = [
+    "ComposeDirector",
+    "DirectorPlan",
     "DialogueContextChunk",
     "GuidanceControlService",
     "GuidanceControlState",
@@ -120,7 +119,6 @@ __all__ = [
     "KNOWN_COMPOSE_BLOCKS",
     "NarrativeSlot",
     "TurnComposeAssembly",
-    "TurnComposeAssembler",
     "PresenceReadPort",
     "PreparedComposeFrame",
     "ShareComposeState",
@@ -155,7 +153,6 @@ __all__ = [
     "collect_stable_portrait",
     "collect_share_state",
     "collect_story_scene",
-    "finish_turn_bundle",
     "get_prompt_trace",
     "normalize_one_sentence",
     "perform_recall_handoff",

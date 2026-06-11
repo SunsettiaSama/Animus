@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from ..inbound.guidance import InboundGuidanceGateway
-from ..inbound.persona import InboundPersonaGateway
-from ..inbound.scene import InboundSceneGateway
-from ..outbound.guidance import OutboundGuidanceGateway
-from ..outbound.persona import OutboundPersonaGateway
-from ..outbound.scene import OutboundSceneGateway
+from .inbound.guidance import InboundGuidanceGateway
+from .inbound.persona import InboundPersonaGateway
+from .inbound.scene import InboundSceneGateway
+from .outbound.guidance import OutboundGuidanceGateway
+from .outbound.persona import OutboundPersonaGateway
+from .outbound.scene import OutboundSceneGateway
 
 
 class OrchestratorInboundHub:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from agent.soul.speak.orchestrator.assemble import finish_turn_bundle
+from test.soul.speak.compose_helpers import finish_turn_for_test as finish_turn_bundle
 from agent.soul.speak.orchestrator.bundle import SpeakPromptBundle
 from agent.soul.speak.orchestrator.guidance.control import (
     GuidanceControlService,
@@ -59,8 +59,9 @@ def test_share_queue_full_triggers_control_refresh():
         share_preview="- [0] 地底蜥蜴（意愿：strong）",
         share_queue_count=SHARE_INTENT_QUEUE_MAX_ITEMS,
         share_queue_full=True,
+        trigger="share_queue_full",
     )
-    assert io.inbound.guidance.sync_for_compose(request) is True
+    assert io.inbound.guidance.sync_for_compose(request, force=True) is True
     snapshot = io.outbound.guidance.snapshot("tao")
     assert snapshot is not None
     assert snapshot["share_linked"] is True
@@ -70,15 +71,30 @@ def test_finish_turn_bundle_injects_guidance_narrative():
     control = GuidanceControlService()
     io = OrchestratorIOHub.from_control_service(control)
     social = SessionSocialManager(registry=_registry_mock())
+    persona = SpeakPersonaLayer()
+    persona.self_narrative = "你是博物学家。"
+    persona.dialogue_compressed = "你们在路上偶遇。"
     bundle = SpeakPromptBundle(
         session_id="tao",
-        persona=SpeakPersonaLayer(
-            self_narrative="你是博物学家。",
-            dialogue_compressed="你们在路上偶遇。",
-        ),
+        persona=persona,
         guidance=SpeakGuidanceLayer(
             interactor_portrait="荧。",
             recall_preview="- 上次在纳塔地底见过蜥蜴",
+        ),
+    )
+    from agent.soul.speak.orchestrator.director.types import DirectorPlan, ModuleDecision
+
+    director_plan = DirectorPlan(
+        session_id="tao",
+        target_turn_index=2,
+        modules=(
+            ModuleDecision("persona", False, True, "test"),
+            ModuleDecision("scene", False, True, "test"),
+            ModuleDecision("guidance", True, True, "test", guidance_trigger="init"),
+            ModuleDecision("context", False, True, "test"),
+            ModuleDecision("memory", False, True, "test"),
+            ModuleDecision("social", False, False, "test"),
+            ModuleDecision("share", False, False, "test"),
         ),
     )
     finish_turn_bundle(
@@ -89,8 +105,9 @@ def test_finish_turn_bundle_injects_guidance_narrative():
         turn_index=2,
         io=io,
         share_queue_count=0,
+        director_plan=director_plan,
     )
-    assert "对话引导" in bundle.guidance.control_arc
+    assert "用户" in bundle.guidance.control_arc and "你" in bundle.guidance.control_arc
     assert bundle.meta.get("guidance_control_version") == 1
 
 

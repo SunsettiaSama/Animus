@@ -354,6 +354,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             original_rotate(session_id)
             self._orchestrator.start_session_compose_sync(session_id)
 
+        original_invalidate = self._compose_runner.invalidate
+
+        def _invalidate_compose(session_id: str) -> None:
+            original_invalidate(session_id)
+            self._orchestrator.compose_director.invalidate_session(session_id)
+
+        self._compose_runner.invalidate = _invalidate_compose  # type: ignore[method-assign]
         self._session_manager.open = _open  # type: ignore[method-assign]
         self._session_manager.queues.clear_session = _clear  # type: ignore[method-assign]
         self._session_manager._starter._on_rotate = _on_rotate  # type: ignore[method-assign]
@@ -479,6 +486,52 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             hold_ms=hold_ms,
         )
 
+    def _on_compose_turn_complete(
+        self,
+        session_id: str,
+        user_text: str,
+        agent_text: str,
+        turn_index: int,
+        session_state: str,
+    ) -> None:
+        if self._orchestrator is None or self._turn_coordinator is None:
+            return
+        director = self._orchestrator.compose_director
+        plan = self._turn_coordinator.plan_for_turn(session_id, turn_index)
+        if plan is None:
+            plan = director.load_plan(session_id, turn_index)
+        presence = self._presence
+        if plan is not None:
+            notes = director.consume_emits(
+                plan,
+                pop_presence_share_at=(
+                    presence.consume_share_at if presence is not None else None
+                ),
+                pop_session_share_at=self._pop_session_share_at,
+                use_session_share_queue=self._orchestrator.uses_session_share_queue(
+                    session_id,
+                ),
+                mark_recall_unit_consumed=self._mark_recall_unit_consumed,
+            )
+            plan.notes.extend(notes)
+        if session_state == "finish":
+            self._memory_compose.refresh_similar_memories_after_turn(
+                session_id,
+                turn_index=turn_index + 1,
+                user_text=user_text,
+                agent_text=agent_text,
+            )
+        record = self.session_registry.get(session_id)
+        self._compose_runner.schedule_director_build(
+            self._orchestrator,
+            director,
+            session_id,
+            target_turn_index=turn_index + 1,
+            user_text=user_text,
+            generation=record.generation,
+            agent_text=agent_text,
+        )
+
     def _kick_for_upcoming_turn(self, session_id: str, user_text: str, turn_index: int) -> None:
         if self._turn_coordinator is None:
             return
@@ -494,7 +547,11 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def _before_compose_bundle(self, session_id: str, user_text: str) -> None:
         if self._turn_coordinator is None:
             return
-        self._turn_coordinator.wait_before_compose(session_id)
+        turn_index = self.session_registry.current_turn_index(session_id)
+        self._turn_coordinator.wait_before_compose(
+            session_id,
+            turn_index=turn_index,
+        )
 
     def _bind_orchestrator_interactor_portrait(self) -> None:
         if self._orchestrator is None:
@@ -504,7 +561,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             portrait_wait_ms=self._portrait_wait_ms,
         )
 
-    def _apply_compose_context(self, bundle, *, similar, portrait) -> None:
+    def _apply_compose_context(
+        self,
+        bundle,
+        *,
+        similar,
+        portrait,
+    ) -> None:
         self._memory_compose.apply_similar_memories(bundle, similar)
         if self._orchestrator is not None:
             from .orchestrator.persona.interactor_portrait import (
@@ -536,6 +599,23 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             turn_index,
         )
 
+    def _bundle_from_director_plan(
+        self,
+        director_plan,
+        session_id: str,
+        user_text: str,
+        *,
+        mode: SpeakTurnMode,
+    ):
+        if self._orchestrator is None or director_plan is None:
+            return None
+        frame = director_plan.prepared_frame
+        if frame is None:
+            return None
+        bundle = self._orchestrator.finalize(frame, user_text, session_id=session_id)
+        bundle.meta["compose_source"] = "director_plan"
+        return bundle
+
     def _finish_turn_bundle(
         self,
         bundle: SpeakPromptBundle,
@@ -544,66 +624,68 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         *,
         mode: SpeakTurnMode,
         turn_index: int,
+        similar,
+        portrait,
+        director_plan=None,
     ) -> SpeakPromptBundle:
-        from .orchestrator.assemble import finish_turn_bundle
-        from .orchestrator.session import RegistrySessionComposePort
+        from .orchestrator.guidance.social import apply_session_social
+        from .orchestrator.scene import apply_story_scene
 
-        share_count = 0
-        reconcile_plan = None
-        session_port = RegistrySessionComposePort(self.session_registry)
-        if self._orchestrator is not None:
-            share_count = self._orchestrator.collect_share_count(session_id)
-            reconcile_plan = self._orchestrator.reconcile_compose(
-                bundle,
-                session_id=session_id,
-            )
-        presence = self._presence
-        if self._orchestrator is not None:
+        if self._orchestrator is not None and director_plan is not None:
             record = self.session_registry.get(session_id)
-            self._orchestrator.attach_session_context(
-                bundle,
-                session_id,
+            presence = self._presence
+            ctx = self._orchestrator.pipeline_context(
+                session_id=session_id,
+                turn_index=turn_index,
+                user_text=user_text,
                 generation=record.generation,
+                mode=mode,
+                social=self._session_manager.social,
+                story_port=self._story_port,
+                world_id_fn=self._world_id_fn,
+                memory_compose=self._memory_compose,
+                similar=similar,
+                portrait=portrait,
+                pop_presence_share_at=(
+                    presence.consume_share_at
+                    if presence is not None
+                    else None
+                ),
+                pop_session_share_at=self._pop_session_share_at,
+                mark_recall_unit_consumed=self._mark_recall_unit_consumed,
             )
-        finished = finish_turn_bundle(
-            bundle,
-            social=self._session_manager.social,
-            session_id=session_id,
-            user_text=user_text,
-            turn_index=turn_index,
-            mode=mode,
-            story_port=self._story_port,
-            world_id_fn=self._world_id_fn,
-            io=self._guidance_io,
-            share_queue_count=share_count,
-            share_state=(
-                self._orchestrator.share_compose_state(session_id)
-                if self._orchestrator is not None
-                else None
-            ),
-            use_session_share_queue=(
-                self._orchestrator.uses_session_share_queue(session_id)
-                if self._orchestrator is not None
-                else False
-            ),
-            pop_presence_share_at=(
-                presence.consume_share_at
-                if presence is not None
-                else None
-            ),
-            pop_session_share_at=self._pop_session_share_at,
-            mark_recall_unit_consumed=self._mark_recall_unit_consumed,
-            session_port=session_port,
-            reconcile_plan=reconcile_plan,
-        )
-        if self._orchestrator is not None:
-            self._orchestrator.touch_compose_cache_from_meta(session_id, finished.meta)
+            finished = self._orchestrator.compose_director.finish_turn(
+                director_plan,
+                bundle,
+                ctx,
+            )
+        else:
+            self._apply_compose_context(
+                bundle,
+                similar=similar,
+                portrait=portrait,
+            )
+            apply_session_social(
+                bundle,
+                self._session_manager.social,
+                session_id=session_id,
+                turn_index=turn_index,
+                user_text=user_text,
+                mode=mode,
+            )
+            apply_story_scene(
+                bundle,
+                story_port=self._story_port,
+                world_id_fn=self._world_id_fn,
+                user_text=user_text,
+            )
+            finished = bundle
         if self._turn_coordinator is not None:
             finished.meta["turn_coordinator"] = self._turn_coordinator.state(
                 session_id,
             ).snapshot()
-            finished.meta["module_refresh"] = finished.meta["turn_coordinator"].get(
-                "module_refresh",
+            finished.meta["director_refresh"] = finished.meta["turn_coordinator"].get(
+                "refresh",
             )
         if self._director is not None:
             finished.meta["session_director"] = self._director.state(session_id).snapshot()
@@ -920,11 +1002,16 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def _on_compose_prepare_request(self, request: ComposePrepareRequest) -> None:
         if self._orchestrator is None:
             return
-        self._compose_runner.schedule_prepare(
+        sid = request.session_id.strip()
+        turn_index = self.session_registry.current_turn_index(sid)
+        generation = self.session_registry.get(sid).generation
+        self._compose_runner.schedule_plan_warm(
             self._orchestrator,
-            request.session_id,
+            sid,
+            target_turn_index=turn_index,
             mode=request.mode,
             reply_style=self._reply_style,
+            generation=generation,
         )
 
     def _schedule_compose_prepare(
@@ -1115,11 +1202,28 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             if turn_index is not None
             else self.session_registry.current_turn_index(session_id)
         )
+        director_plan = None
         ledger = None
         if self._turn_coordinator is not None:
             ledger = self._turn_coordinator.inject_ledgers.ledger(
                 session_id,
                 resolved_turn,
+            )
+            director_plan = self._turn_coordinator.plan_for_turn(
+                session_id,
+                resolved_turn,
+            )
+        if director_plan is None and self._orchestrator is not None:
+            director_plan = self._orchestrator.compose_director.load_plan(
+                session_id,
+                resolved_turn,
+            )
+        if director_plan is not None and ledger is not None and self._orchestrator is not None:
+            self._orchestrator.compose_director.apply_memory_kick(
+                director_plan,
+                self._memory_compose,
+                user_text=user_text,
+                ledger=ledger,
             )
         pulled, portrait_pulled = self._memory_compose.pull_compose_context(
             session_id,
@@ -1183,39 +1287,59 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 user_text,
                 mode=mode,
                 turn_index=resolved_turn,
+                similar=pulled,
+                portrait=portrait_pulled,
             )
 
         queued = self._session_manager.pop_compose(session_id, mode=mode)
         if queued is not None:
             bundle = self._orchestrator.finalize(queued.frame, user_text, session_id=session_id)
             bundle.meta["compose_source"] = "session_queue"
-            self._apply_compose_context(
-                bundle,
-                similar=pulled,
-                portrait=portrait_pulled,
-            )
             return self._finish_turn_bundle(
                 bundle,
                 session_id,
                 user_text,
                 mode=mode,
                 turn_index=resolved_turn,
+                similar=pulled,
+                portrait=portrait_pulled,
+                director_plan=director_plan,
             )
 
-        frame = self._compose_runner.take_ready_frame(session_id, mode=mode)
-        if frame is not None:
-            bundle = self._orchestrator.finalize(frame, user_text, session_id=session_id)
-            self._apply_compose_context(
-                bundle,
-                similar=pulled,
-                portrait=portrait_pulled,
+        bundle = self._bundle_from_director_plan(
+            director_plan,
+            session_id,
+            user_text,
+            mode=mode,
+        )
+        if bundle is None and self._orchestrator is not None:
+            record = self.session_registry.get(session_id)
+            meta = self._orchestrator.compose_cache(session_id).meta_snapshot()
+            director_plan = self._orchestrator.compose_director.bootstrap_plan(
+                session_id,
+                target_turn_index=resolved_turn,
+                user_text=user_text,
+                generation=record.generation,
+                bundle_meta=meta,
+                mode=mode,
             )
+            self._orchestrator.compose_director.save_plan(director_plan)
+            bundle = self._bundle_from_director_plan(
+                director_plan,
+                session_id,
+                user_text,
+                mode=mode,
+            )
+        if bundle is not None:
             return self._finish_turn_bundle(
                 bundle,
                 session_id,
                 user_text,
                 mode=mode,
                 turn_index=resolved_turn,
+                similar=pulled,
+                portrait=portrait_pulled,
+                director_plan=director_plan,
             )
 
         bundle = self._orchestrator.compose(
@@ -1226,17 +1350,15 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             generation=self.session_registry.get(session_id).generation,
         )
         bundle.meta["compose_source"] = "sync_fallback"
-        self._apply_compose_context(
-            bundle,
-            similar=pulled,
-            portrait=portrait_pulled,
-        )
         return self._finish_turn_bundle(
             bundle,
             session_id,
             user_text,
             mode=mode,
             turn_index=resolved_turn,
+            similar=pulled,
+            portrait=portrait_pulled,
+            director_plan=director_plan,
         )
 
     _SHARE_HANDOFF_INSTRUCTION = (
@@ -1472,6 +1594,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             parse_agent_output=parse_agent_output,
             session_trace_cache=lambda sid, ti: self.session_trace_cache(sid, turn_index=ti),
             before_compose_bundle=self._before_compose_bundle,
+            on_turn_complete_hook=self._on_compose_turn_complete,
         )
         result = run_session_turn(
             self._session_manager,

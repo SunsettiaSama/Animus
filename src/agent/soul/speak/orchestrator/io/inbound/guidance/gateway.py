@@ -55,63 +55,10 @@ class InboundGuidanceGateway:
         *,
         force: bool = False,
     ) -> bool:
-        if force:
-            self.plan(request)
-            return True
-        entry = self._control.session_record(request.session_id)
-        active = self._control.active(request.session_id)
-        if request.share_queue_full and active is not None and not active.share_linked:
-            share_req = GuidancePlanRequest(
-                session_id=request.session_id,
-                turn_index=request.turn_index,
-                distilled_context=request.distilled_context,
-                persona_portrait=request.persona_portrait,
-                interactor_portrait=request.interactor_portrait,
-                share_preview=request.share_preview,
-                recall_preview=request.recall_preview,
-                share_candidates=request.share_candidates,
-                recall_candidates=request.recall_candidates,
-                share_queue_count=request.share_queue_count,
-                share_queue_full=True,
-                trigger="share_queue_full",
-                use_session_share_queue=request.use_session_share_queue,
-            )
-            self.plan(share_req)
-            return True
-        if active is None and not entry.has_control_history():
-            init_req = GuidancePlanRequest(
-                session_id=request.session_id,
-                turn_index=request.turn_index,
-                distilled_context=request.distilled_context,
-                persona_portrait=request.persona_portrait,
-                interactor_portrait=request.interactor_portrait,
-                share_preview=request.share_preview,
-                recall_preview=request.recall_preview,
-                share_candidates=request.share_candidates,
-                recall_candidates=request.recall_candidates,
-                share_queue_count=request.share_queue_count,
-                share_queue_full=request.share_queue_full,
-                trigger="init",
-                use_session_share_queue=request.use_session_share_queue,
-            )
-            self.plan(init_req)
-            return True
-        turn_req = GuidancePlanRequest(
-            session_id=request.session_id,
-            turn_index=request.turn_index,
-            distilled_context=request.distilled_context,
-            persona_portrait=request.persona_portrait,
-            interactor_portrait=request.interactor_portrait,
-            share_preview=request.share_preview,
-            recall_preview=request.recall_preview,
-            share_candidates=request.share_candidates,
-            recall_candidates=request.recall_candidates,
-            share_queue_count=request.share_queue_count,
-            share_queue_full=request.share_queue_full,
-            trigger="turn",
-            use_session_share_queue=request.use_session_share_queue,
-        )
-        self.plan(turn_req)
+        """被动化：仅导演显式 force 时触发 replan。"""
+        if not force:
+            return False
+        self.plan(request)
         return True
 
     @staticmethod

@@ -1,16 +1,7 @@
 from __future__ import annotations
 
-_DISTILL_HEADER = "【当前对话 · 上下文蒸馏】"
-_DISTILL_NOTE = (
-    "以下为当前会话内已完成蒸馏的对话摘要（每段一批轮次压缩为一句）；"
-    "用于把握已谈过的脉络，勿与下方未蒸馏原文或长期记忆混淆。"
-)
-
-_WM_HEADER = "【当前会话 · 工作记忆】"
-_WM_NOTE = (
-    "以下为当前 generation 内、尚未纳入蒸馏的最近几轮对白原文；"
-    "用于接续当下话题，不要逐句复述或当作台词模板。"
-)
+_DISTILL_LEAD = "在此之前，你们已经谈过的脉络可概括为："
+_WM_LEAD = "尚未纳入上述摘要的最近几轮对白如下："
 
 
 def render_dialogue_compressed(sentences: list[str]) -> str:
@@ -26,7 +17,7 @@ def render_dialogue_context_for_prompt(sentences: list[str]) -> str:
     body = render_dialogue_compressed(sentences)
     if not body:
         return ""
-    return "\n".join([_DISTILL_HEADER, _DISTILL_NOTE, body])
+    return f"{_DISTILL_LEAD}\n{body}"
 
 
 def render_recent_turns_for_prompt(
@@ -46,10 +37,8 @@ def render_recent_turns_for_prompt(
     if not recent_parts:
         return ""
     sections: list[str] = [
-        _WM_HEADER,
-        _WM_NOTE,
-        f"generation={generation}",
-        "最近轮次（原文）：",
+        _WM_LEAD,
+        f"（generation={generation}）",
         *recent_parts,
     ]
     return "\n".join(sections)

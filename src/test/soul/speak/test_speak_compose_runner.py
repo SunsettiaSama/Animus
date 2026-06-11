@@ -8,12 +8,11 @@ from agent.soul.presence.share_desire import ShareDesire
 from agent.soul.speak.orchestrator import SpeakOrchestrator
 from agent.soul.speak.orchestrator.runner import SpeakComposeRunner
 from agent.soul.presence.state.dynamic.expectation.queue import ShareIntent, ShareIntentQueue
+from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 
 
 def _build_composer():
     persona = MagicMock()
-    from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
-
     persona.get_persona_snapshot.return_value = persona_snapshot_with_distill(name="小A")
     presence = MagicMock()
     snap = MagicMock()
@@ -37,19 +36,19 @@ def test_compose_runner_prefetch_non_blocking():
     composer, _ = _build_composer()
     runner = SpeakComposeRunner()
     runner.start()
-    runner.schedule_prepare(composer, "tao")
+    runner.schedule_plan_warm(composer, "tao", target_turn_index=1)
+    assert runner.wait_for_plan_ready("tao", 1, timeout_ms=10) is True
 
-    assert runner.take_ready_frame("tao") is None
-
-    deadline = time.time() + 1.0
-    frame = None
+    deadline = time.time() + 2.0
+    plan = None
     while time.time() < deadline:
-        frame = runner.take_ready_frame("tao")
-        if frame is not None:
+        plan = composer.compose_director.load_plan("tao", 1)
+        if plan is not None and plan.prepared_frame is not None:
             break
-        time.sleep(0.01)
+        time.sleep(0.02)
 
     runner.stop()
+    frame = plan.prepared_frame if plan is not None else None
     assert frame is not None
     assert frame.wants_share is True
     assert "架构" in frame.share_summary
@@ -61,15 +60,14 @@ def test_compose_runner_invalidate_drops_cached_frame():
     composer, _ = _build_composer()
     runner = SpeakComposeRunner()
     runner.start()
-    done = threading.Event()
-
-    def _job() -> None:
-        frame = composer.prepare("tao")
-        runner._frames[("tao", "inbound")] = frame
-        done.set()
-
-    runner._worker.enqueue(_job)
-    done.wait(timeout=1.0)
+    runner.schedule_plan_warm(composer, "tao", target_turn_index=1)
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        plan = composer.compose_director.load_plan("tao", 1)
+        if plan is not None and plan.prepared_frame is not None:
+            break
+        time.sleep(0.02)
+    assert composer.compose_director.load_plan("tao", 1) is not None
     runner.invalidate("tao")
-    assert runner.take_ready_frame("tao") is None
+    assert composer.compose_director.load_plan("tao", 1) is None
     runner.stop()

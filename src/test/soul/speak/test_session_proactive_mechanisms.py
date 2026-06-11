@@ -5,9 +5,9 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 from agent.soul.speak.orchestrator import SpeakPromptBundle
-from agent.soul.speak.orchestrator.assemble import finish_turn_bundle
 from agent.soul.speak.orchestrator.guidance.social import (
     INITIATIVE_PROMPT,
+    apply_session_social,
     render_silence_break_block,
 )
 from agent.soul.speak.llm.engine import SpeakLLMEngine
@@ -65,9 +65,9 @@ def test_finish_turn_bundle_injects_initiative_into_social_blocks():
     initiative._rng = lambda: 0.0
     social = SessionSocialManager(registry=_registry_mock(), initiative=initiative)
     bundle = SpeakPromptBundle(session_id="s1")
-    finish_turn_bundle(
+    apply_session_social(
         bundle,
-        social=social,
+        social,
         session_id="s1",
         turn_index=4,
         user_text="????",
@@ -93,9 +93,9 @@ def test_finish_turn_bundle_prefers_silence_break_over_initiative():
     )
     social.arm_silence_break(spec)
     bundle = SpeakPromptBundle(session_id="s1")
-    finish_turn_bundle(
+    apply_session_social(
         bundle,
-        social=social,
+        social,
         session_id="s1",
         turn_index=4,
         user_text="????",

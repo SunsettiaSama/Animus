@@ -4,13 +4,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .compose_reconcile import ComposeVersionLedger, read_bundle_ledger
-from .compose_slots import ComposeBlockId, KNOWN_COMPOSE_BLOCKS, TurnComposeAssembly
+from .blocks.core.ledger import read_bundle_ledger
+from .blocks.core.types import VERSIONED_BLOCKS, BlockId, BlockVersionLedger, TurnBlockAssembly
 
 
 @dataclass(frozen=True)
 class ComposeModuleCacheEntry:
-    block: ComposeBlockId
+    block: BlockId
     narrative: str
     version: int
     updated_monotonic: float
@@ -26,11 +26,9 @@ class ComposeModuleCacheEntry:
 
 @dataclass
 class SessionComposeCache:
-    """Orchestrator 侧各编排块的叙述缓存与版本台账。"""
-
     session_id: str
-    ledger: ComposeVersionLedger = field(default_factory=ComposeVersionLedger)
-    slots: dict[ComposeBlockId, ComposeModuleCacheEntry] = field(default_factory=dict)
+    ledger: BlockVersionLedger = field(default_factory=BlockVersionLedger)
+    slots: dict[BlockId, ComposeModuleCacheEntry] = field(default_factory=dict)
     sync_notes: list[str] = field(default_factory=list)
 
     def meta_snapshot(self) -> dict[str, Any]:
@@ -39,7 +37,7 @@ class SessionComposeCache:
             "compose_session_generation": self.ledger.generation,
         }
         assembly_slots: list[dict[str, object]] = []
-        for block in KNOWN_COMPOSE_BLOCKS:
+        for block in VERSIONED_BLOCKS:
             entry = self.slots.get(block)
             if entry is None:
                 continue
@@ -75,7 +73,7 @@ class SessionComposeCache:
             block = raw.get("block")
             version = raw.get("version")
             narrative = raw.get("narrative")
-            if block not in KNOWN_COMPOSE_BLOCKS:
+            if block not in VERSIONED_BLOCKS:
                 continue
             if not isinstance(version, int):
                 continue
@@ -87,8 +85,8 @@ class SessionComposeCache:
                 updated_monotonic=now,
             )
 
-    def update_from_assembly(self, assembly: TurnComposeAssembly, *, generation: int | None = None) -> None:
-        self.ledger = ComposeVersionLedger(
+    def update_from_assembly(self, assembly: TurnBlockAssembly, *, generation: int | None = None) -> None:
+        self.ledger = BlockVersionLedger(
             persona=assembly.get("persona").version if assembly.get("persona") else None,
             scene=assembly.get("scene").version if assembly.get("scene") else None,
             guidance=assembly.get("guidance").version if assembly.get("guidance") else None,

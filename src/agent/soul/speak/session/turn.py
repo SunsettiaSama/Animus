@@ -49,6 +49,7 @@ class SessionTurnHost:
     session_trace_cache: Callable[[str, int], dict] | None = None
     on_turn_start: Callable[[str, str, int], None] | None = None
     before_compose_bundle: Callable[[str, str], None] | None = None
+    on_turn_complete_hook: Callable[[str, str, str, int, str], None] | None = None
 
 
 def _generate_with_outbound(
@@ -349,6 +350,14 @@ def run_session_turn(
             session_state=parsed.session_state,
             answer=answer_body,
         )
+        if host.on_turn_complete_hook is not None:
+            host.on_turn_complete_hook(
+                session_id,
+                user_text,
+                answer_body,
+                turn_index,
+                parsed.session_state,
+            )
 
         return SpeakTurnResult(
             session_id=session_id,

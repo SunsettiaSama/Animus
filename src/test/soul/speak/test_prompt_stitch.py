@@ -28,8 +28,7 @@ class _Identity:
     narrative: str = ""
 
     def render(self) -> str:
-        body = self.narrative.strip()
-        return f"【自叙·你是谁】\n{body}" if body else ""
+        return self.narrative.strip()
 
 
 @dataclass
@@ -84,26 +83,28 @@ def test_assemble_turn_system_order():
     bundle = _Bundle(
         system=_System(
             role="你是会话中的角色。",
-            output_format="【输出格式】\n用标签回复。",
+            output_format="回复时请用成对标签组织输出。",
         ),
         persona=_Persona(
             identity=_Identity(narrative="你是博物学家。"),
             relational=_Relational(
-                interactor_portrait="【对话者画像】\n称呼：访客",
+                interactor_portrait="与你交谈的是访客，特质偏好奇。",
             ),
         ),
         scene=_Scene(world_scene="风起地·傍晚"),
         guidance=_Guidance(
-            control_arc="【引导】\n先回应用户关切。",
-            context_distill="【当前对话 · 上下文蒸馏】\n- 你们谈到了蒙德城。",
-            working_memory="【当前会话 · 工作记忆】\n用户：你好\n我：你好呀",
+            control_arc="用户可能在等你先开口。你状态平稳，打算短句接住对方。",
+            context_distill="在此之前，你们已经谈过的脉络可概括为：\n- 你们谈到了蒙德城。",
+            working_memory="尚未纳入上述摘要的最近几轮对白如下：\n用户：你好\n我：你好呀",
         ),
     )
     text = assemble_turn_system(bundle)
-    assert "【编排态 · 本轮动态】" in text
-    assert "【当前对话 · 上下文蒸馏】" in text
-    assert "【当前会话 · 工作记忆】" in text
-    assert "【输出格式 · 硬性约束】" in text
-    assert text.index("【编排态") < text.index("【当前对话")
-    assert text.index("【当前对话") < text.index("【当前会话")
-    assert text.index("【当前会话") < text.index("【输出格式")
+    assert "【编排态" not in text
+    assert "【对话引导 ·" not in text
+    assert "你是博物学家。" in text
+    assert "在此之前，你们已经谈过的脉络" in text
+    assert "尚未纳入上述摘要的最近几轮对白" in text
+    assert "回复时请用成对标签" in text
+    assert text.index("你是博物学家") < text.index("在此之前")
+    assert text.index("在此之前") < text.index("尚未纳入")
+    assert text.index("尚未纳入") < text.index("回复时请")

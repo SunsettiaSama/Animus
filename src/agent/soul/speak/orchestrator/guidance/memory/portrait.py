@@ -30,24 +30,20 @@ def render_interactor_portrait_for_prompt(
     if not traits:
         traits = _PLACEHOLDER
 
-    lines = [
-        "【对话者画像】",
-        f"称呼：{display_name}",
-        f"特质：{traits}",
-    ]
+    parts = [f"与你交谈的是{display_name}，特质偏{traits}"]
     relation = agent_relation.strip()
     if relation:
-        lines.append(f"与你的关系：{relation}")
+        parts.append(f"你们的关系是{relation.rstrip('。')}")
     impression = recent_impression.strip()
     if impression:
-        lines.append(f"近期印象：{impression}")
-    return "\n".join(lines)
+        parts.append(f"近期你对{display_name}的印象是{impression.rstrip('。')}")
+    return "；".join(parts) + "。"
 
 
 def render_interactor_portrait_inject(portrait_text: str) -> str:
     text = portrait_text.strip()
     if not text:
         return ""
-    if text.startswith("【对话者画像】"):
+    if text.startswith("与你交谈"):
         return text
-    return f"【对话者画像】\n{text}"
+    return f"与你交谈的是{text.rstrip('。')}。"

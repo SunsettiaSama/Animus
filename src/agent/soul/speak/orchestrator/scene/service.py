@@ -9,7 +9,7 @@ from agent.soul.speak.llm.engine import SpeakLLMEngine
 from .collect import collect_story_scene
 from .layer import SpeakSceneLayer
 from .port import StoryScenePort
-from .render import render_world_scene_block
+from .render import normalize_scene_inject, render_world_scene_block
 from .resolve_llm import pick_scene_by_llm
 from .resolve_regex import pick_scene_by_regex
 from .state import SceneComposeState, SceneUpdateResult
@@ -121,9 +121,7 @@ class SceneComposeService:
             layer.matched_by = matched_by
             meta["story_scene_matched_by"] = matched_by
         if inject:
-            if not inject.startswith("【"):
-                inject = render_world_scene_block(inject)
-            layer.world_scene = inject
+            layer.world_scene = normalize_scene_inject(inject)
         if layer.scene_name:
             meta["story_scene_name"] = layer.scene_name
         return layer, meta

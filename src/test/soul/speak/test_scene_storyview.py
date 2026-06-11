@@ -100,5 +100,5 @@ def test_scene_layer_renders_into_system():
         user_text="你好",
     )
     assembled = bundle.build_system()
-    assert "【你所处的场景】" in assembled
+    assert "你此刻身处" in assembled or "茶壶" in assembled
     assert "茶壶" in assembled

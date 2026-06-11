@@ -98,12 +98,12 @@ def build_module_sections(
 
     coordinator = bundle.meta.get("turn_coordinator")
     if isinstance(coordinator, dict):
-        refresh = coordinator.get("module_refresh")
+        refresh = coordinator.get("refresh")
         if refresh:
             sections.append(
                 (
-                    "session.module_refresh",
-                    "会话 · 当轮模块刷新标记",
+                    "session.director_refresh",
+                    "会话 · Director 刷新标记",
                     json.dumps(refresh, ensure_ascii=False),
                 ),
             )
@@ -114,6 +114,18 @@ def build_module_sections(
                     "session.inject_ledger",
                     "会话 · 记忆注入账本",
                     json.dumps(ledger, ensure_ascii=False),
+                ),
+            )
+
+    director_plan = bundle.meta.get("compose_director_plan")
+    if isinstance(director_plan, dict):
+        refresh = director_plan.get("refresh")
+        if refresh:
+            sections.append(
+                (
+                    "session.plan_refresh",
+                    "会话 · Director 刷新标记",
+                    json.dumps(refresh, ensure_ascii=False),
                 ),
             )
 

@@ -4,9 +4,5 @@ from .state import GuidanceControlState
 
 
 def render_control_arc(state: GuidanceControlState) -> str:
-    body = state.narrative.strip()
-    if not body:
-        return ""
-    if not (body.startswith('"') or body.startswith('"')):
-        body = f'"{body}"'
-    return f"【对话引导】\n{body}"
+    """对话引导：直接输出 narrative 自然段，不加硬边界标题。"""
+    return state.narrative.strip()

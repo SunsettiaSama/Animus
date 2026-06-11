@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from ...compose.runner import SpeakComposeRunner
+from ...orchestrator.runner import SpeakComposeRunner
 from ...session import SpeakSessionService
 from ...session.lifecycle import SpeakSessionRegistry
 from .compose.gateway import InboundComposeGateway

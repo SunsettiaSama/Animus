@@ -5,7 +5,6 @@ from agent.soul.speak.session.queue.types import InterruptContext
 
 def render_interrupt_system_block(ctx: InterruptContext) -> str:
     lines = [
-        "【会话插队】",
         "用户在 agent 尚未完成 outward 推送时又发送了新消息。",
         f"用户最新输入：{ctx.new_user_text.strip()}",
     ]
@@ -29,7 +28,6 @@ def render_interrupt_system_block(ctx: InterruptContext) -> str:
             order = ",".join(str(index) for index in ctx.queue_decision_reorder)
             lines.append(f"恢复顺序：{order}")
     lines.extend([
-        "",
         "请先回应用户最新输入；队列处置已由独立决策轮完成，无需在本轮 think 中重复判断。",
         "按正常轮次状态输出 finish / append / share / recall 即可。",
     ])

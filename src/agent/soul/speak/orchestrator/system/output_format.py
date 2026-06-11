@@ -27,8 +27,7 @@ class SpeakOutputFormat:
             f"{speak_tag('state', 'finish')}"
         )
         lines = [
-            "【输出格式】",
-            "用成对标签 [tag]…[/tag] 组织回复。",
+            "回复时请用成对标签 [tag]…[/tag] 组织输出。",
             f"必填：{think}（内部，不对用户展示）；{finish}/{append}/{share}/{recall_state} 四选一。",
             (
                 f"{finish} 结束等用户；{append} 本轮继续；"

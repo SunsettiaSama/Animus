@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.machinery
+import os
 import sys
 import types
 from pathlib import Path
@@ -17,12 +18,8 @@ def pytest_configure(config):
     )
 
 
-def pytest_collection_modifyitems(config, items):
-    if not config.getoption("--run-network", default=False):
-        skip_network = pytest.mark.skip(reason="needs network; run with --run-network")
-        for item in items:
-            if "network" in item.keywords:
-                item.add_marker(skip_network)
+def _option_registered(parser: pytest.Parser, dest: str) -> bool:
+    return any(getattr(opt, "dest", None) == dest for opt in parser._anonymous.options)
 
 
 def pytest_addoption(parser):
@@ -32,6 +29,44 @@ def pytest_addoption(parser):
         default=False,
         help="include tests that require network access",
     )
+    if not _option_registered(parser, "run_speak_live"):
+        parser.addoption(
+            "--run-speak-live",
+            action="store_true",
+            default=False,
+            help="使用真实 LLM 跑 speak 冒烟（需 --speak-base-url / --speak-api-key）",
+        )
+    if not _option_registered(parser, "speak_model"):
+        parser.addoption(
+            "--speak-model",
+            default=os.environ.get("SPEAK_SMOKE_MODEL", "deepseek-chat"),
+            help="speak live 冒烟使用的模型名",
+        )
+    if not _option_registered(parser, "speak_base_url"):
+        parser.addoption(
+            "--speak-base-url",
+            default=os.environ.get("SPEAK_SMOKE_BASE_URL"),
+            help="speak live 冒烟 API base URL",
+        )
+    if not _option_registered(parser, "speak_api_key"):
+        parser.addoption(
+            "--speak-api-key",
+            default=os.environ.get("SPEAK_SMOKE_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+            help="speak live 冒烟 API key",
+        )
+
+
+def pytest_collection_modifyitems(config, items):
+    allow_network = config.getoption("--run-network", default=False) or config.getoption(
+        "--run-speak-live",
+        default=False,
+    )
+    if allow_network:
+        return
+    skip_network = pytest.mark.skip(reason="needs network; run with --run-network or --run-speak-live")
+    for item in items:
+        if "network" in item.keywords:
+            item.add_marker(skip_network)
 
 
 SRC = Path(__file__).resolve().parent.parent

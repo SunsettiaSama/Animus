@@ -97,11 +97,19 @@ class SpeakContextDistiller:
         user_text: str,
         agent_text: str,
     ) -> None:
+        """记账：仅累积 chunk，蒸馏由导演 distill_if_requested 触发。"""
+        self.record_chunk(session_id, user_text, agent_text)
+
+    def record_chunk(
+        self,
+        session_id: str,
+        user_text: str,
+        agent_text: str,
+    ) -> None:
         user = user_text.strip()
         agent = agent_text.strip()
         if not user and not agent:
             return
-
         state = self._session(session_id)
         with state.lock:
             state.buffer.append(DialogueContextChunk(user_text=user, agent_text=agent))
@@ -109,11 +117,19 @@ class SpeakContextDistiller:
                 batch = state.buffer[: self._chunk_size]
                 state.buffer = state.buffer[self._chunk_size :]
                 state.queued_batches.append(batch)
+
+    def distill_if_requested(self, session_id: str) -> bool:
+        """导演显式请求时启动排队蒸馏。"""
+        state = self._session(session_id)
+        should_pump = False
+        with state.lock:
             should_pump = bool(state.queued_batches) and not state.distilling
             if should_pump:
                 state.distilling = True
         if should_pump:
             self._submit(lambda sid=session_id: self._pump_session(sid))
+            return True
+        return False
 
     def prompt_block(self, session_id: str) -> str:
         """非阻塞：已完成蒸馏摘要（无 prompt 头，供 compose / 决策）。"""

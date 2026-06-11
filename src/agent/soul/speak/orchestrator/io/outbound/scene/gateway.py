@@ -24,6 +24,12 @@ class OutboundSceneGateway:
     def active(self, session_id: str):
         return self._compose.active(session_id)
 
+    def snapshot(self, session_id: str) -> dict[str, object] | None:
+        state = self._compose.active(session_id)
+        if state is None:
+            return None
+        return {"world_scene": state.layer.world_scene}
+
     def apply_to_bundle(self, bundle: SpeakPromptBundle, session_id: str) -> bool:
         state = self._compose.active(session_id)
         if state is None or not state.result.ok:

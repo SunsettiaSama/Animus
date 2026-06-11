@@ -9,7 +9,6 @@ import pytest
 from config.agent.persona_config import PersonaConfig
 from config.soul.config import SoulConfig
 from config.soul.memory.infra_config import SoulMemoryInfraConfig
-from agent.soul.service import SoulService
 from infra.memory import MemoryInfraService
 
 
@@ -67,6 +66,8 @@ def persona_cfg(soul_temp_dir):
 
 @pytest.fixture
 def soul_service(soul_temp_dir, persona_cfg, mock_llm, disabled_memory_infra):
+    from agent.soul.service import SoulService
+
     return SoulService(
         life_dir=os.path.join(soul_temp_dir, "life"),
         persona_cfg=persona_cfg,

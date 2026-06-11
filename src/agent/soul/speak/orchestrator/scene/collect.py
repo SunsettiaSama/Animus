@@ -4,7 +4,7 @@ from typing import Any
 
 from .layer import SpeakSceneLayer
 from .port import StorySceneReadPort
-from .render import render_world_scene_block
+from .render import normalize_scene_inject, render_world_scene_block
 
 
 def collect_story_scene(
@@ -38,8 +38,8 @@ def collect_story_scene(
             inject = render_world_scene_block(snapshot)
             matched_by = matched_by or "snapshot"
 
-    if inject and not inject.startswith("【"):
-        inject = render_world_scene_block(inject)
+    if inject:
+        inject = normalize_scene_inject(inject)
 
     layer = SpeakSceneLayer(
         world_scene=inject,
