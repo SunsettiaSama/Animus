@@ -6,8 +6,8 @@ from collections import defaultdict
 from agent.soul.workers import DomainWorker
 
 from .orchestrator import SpeakOrchestrator
-from .system.reply_style import SpeakReplyStyle
-from .system.role import SpeakTurnMode
+from .blocks.system.reply_style import SpeakReplyStyle
+from .blocks.system.role import SpeakTurnMode
 
 
 class SpeakComposeRunner:
@@ -21,6 +21,7 @@ class SpeakComposeRunner:
         self._ready_events: dict[tuple[str, int], threading.Event] = {}
         self._last_orchestrator: SpeakOrchestrator | None = None
         self._last_turn_index: dict[str, int] = {}
+        self._on_frame_ready = None
 
     @property
     def worker(self) -> DomainWorker:
@@ -70,6 +71,9 @@ class SpeakComposeRunner:
     def _signal_plan_ready(self, session_id: str, turn_index: int) -> None:
         self._ready_event(session_id, turn_index).set()
 
+    def set_frame_ready_handler(self, handler) -> None:
+        self._on_frame_ready = handler
+
     def schedule_plan_warm(
         self,
         orchestrator: SpeakOrchestrator,
@@ -107,6 +111,8 @@ class SpeakComposeRunner:
                 agent_text=agent_text,
             )
             director.save_plan(plan)
+            if self._on_frame_ready is not None and plan.prepared_frame is not None:
+                self._on_frame_ready(plan.prepared_frame, mode=mode)
             with self._lock:
                 self._in_flight.discard(inflight_key)
             self._signal_plan_ready(sid, target_turn_index)

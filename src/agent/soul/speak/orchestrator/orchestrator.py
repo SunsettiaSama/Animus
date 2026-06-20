@@ -20,41 +20,38 @@ from .bundle import SpeakPromptBundle
 
 from .frame import PreparedComposeFrame
 
-from .guidance.layer import SpeakGuidanceLayer
-
-from .guidance.context import SpeakContextDistiller
-
-from .guidance.control import GuidanceControlService
-
-from .guidance.share import ShareDesireComposer
-from .guidance.share.state import ShareComposeState
-
-from .guidance.share.preview import format_share_preview
+from .blocks.guidance.share_preview import format_share_preview
+from .blocks.guidance import (
+    GuidanceControlService,
+    ShareComposeState,
+    ShareDesireComposer,
+    SpeakContextDistiller,
+)
+from .blocks.guidance.layer import SpeakGuidanceLayer
 
 from .io import OrchestratorIOHub
 
 from .io.inbound.persona import PersonaComposeRequest
 
-from .persona import PersonaComposeService, SpeakPersonaLayer
-from .persona.interactor_portrait import (
+from .blocks.persona import PersonaComposeService, SpeakPersonaLayer
+from .blocks.persona import (
     MemoryComposePortraitPullPort,
     PersonaInteractorPortraitService,
 )
 
-from .scene import SceneComposeService, SpeakSceneLayer
+from .blocks.scene import SceneComposeService, SpeakSceneLayer
 
-from .blocks import BlockRegistry
+from .blocks.registry import BlockRegistry
 from .compose_cache import ComposeCacheRegistry, SessionComposeCache
 from .director import ComposeDirector
 from .pipeline import ComposePipeline, ComposePipelineContext
-from .memory import MemoryWarmBuffer
+from .blocks.memory.warm_buffer import MemoryWarmBuffer
+from .queue.hub import ComposeQueueHub
 from .session_sync import SessionComposeSyncAgent
 
-from .system.build import build_system_layer
-
-from .system.reply_style import SpeakReplyStyle
-
-from .system.role import SpeakTurnMode
+from .blocks.system.build import build_system_layer
+from .blocks.system.reply_style import SpeakReplyStyle
+from .blocks.system.role import SpeakTurnMode
 
 
 
@@ -181,6 +178,8 @@ class SpeakOrchestrator:
         self._compose_caches = ComposeCacheRegistry()
         self._memory_buffers: dict[str, MemoryWarmBuffer] = {}
         self._memory_turn_gap = 3
+        self._compose_queue_hub = ComposeQueueHub(memory_turn_gap=self._memory_turn_gap)
+        self._compose_queue_hub.bind_memory_buffer(self.memory_warm_buffer)
         self._session_sync = SessionComposeSyncAgent(self)
 
 
@@ -278,6 +277,11 @@ class SpeakOrchestrator:
 
     def bind_memory_turn_gap(self, turn_gap: int) -> None:
         self._memory_turn_gap = max(1, turn_gap)
+        self._compose_queue_hub._memory_turn_gap = self._memory_turn_gap
+
+    @property
+    def compose_queue_hub(self) -> ComposeQueueHub:
+        return self._compose_queue_hub
 
     def compose_cache(self, session_id: str) -> SessionComposeCache:
         return self._compose_caches.get(session_id)
@@ -306,9 +310,11 @@ class SpeakOrchestrator:
         sid = session_id.strip()
         self._compose_caches.clear(sid)
         self._compose_director.clear_session(sid)
+        self._compose_queue_hub.clear_session(sid)
         buf = self._memory_buffers.pop(sid, None)
         if buf is not None:
             buf.clear_session(sid)
+        self._guidance_control.clear_control_arc(sid)
 
     @property
     def interactor_portrait(self) -> PersonaInteractorPortraitService:

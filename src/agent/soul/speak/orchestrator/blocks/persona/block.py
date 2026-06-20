@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ...io.inbound.persona import PersonaComposeRequest
-from ...persona import SpeakPersonaLayer
+from .api import SpeakPersonaLayer
 from ..core.base import BlockContext, ComposeTarget
 from ..core.types import BlockId, BlockSnapshot
 from ..core.util import distilled_context

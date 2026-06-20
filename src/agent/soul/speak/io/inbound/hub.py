@@ -42,7 +42,6 @@ class SpeakInboundHub:
             keyword_wait_ms=keyword_wait_ms,
             memory_budget=memory_budget,
             portrait_wait_ms=portrait_wait_ms,
-            recall_pick_weights=session_manager.queues.memory_queue,
         )
         self.compose = InboundComposeGateway(compose_runner)
         self.drive = SpeakDriveBridge(presence, share_threshold=share_threshold)

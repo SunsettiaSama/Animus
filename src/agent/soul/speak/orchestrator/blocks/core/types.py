@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from ...guidance.control.state import GuidanceControlState
+if TYPE_CHECKING:
+    from ..guidance.control import GuidanceControlState
+else:
+    GuidanceControlState = Any  # type: ignore[assignment,misc]
 
 BlockId = Literal[
     "system",

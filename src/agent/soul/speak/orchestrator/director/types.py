@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..blocks.core.types import BlockId
 from ..frame import PreparedComposeFrame
-from ..guidance.control.state import GuidanceControlState
+
+if TYPE_CHECKING:
+    from ..blocks.guidance.control import GuidanceControlState
+else:
+    GuidanceControlState = Any  # type: ignore[assignment,misc]
 
 SocialArmedKind = Literal["enter_greeting", "silence_break", "initiative"]
 

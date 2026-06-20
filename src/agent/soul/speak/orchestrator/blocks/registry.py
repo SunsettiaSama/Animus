@@ -5,13 +5,13 @@ from typing import TYPE_CHECKING, Any
 from .context import ContextBlock
 from .core.base import BlockContext, ComposeTarget, PromptBlock
 from .core.types import REFRESH_ORDER, BlockId, BlockSnapshot, TurnBlockAssembly
-from .guidance import GuidanceBlock
-from .memory import MemoryBlock
-from .persona import PersonaBlock
-from .scene import SceneBlock
-from .share import ShareBlock
-from .social import SocialBlock
-from .system import SystemBlock
+from .guidance.block import GuidanceBlock
+from .memory.block import MemoryBlock
+from .persona.block import PersonaBlock
+from .scene.block import SceneBlock
+from .share.block import ShareBlock
+from .social.block import SocialBlock
+from .system.block import SystemBlock
 
 if TYPE_CHECKING:
     from ..bundle import SpeakPromptBundle

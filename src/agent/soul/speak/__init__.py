@@ -6,9 +6,9 @@ from typing import Any
 _LAZY: dict[str, tuple[str, str]] = {
     "SpeakPromptBundle": ("agent.soul.speak.orchestrator", "SpeakPromptBundle"),
     "SpeakOrchestrator": ("agent.soul.speak.orchestrator", "SpeakOrchestrator"),
-    "SpeakReplyStyle": ("agent.soul.speak.orchestrator.system", "SpeakReplyStyle"),
-    "SpeakContextDistiller": ("agent.soul.speak.orchestrator.guidance.context", "SpeakContextDistiller"),
-    "SpeakOutputFormat": ("agent.soul.speak.orchestrator.system.output_format", "SpeakOutputFormat"),
+    "SpeakReplyStyle": ("agent.soul.speak.orchestrator.blocks.system", "SpeakReplyStyle"),
+    "SpeakContextDistiller": ("agent.soul.speak.orchestrator.blocks.guidance", "SpeakContextDistiller"),
+    "SpeakOutputFormat": ("agent.soul.speak.orchestrator.blocks.system", "SpeakOutputFormat"),
     "SpeakDriveBridge": ("agent.soul.speak.drive", "SpeakDriveBridge"),
     "SpeakDriveResult": ("agent.soul.speak.drive", "SpeakDriveResult"),
     "SpeakDriveSnapshot": ("agent.soul.speak.drive", "SpeakDriveSnapshot"),

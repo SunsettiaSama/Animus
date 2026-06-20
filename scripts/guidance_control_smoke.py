@@ -57,12 +57,20 @@ def _bootstrap_guidance_modules():
     _ensure_pkg("agent.soul.speak", SRC / "agent" / "soul" / "speak")
     _ensure_pkg("agent.soul.speak.orchestrator", SRC / "agent" / "soul" / "speak" / "orchestrator")
     _ensure_pkg(
-        "agent.soul.speak.orchestrator.guidance",
-        SRC / "agent" / "soul" / "speak" / "orchestrator" / "guidance",
+        "agent.soul.speak.orchestrator.blocks",
+        SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks",
     )
     _ensure_pkg(
-        "agent.soul.speak.orchestrator.guidance.control",
-        SRC / "agent" / "soul" / "speak" / "orchestrator" / "guidance" / "control",
+        "agent.soul.speak.orchestrator.blocks.guidance",
+        SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "guidance",
+    )
+    _ensure_pkg(
+        "agent.soul.speak.orchestrator.blocks.guidance.runtime",
+        SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "guidance" / "runtime",
+    )
+    _ensure_pkg(
+        "agent.soul.speak.orchestrator.blocks.guidance.runtime.control",
+        SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "guidance" / "runtime" / "control",
     )
     _ensure_pkg("agent.soul.speak.orchestrator.io", SRC / "agent" / "soul" / "speak" / "orchestrator" / "io")
     _ensure_pkg(
@@ -82,25 +90,25 @@ def _bootstrap_guidance_modules():
         SRC / "agent" / "soul" / "speak" / "orchestrator" / "io" / "outbound" / "guidance",
     )
 
-    base = "agent.soul.speak.orchestrator.guidance.control"
+    base = "agent.soul.speak.orchestrator.blocks.guidance.runtime.control"
     state = _load_module(
-        "agent/soul/speak/orchestrator/guidance/control/state.py",
+        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/state.py",
         f"{base}.state",
     )
     _load_module(
-        "agent/soul/speak/orchestrator/guidance/control/store.py",
+        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/store.py",
         f"{base}.store",
     )
     render = _load_module(
-        "agent/soul/speak/orchestrator/guidance/control/render.py",
+        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/render.py",
         f"{base}.render",
     )
     planner = _load_module(
-        "agent/soul/speak/orchestrator/guidance/control/planner.py",
+        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/planner.py",
         f"{base}.planner",
     )
     service = _load_module(
-        "agent/soul/speak/orchestrator/guidance/control/service.py",
+        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/service.py",
         f"{base}.service",
     )
     control_pkg = sys.modules[base]
@@ -108,6 +116,12 @@ def _bootstrap_guidance_modules():
     control_pkg.GuidanceControlState = state.GuidanceControlState
     control_pkg.GuidanceTrigger = state.GuidanceTrigger
     control_pkg.GuidancePlanInput = planner.GuidancePlanInput
+    guidance_pkg = sys.modules["agent.soul.speak.orchestrator.blocks.guidance"]
+    guidance_pkg.GuidanceControlService = service.GuidanceControlService
+    guidance_pkg.GuidanceControlState = state.GuidanceControlState
+    guidance_pkg.GuidanceTrigger = state.GuidanceTrigger
+    guidance_pkg.GuidancePlanInput = planner.GuidancePlanInput
+    guidance_pkg.render_control_arc = render.render_control_arc
     _load_module(
         "agent/soul/speak/orchestrator/io/inbound/guidance/request.py",
         "agent.soul.speak.orchestrator.io.inbound.guidance.request",
@@ -202,7 +216,7 @@ def main() -> None:
         share_queue_full=False,
         trigger="init",
     )
-    inbound.sync_for_compose(init_req)
+    inbound.sync_for_compose(init_req, force=True)
     snap = outbound.snapshot(session_id)
     _print_state("API · get_guidance_control / snapshot", control.active(session_id))
     print(f"version={outbound.version(session_id)}", flush=True)
@@ -218,7 +232,7 @@ def main() -> None:
         share_queue_count=SHARE_INTENT_QUEUE_MAX_ITEMS,
         share_queue_full=True,
     )
-    refreshed = inbound.sync_for_compose(share_req)
+    refreshed = inbound.sync_for_compose(share_req, force=True)
     print(f"sync_for_compose refreshed={refreshed}", flush=True)
     _print_state("联动后 snapshot", control.active(session_id))
     print(
@@ -240,8 +254,8 @@ def main() -> None:
     engine = SpeakLLMEngine(LLM(llm_cfg))
     llm_control = GuidanceControlService(llm=engine)
     cand_types = _load_module(
-        "agent/soul/speak/orchestrator/guidance/control/candidate_types.py",
-        "agent.soul.speak.orchestrator.guidance.control.candidate_types",
+        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/candidate_types.py",
+        "agent.soul.speak.orchestrator.blocks.guidance.runtime.control.candidate_types",
     )
     SharePlannerCandidate = cand_types.SharePlannerCandidate
     RecallPlannerCandidate = cand_types.RecallPlannerCandidate

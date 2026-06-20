@@ -5,15 +5,15 @@ from typing import TYPE_CHECKING, Any
 from ..blocks.core.base import ComposeTarget, PlanSidecar
 from ..blocks.core.ledger import write_session_ledger
 from ..blocks.core.types import TurnBlockAssembly
+from ..blocks.guidance.layer import SpeakGuidanceLayer
+from ..blocks.persona.api import SpeakPersonaLayer
 from ..blocks.registry import BlockRegistry
+from ..blocks.scene.api import SpeakSceneLayer
 from ..bundle import SpeakPromptBundle
 from ..director.decide import decide_plan
 from ..frame import PreparedComposeFrame
-from ..guidance.layer import SpeakGuidanceLayer
-from ..persona import SpeakPersonaLayer
-from ..scene import SpeakSceneLayer
-from ..system.build import build_system_layer
-from ..system.reply_style import SpeakReplyStyle
+from ..blocks.system.build import build_system_layer
+from ..blocks.system.reply_style import SpeakReplyStyle
 from .context import ComposePipelineContext
 
 if TYPE_CHECKING:
@@ -247,7 +247,10 @@ class ComposePipeline:
             session_id=sid,
             mode=ctx.mode,
             generation=generation,
-            system=build_system_layer(mode=ctx.mode),
+            system=build_system_layer(
+                mode=ctx.mode,
+                output_format=ctx.reply_style.render_prompt(),
+            ),
             persona=SpeakPersonaLayer(),
             scene=SpeakSceneLayer(),
             guidance=SpeakGuidanceLayer(),

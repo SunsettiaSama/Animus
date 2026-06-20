@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...frame import PreparedComposeFrame
-from ...system.reply_style import SpeakReplyStyle
-from ...system.role import SpeakTurnMode
+from ..system.reply_style import SpeakReplyStyle
+from ..system.role import SpeakTurnMode
 from .types import BlockId, BlockSnapshot, PlanSidecar, TurnBlockAssembly
 
 if TYPE_CHECKING:
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
     from ...bundle import SpeakPromptBundle
     from ...director.types import DirectorPlan, ModuleDecision
-    from ...guidance.share.state import ShareComposeState
+    from ..guidance.share import ShareComposeState
     from ...io import OrchestratorIOHub
     from ...orchestrator import SpeakOrchestrator
     from ...session.port import SessionComposePort

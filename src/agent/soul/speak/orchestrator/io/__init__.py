@@ -8,7 +8,7 @@ from .inbound import (
     SceneUpdateRequest,
 )
 from .outbound import OutboundGuidanceGateway, OutboundPersonaGateway, OutboundSceneGateway
-from ..persona.outbound import PersonaOutboundBrief
+from ..blocks.persona import PersonaOutboundBrief
 
 __all__ = [
     "PersonaOutboundBrief",
@@ -25,4 +25,4 @@ __all__ = [
     "PersonaComposeRequest",
     "SceneUpdateRequest",
 ]
-
+

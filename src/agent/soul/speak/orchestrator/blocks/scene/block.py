@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ...io.inbound.scene import SceneUpdateRequest
-from ...scene import apply_story_scene
+from .api import apply_story_scene
 from ..core.base import BlockContext, ComposeTarget
 from ..core.types import BlockId, BlockSnapshot
 

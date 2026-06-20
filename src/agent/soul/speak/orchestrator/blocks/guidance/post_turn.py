@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...guidance.control.consume import consume_guidance_emits
+from .runtime.control.consume import consume_guidance_emits
 from ..core.base import BlockContext
 
 

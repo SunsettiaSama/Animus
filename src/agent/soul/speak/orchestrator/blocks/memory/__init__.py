@@ -3,6 +3,7 @@ from .block import MemoryBlock
 from .kick import kick_memory_requests
 from .plan import build_memory_inject_plan, has_topic_shift_signal, is_short_ack
 from .snapshot import memory_snapshot
+from .warm_buffer import MemoryWarmBuffer
 
 __all__ = [
     "MemoryBlock",
@@ -13,4 +14,5 @@ __all__ = [
     "is_short_ack",
     "kick_memory_requests",
     "memory_snapshot",
+    "MemoryWarmBuffer",
 ]

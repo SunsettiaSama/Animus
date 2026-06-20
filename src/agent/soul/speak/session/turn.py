@@ -261,7 +261,7 @@ def run_session_turn(
             if parsed.session_state == "finish":
                 break
 
-            if manager.compose_queue.has_pending(session_id, mode=mode) and host.compose_from_queue is not None:
+            if host.compose_from_queue is not None:
                 queued = host.compose_from_queue(
                     session_id,
                     user_text,

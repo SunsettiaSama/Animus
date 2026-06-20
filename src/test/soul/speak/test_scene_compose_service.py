@@ -36,24 +36,49 @@ for pkg in (
     "agent.soul.speak",
     "agent.soul.speak.llm",
     "agent.soul.speak.orchestrator",
-    "agent.soul.speak.orchestrator.scene",
+    "agent.soul.speak.orchestrator.blocks",
+    "agent.soul.speak.orchestrator.blocks.scene",
+    "agent.soul.speak.orchestrator.blocks.scene.runtime",
 ):
     _ensure_pkg(pkg)
 
 _load("agent/soul/speak/llm/engine.py", "agent.soul.speak.llm.engine")
-_load("agent/soul/speak/orchestrator/scene/layer.py", "agent.soul.speak.orchestrator.scene.layer")
-_load("agent/soul/speak/orchestrator/scene/port.py", "agent.soul.speak.orchestrator.scene.port")
-_load("agent/soul/speak/orchestrator/scene/render.py", "agent.soul.speak.orchestrator.scene.render")
-_load("agent/soul/speak/orchestrator/scene/collect.py", "agent.soul.speak.orchestrator.scene.collect")
-_load("agent/soul/speak/orchestrator/scene/state.py", "agent.soul.speak.orchestrator.scene.state")
-_load("agent/soul/speak/orchestrator/scene/resolve_regex.py", "agent.soul.speak.orchestrator.scene.resolve_regex")
-_load("agent/soul/speak/orchestrator/scene/resolve_llm.py", "agent.soul.speak.orchestrator.scene.resolve_llm")
+_load(
+    "agent/soul/speak/orchestrator/blocks/scene/runtime/layer.py",
+    "agent.soul.speak.orchestrator.blocks.scene.runtime.layer",
+)
+_load(
+    "agent/soul/speak/orchestrator/blocks/scene/runtime/port.py",
+    "agent.soul.speak.orchestrator.blocks.scene.runtime.port",
+)
+_load(
+    "agent/soul/speak/orchestrator/blocks/scene/runtime/render.py",
+    "agent.soul.speak.orchestrator.blocks.scene.runtime.render",
+)
+_load(
+    "agent/soul/speak/orchestrator/blocks/scene/runtime/collect.py",
+    "agent.soul.speak.orchestrator.blocks.scene.runtime.collect",
+)
+_load(
+    "agent/soul/speak/orchestrator/blocks/scene/runtime/state.py",
+    "agent.soul.speak.orchestrator.blocks.scene.runtime.state",
+)
+_load(
+    "agent/soul/speak/orchestrator/blocks/scene/runtime/resolve_regex.py",
+    "agent.soul.speak.orchestrator.blocks.scene.runtime.resolve_regex",
+)
+_load(
+    "agent/soul/speak/orchestrator/blocks/scene/runtime/resolve_llm.py",
+    "agent.soul.speak.orchestrator.blocks.scene.runtime.resolve_llm",
+)
 _service = _load(
-    "agent/soul/speak/orchestrator/scene/service.py",
-    "agent.soul.speak.orchestrator.scene.service",
+    "agent/soul/speak/orchestrator/blocks/scene/runtime/service.py",
+    "agent.soul.speak.orchestrator.blocks.scene.runtime.service",
 )
 
-pick_scene_by_regex = sys.modules["agent.soul.speak.orchestrator.scene.resolve_regex"].pick_scene_by_regex
+pick_scene_by_regex = sys.modules[
+    "agent.soul.speak.orchestrator.blocks.scene.runtime.resolve_regex"
+].pick_scene_by_regex
 SceneComposeService = _service.SceneComposeService
 SceneUpdateInput = _service.SceneUpdateInput
 

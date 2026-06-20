@@ -66,8 +66,8 @@ class OrchestratorIOHub:
 
     @classmethod
     def from_control_service(cls, control) -> OrchestratorIOHub:
-        from agent.soul.speak.orchestrator.persona.compose.service import PersonaComposeService
-        from agent.soul.speak.orchestrator.scene.service import SceneComposeService
+        from agent.soul.speak.orchestrator.blocks.persona import PersonaComposeService
+        from agent.soul.speak.orchestrator.blocks.scene import SceneComposeService
 
         placeholder_persona = PersonaComposeService(
             persona=_MissingPersonaPort(),

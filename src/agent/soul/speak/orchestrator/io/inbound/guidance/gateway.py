@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from config.soul.presence.config import SHARE_INTENT_QUEUE_MAX_ITEMS
 
-from agent.soul.speak.orchestrator.guidance.control import (
+from agent.soul.speak.orchestrator.blocks.guidance import (
     GuidanceControlService,
     GuidancePlanInput,
 )

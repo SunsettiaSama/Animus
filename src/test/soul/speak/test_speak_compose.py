@@ -10,8 +10,8 @@ from agent.soul.speak.orchestrator import (
     SpeakPersonaLayer,
     SpeakSceneLayer,
     SpeakSystemLayer,
-    collect_share_state,
 )
+from agent.soul.speak.orchestrator.guidance.share import collect_share_state
 from agent.soul.presence.state.dynamic.expectation.queue import ShareIntent, ShareIntentQueue
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 

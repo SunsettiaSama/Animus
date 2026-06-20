@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...system.build import build_system_layer
+from .build import build_system_layer
 from ..core.base import BlockContext, ComposeTarget
 from ..core.types import BlockId, BlockSnapshot
 

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..pipeline.compose_pipeline import ComposePipeline
 from ..pipeline.context import ComposePipelineContext
-from ..system.role import SpeakTurnMode
+from ..blocks.system.role import SpeakTurnMode
 from .decide import decide_plan
 from .store import DirectorPlanStore
 from .types import DirectorPlan

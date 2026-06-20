@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent.soul.speak.orchestrator.bundle import SpeakPromptBundle
 
-from agent.soul.speak.orchestrator.guidance.control import GuidanceControlService
+from agent.soul.speak.orchestrator.blocks.guidance import GuidanceControlService
 
 
 class OutboundGuidanceGateway:

@@ -11,6 +11,7 @@ from infra.llm import BaseLLM
 from .actions import SpeakAction
 from ..session import SpeakFeelingChunk, SpeakSubjectiveChunk
 from ..llm.director_engine import SpeakDirectorLLMEngine
+from ..orchestrator.directors import DirectorLLMCaller
 from ..service import SpeakService
 
 if TYPE_CHECKING:
@@ -61,8 +62,19 @@ class SpeakHandler:
         if llm is not None and service.llm_engine.llm is None:
             service.llm_engine.set_llm(llm)
         director_llm = self.resolve_director_llm()
-        if director_llm is not None and not service._director_llm.available:
-            service._director_llm._engine.set_llm(director_llm)
+        if director_llm is not None:
+            if not service._director_llm.available:
+                service._director_llm._engine.set_llm(director_llm)
+            service._director_llm_caller = DirectorLLMCaller(
+                llm=director_llm,
+                timeout_sec=8.0,
+            )
+            if service._director_coordinator is not None:
+                service._director_coordinator._turn_delivery._llm = service._director_llm_caller
+                service._director_coordinator._outline._llm = service._director_llm_caller
+                service._director_coordinator._user_intent._llm = service._director_llm_caller
+                service._director_coordinator._speak_gate._llm = service._director_llm_caller
+                service._director_coordinator._module_inject._llm = service._director_llm_caller
         return service
 
     def handle(self, action: str, payload: dict[str, Any]) -> Any:

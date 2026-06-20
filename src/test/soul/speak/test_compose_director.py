@@ -9,12 +9,12 @@ from agent.soul.speak.orchestrator.director.memory import (
 )
 from agent.soul.speak.orchestrator.director.service import ComposeDirector
 from agent.soul.speak.orchestrator.director.share import share_queue_full
-from agent.soul.speak.orchestrator.blocks.registry import BlockRegistry
-from agent.soul.speak.orchestrator.pipeline.context import ComposePipelineContext
-from agent.soul.speak.orchestrator.guidance.control import (
+from agent.soul.speak.orchestrator.blocks.guidance import (
     GuidanceControlService,
     GuidancePlanInput,
 )
+from agent.soul.speak.orchestrator.blocks.registry import BlockRegistry
+from agent.soul.speak.orchestrator.pipeline.context import ComposePipelineContext
 from agent.soul.speak.orchestrator.io import OrchestratorIOHub
 from agent.soul.speak.orchestrator.io.inbound.guidance import GuidancePlanRequest
 from config.soul.presence.config import SHARE_INTENT_QUEUE_MAX_ITEMS

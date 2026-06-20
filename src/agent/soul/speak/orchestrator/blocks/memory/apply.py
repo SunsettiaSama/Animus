@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...persona.interactor_portrait import interactor_pull_from_memory_result
+from ..persona.api import interactor_pull_from_memory_result
 from ..core.base import BlockContext
 from ...director.types import DirectorPlan
 

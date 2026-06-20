@@ -3,76 +3,37 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .compose import SessionComposeQueue
-from .decision import QueueDecisionResult
-from .memory import (
-    MemoryBufferItem,
-    MemoryBufferSource,
-    MemoryComposePullResult,
-    MemoryQueueConsumeResult,
-    MemoryQueueItem,
-    SessionMemoryBuffer,
-)
-from .portrait import PortraitQueueConsumeResult, PortraitQueueItem, SessionPortraitQueue
 from .share import SessionShareQueue
-from agent.soul.speak.orchestrator.guidance.interrupt import render_interrupt_system_block
-
-from .interrupt import summarize_suspended_compose
 from ..pacing import SessionUtterancePacing, UtteranceHoldPreset
 from .types import BrewLine, InterruptContext, SessionRuntime, SubmitUserInputResult, SpeakTurnMode
 from .user import SessionUserQueue, UserInputItem
 
-try:
-    from agent.soul.speak.orchestrator.memory import MemoryWarmBuffer
-except ImportError:
-    MemoryWarmBuffer = None  # type: ignore[misc, assignment]
+if TYPE_CHECKING:
+    from agent.soul.speak.orchestrator.queue.hub import ComposeQueueHub
 
 
 class SessionQueueHub:
-    """队列与会话推送态：compose / user 队列、插队、异步决策。"""
+    """会话推送态：user 队列、typing/brew、插队信号（compose 调度在 orchestrator）。"""
 
     def __init__(
         self,
         *,
-        memory_turn_gap: int = 3,
         brew_queue_max: int = 3,
         typing_idle_ms: int = 3000,
     ) -> None:
-        self._compose_queue = SessionComposeQueue()
         self._user_queue = SessionUserQueue()
-        self._memory_turn_gap = memory_turn_gap
         self._brew_queue_max = max(1, brew_queue_max)
         self._typing_idle_ms_default = max(500, typing_idle_ms)
-        self._memory_resolve: Callable[[str], SessionMemoryBuffer] | None = None
-        self._fallback_memory = SessionMemoryBuffer(max_turn_gap=memory_turn_gap)
-        self._portrait_queue = SessionPortraitQueue(max_turn_gap=memory_turn_gap)
         self._share_queue = SessionShareQueue()
         self._runtimes: dict[str, SessionRuntime] = {}
-        self._schedule_compose: Callable[[str, str], None] | None = None
-        self._schedule_queue_decision: Callable[[str, InterruptContext, int], None] | None = None
+        self._compose_hub: ComposeQueueHub | None = None
         self._on_typing_start: Callable[[str], None] | None = None
         self._on_typing_idle: Callable[[str], None] | None = None
 
-    def bind_compose_scheduler(self, schedule_compose: Callable[[str, str], None]) -> None:
-        self._schedule_compose = schedule_compose
-
-    def bind_queue_decision_scheduler(
-        self,
-        schedule_decision: Callable[[str, InterruptContext, int], None],
-    ) -> None:
-        self._schedule_queue_decision = schedule_decision
-
-    def bind_memory_warm_buffer(
-        self,
-        resolver: Callable[[str], SessionMemoryBuffer],
-    ) -> None:
-        self._memory_resolve = resolver
-
-    def _memory_for(self, session_id: str) -> SessionMemoryBuffer:
-        if self._memory_resolve is not None:
-            return self._memory_resolve(session_id)
-        return self._fallback_memory
+    def bind_compose_hub(self, compose_hub: ComposeQueueHub) -> None:
+        self._compose_hub = compose_hub
 
     def _runtime(self, session_id: str) -> SessionRuntime:
         if session_id not in self._runtimes:
@@ -92,7 +53,6 @@ class SessionQueueHub:
         enabled: bool,
         hold_ms: UtteranceHoldPreset = 3000,
     ) -> SessionUtterancePacing:
-        """Deprecated：映射为 typing_idle_ms，不再阻塞 compose。"""
         runtime = self._runtime(session_id)
         runtime.pacing.enabled = False
         runtime.pacing.hold_ms = 5000 if hold_ms == 5000 else 3000
@@ -119,7 +79,6 @@ class SessionQueueHub:
         return runtime.typing_idle_event.wait(timeout=timeout)
 
     def wait_typing_idle_handoff(self, session_id: str, *, timeout: float = 120.0) -> bool:
-        """等待 typing_idle 后导演决策 + 酝酿出队完成。"""
         runtime = self._runtime(session_id)
         return runtime.typing_idle_handoff.wait(timeout=timeout)
 
@@ -259,20 +218,8 @@ class SessionQueueHub:
             runtime.on_typing_idle(session_id)
 
     @property
-    def compose_queue(self) -> SessionComposeQueue:
-        return self._compose_queue
-
-    @property
     def user_queue(self) -> SessionUserQueue:
         return self._user_queue
-
-    @property
-    def memory_turn_gap(self) -> int:
-        return self._memory_turn_gap
-
-    @property
-    def memory_queue(self) -> SessionMemoryBuffer:
-        return self._fallback_memory
 
     @property
     def share_queue(self) -> SessionShareQueue:
@@ -286,66 +233,6 @@ class SessionQueueHub:
 
     def pop_deferred_share_intent(self, session_id: str):
         return self._share_queue.pop_most_wanted(session_id)
-
-    def enqueue_memory(self, session_id: str, item: MemoryBufferItem) -> None:
-        self._memory_for(session_id).enqueue_turn(session_id, item)
-
-    def set_social_prefetch(self, session_id: str, item: MemoryBufferItem) -> None:
-        self._memory_for(session_id).set_social_prefetch(session_id, item)
-
-    def set_warm_spread(self, session_id: str, item: MemoryBufferItem) -> None:
-        self._memory_for(session_id).set_warm_spread(session_id, item)
-
-    def pull_memory_for_compose(
-        self,
-        session_id: str,
-        current_turn_index: int,
-        *,
-        keyword_wait_ms: int = 200,
-        budget: int = 5,
-        merge_ratio: float | None = None,
-        user_text: str = "",
-    ) -> MemoryComposePullResult:
-        memory = self._memory_for(session_id)
-        if MemoryWarmBuffer is not None and isinstance(memory, MemoryWarmBuffer):
-            return memory.pull_for_compose(
-                session_id,
-                current_turn_index,
-                keyword_wait_ms=keyword_wait_ms,
-                budget=budget,
-                merge_ratio=merge_ratio,
-                user_text=user_text,
-            )
-        return memory.pull_for_compose(
-            session_id,
-            current_turn_index,
-            keyword_wait_ms=keyword_wait_ms,
-            budget=budget,
-            merge_ratio=merge_ratio,
-        )
-
-    def enqueue_portrait(self, session_id: str, item: PortraitQueueItem) -> None:
-        self._portrait_queue.enqueue(session_id, item)
-
-    def consume_portrait_for_compose(
-        self,
-        session_id: str,
-        current_turn_index: int,
-    ) -> PortraitQueueConsumeResult:
-        return self._portrait_queue.consume_for_compose(session_id, current_turn_index)
-
-    def pull_portrait_for_compose(
-        self,
-        session_id: str,
-        current_turn_index: int,
-        *,
-        wait_ms: int = 0,
-    ) -> PortraitQueueConsumeResult:
-        return self._portrait_queue.pull_for_compose(
-            session_id,
-            current_turn_index,
-            wait_ms=wait_ms,
-        )
 
     def is_pushing(self, session_id: str) -> bool:
         runtime = self._runtime(session_id)
@@ -371,21 +258,21 @@ class SessionQueueHub:
         decision_token = 0
         with runtime.lock:
             if runtime.phase == "pushing":
+                suspended_count = 0
+                suspended_summary = ""
+                if self._compose_hub is not None:
+                    suspended_count, suspended_summary = self._compose_hub.suspend_session(
+                        session_id,
+                    )
                 runtime.interrupt = InterruptContext(
                     new_user_text=normalized,
                     previous_user_text=runtime.active_user_text,
                     partial_agent_output=runtime.partial_agent_output,
+                    suspended_compose_count=suspended_count,
+                    suspended_compose_summary=suspended_summary,
                 )
-                self._suspend_compose_locked(session_id, runtime)
-                runtime.interrupt.suspended_compose_count = len(runtime.suspended_compose)
-                runtime.interrupt.suspended_compose_summary = summarize_suspended_compose(
-                    runtime.suspended_compose,
-                )
-                runtime.queue_decision_token += 1
-                decision_token = runtime.queue_decision_token
-                runtime.queue_decision = None
-                runtime.queue_decision_pending = True
-                runtime.queue_decision_event.clear()
+                if self._compose_hub is not None:
+                    decision_token = self._compose_hub.begin_queue_decision(session_id)
                 interrupt_ctx = runtime.interrupt
                 self._user_queue.push_front(
                     UserInputItem(
@@ -415,11 +302,9 @@ class SessionQueueHub:
             else:
                 return SubmitUserInputResult(queued=False)
 
-        if interrupt_ctx is not None:
-            if self._schedule_queue_decision is not None:
-                self._schedule_queue_decision(session_id, interrupt_ctx, decision_token)
-            if self._schedule_compose is not None:
-                self._schedule_compose(session_id, typed_mode)
+        if interrupt_ctx is not None and self._compose_hub is not None:
+            self._compose_hub.request_queue_decision(session_id, interrupt_ctx, decision_token)
+            self._compose_hub.schedule_compose(session_id, typed_mode)
             return SubmitUserInputResult(
                 queued=True,
                 interrupt=True,
@@ -454,67 +339,6 @@ class SessionQueueHub:
             runtime.active_user_text = ""
             return interrupt
 
-    def on_queue_decision_complete(
-        self,
-        session_id: str,
-        token: int,
-        result: QueueDecisionResult,
-    ) -> None:
-        runtime = self._runtime(session_id)
-        with runtime.lock:
-            if token != runtime.queue_decision_token:
-                return
-            runtime.queue_decision = result
-            runtime.queue_decision_pending = False
-            runtime.queue_decision_event.set()
-
-    def await_queue_decision(
-        self,
-        session_id: str,
-        *,
-        timeout: float = 30.0,
-    ) -> QueueDecisionResult | None:
-        runtime = self._runtime(session_id)
-        with runtime.lock:
-            if not runtime.queue_decision_pending:
-                decision = runtime.queue_decision
-                if isinstance(decision, QueueDecisionResult):
-                    return decision
-                return None
-
-        if not runtime.queue_decision_event.wait(timeout=timeout):
-            with runtime.lock:
-                runtime.queue_decision_pending = False
-            return QueueDecisionResult(maintain=False, thought="decision timeout")
-
-        with runtime.lock:
-            decision = runtime.queue_decision
-            if isinstance(decision, QueueDecisionResult):
-                return decision
-            return None
-
-    def prepare_interrupt_turn(
-        self,
-        session_id: str,
-        item: UserInputItem,
-    ) -> InterruptContext | None:
-        if not item.interrupted:
-            return None
-        ctx = self.interrupt_context_for(session_id, item)
-        if ctx is None:
-            return None
-        decision = self.await_queue_decision(session_id)
-        if decision is None:
-            return ctx
-        if decision.maintain:
-            self.resume_suspended_compose(session_id, reorder=decision.reorder)
-        else:
-            self.drop_suspended_compose(session_id)
-        ctx.queue_decision_maintain = decision.maintain
-        ctx.queue_decision_thought = decision.thought
-        ctx.queue_decision_reorder = decision.reorder
-        return ctx
-
     def interrupt_context_for(self, session_id: str, item: UserInputItem) -> InterruptContext | None:
         if not item.interrupted:
             return None
@@ -522,95 +346,39 @@ class SessionQueueHub:
         with runtime.lock:
             if runtime.interrupt is not None:
                 return runtime.interrupt
+            suspended_count = 0
+            suspended_summary = ""
+            if self._compose_hub is not None:
+                snap = self._compose_hub.debug_snapshot(session_id)
+                suspended_count = int(snap.get("suspended_compose_count", 0))
             return InterruptContext(
                 new_user_text=item.user_text,
                 previous_user_text=runtime.partial_agent_output,
-                suspended_compose_count=len(runtime.suspended_compose),
-                suspended_compose_summary=summarize_suspended_compose(runtime.suspended_compose),
+                suspended_compose_count=suspended_count,
+                suspended_compose_summary=suspended_summary,
             )
-
-    def render_interrupt_block(self, ctx: InterruptContext) -> str:
-        return render_interrupt_system_block(ctx)
-
-    def resume_suspended_compose(
-        self,
-        session_id: str,
-        *,
-        reorder: tuple[int, ...] | None = None,
-    ) -> int:
-        runtime = self._runtime(session_id)
-        with runtime.lock:
-            items = list(runtime.suspended_compose)
-            if reorder is not None and len(reorder) > 1:
-                ordered: list = []
-                for index in reorder:
-                    if 1 <= index <= len(items):
-                        ordered.append(items[index - 1])
-                seen = set(reorder)
-                for index, item in enumerate(items, start=1):
-                    if index not in seen:
-                        ordered.append(item)
-                items = ordered
-            restored = 0
-            for item in items:
-                self._compose_queue.enqueue(item.frame, mode=item.mode)
-                restored += 1
-            runtime.suspended_compose.clear()
-            return restored
-
-    def drop_suspended_compose(self, session_id: str) -> int:
-        runtime = self._runtime(session_id)
-        with runtime.lock:
-            count = len(runtime.suspended_compose)
-            runtime.suspended_compose.clear()
-            return count
-
-    def _suspend_compose_locked(self, session_id: str, runtime: SessionRuntime) -> None:
-        for mode in ("inbound", "proactive"):
-            typed_mode: SpeakTurnMode = mode  # type: ignore[assignment]
-            while self._compose_queue.has_pending(session_id, mode=typed_mode):
-                item = self._compose_queue.pop(session_id, mode=typed_mode)
-                if item is not None:
-                    runtime.suspended_compose.append(item)
-
-    def on_compose_ready(self, frame, *, mode: str = "inbound") -> None:
-        typed_mode: SpeakTurnMode = "inbound" if mode == "inbound" else "proactive"
-        self._compose_queue.enqueue(frame, mode=typed_mode)
-
-    def pop_compose(self, session_id: str, *, mode: str = "inbound"):
-        typed_mode: SpeakTurnMode = "inbound" if mode == "inbound" else "proactive"
-        return self._compose_queue.pop(session_id, mode=typed_mode)
 
     def debug_snapshot(self, session_id: str) -> dict[str, object]:
         runtime = self._runtimes.get(session_id)
         phase = "idle"
         partial = ""
-        suspended = 0
         if runtime is not None:
             with runtime.lock:
                 phase = runtime.phase
                 partial = runtime.partial_agent_output
-                suspended = len(runtime.suspended_compose)
-        return {
+        out: dict[str, object] = {
             "session_id": session_id,
             "push_phase": phase,
             "partial_agent_output_chars": len(partial),
             "partial_agent_output_preview": partial[:300],
-            "suspended_compose_count": suspended,
-            "memory_queue": self._memory_for(session_id).peek_session(session_id),
-            "portrait_queue": self._portrait_queue.peek_session(session_id),
             "share_queue": self._share_queue.peek_session(session_id),
-            "compose_pending_inbound": self._compose_queue.has_pending(session_id, mode="inbound"),
-            "compose_pending_proactive": self._compose_queue.has_pending(session_id, mode="proactive"),
             "user_queue_pending": self._user_queue.has_pending(session_id),
         }
+        if self._compose_hub is not None:
+            out.update(self._compose_hub.debug_snapshot(session_id))
+        return out
 
     def clear_session(self, session_id: str) -> None:
-        self._compose_queue.clear_session(session_id)
-        self._memory_for(session_id).clear_session(session_id)
-        if self._memory_resolve is not None:
-            self._fallback_memory.clear_session(session_id)
-        self._portrait_queue.clear_session(session_id)
         self._share_queue.clear_session(session_id)
         runtime = self._runtimes.pop(session_id, None)
         if runtime is not None:
@@ -618,12 +386,7 @@ class SessionQueueHub:
                 if runtime.idle_timer is not None:
                     runtime.idle_timer.cancel()
                     runtime.idle_timer = None
-                runtime.suspended_compose.clear()
                 runtime.interrupt = None
-                runtime.queue_decision = None
-                runtime.queue_decision_pending = False
-                runtime.queue_decision_token += 1
-                runtime.queue_decision_event.set()
                 runtime.brew_queue.clear()
                 runtime.pending_user_text = ""
         self._user_queue.clear_session(session_id)

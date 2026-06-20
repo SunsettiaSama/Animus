@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agent.soul.speak.orchestrator.persona.compose.service import PersonaComposeService
-from agent.soul.speak.orchestrator.persona.layer import SpeakPersonaLayer
+from agent.soul.speak.orchestrator.blocks.persona import (
+    PersonaComposeService,
+    SpeakPersonaLayer,
+)
 
 if TYPE_CHECKING:
     from agent.soul.speak.orchestrator.bundle import SpeakPromptBundle

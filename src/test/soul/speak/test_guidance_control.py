@@ -138,9 +138,9 @@ def test_recall_candidates_penalize_repeat_pick():
         PICK_PENALTY_FACTOR,
         PICK_WEIGHT_FLOOR,
     )
-    from agent.soul.speak.session.queue.memory import SessionMemoryBuffer
+    from agent.soul.speak.orchestrator.queue.memory import ComposeMemoryBuffer
 
-    buffer = SessionMemoryBuffer()
+    buffer = ComposeMemoryBuffer()
     session_id = "tao"
     pulled = SimpleNamespace(
         social_prefetch_lines=["唯一 social"],

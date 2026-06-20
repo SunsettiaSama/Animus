@@ -1,15 +1,13 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
-from agent.soul.memory.emergence.line_dedup import dedupe_memory_line_pairs
-from agent.soul.speak.orchestrator.guidance.memory.candidates import (
+from agent.soul.speak.orchestrator.blocks.guidance.memory import (
+    RecallPickWeightPort,
     build_recall_candidates_from_pull,
-    format_recall_candidates,
-)
-from agent.soul.speak.orchestrator.guidance.memory.pick_weights import RecallPickWeightPort
-from agent.soul.speak.orchestrator.guidance.memory import (
     format_interactor_preview,
+    format_recall_candidates,
     render_interactor_portrait_inject,
 )
 from agent.soul.speak.orchestrator.prompt_trace import get_prompt_trace
@@ -24,6 +22,47 @@ from .request import (
 )
 
 GetBoundInteractor = Callable[[str], str]
+_WS_RE = re.compile(r"\s+")
+
+
+def _memory_line_body_key(line: str, *, prefix_len: int = 200) -> str:
+    text = _WS_RE.sub(" ", str(line or "").strip())
+    if not text:
+        return ""
+    if "：" in text:
+        body = text.split("：", 1)[1].strip()
+    elif ": " in text:
+        body = text.split(": ", 1)[1].strip()
+    else:
+        body = text
+    if prefix_len > 0 and len(body) > prefix_len:
+        body = body[:prefix_len]
+    return body
+
+
+def _dedupe_memory_line_pairs(
+    lines: list[str],
+    unit_ids: list[str],
+) -> tuple[list[str], list[str]]:
+    ids_seen: set[str] = set()
+    keys_seen: set[str] = set()
+    out_lines: list[str] = []
+    out_ids: list[str] = []
+    for line, uid in zip(lines, unit_ids):
+        uid = str(uid).strip()
+        if not uid:
+            continue
+        if uid in ids_seen:
+            continue
+        key = _memory_line_body_key(line)
+        if key and key in keys_seen:
+            continue
+        ids_seen.add(uid)
+        if key:
+            keys_seen.add(key)
+        out_lines.append(line)
+        out_ids.append(uid)
+    return out_lines, out_ids
 
 
 class InboundMemoryComposeBridge:
@@ -133,7 +172,7 @@ class InboundMemoryComposeBridge:
         *,
         user_text: str = "",
     ) -> SimilarMemoryPullResult:
-        return self._gateway.pull_similar_memories(
+        pulled = self._gateway.pull_similar_memories(
             session_id,
             turn_index,
             keyword_wait_ms=self._keyword_wait_ms,
@@ -141,13 +180,37 @@ class InboundMemoryComposeBridge:
             merge_ratio=self._merge_ratio,
             user_text=user_text,
         )
+        get_prompt_trace().emit_event(
+            session_id,
+            label="memory_pull_similar",
+            turn_index=turn_index,
+            payload={
+                "user_text": user_text,
+                "inject": {
+                    "turn_index": pulled.inject.turn_index,
+                    "lines": list(pulled.inject.lines),
+                    "unit_ids": list(pulled.inject.unit_ids),
+                },
+                "spilled": {
+                    "turn_index": pulled.spilled.turn_index,
+                    "lines": list(pulled.spilled.lines),
+                    "unit_ids": list(pulled.spilled.unit_ids),
+                },
+                "social_prefetch_lines": list(pulled.social_prefetch_lines),
+                "warm_spread_lines": list(pulled.warm_spread_lines),
+                "sources": list(pulled.sources),
+                "keyword_wait_ms": pulled.keyword_wait_ms,
+                "merge_ratio": pulled.merge_ratio,
+            },
+        )
+        return pulled
 
     def apply_similar_memories(
         self,
         bundle,
         pulled: SimilarMemoryPullResult,
     ) -> None:
-        merged_lines, merged_ids = dedupe_memory_line_pairs(
+        merged_lines, merged_ids = _dedupe_memory_line_pairs(
             list(pulled.social_prefetch_lines)
             + list(pulled.warm_spread_lines)
             + list(pulled.inject.lines),
@@ -217,11 +280,22 @@ class InboundMemoryComposeBridge:
         session_id: str,
         turn_index: int,
     ) -> InteractorPortraitPullResult:
-        return self._gateway.pull_interactor_portrait(
+        pulled = self._gateway.pull_interactor_portrait(
             session_id,
             turn_index,
             wait_ms=self._portrait_wait_ms,
         )
+        get_prompt_trace().emit_event(
+            session_id,
+            label="memory_pull_portrait",
+            turn_index=turn_index,
+            payload={
+                "interactor_id": pulled.interactor_id,
+                "turn_index": pulled.turn_index,
+                "portrait_text": pulled.portrait_text,
+            },
+        )
+        return pulled
 
     def apply_interactor_portrait(
         self,

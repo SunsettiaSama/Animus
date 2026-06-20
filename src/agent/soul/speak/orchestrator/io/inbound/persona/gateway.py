@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from agent.soul.speak.orchestrator.persona.compose.input import PersonaComposeInput
-from agent.soul.speak.orchestrator.persona.compose.service import PersonaComposeService
+from agent.soul.speak.orchestrator.blocks.persona import (
+    PersonaComposeInput,
+    PersonaComposeService,
+)
 
 from .request import PersonaComposeRequest
 

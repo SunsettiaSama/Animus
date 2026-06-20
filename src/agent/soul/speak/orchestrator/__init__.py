@@ -1,6 +1,6 @@
 from .bundle import SpeakPromptBundle, SpeakTurnMode
 from .frame import PreparedComposeFrame
-from .guidance import (
+from .blocks.guidance import (
     DialogueContextChunk,
     GuidanceControlService,
     GuidanceControlState,
@@ -15,15 +15,6 @@ from .guidance import (
     ShareRevealResult,
     SpeakContextDistiller,
     SpeakGuidanceLayer,
-    collect_share_state,
-    normalize_one_sentence,
-    pop_share_handoff,
-    render_control_arc,
-    render_dialogue_compressed,
-    render_session_working_memory,
-    render_share_full_text,
-    render_share_guidance,
-    render_share_system_prompt,
 )
 from .io import (
     GuidancePlanRequest,
@@ -40,16 +31,10 @@ from .io import (
 from .director import ComposeDirector, DirectorPlan
 from .orchestrator import PersonaQueryPort, PresenceReadPort, SpeakOrchestrator
 from .runner import SpeakComposeRunner
-from .assemble import (
-    APPEND_CONTINUE_INSTRUCTION,
-    build_turn_system,
-    resolve_llm_user_text,
-)
+from .assemble import APPEND_CONTINUE_INSTRUCTION, build_turn_system, resolve_llm_user_text
 from .blocks.core.types import VERSIONED_BLOCKS as KNOWN_COMPOSE_BLOCKS
 from .blocks.core.types import BlockSlot as NarrativeSlot, TurnBlockAssembly as TurnComposeAssembly
-from .scene import apply_story_scene
-from .prompt_trace import SpeakPromptTrace, get_prompt_trace
-from .persona import (
+from .blocks.persona import (
     IDENTITY_HARD_MAX_CHARS,
     IDENTITY_PROMPT_TARGET_CHARS,
     PersonaComposeInput,
@@ -58,41 +43,18 @@ from .persona import (
     PersonaDistillRecord,
     PersonaOutboundBrief,
     SpeakPersonaLayer,
-    collect_persona_outbound_brief,
-    collect_persona_distill,
-    collect_persona_layer,
-    collect_stable_portrait,
-    render_persona_traits,
-    render_self_concept,
-    render_self_concept_full,
-    render_self_narrative_block,
-    render_traits,
 )
-from .guidance.memory import (
-    render_interactor_portrait_for_prompt,
-    render_interactor_portrait_inject,
-    render_similar_memories_block,
-)
-from agent.soul.speak.io.inbound.memory.recall import perform_recall_handoff
-from .scene import (
+from .prompt_trace import SpeakPromptTrace, get_prompt_trace
+from .blocks.scene import (
     SceneComposeService,
     SceneUpdateInput,
     SpeakSceneLayer,
     StoryScenePort,
     StorySceneReadPort,
-    collect_story_scene,
 )
-from .system import (
-    SpeakOutputFormat,
-    SpeakReplyStyle,
-    SpeakSystemLayer,
-    build_role,
-    build_system_layer,
-)
+from .blocks.system import SpeakOutputFormat, SpeakReplyStyle, SpeakSystemLayer
 
 __all__ = [
-    "ComposeDirector",
-    "DirectorPlan",
     "DialogueContextChunk",
     "GuidanceControlService",
     "GuidanceControlState",
@@ -144,32 +106,7 @@ __all__ = [
     "SpeakSystemLayer",
     "SpeakTurnMode",
     "APPEND_CONTINUE_INSTRUCTION",
-    "apply_story_scene",
-    "build_role",
-    "build_system_layer",
     "build_turn_system",
-    "collect_persona_distill",
-    "collect_persona_layer",
-    "collect_stable_portrait",
-    "collect_share_state",
-    "collect_story_scene",
     "get_prompt_trace",
-    "normalize_one_sentence",
-    "perform_recall_handoff",
-    "pop_share_handoff",
-    "render_control_arc",
-    "render_dialogue_compressed",
-    "render_interactor_portrait_for_prompt",
-    "render_interactor_portrait_inject",
-    "render_persona_traits",
-    "render_self_concept",
-    "render_self_concept_full",
-    "render_session_working_memory",
-    "render_share_full_text",
-    "render_share_guidance",
-    "render_share_system_prompt",
-    "render_similar_memories_block",
-    "render_self_narrative_block",
-    "render_traits",
     "resolve_llm_user_text",
 ]

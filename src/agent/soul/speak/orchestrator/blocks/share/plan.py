@@ -3,7 +3,7 @@ from __future__ import annotations
 from config.soul.presence.config import SHARE_INTENT_QUEUE_MAX_ITEMS
 
 from ...director.types import ShareComposePlan
-from ...guidance.share.state import ShareComposeState
+from ..guidance.share import ShareComposeState
 
 
 def build_share_compose_plan(

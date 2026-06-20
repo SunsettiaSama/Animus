@@ -46,12 +46,7 @@ class SessionRuntime:
     active_user_text: str = ""
     partial_agent_output: str = ""
     interrupt: InterruptContext | None = None
-    suspended_compose: list[Any] = field(default_factory=list)
-    queue_decision_pending: bool = False
-    queue_decision_token: int = 0
-    queue_decision: Any | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
-    queue_decision_event: threading.Event = field(default_factory=threading.Event)
     typing_active: bool = False
     typing_idle: bool = True
     last_typing_at: float = 0.0

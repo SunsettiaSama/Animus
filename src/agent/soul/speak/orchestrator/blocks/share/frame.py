@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from ...director.types import ShareComposePlan
 from ...frame import PreparedComposeFrame
-from ...guidance.share.candidates import format_share_candidates, select_share_candidates
-from ...guidance.share.preview import format_share_preview
-from ...guidance.share.state import ShareComposeState
+from ..guidance.share import ShareComposeState
+from ..guidance.share_candidates import format_share_candidates, select_share_candidates
+from ..guidance.share_preview import format_share_preview
 
 
 def attach_share_to_frame(

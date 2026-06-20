@@ -48,11 +48,11 @@ def _load(relpath: str, fullname: str) -> object:
 
 
 def _stub_pick_weights() -> None:
-    pw = types.ModuleType("agent.soul.speak.orchestrator.guidance.memory.pick_weights")
+    pw = types.ModuleType("agent.soul.speak.orchestrator.blocks.guidance.runtime.memory.pick_weights")
     pw.PICK_WEIGHT_DEFAULT = 1.0
     pw.PICK_PENALTY_FACTOR = 0.38
     pw.PICK_WEIGHT_FLOOR = 0.15
-    sys.modules["agent.soul.speak.orchestrator.guidance.memory.pick_weights"] = pw
+    sys.modules["agent.soul.speak.orchestrator.blocks.guidance.runtime.memory.pick_weights"] = pw
 
 
 def _bootstrap() -> object:
@@ -63,28 +63,28 @@ def _bootstrap() -> object:
         ("agent.soul.speak.session", SRC / "agent" / "soul" / "speak" / "session"),
         ("agent.soul.speak.session.queue", SRC / "agent" / "soul" / "speak" / "session" / "queue"),
         ("agent.soul.speak.orchestrator", SRC / "agent" / "soul" / "speak" / "orchestrator"),
-        ("agent.soul.speak.orchestrator.guidance", SRC / "agent" / "soul" / "speak" / "orchestrator" / "guidance"),
-        ("agent.soul.speak.orchestrator.guidance.memory", SRC / "agent" / "soul" / "speak" / "orchestrator" / "guidance" / "memory"),
-        ("agent.soul.speak.orchestrator.memory", SRC / "agent" / "soul" / "speak" / "orchestrator" / "memory"),
+        ("agent.soul.speak.orchestrator.blocks", SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks"),
+        ("agent.soul.speak.orchestrator.blocks.memory", SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "memory"),
+        ("agent.soul.speak.orchestrator.blocks.guidance", SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "guidance"),
+        ("agent.soul.speak.orchestrator.blocks.guidance.runtime", SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "guidance" / "runtime"),
         ("agent.soul.memory", SRC / "agent" / "soul" / "memory"),
         ("agent.soul.memory.emergence", SRC / "agent" / "soul" / "memory" / "emergence"),
         ("agent.soul.memory.graph", SRC / "agent" / "soul" / "memory" / "graph"),
     ):
         _ensure_pkg(name, rel)
 
-    _stub_pick_weights()
     _load("agent/soul/memory/graph/keywords.py", "agent.soul.memory.graph.keywords")
     _load("agent/soul/memory/emergence/line_dedup.py", "agent.soul.memory.emergence.line_dedup")
-    _load("agent/soul/speak/session/queue/memory.py", "agent.soul.speak.session.queue.memory")
-    _load("agent/soul/speak/orchestrator/memory/warm_buffer.py", "agent.soul.speak.orchestrator.memory.warm_buffer")
+    _load("agent/soul/speak/orchestrator/queue/memory.py", "agent.soul.speak.orchestrator.queue.memory")
+    _load("agent/soul/speak/orchestrator/blocks/memory/warm_buffer.py", "agent.soul.speak.orchestrator.blocks.memory.warm_buffer")
     _load("agent/soul/speak/orchestrator/compose_cache.py", "agent.soul.speak.orchestrator.compose_cache")
-    return _load("agent/soul/speak/orchestrator/memory/warm_buffer.py", "agent.soul.speak.orchestrator.memory.warm_buffer")
+    return _load("agent/soul/speak/orchestrator/blocks/memory/warm_buffer.py", "agent.soul.speak.orchestrator.blocks.memory.warm_buffer")
 
 
 def main() -> int:
     warm_mod = _bootstrap()
     MemoryWarmBuffer = warm_mod.MemoryWarmBuffer
-    MemoryBufferItem = sys.modules["agent.soul.speak.session.queue.memory"].MemoryBufferItem
+    MemoryBufferItem = sys.modules["agent.soul.speak.orchestrator.queue.memory"].MemoryBufferItem
 
     _sep("memory warm buffer")
     buf = MemoryWarmBuffer(max_turn_gap=3)
@@ -143,43 +143,6 @@ def main() -> int:
     )
     print("social line score:", score)
 
-    _sep("compose reconcile (isolated)")
-    reconcile_mod = _load(
-        "agent/soul/speak/orchestrator/compose_reconcile.py",
-        "agent.soul.speak.orchestrator.compose_reconcile",
-    )
-    from types import SimpleNamespace
-
-    session = SimpleNamespace(session_id=sid, turn_index=1, generation=2, interactor_id="user-1")
-
-    class _IO:
-        class _Outbound:
-            class _Persona:
-                def version(self, _sid: str):
-                    return 4
-
-            class _Scene:
-                def version(self, _sid: str):
-                    return 1
-
-            class _Guidance:
-                def version(self, _sid: str):
-                    return 5
-
-            persona = _Persona()
-            scene = _Scene()
-            guidance = _Guidance()
-
-        outbound = _Outbound()
-
-    plan = reconcile_mod.build_compose_reconcile_plan(
-        bundle_meta=cache.meta_snapshot(),
-        io=_IO(),
-        session=session,
-    )
-    print("directives:", [d.snapshot() for d in plan.directives])
-    print("session_sync: 已在 SpeakService.open 时通过 SessionComposeSyncAgent 异步调度")
-
     _sep("turn inject ledger")
     ledger_mod = _load(
         "agent/soul/speak/orchestrator/turn_inject_ledger.py",
@@ -199,13 +162,6 @@ def main() -> int:
         '{"action":"enqueue_brew","lines":["嗯，我在听"],"reason":"smoke"}'
     )
     print("director:", parsed.snapshot())
-
-    _sep("brew delay")
-    brew_mod = _load(
-        "agent/soul/speak/session/director/delays.py",
-        "agent.soul.speak.session.director.delays",
-    )
-    print("brew delay ms:", brew_mod.calc_brew_delay_ms("嗯，我在听"))
 
     _sep("ok")
     return 0

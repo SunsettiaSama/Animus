@@ -9,19 +9,19 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 _spec = importlib.util.spec_from_file_location(
-    "agent.soul.speak.session.queue.memory",
-    SRC / "agent/soul/speak/session/queue/memory.py",
+    "agent.soul.speak.orchestrator.queue.memory",
+    SRC / "agent/soul/speak/orchestrator/queue/memory.py",
 )
 _mod = importlib.util.module_from_spec(_spec)
-sys.modules["agent.soul.speak.session.queue.memory"] = _mod
+sys.modules["agent.soul.speak.orchestrator.queue.memory"] = _mod
 _spec.loader.exec_module(_mod)
 
 MemoryBufferItem = _mod.MemoryBufferItem
-SessionMemoryBuffer = _mod.SessionMemoryBuffer
+ComposeMemoryBuffer = _mod.ComposeMemoryBuffer
 
 
 def test_memory_buffer_spills_stale_emergence_and_keeps_near():
-    buffer = SessionMemoryBuffer(max_turn_gap=3)
+    buffer = ComposeMemoryBuffer(max_turn_gap=3)
     buffer.enqueue_turn(
         "s1",
         MemoryBufferItem(
@@ -56,7 +56,7 @@ def test_memory_buffer_spills_stale_emergence_and_keeps_near():
 
 
 def test_memory_buffer_keyword_only_for_current_turn():
-    buffer = SessionMemoryBuffer(max_turn_gap=3)
+    buffer = ComposeMemoryBuffer(max_turn_gap=3)
     buffer.enqueue_turn(
         "s1",
         MemoryBufferItem(

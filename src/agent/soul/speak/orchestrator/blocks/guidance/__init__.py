@@ -1,13 +1,62 @@
-from .apply import apply_guidance
-from .block import GuidanceBlock
-from .post_turn import post_turn_guidance
-from .refresh import refresh_guidance
-from .snapshot import guidance_snapshot
-
+from .context import (
+    DialogueContextChunk,
+    SpeakContextDistiller,
+    normalize_one_sentence,
+    render_dialogue_compressed,
+    render_session_working_memory,
+)
+from .control import (
+    GuidanceControlService,
+    GuidanceControlState,
+    GuidancePlanInput,
+    GuidanceTrigger,
+    render_control_arc,
+)
+from .layer import SpeakGuidanceLayer
+from .memory import (
+    RecallPickWeightPort,
+    render_interactor_portrait_for_prompt,
+    render_interactor_portrait_inject,
+    render_similar_memories_block,
+)
+from .share import (
+    ShareComposeState,
+    ShareDesireComposer,
+    ShareDriveEvaluation,
+    ShareEventView,
+    ShareRevealGate,
+    ShareRevealPointer,
+    ShareRevealResult,
+    collect_share_state,
+    pop_share_handoff,
+    render_share_full_text,
+    render_share_system_prompt,
+)
 __all__ = [
-    "GuidanceBlock",
-    "apply_guidance",
-    "guidance_snapshot",
-    "post_turn_guidance",
-    "refresh_guidance",
+    "DialogueContextChunk",
+    "GuidanceControlService",
+    "GuidanceControlState",
+    "GuidancePlanInput",
+    "GuidanceTrigger",
+    "RecallPickWeightPort",
+    "ShareComposeState",
+    "ShareDesireComposer",
+    "ShareDriveEvaluation",
+    "ShareEventView",
+    "ShareRevealGate",
+    "ShareRevealPointer",
+    "ShareRevealResult",
+    "SpeakContextDistiller",
+    "SpeakGuidanceLayer",
+    "collect_share_state",
+    "normalize_one_sentence",
+    "pop_share_handoff",
+    "render_control_arc",
+    "render_dialogue_compressed",
+    "render_interactor_portrait_for_prompt",
+    "render_interactor_portrait_inject",
+    "render_session_working_memory",
+    "render_share_full_text",
+    "render_share_system_prompt",
+    "render_similar_memories_block",
 ]

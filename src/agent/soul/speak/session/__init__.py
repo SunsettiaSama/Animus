@@ -27,11 +27,7 @@ from .lifecycle import (
     TurnRecordResult,
 )
 from .queue import (
-    ComposeQueueItem,
     InterruptContext,
-    QueueDecisionResult,
-    QueueDecisionRunner,
-    SessionComposeQueue,
     SessionQueueHub,
     SessionUserQueue,
     SubmitUserInputResult,
@@ -41,17 +37,13 @@ from .service import SpeakSessionManager, SpeakSessionService
 from .manage import SessionSocialManager
 
 __all__ = [
-    "ComposeQueueItem",
     "InterruptContext",
-    "QueueDecisionResult",
-    "QueueDecisionRunner",
     "ResolvedFeeling",
     "SPEAK_SESSION_IDLE_SEC",
     "CompositeSemanticBoundary",
     "EmbeddingSemanticBoundary",
     "SemanticSessionBoundary",
     "SessionBootstrap",
-    "SessionComposeQueue",
     "SessionEndReason",
     "SessionEndResult",
     "SessionHolder",

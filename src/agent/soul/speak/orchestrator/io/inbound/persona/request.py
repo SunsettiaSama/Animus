@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent.soul.speak.orchestrator.persona.compose.records import PersonaDistillRecord
+from agent.soul.speak.orchestrator.blocks.persona import PersonaDistillRecord
 
 
 @dataclass(frozen=True)

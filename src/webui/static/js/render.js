@@ -1103,7 +1103,6 @@ export function appendSpeakStream(opts = {}) {
   }
 
   function _showTypingIndicator() {
-    if (!simulated) return;
     setTitleBarTyping(true);
   }
 
@@ -1346,9 +1345,8 @@ export function appendSpeakStream(opts = {}) {
     onEvent(kind, text, meta = {}) {
       switch (kind) {
         case 'agent_typing':
-          if (!simulated) break;
-          if (meta.active) _showTypingIndicator();
-          else _hideTypingIndicator();
+          if (meta.active === false) _hideTypingIndicator();
+          else _showTypingIndicator();
           break;
         case 'tag':
           _clearChunkPill();

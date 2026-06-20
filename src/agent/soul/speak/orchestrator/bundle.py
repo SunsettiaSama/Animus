@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .guidance.layer import SpeakGuidanceLayer
-from .persona import SpeakPersonaLayer
-from .scene import SpeakSceneLayer
-from .system.layer import SpeakSystemLayer
-from .system.reply_style import SpeakReplyStyle
-from .system.role import SpeakTurnMode
+from .blocks.guidance.layer import SpeakGuidanceLayer
+from .blocks.persona.api import SpeakPersonaLayer
+from .blocks.scene.api import SpeakSceneLayer
+from .blocks.system.layer import SpeakSystemLayer
+from .blocks.system.reply_style import SpeakReplyStyle
+from .blocks.system.role import SpeakTurnMode
 
 __all__ = ["SpeakPromptBundle", "SpeakTurnMode"]
 

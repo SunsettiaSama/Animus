@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ..system.reply_style import SpeakReplyStyle
-from ..system.role import SpeakTurnMode
+from ..blocks.system.reply_style import SpeakReplyStyle
+from ..blocks.system.role import SpeakTurnMode
 from ..blocks.core.base import BlockContext
 
 if TYPE_CHECKING:

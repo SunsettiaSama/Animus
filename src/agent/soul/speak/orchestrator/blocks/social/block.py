@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...guidance.social import apply_session_social
+from ..guidance.session_bridge import apply_session_social
 from ..core.base import BlockContext, ComposeTarget
 from ..core.types import BlockId, BlockSnapshot
 

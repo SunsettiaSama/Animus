@@ -15,13 +15,13 @@ from agent.soul.speak.orchestrator.blocks.context import ContextBlock, context_s
 from agent.soul.speak.orchestrator.blocks.core.base import BlockContext
 from agent.soul.speak.orchestrator.bundle import SpeakPromptBundle
 from agent.soul.speak.orchestrator.director.decide import decide_plan
-from agent.soul.speak.orchestrator.guidance.context import SpeakContextDistiller
-from agent.soul.speak.orchestrator.guidance.layer import SpeakGuidanceLayer
+from agent.soul.speak.orchestrator.blocks.guidance.context import SpeakContextDistiller
+from agent.soul.speak.orchestrator.blocks.guidance.layer import SpeakGuidanceLayer
 from agent.soul.speak.orchestrator.orchestrator import SpeakOrchestrator
-from agent.soul.speak.orchestrator.persona import SpeakPersonaLayer
-from agent.soul.speak.orchestrator.scene import SpeakSceneLayer
-from agent.soul.speak.orchestrator.system.build import build_system_layer
-from agent.soul.speak.orchestrator.system.reply_style import SpeakReplyStyle
+from agent.soul.speak.orchestrator.blocks.persona import SpeakPersonaLayer
+from agent.soul.speak.orchestrator.blocks.scene import SpeakSceneLayer
+from agent.soul.speak.orchestrator.blocks.system.build import build_system_layer
+from agent.soul.speak.orchestrator.blocks.system.reply_style import SpeakReplyStyle
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 
 SESSION = "ctx-smoke"

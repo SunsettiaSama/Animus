@@ -47,12 +47,14 @@ def test_presence_emits_status_update_on_persist():
 def _speak_with_mock_life(**kwargs) -> SpeakService:
     from test.soul.speak._life_outbound_mock import RecordingSpeakLifeOutbound
 
+    kwargs.setdefault("presence", PresenceService())
+    kwargs.setdefault("persona", MagicMock())
     return SpeakService(life_outbound=RecordingSpeakLifeOutbound(), **kwargs)
 
 
 def test_speak_on_presence_status_update_writes_status_store():
     store = SpeakStatusStore()
-    speak = _speak_with_mock_life(presence=None)
+    speak = _speak_with_mock_life()
     speak._inbound_compose._store = store
 
     snap = _snap_with_portrait("tao", "\u4f60\u6b64\u523b\u5e73\u9759")

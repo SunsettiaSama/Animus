@@ -18,16 +18,12 @@ from .lifecycle import (
 )
 from .queue import (
     InterruptContext,
-    QueueDecisionResult,
-    SessionComposeQueue,
     SessionQueueHub,
     SessionUserQueue,
     SubmitUserInputResult,
     UserInputItem,
 )
 from .manage import SessionSocialManager
-from .queue.memory import MemoryBufferItem, MemoryBufferSource
-from agent.soul.speak.orchestrator.guidance.control import GuidanceControlService
 
 if TYPE_CHECKING:
     from agent.soul.presence.service import PresenceService
@@ -50,17 +46,15 @@ class SpeakSessionService:
         touch_dialogue: Callable[[str], None] | None = None,
         registry: SpeakSessionRegistry | None = None,
         reset_context: Callable[[str], None] | None = None,
-        memory_turn_gap: int = 3,
-        guidance_control: GuidanceControlService | None = None,
         brew_queue_max: int = 3,
         typing_idle_ms: int = 3000,
+        compose_pending: Callable[[str], bool] | None = None,
     ) -> None:
         self._queues = SessionQueueHub(
-            memory_turn_gap=memory_turn_gap,
             brew_queue_max=brew_queue_max,
             typing_idle_ms=typing_idle_ms,
         )
-        self._guidance_control = guidance_control
+        self._compose_pending = compose_pending
         self._bootstrap = SessionBootstrap(
             idle_sec=idle_sec,
             inner_lifecycle=inner_lifecycle,
@@ -86,8 +80,6 @@ class SpeakSessionService:
 
         def _clear(session_id: str) -> None:
             self._social.clear_session(session_id)
-            if self._guidance_control is not None:
-                self._guidance_control.clear_control_arc(session_id)
             original(session_id)
 
         self._queues.clear_session = _clear  # type: ignore[method-assign]
@@ -99,10 +91,6 @@ class SpeakSessionService:
     @property
     def registry(self) -> SpeakSessionRegistry:
         return self._bootstrap.registry
-
-    @property
-    def compose_queue(self) -> SessionComposeQueue:
-        return self._queues.compose_queue
 
     @property
     def user_queue(self) -> SessionUserQueue:
@@ -122,15 +110,6 @@ class SpeakSessionService:
 
     def bind_record_fn(self, record_fn: Callable[[SpeakTurnChunk], SpeakIngestResult]) -> None:
         self._holder.bind_record_fn(record_fn)
-
-    def bind_compose_scheduler(self, schedule_compose: Callable[[str, str], None]) -> None:
-        self._queues.bind_compose_scheduler(schedule_compose)
-
-    def bind_queue_decision_scheduler(
-        self,
-        schedule_decision: Callable[[str, InterruptContext, int], None],
-    ) -> None:
-        self._queues.bind_queue_decision_scheduler(schedule_decision)
 
     def utterance_pacing(self, session_id: str):
         return self._queues.utterance_pacing(session_id)
@@ -186,9 +165,7 @@ class SpeakSessionService:
             return True
         if self.user_queue.has_pending(session_id):
             return True
-        if self.compose_queue.has_pending(session_id, mode="inbound"):
-            return True
-        if self.compose_queue.has_pending(session_id, mode="proactive"):
+        if self._compose_pending is not None and self._compose_pending(session_id):
             return True
         record = self.registry.get(session_id)
         if record.turn_index > 0 and not self.registry.is_temporally_expired(session_id):
@@ -239,11 +216,6 @@ class SpeakSessionService:
             session_state=session_state,
             answer=answer,
         )
-        if self._guidance_control is not None:
-            self._guidance_control.on_turn_complete(
-                session_id,
-                session_state=session_state,
-            )
 
     def pop_pending_user_input(self, session_id: str) -> UserInputItem | None:
         return self._queues.pop_pending_user_input(session_id)
@@ -257,141 +229,11 @@ class SpeakSessionService:
     def end_push(self, session_id: str, *, partial_output: str = "") -> InterruptContext | None:
         return self._queues.end_push(session_id, partial_output=partial_output)
 
-    def on_queue_decision_complete(
-        self,
-        session_id: str,
-        token: int,
-        result: QueueDecisionResult,
-    ) -> None:
-        self._queues.on_queue_decision_complete(session_id, token, result)
-
-    def prepare_interrupt_turn(
-        self,
-        session_id: str,
-        item: UserInputItem,
-    ) -> InterruptContext | None:
-        return self._queues.prepare_interrupt_turn(session_id, item)
-
-    def render_interrupt_block(self, ctx: InterruptContext) -> str:
-        return self._queues.render_interrupt_block(ctx)
-
-    def on_compose_ready(self, frame, *, mode: str = "inbound") -> None:
-        self._queues.on_compose_ready(frame, mode=mode)
-
-    def pop_compose(self, session_id: str, *, mode: str = "inbound"):
-        return self._queues.pop_compose(session_id, mode=mode)
-
-    def clear_compose(self, session_id: str) -> None:
-        self._queues.clear_session(session_id)
+    def interrupt_context_for(self, session_id: str, item: UserInputItem) -> InterruptContext | None:
+        return self._queues.interrupt_context_for(session_id, item)
 
     def begin_turn(self, session_id: str) -> int:
         return self.registry.begin_turn(session_id)
-
-    def enqueue_memory_result(
-        self,
-        session_id: str,
-        *,
-        turn_index: int,
-        lines: list[str],
-        unit_ids: list[str],
-        source: MemoryBufferSource = "emergence",
-        ready: bool = True,
-    ) -> None:
-        self._queues.enqueue_memory(
-            session_id,
-            MemoryBufferItem(
-                turn_index=turn_index,
-                lines=tuple(lines),
-                unit_ids=tuple(unit_ids),
-                source=source,
-                ready=ready,
-            ),
-        )
-
-    def set_social_prefetch(
-        self,
-        session_id: str,
-        *,
-        lines: list[str],
-        unit_ids: list[str],
-        interactor_id: str = "",
-    ) -> None:
-        self._queues.set_social_prefetch(
-            session_id,
-            MemoryBufferItem(
-                turn_index=0,
-                lines=tuple(lines),
-                unit_ids=tuple(unit_ids),
-                source="social_prefetch",
-            ),
-        )
-
-    def set_warm_spread(
-        self,
-        session_id: str,
-        *,
-        lines: list[str],
-        unit_ids: list[str],
-    ) -> None:
-        self._queues.set_warm_spread(
-            session_id,
-            MemoryBufferItem(
-                turn_index=0,
-                lines=tuple(lines),
-                unit_ids=tuple(unit_ids),
-                source="warm_spread",
-            ),
-        )
-
-    def pull_memory_for_compose(
-        self,
-        session_id: str,
-        turn_index: int,
-        *,
-        keyword_wait_ms: int = 200,
-        budget: int = 5,
-        merge_ratio: float | None = None,
-        user_text: str = "",
-    ):
-        return self._queues.pull_memory_for_compose(
-            session_id,
-            turn_index,
-            keyword_wait_ms=keyword_wait_ms,
-            budget=budget,
-            merge_ratio=merge_ratio,
-            user_text=user_text,
-        )
-
-    def pull_portrait_for_compose(
-        self,
-        session_id: str,
-        turn_index: int,
-        *,
-        wait_ms: int = 0,
-    ):
-        return self._queues.pull_portrait_for_compose(session_id, turn_index, wait_ms=wait_ms)
-
-    def enqueue_interactor_portrait(
-        self,
-        session_id: str,
-        *,
-        turn_index: int,
-        interactor_id: str,
-        portrait_text: str,
-    ) -> None:
-        from .queue.portrait import PortraitQueueItem
-
-        self._queues.enqueue_portrait(
-            session_id,
-            PortraitQueueItem(
-                turn_index=turn_index,
-                interactor_id=interactor_id,
-                portrait_text=portrait_text,
-            ),
-        )
-
-    def consume_portrait_for_compose(self, session_id: str, turn_index: int):
-        return self._queues.consume_portrait_for_compose(session_id, turn_index)
 
 
 SpeakSessionManager = SpeakSessionService

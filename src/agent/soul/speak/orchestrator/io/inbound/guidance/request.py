@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent.soul.speak.orchestrator.guidance.control.state import GuidanceTrigger
-from agent.soul.speak.orchestrator.guidance.control.candidate_types import (
+from agent.soul.speak.orchestrator.blocks.guidance.control_types import (
+    GuidanceTrigger,
     RecallPlannerCandidate,
     SharePlannerCandidate,
 )
-from agent.soul.speak.orchestrator.persona.outbound.brief import PersonaOutboundBrief
+from agent.soul.speak.orchestrator.blocks.persona import PersonaOutboundBrief
 
 
 @dataclass(frozen=True)

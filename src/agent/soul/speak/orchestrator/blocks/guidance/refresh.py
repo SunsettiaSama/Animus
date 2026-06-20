@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from ...guidance.control.candidate_types import RecallPlannerCandidate
-from ...guidance.inbound.persona_brief import (
+from .runtime.control.candidate_types import RecallPlannerCandidate
+from .runtime.inbound.persona_brief import (
     build_guidance_plan_request,
     stash_persona_outbound_brief,
 )
-from ...guidance.share.candidates import format_share_candidates, select_share_candidates
-from ...persona.outbound.brief import collect_persona_outbound_brief
+from ..guidance.share_candidates import format_share_candidates, select_share_candidates
+from ..persona import collect_persona_outbound_brief
 from ..core.base import BlockContext, ComposeTarget
 from ..core.util import distilled_context
 

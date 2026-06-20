@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.soul.speak.orchestrator.scene.service import SceneComposeService, SceneUpdateInput
+from agent.soul.speak.orchestrator.blocks.scene import SceneComposeService, SceneUpdateInput
 
 from .request import SceneUpdateRequest
 

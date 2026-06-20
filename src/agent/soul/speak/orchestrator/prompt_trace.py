@@ -104,6 +104,28 @@ class SpeakPromptTrace:
         lines.extend(["=" * 72, ""])
         _print_block(lines)
 
+    def emit_event(
+        self,
+        session_id: str,
+        *,
+        label: str,
+        payload: dict[str, Any],
+        turn_index: int | None = None,
+    ) -> None:
+        if not self.is_enabled(session_id):
+            return
+        turn = f" turn={turn_index}" if turn_index is not None else ""
+        lines = [
+            "",
+            "=" * 72,
+            f"[SPEAK TRACE] {label} session={session_id}{turn}",
+            "-" * 72,
+            _format_cache(payload),
+            "=" * 72,
+            "",
+        ]
+        _print_block(lines)
+
     def emit_turn_finish(
         self,
         session_id: str,
@@ -140,7 +162,7 @@ class SpeakPromptTrace:
 def _format_cache(cache: dict[str, Any]) -> str:
     import json
 
-    return json.dumps(cache, ensure_ascii=False, indent=2)
+    return json.dumps(cache, ensure_ascii=False, indent=2, default=str)
 
 
 def _print_block(lines: list[str]) -> None:

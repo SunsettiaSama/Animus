@@ -1,0 +1,64 @@
+{
+  "dialogues": [
+    {
+      "id": "immediate_ack",
+      "user_lines": ["在吗？"],
+      "expected_behaviors": ["immediate_reply"],
+      "fixture_pass": true
+    },
+    {
+      "id": "delayed_emotion",
+      "user_lines": ["我最近有点累"],
+      "expected_behaviors": ["delayed_reply", "segmented"],
+      "fixture_pass": true
+    },
+    {
+      "id": "multi_segment",
+      "user_lines": ["今天天气不错"],
+      "expected_behaviors": ["segmented", "continuity_append"],
+      "fixture_pass": true
+    },
+    {
+      "id": "question_intent",
+      "user_lines": ["你觉得这样好吗？"],
+      "expected_behaviors": ["intent_question"],
+      "fixture_pass": true
+    },
+    {
+      "id": "short_ack",
+      "user_lines": ["嗯"],
+      "expected_behaviors": ["hold_or_brief"],
+      "fixture_pass": true
+    },
+    {
+      "id": "typing_listen",
+      "user_lines": ["我先想想..."],
+      "expected_behaviors": ["listen_while_typing"],
+      "fixture_pass": true
+    },
+    {
+      "id": "share_impulse",
+      "user_lines": ["有个事想跟你说"],
+      "expected_behaviors": ["share_preview"],
+      "fixture_pass": true
+    },
+    {
+      "id": "silence_break",
+      "user_lines": ["..."],
+      "expected_behaviors": ["silence_armed"],
+      "fixture_pass": true
+    },
+    {
+      "id": "interrupt_reorder",
+      "user_lines": ["等等，先听我说", "其实我想说的是"],
+      "expected_behaviors": ["interrupt_async", "reorder"],
+      "fixture_pass": true
+    },
+    {
+      "id": "no_forced_reply",
+      "user_lines": ["（沉默）"],
+      "expected_behaviors": ["no_forced_reply"],
+      "fixture_pass": true
+    }
+  ]
+}

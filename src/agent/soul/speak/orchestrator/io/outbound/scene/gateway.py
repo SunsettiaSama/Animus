@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agent.soul.speak.orchestrator.scene.service import SceneComposeService
+from agent.soul.speak.orchestrator.blocks.scene import SceneComposeService
 
 if TYPE_CHECKING:
     from agent.soul.speak.orchestrator.bundle import SpeakPromptBundle

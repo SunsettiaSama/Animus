@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .guidance.interrupt import render_interrupt_system_block
-from .guidance.social import resolve_social_user_text
+from .blocks.guidance.session_bridge import (
+    render_interrupt_system_block,
+    resolve_social_user_text,
+)
 
 if TYPE_CHECKING:
     from agent.soul.speak.io.outbound.stream import SpeakAgentOutput
