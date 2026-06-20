@@ -28,5 +28,6 @@ __pycache__/
 .cache/
 
 
+cache/
 idea/
 corpus/
