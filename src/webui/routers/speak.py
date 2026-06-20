@@ -169,17 +169,27 @@ def get_speak_session_debug(session_id: str):
 
 
 @router.post("/api/speak/reset")
-def reset_speak_session(body: SpeakResetRequest | None = None):
-    soul, err = _soul_or_400()
-    if err is not None:
-        return err
-    if body is None or not body.session_id.strip():
+def reset_speak_session(
+    body: SpeakResetRequest | None = None,
+    session_id: str = "",
+):
+    sid = session_id.strip()
+    if body is not None and body.session_id.strip():
+        sid = body.session_id.strip()
+    if not sid:
         return {"ok": False, "error": "missing session_id"}
-    session_id = body.session_id.strip()
-    ended = soul.finalize_speak_session(session_id)
+    soul = _resolve_soul()
+    if soul is None:
+        return {
+            "ok": False,
+            "session_id": sid,
+            "reason": "soul_unavailable",
+            "ended": None,
+        }
+    ended = soul.finalize_speak_session(sid)
     return {
         "ok": True,
-        "session_id": session_id,
+        "session_id": sid,
         "ended": ended,
     }
 

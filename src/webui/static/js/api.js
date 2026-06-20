@@ -171,8 +171,8 @@ async function _checkJson(r) {
 
 export const http = {
   get:   path       => fetch(path).then(_checkJson),
-  post:  (path, b)  => fetch(path, { method: 'POST',   headers: _JSON_H, body: JSON.stringify(b) }).then(_checkJson),
-  patch: (path, b)  => fetch(path, { method: 'PATCH',  headers: _JSON_H, body: JSON.stringify(b) }).then(_checkJson),
+  post:  (path, b = {}) => fetch(path, { method: 'POST',   headers: _JSON_H, body: JSON.stringify(b) }).then(_checkJson),
+  patch: (path, b = {}) => fetch(path, { method: 'PATCH',  headers: _JSON_H, body: JSON.stringify(b) }).then(_checkJson),
   del:   path       => fetch(path, { method: 'DELETE' }).then(_checkJson),
 
   /** POST with FormData (file upload) — no Content-Type header. */

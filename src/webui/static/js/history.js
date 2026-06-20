@@ -173,7 +173,12 @@ export async function beginNewConversation({ resetBackend = true } = {}) {
   set('_createdAt', new Date().toISOString());
   clearMessages();
   if (resetBackend) {
-    await resetBackendSession(ids.sessionId);
+    await resetBackendSession(ids.sessionId).catch(err => {
+      console.warn('[speak] reset backend session skipped', {
+        session_id: ids.sessionId,
+        error: err?.message ?? String(err),
+      });
+    });
   }
   const tb = document.getElementById('tb-title');
   if (tb) tb.textContent = '新对话';

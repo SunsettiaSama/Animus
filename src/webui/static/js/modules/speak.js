@@ -47,8 +47,9 @@ export async function resetSession(sessionId) {
   if (!sid) {
     throw new Error('missing session_id');
   }
-  await http.post(PATHS.speak.reset, { session_id: sid });
-  _cb.onToast('对话已重置');
+  const data = await http.post(PATHS.speak.reset, { session_id: sid });
+  if (data?.ok) _cb.onToast('对话已重置');
+  return data;
 }
 
 export async function pollUntilReady(timeoutMs = 120_000, intervalMs = 800) {
