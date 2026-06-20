@@ -265,8 +265,10 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
         while True:
             item = await event_q.get()
             if isinstance(item, dict) and item.get("type") == "__port_closed__":
+                event_q.task_done()
                 return
             await _send_json(item)
+            event_q.task_done()
 
     pump_task = asyncio.create_task(_pump_events())
 
@@ -408,6 +410,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                 await asyncio.to_thread(worker.join, 2.0)
             else:
                 await asyncio.to_thread(worker.join)
+            await event_q.join()
 
             if turn_error:
                 await _send_json({"type": "error", "message": turn_error[0]})
