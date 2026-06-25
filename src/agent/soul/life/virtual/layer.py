@@ -15,15 +15,15 @@ from ..narrative_context import (
 )
 from .chronicle import VirtualChronicleStore
 from storyview.port import StoryPort
-from storyview.types import StoryEventKind
+from storyview.types import GMAnswer, GMExchange, GMQuestion, StoryBeatOutcome, StoryEventKind
 from .journal.filler import LandmarkFiller, NullLandmarkFiller
 from .journal.item import Landmark, LandmarkStatus
 from .journal.journal import LifeJournal
 from .journal.store import JournalStore
 from .narrative import NarrativeEngine
+from .narrative.engine import NarrativeDraft
 from agent.soul.life.experience.domain.virtual_codec import VirtualUnitContext, VirtualUnitTrigger
 from .surprise.generator import NullSurpriseGenerator, SurpriseGenerator
-from .surprise.launcher import SurpriseLauncher
 
 
 class VirtualLayer:
@@ -53,13 +53,14 @@ class VirtualLayer:
         self._surprise_generator: SurpriseGenerator = (
             self._narrative if self._narrative is not None else NullSurpriseGenerator()
         )
-        self._surprise_launcher = SurpriseLauncher()
         self._profile_narrative = ""
         self._continuity_memories: list[str] = []
         self._world_background = ""
         self._context_supplier: NarrativeContextSupplier | None = None
         self._world_context_supplier: StoryWorldContextSupplier | None = None
         self._story_port: StoryPort | None = None
+        self._gm_answerer: Callable[[GMQuestion], str] | None = None
+        self._story_arc_max_steps = 3
         self._world_id: str = "default"
 
     @property
@@ -97,7 +98,9 @@ class VirtualLayer:
 
     @property
     def surprise_probability(self) -> float:
-        return self._surprise_launcher.probability
+        if self._story_port is None:
+            return 0.0
+        return self._story_port.surprise_probability(self._world_id)
 
     def set_narrative_engine(self, engine: NarrativeEngine | None) -> None:
         self._narrative = engine
@@ -128,6 +131,12 @@ class VirtualLayer:
     def set_story_port(self, port: StoryPort | None) -> None:
         self._story_port = port
 
+    def set_gm_answerer(self, answerer: Callable[[GMQuestion], str] | None) -> None:
+        self._gm_answerer = answerer
+
+    def set_story_arc_max_steps(self, max_steps: int) -> None:
+        self._story_arc_max_steps = max(1, min(6, int(max_steps)))
+
     def set_world_id(self, world_id: str) -> None:
         self._world_id = world_id.strip() or "default"
 
@@ -149,6 +158,128 @@ class VirtualLayer:
         packet = port.begin_event(self._world_id, cue, kind=kind)
         self.apply_world_background(packet.scene_text)
         return packet
+
+    def _answer_gm_question(
+        self,
+        question: GMQuestion,
+        *,
+        fallback: str = "",
+    ) -> GMAnswer:
+        text = ""
+        if self._gm_answerer is not None:
+            text = self._gm_answerer(question).strip()
+        if not text:
+            text = fallback.strip()
+        if not text and question.choices:
+            text = question.choices[0]
+        if not text:
+            text = "你先稳住自己，观察眼前的变化。"
+        return GMAnswer(
+            question_id=question.question_id,
+            text=text,
+            intent=text,
+        )
+
+    def _next_arc_cue(
+        self,
+        base_cue: str,
+        outcome: StoryBeatOutcome,
+        *,
+        step: int,
+    ) -> str:
+        result = outcome.resolved.resolution_text.strip()
+        answer = outcome.answer.text.strip()
+        return (
+            f"{base_cue.strip()}\n"
+            f"上一拍你选择：{answer}\n"
+            f"上一拍客观反馈：{result}\n"
+            f"现在进入第 {step + 1} 拍，主持继续推进这个场景弧。"
+        )
+
+    def _with_arc(
+        self,
+        outcome: StoryBeatOutcome,
+        *,
+        outcomes: list[StoryBeatOutcome],
+        objective_summary: str,
+    ) -> StoryBeatOutcome:
+        return StoryBeatOutcome(
+            question=outcome.question,
+            answer=outcome.answer,
+            scene_packet=outcome.scene_packet,
+            resolved=outcome.resolved,
+            dice_value=outcome.dice_value,
+            dice_tendency=outcome.dice_tendency,
+            influence=outcome.influence,
+            scene_candidates=outcome.scene_candidates,
+            arc_steps=tuple(
+                GMExchange(
+                    question=item.question,
+                    answer=item.answer,
+                    scene_packet=item.scene_packet,
+                    resolved=item.resolved,
+                )
+                for item in outcomes
+            ),
+            objective_summary=objective_summary,
+        )
+
+    def _run_story_arc(
+        self,
+        cue: str,
+        *,
+        kind: StoryEventKind | str,
+        fallback_answer: str = "",
+        first_question: GMQuestion | None = None,
+    ) -> StoryBeatOutcome:
+        port = self._require_story_port()
+        outcomes: list[StoryBeatOutcome] = []
+        question = first_question
+        current_cue = cue
+        move_offered = False
+        for step in range(self._story_arc_max_steps):
+            if question is None:
+                question = port.ask_gm(
+                    self._world_id,
+                    current_cue,
+                    kind=kind,
+                )
+            answer = self._answer_gm_question(
+                question,
+                fallback=fallback_answer if step == 0 else "",
+            )
+            outcome = port.answer_gm(
+                question,
+                answer,
+                with_dice=True,
+            )
+            outcomes.append(outcome)
+            move_context = ""
+            if not move_offered:
+                move_question = port.ask_move(
+                    self._world_id,
+                    current_cue,
+                    kind=kind,
+                )
+                move_offered = True
+                if move_question is not None:
+                    move_answer = self._answer_gm_question(move_question)
+                    move_outcome = port.answer_move(
+                        move_question,
+                        move_answer,
+                        with_dice=False,
+                    )
+                    move_context = move_outcome.scene_packet.scene_text.strip()
+            current_cue = self._next_arc_cue(cue, outcome, step=step)
+            if move_context:
+                current_cue = f"{current_cue}\n\n【新的场景信息】\n{move_context}"
+            question = None
+        objective_summary = port.distill_arc(self._world_id, outcomes)
+        return self._with_arc(
+            outcomes[-1],
+            outcomes=outcomes,
+            objective_summary=objective_summary,
+        )
 
     def apply_narrative_context(
         self,
@@ -276,6 +407,116 @@ class VirtualLayer:
         since = datetime.fromisoformat(since_iso.replace("Z", "+00:00"))
         return self._journal.count_written_since(since)
 
+    def _subjective_from_outcome(
+        self,
+        outcome: StoryBeatOutcome,
+        *,
+        salience: float,
+        trigger: VirtualUnitTrigger,
+        landmark_id: str = "",
+        default_intensity: float | None = None,
+    ) -> tuple[NarrativeDraft | None, ExperienceUnit]:
+        intensity = default_intensity
+        if intensity is None:
+            intensity = outcome.influence.salience or salience
+        effective_salience = max(salience, outcome.influence.salience or 0.0)
+        draft: NarrativeDraft | None = None
+        objective_arc = outcome.objective_summary.strip()
+        if not objective_arc:
+            objective_arc = outcome.resolved.resolution_text
+        arc_dialogue = "\n".join(
+            f"{idx}. 主持：{step.question.question.strip()} / 你：{step.answer.text.strip()}"
+            for idx, step in enumerate(outcome.arc_steps, start=1)
+        )
+        if self._narrative is not None:
+            draft = self._narrative.subjective_from_outcome(
+                objective_scene="",
+                resolution_text=objective_arc,
+                gm_question=arc_dialogue or outcome.question.question,
+                soul_answer=outcome.answer.text,
+                decision_importance=outcome.influence.decision_importance,
+                profile_narrative=self._profile_narrative,
+                continuity_memories=self._continuity_memories,
+                world_background=self._world_background,
+                default_intensity=intensity,
+            )
+        narrative = draft.narrative if draft is not None else outcome.resolved.resolution_text
+        emotion_text = draft.emotion_text if draft is not None else ""
+        emotion_strength = draft.emotion_strength if draft is not None else "明显触动"
+        emotion_intensity = draft.emotion_intensity if draft is not None else intensity
+        perception = draft.perception if draft is not None else ""
+        action_summary = draft.action_summary if draft is not None else outcome.answer.text[:60]
+        source = "surprise" if trigger == VirtualUnitTrigger.surprise else "narrative"
+        unit = self._builder.record_virtual_beat(
+            narrative,
+            perception=perception,
+            action_summary=action_summary,
+            emotion_text=emotion_text,
+            emotion_label=emotion_strength,
+            salience=effective_salience,
+            source=source,
+            virtual_ctx=VirtualUnitContext(
+                trigger=trigger,
+                landmark_id=landmark_id,
+                story_event_id=outcome.scene_packet.event_id,
+                scene_id=outcome.question.scene_id,
+                question_id=outcome.question.question_id,
+            ),
+        )
+        return draft, unit
+
+    def _outcome_payload(
+        self,
+        outcome: StoryBeatOutcome,
+        *,
+        draft: NarrativeDraft | None,
+        unit: ExperienceUnit,
+        trigger: str,
+        salience: float,
+        share_desire: str,
+        landmark_id: str = "",
+        intention: str = "",
+    ) -> dict:
+        return {
+            "triggered": True,
+            "trigger": trigger,
+            "salience": salience,
+            "share_desire": share_desire,
+            "experience_id": unit.id,
+            "narrative": unit.situation.narration,
+            "scene_text": outcome.scene_packet.scene_text,
+            "resolution_text": outcome.objective_summary or outcome.resolved.resolution_text,
+            "gm_question": outcome.question.question,
+            "soul_answer": outcome.answer.text,
+            "decision_importance": outcome.influence.decision_importance,
+            "arc_steps": [
+                {
+                    "gm_question": step.question.question,
+                    "soul_answer": step.answer.text,
+                    "scene_text": step.scene_packet.scene_text,
+                    "resolution_text": step.resolved.resolution_text,
+                }
+                for step in outcome.arc_steps
+            ],
+            "scene_id": outcome.question.scene_id,
+            "story_event_id": outcome.scene_packet.event_id,
+            "scene_candidates": [
+                {
+                    "scene_id": cand.scene.id,
+                    "name": cand.scene.name,
+                    "matched_by": cand.matched_by,
+                    "score": cand.score,
+                }
+                for cand in outcome.scene_candidates
+            ],
+            "deviation": outcome.resolved.deviation,
+            "landmark_id": landmark_id,
+            "intention": intention,
+            "emotion_text": draft.emotion_text if draft is not None else "",
+            "emotion_intensity": draft.emotion_intensity if draft is not None else salience,
+            "emotion_strength": draft.emotion_strength if draft is not None else "",
+        }
+
     def record_story_beat(
         self,
         narrative_hint: str,
@@ -329,132 +570,71 @@ class VirtualLayer:
             query = f"{query} {lm.context.strip()}"
         self.ensure_narrative_context(NarrativePurpose.fill, query=query)
         lm.mark_processing()
-        port = self._require_story_port()
-        packet = port.begin_event(self._world_id, query, kind=StoryEventKind.landmark)
-        self.apply_world_background(packet.scene_text)
-        objective_scene = packet.scene_text
-        narrative = ""
-        emotion_text = ""
-        emotion_intensity = 0.6
-        emotion_strength = "明显触动"
-        if self._narrative is not None:
-            draft = self._narrative.fill_with_emotion(
-                landmark=lm,
-                profile_narrative=self._profile_narrative,
-                continuity_memories=self._continuity_memories,
-                world_background=self._world_background,
-                objective_scene=objective_scene,
-                default_intensity=0.6,
-            )
-            narrative = draft.narrative
-            emotion_text = draft.emotion_text
-            emotion_intensity = draft.emotion_intensity
-            emotion_strength = draft.emotion_strength
-        else:
-            narrative = lm.intention
-        outcome = port.resolve_event(
-            packet.event_id,
-            intent=lm.intention,
-            agent_narrative=narrative,
-            with_dice=True,
+        story_outcome = self._run_story_arc(
+            query,
+            kind=StoryEventKind.landmark,
+            fallback_answer=lm.intention,
         )
-        dice_value = outcome.dice_value
-        dice_tendency = outcome.dice_tendency
-        unit = self.record_story_beat(
-            narrative_hint=narrative,
+        self.apply_world_background(story_outcome.scene_packet.scene_text)
+        draft, unit = self._subjective_from_outcome(
+            story_outcome,
             salience=0.6,
-            emotion_label=emotion_strength,
-            action_kind=ExperienceActionKind.deciding,
-            virtual_ctx=VirtualUnitContext(
-                trigger=VirtualUnitTrigger.landmark,
-                landmark_id=lm.id,
-                dice_value=dice_value,
-                dice_tendency=dice_tendency,
-            ),
+            trigger=VirtualUnitTrigger.landmark,
+            landmark_id=lm.id,
+            default_intensity=0.6,
         )
         lm.mark_done(
-            narrative=narrative,
+            narrative=unit.situation.narration,
             experience_id=unit.id,
-            dice_value=dice_value,
-            dice_tendency=dice_tendency,
+            dice_value=0,
+            dice_tendency="",
         )
         self.save_journal()
-        return {
-            "hint": narrative,
-            "scene_text": objective_scene,
-            "resolution_text": outcome.resolution_text,
-            "salience": 0.6,
-            "trigger": "landmark",
-            "intention": lm.intention,
-            "share_desire": "moderate",
-            "emotion_text": emotion_text,
-            "emotion_intensity": emotion_intensity,
-            "emotion_strength": emotion_strength,
-            "dice_value": dice_value,
-            "dice_tendency": dice_tendency,
-            "deviation": outcome.deviation,
-        }
+        payload = self._outcome_payload(
+            story_outcome,
+            draft=draft,
+            unit=unit,
+            trigger="landmark",
+            salience=0.6,
+            share_desire="moderate",
+            landmark_id=lm.id,
+            intention=lm.intention,
+        )
+        payload["hint"] = unit.situation.narration
+        return payload
 
     def tick_surprise(self, elapsed_sec: float) -> dict:
-        if not self._surprise_launcher.tick(elapsed_sec=elapsed_sec):
+        port = self._require_story_port()
+        question = port.ask_surprise(self._world_id, elapsed_sec)
+        if question is None:
             return {
                 "triggered": False,
-                "probability": round(self._surprise_launcher.probability, 3),
+                "probability": round(port.surprise_probability(self._world_id), 3),
             }
-        self.ensure_narrative_context(NarrativePurpose.surprise)
-        port = self._require_story_port()
-        packet = port.begin_event(
-            self._world_id,
+        story_outcome = self._run_story_arc(
             "意外事件",
             kind=StoryEventKind.surprise,
+            first_question=question,
         )
-        self.apply_world_background(packet.scene_text)
-        objective_scene = packet.scene_text
-        narrative = ""
-        emotion_text = ""
-        emotion_intensity = 0.5
-        emotion_strength = "明显触动"
-        if self._narrative is not None:
-            draft = self._narrative.generate_with_emotion(
-                continuity_memories=self._continuity_memories,
-                profile_narrative=self._profile_narrative,
-                world_background=self._world_background,
-                objective_scene=objective_scene,
-                default_intensity=0.5,
-            )
-            narrative = draft.narrative
-            emotion_text = draft.emotion_text
-            emotion_intensity = draft.emotion_intensity
-            emotion_strength = draft.emotion_strength
-        else:
-            narrative = "一件意外的事发生了。"
-        outcome = port.resolve_event(
-            packet.event_id,
-            intent="意外降临",
-            agent_narrative=narrative,
-            with_dice=True,
-        )
-        unit = self.record_surprise(
-            narrative_hint=narrative,
-            dice_value=outcome.dice_value,
-            dice_tendency=outcome.dice_tendency,
+        self.ensure_narrative_context(NarrativePurpose.surprise)
+        self.apply_world_background(story_outcome.scene_packet.scene_text)
+        draft, unit = self._subjective_from_outcome(
+            story_outcome,
             salience=0.5,
+            trigger=VirtualUnitTrigger.surprise,
+            default_intensity=0.5,
         )
-        return {
-            "triggered": True,
-            "probability": round(self._surprise_launcher.probability, 3),
-            "experience_id": unit.id,
-            "narrative": narrative,
-            "scene_text": objective_scene,
-            "resolution_text": outcome.resolution_text,
-            "salience": 0.5,
-            "share_desire": "eager",
-            "emotion_text": emotion_text,
-            "emotion_intensity": emotion_intensity,
-            "emotion_strength": emotion_strength,
-            "dice_value": outcome.dice_value,
-            "dice_tendency": outcome.dice_tendency,
-        }
+        payload = self._outcome_payload(
+            story_outcome,
+            draft=draft,
+            unit=unit,
+            trigger="surprise",
+            salience=0.5,
+            share_desire="eager",
+        )
+        payload["triggered"] = True
+        payload["probability"] = round(port.surprise_probability(self._world_id), 3)
+        return payload
 
     def process_wander_experience(
         self,
@@ -571,8 +751,11 @@ class VirtualLayer:
         return beats
 
     def status_fragment(self) -> dict:
+        surprise_p = 0.0
+        if self._story_port is not None:
+            surprise_p = self._story_port.surprise_probability(self._world_id)
         return {
             "due_landmarks": len(self._journal.due_landmarks()),
-            "surprise_p": round(self._surprise_launcher.probability, 3),
+            "surprise_p": round(surprise_p, 3),
             "landmark_slots": self._journal.today_remaining_slots(),
         }

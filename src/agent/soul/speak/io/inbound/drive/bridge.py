@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from config.soul.presence.config import PROACTIVE_OPEN_THRESHOLD
 
-from ....orchestrator.blocks.guidance import ShareDesireComposer
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance import ShareDesireComposer
 
 if TYPE_CHECKING:
     from agent.soul.presence import PresenceService

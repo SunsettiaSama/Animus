@@ -35,49 +35,49 @@ for pkg in (
     "agent.soul",
     "agent.soul.speak",
     "agent.soul.speak.llm",
-    "agent.soul.speak.orchestrator",
-    "agent.soul.speak.orchestrator.blocks",
-    "agent.soul.speak.orchestrator.blocks.scene",
-    "agent.soul.speak.orchestrator.blocks.scene.runtime",
+    "agent.soul.speak.pipelines.request_driven.orchestrator",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene.runtime",
 ):
     _ensure_pkg(pkg)
 
 _load("agent/soul/speak/llm/engine.py", "agent.soul.speak.llm.engine")
 _load(
-    "agent/soul/speak/orchestrator/blocks/scene/runtime/layer.py",
-    "agent.soul.speak.orchestrator.blocks.scene.runtime.layer",
+    "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/scene/runtime/layer.py",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene.runtime.layer",
 )
 _load(
-    "agent/soul/speak/orchestrator/blocks/scene/runtime/port.py",
-    "agent.soul.speak.orchestrator.blocks.scene.runtime.port",
+    "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/scene/runtime/port.py",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene.runtime.port",
 )
 _load(
-    "agent/soul/speak/orchestrator/blocks/scene/runtime/render.py",
-    "agent.soul.speak.orchestrator.blocks.scene.runtime.render",
+    "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/scene/runtime/render.py",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene.runtime.render",
 )
 _load(
-    "agent/soul/speak/orchestrator/blocks/scene/runtime/collect.py",
-    "agent.soul.speak.orchestrator.blocks.scene.runtime.collect",
+    "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/scene/runtime/collect.py",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene.runtime.collect",
 )
 _load(
-    "agent/soul/speak/orchestrator/blocks/scene/runtime/state.py",
-    "agent.soul.speak.orchestrator.blocks.scene.runtime.state",
+    "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/scene/runtime/state.py",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene.runtime.state",
 )
 _load(
-    "agent/soul/speak/orchestrator/blocks/scene/runtime/resolve_regex.py",
-    "agent.soul.speak.orchestrator.blocks.scene.runtime.resolve_regex",
+    "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/scene/runtime/resolve_regex.py",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene.runtime.resolve_regex",
 )
 _load(
-    "agent/soul/speak/orchestrator/blocks/scene/runtime/resolve_llm.py",
-    "agent.soul.speak.orchestrator.blocks.scene.runtime.resolve_llm",
+    "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/scene/runtime/resolve_llm.py",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene.runtime.resolve_llm",
 )
 _service = _load(
-    "agent/soul/speak/orchestrator/blocks/scene/runtime/service.py",
-    "agent.soul.speak.orchestrator.blocks.scene.runtime.service",
+    "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/scene/runtime/service.py",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene.runtime.service",
 )
 
 pick_scene_by_regex = sys.modules[
-    "agent.soul.speak.orchestrator.blocks.scene.runtime.resolve_regex"
+    "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene.runtime.resolve_regex"
 ].pick_scene_by_regex
 SceneComposeService = _service.SceneComposeService
 SceneUpdateInput = _service.SceneUpdateInput

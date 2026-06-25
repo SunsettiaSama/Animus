@@ -7,27 +7,51 @@ from typing import Callable
 from agent.soul.workers.domain_worker import DomainWorker
 
 from storyview.engine import StoryEngine
-from storyview.store.mysql import StoryStoreBundle
-from storyview.types import ResolvedOutcome, SceneCandidate, SceneLocateResult, ScenePacket, StoryEventKind
+from infra.storage import JsonStorageService
+from storyview.store.mysql import StoryStoreBundle as MySQLStoryStoreBundle
+from storyview.store.json import StoryStoreBundle as JsonStoryStoreBundle
+from storyview.types import (
+    GMAnswer,
+    GMQuestion,
+    ResolvedOutcome,
+    SceneCandidate,
+    SceneLocateResult,
+    ScenePacket,
+    StoryBeatOutcome,
+    StoryEventKind,
+)
 
 
 class StoryService(DomainWorker):
     """故事引擎 worker：所有 world 写操作经队列；同 world_id 串行。"""
 
-    def __init__(self, mysql_client, llm=None) -> None:
+    def __init__(
+        self,
+        mysql_client=None,
+        llm=None,
+        *,
+        storage_backend: str = "mysql",
+        json_root: str = ".react/soul_db",
+    ) -> None:
         super().__init__("story-worker")
-        self._stores = StoryStoreBundle(mysql_client)
+        if storage_backend.strip().lower() == "json":
+            self._stores = JsonStoryStoreBundle(JsonStorageService(json_root))
+        else:
+            if mysql_client is None:
+                raise RuntimeError("mysql story backend requires mysql_client")
+            self._stores = MySQLStoryStoreBundle(mysql_client)
         self._engine = StoryEngine(self._stores, llm=llm)
         self._world_locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
         self._last_scene: dict[str, ScenePacket] = {}
+        self._last_outcome: dict[str, StoryBeatOutcome] = {}
 
     @property
     def engine(self) -> StoryEngine:
         return self._engine
 
     @property
-    def stores(self) -> StoryStoreBundle:
+    def stores(self):
         return self._stores
 
     def init_schema(self) -> None:
@@ -38,6 +62,16 @@ class StoryService(DomainWorker):
 
     def last_scene(self, world_id: str) -> ScenePacket | None:
         return self._last_scene.get(world_id)
+
+    def last_beat_outcome(self, world_id: str) -> StoryBeatOutcome | None:
+        return self._last_outcome.get(world_id)
+
+    def surprise_probability(self, world_id: str) -> float:
+        future = self._run_world(
+            world_id,
+            lambda: self._engine.surprise_probability(world_id),
+        )
+        return future.result()
 
     def _world_lock(self, world_id: str) -> threading.Lock:
         with self._locks_guard:
@@ -54,7 +88,10 @@ class StoryService(DomainWorker):
             with self._world_lock(world_id):
                 if future.cancelled():
                     return
-                future.set_result(fn())
+                try:
+                    future.set_result(fn())
+                except BaseException as exc:
+                    future.set_exception(exc)
 
         self.enqueue(task)
         return future
@@ -205,4 +242,133 @@ class StoryService(DomainWorker):
                 scene_id,
                 transition_text=transition_text,
             ),
+        )
+
+    def ask_gm(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> Future[GMQuestion]:
+        return self._run_world(
+            world_id,
+            lambda: self._engine.ask_gm(world_id, cue, kind=kind),
+        )
+
+    def answer_gm(
+        self,
+        question: GMQuestion,
+        answer: GMAnswer,
+        *,
+        with_dice: bool = True,
+    ) -> Future[StoryBeatOutcome]:
+        world_id = question.world_id
+
+        def _do() -> StoryBeatOutcome:
+            outcome = self._engine.answer_gm(question, answer, with_dice=with_dice)
+            self._last_scene[world_id] = outcome.scene_packet
+            self._last_outcome[world_id] = outcome
+            return outcome
+
+        return self._run_world(world_id, _do)
+
+    def ask_move(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> Future[GMQuestion | None]:
+        return self._run_world(
+            world_id,
+            lambda: self._engine.ask_move(world_id, cue, kind=kind),
+        )
+
+    def answer_move(
+        self,
+        question: GMQuestion,
+        answer: GMAnswer,
+        *,
+        with_dice: bool = False,
+    ) -> Future[StoryBeatOutcome]:
+        world_id = question.world_id
+
+        def _do() -> StoryBeatOutcome:
+            outcome = self._engine.answer_move(
+                question,
+                answer,
+                with_dice=with_dice,
+            )
+            self._last_scene[world_id] = outcome.scene_packet
+            self._last_outcome[world_id] = outcome
+            return outcome
+
+        return self._run_world(world_id, _do)
+
+    def orchestrate_beat(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+        answer_text: str | None = None,
+        with_dice: bool = True,
+    ) -> Future[StoryBeatOutcome]:
+        def _do() -> StoryBeatOutcome:
+            outcome = self._engine.orchestrate_beat(
+                world_id,
+                cue,
+                kind=kind,
+                answer_text=answer_text,
+                with_dice=with_dice,
+            )
+            self._last_scene[world_id] = outcome.scene_packet
+            self._last_outcome[world_id] = outcome
+            return outcome
+
+        return self._run_world(world_id, _do)
+
+    def tick_surprise(
+        self,
+        world_id: str,
+        elapsed_sec: float,
+    ) -> Future[StoryBeatOutcome | None]:
+        def _do() -> StoryBeatOutcome | None:
+            outcome = self._engine.tick_surprise(world_id, elapsed_sec)
+            if outcome is not None:
+                self._last_scene[world_id] = outcome.scene_packet
+                self._last_outcome[world_id] = outcome
+            return outcome
+
+        return self._run_world(world_id, _do)
+
+    def ask_surprise(
+        self,
+        world_id: str,
+        elapsed_sec: float,
+    ) -> Future[GMQuestion | None]:
+        return self._run_world(
+            world_id,
+            lambda: self._engine.ask_surprise(world_id, elapsed_sec),
+        )
+
+    def distill_arc(
+        self,
+        world_id: str,
+        outcomes: list[StoryBeatOutcome],
+    ) -> Future[str]:
+        return self._run_world(
+            world_id,
+            lambda: self._engine.distill_arc(world_id, outcomes),
+        )
+
+    def distill_arc(
+        self,
+        world_id: str,
+        outcomes: list[StoryBeatOutcome],
+    ) -> Future[str]:
+        return self._run_world(
+            world_id,
+            lambda: self._engine.distill_arc(world_id, outcomes),
         )

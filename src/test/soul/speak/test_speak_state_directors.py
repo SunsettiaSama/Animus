@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from agent.soul.speak.orchestrator.directors.fallback import fallback_delivery_plan
-from agent.soul.speak.orchestrator.state.core.delivery import ReplySegment, build_delivery_plan
-from agent.soul.speak.orchestrator.state.core.enums import normalize_continuity
-from agent.soul.speak.orchestrator.state.core.types import (
+from agent.soul.speak.pipelines.request_driven.orchestrator.directors.fallback import fallback_delivery_plan
+from agent.soul.speak.pipelines.request_driven.orchestrator.state.core.delivery import ReplySegment, build_delivery_plan
+from agent.soul.speak.pipelines.request_driven.orchestrator.state.core.enums import normalize_continuity
+from agent.soul.speak.pipelines.request_driven.orchestrator.state.core.types import (
     DialogueSnapshot,
     SessionRuntimeSnapshot,
     SessionSignals,
     SessionSnapshot,
     build_snapshot_id,
 )
-from agent.soul.speak.orchestrator.state.runtime.store import StateStore
-from agent.soul.speak.orchestrator.state.snapshot.print import print_session_snapshot
+from agent.soul.speak.pipelines.request_driven.orchestrator.state.runtime.store import StateStore
+from agent.soul.speak.pipelines.request_driven.orchestrator.state.snapshot.print import print_session_snapshot
 
 
 def _snapshot(user_text: str = "今天天气不错") -> SessionSnapshot:

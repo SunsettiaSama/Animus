@@ -31,7 +31,7 @@ from agent.soul.speak.io.inbound.compose import (
 from agent.soul.speak.io.inbound.compose.store import SpeakStatusStore
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 
-from agent.soul.speak.orchestrator.persona import collect_persona_layer
+from agent.soul.speak.pipelines.request_driven.orchestrator.persona import collect_persona_layer
 
 
 def main() -> None:
@@ -103,7 +103,7 @@ def main() -> None:
         print(block)
         print("---")
 
-    forbidden = ("????, "????, "????·????)
+    forbidden = ("????, "????, "????????)
     for marker in forbidden:
         if marker in status.presence:
             raise SystemExit(f"FAIL: presence ??????{marker!r}")

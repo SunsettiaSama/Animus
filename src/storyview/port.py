@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from storyview.service import StoryService
-from storyview.types import ResolvedOutcome, SceneCandidate, SceneLocateResult, ScenePacket, StoryEventKind
+from storyview.types import (
+    GMAnswer,
+    GMQuestion,
+    ResolvedOutcome,
+    SceneCandidate,
+    SceneLocateResult,
+    ScenePacket,
+    StoryBeatOutcome,
+    StoryEventKind,
+)
 
 
 class StoryPort:
@@ -48,6 +57,12 @@ class StoryPort:
 
     def last_scene(self, world_id: str) -> ScenePacket | None:
         return self._service.last_scene(world_id)
+
+    def last_beat_outcome(self, world_id: str) -> StoryBeatOutcome | None:
+        return self._service.last_beat_outcome(world_id)
+
+    def surprise_probability(self, world_id: str) -> float:
+        return self._service.surprise_probability(world_id)
 
     def render_background(self, world_id: str, *, query: str = "", purpose: str = "") -> str:
         return self._service.render_background(world_id, query=query, purpose=purpose)
@@ -129,6 +144,88 @@ class StoryPort:
             scene_id,
             transition_text=transition_text,
         ).result()
+
+    def ask_gm(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> GMQuestion:
+        return self._service.ask_gm(world_id, cue, kind=kind).result()
+
+    def answer_gm(
+        self,
+        question: GMQuestion,
+        answer: GMAnswer,
+        *,
+        with_dice: bool = True,
+    ) -> StoryBeatOutcome:
+        return self._service.answer_gm(
+            question,
+            answer,
+            with_dice=with_dice,
+        ).result()
+
+    def ask_move(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> GMQuestion | None:
+        return self._service.ask_move(world_id, cue, kind=kind).result()
+
+    def answer_move(
+        self,
+        question: GMQuestion,
+        answer: GMAnswer,
+        *,
+        with_dice: bool = False,
+    ) -> StoryBeatOutcome:
+        return self._service.answer_move(
+            question,
+            answer,
+            with_dice=with_dice,
+        ).result()
+
+    def orchestrate_beat(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+        answer_text: str | None = None,
+        with_dice: bool = True,
+    ) -> StoryBeatOutcome:
+        return self._service.orchestrate_beat(
+            world_id,
+            cue,
+            kind=kind,
+            answer_text=answer_text,
+            with_dice=with_dice,
+        ).result()
+
+    def tick_surprise(
+        self,
+        world_id: str,
+        elapsed_sec: float,
+    ) -> StoryBeatOutcome | None:
+        return self._service.tick_surprise(world_id, elapsed_sec).result()
+
+    def ask_surprise(
+        self,
+        world_id: str,
+        elapsed_sec: float,
+    ) -> GMQuestion | None:
+        return self._service.ask_surprise(world_id, elapsed_sec).result()
+
+    def distill_arc(
+        self,
+        world_id: str,
+        outcomes: list[StoryBeatOutcome],
+    ) -> str:
+        return self._service.distill_arc(world_id, outcomes).result()
 
 
 StoryLifePort = StoryPort

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from agent.soul.handlers.api.actions import SpeakAction
 from agent.soul.request import SoulDomain, SoulRequest
+from agent.soul.speak.io.handler import SpeakHandler
 
 
 def test_speak_handler_api_property(soul_service):
@@ -101,3 +104,52 @@ def test_speak_run_turn_requires_running(soul_service):
 def test_speak_submit_user_input_requires_running(soul_service):
     with pytest.raises(RuntimeError, match="\u672a\u8fd0\u884c"):
         soul_service.speak_submit_user_input("tao", "hi")
+
+
+def test_speak_handler_run_turn_passes_pipeline():
+    calls: list[dict[str, object]] = []
+
+    class _FakeSpeakService:
+        def run_turn(self, session_id, text, *, stream=False, mode="inbound", pipeline=None):
+            calls.append({
+                "session_id": session_id,
+                "text": text,
+                "stream": stream,
+                "mode": mode,
+                "pipeline": pipeline,
+            })
+            return SimpleNamespace(
+                session_id=session_id,
+                answer="ok",
+                output=None,
+                meta={"session_state": "finish", "pipeline": pipeline},
+                recorded=False,
+                bundle=SimpleNamespace(summary_for_log=lambda: {}),
+                stream_events=[],
+                notes=[],
+            )
+
+    handler = SpeakHandler(
+        get_speak_service=lambda: _FakeSpeakService(),
+        experience=SimpleNamespace(),
+    )
+
+    result = handler.handle(
+        SpeakAction.RUN_TURN,
+        {
+            "session_id": "s1",
+            "text": "hello",
+            "stream": True,
+            "mode": "inbound",
+            "pipeline": "request_driven",
+        },
+    )
+
+    assert calls == [{
+        "session_id": "s1",
+        "text": "hello",
+        "stream": True,
+        "mode": "inbound",
+        "pipeline": "request_driven",
+    }]
+    assert result["pipeline"] == "request_driven"

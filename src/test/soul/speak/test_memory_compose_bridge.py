@@ -1,17 +1,17 @@
-"""Speak ??ù?compose ?? / ??????ù?""
+"""Speak ???compose ?? / ???????""
 from __future__ import annotations
 
 import threading
 import time
 
-from agent.soul.speak.orchestrator import SpeakPromptBundle
+from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakPromptBundle
 from agent.soul.speak.io.inbound.memory.compose_bridge import InboundMemoryComposeBridge
 from agent.soul.speak.io.inbound.memory.gateway import InboundMemoryGateway
 from agent.soul.speak.io.inbound.memory.request import (
     SimilarMemoryBlock,
     SimilarMemoryPullResult,
 )
-from agent.soul.speak.orchestrator.prompt_trace import get_prompt_trace
+from agent.soul.speak.pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
 from agent.soul.speak.session.queue.memory import MemoryBufferItem, SessionMemoryBuffer
 from agent.soul.speak.session.service import SpeakSessionService
 
@@ -85,7 +85,7 @@ def test_pull_compose_context_waits_for_keyword():
             "s-wait",
             MemoryBufferItem(
                 turn_index=2,
-                lines=("????ù?,),
+                lines=("?????,),
                 unit_ids=("u-kw",),
                 source="keyword",
             ),
@@ -94,12 +94,12 @@ def test_pull_compose_context_waits_for_keyword():
     threading.Thread(target=delayed_enqueue, daemon=True).start()
     similar, _ = bridge.pull_compose_context(
         "s-wait",
-        user_text="????ù?,
+        user_text="?????,
         turn_index=2,
     )
 
     assert "u-kw" in similar.inject.unit_ids
-    assert "????ù? in similar.inject.lines
+    assert "????? in similar.inject.lines
 
 
 def test_pull_compose_context_includes_social_prefetch_slot():
@@ -117,7 +117,7 @@ def test_pull_compose_context_includes_social_prefetch_slot():
         "s-social",
         MemoryBufferItem(
             turn_index=2,
-            lines=("??ù?,),
+            lines=("???,),
             unit_ids=("u-kw",),
             source="keyword",
         ),
@@ -143,7 +143,7 @@ def test_empty_pull_writes_no_similar_block():
     get_prompt_trace().set_session("s-empty", True)
     similar, _ = bridge.pull_compose_context(
         "s-empty",
-        user_text="????ù?,
+        user_text="?????,
         turn_index=2,
     )
     bridge.apply_similar_memories(bundle, similar)

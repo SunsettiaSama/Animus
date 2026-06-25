@@ -4,8 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
-from agent.soul.speak.orchestrator import SpeakPromptBundle
-from agent.soul.speak.orchestrator.guidance.social import (
+from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakPromptBundle
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.social import (
     INITIATIVE_PROMPT,
     apply_session_social,
     render_silence_break_block,

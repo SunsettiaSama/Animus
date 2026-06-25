@@ -72,7 +72,7 @@ def _soul_or_400():
             status_code=400,
             content={
                 "status": "error",
-                "detail": "Soul 未就绪：请先初始化 ReAct（persona + MySQL）。",
+                "detail": "Soul 未就绪：请先初始化 ReAct（persona + storage backend）。",
             },
         )
     return soul, None
@@ -113,7 +113,9 @@ def get_soul_readiness():
     from config.infra.db_config import DBConfig
 
     db_cfg = DBConfig.load_default()
+    storage_backend = db_cfg.resolved_storage_backend()
     mysql_enabled = bool(db_cfg.mysql.enabled)
+    mysql_blocking = storage_backend == "mysql"
 
     llm_ready = bool(
         getattr(state, "llm_service", None) is not None
@@ -142,9 +144,9 @@ def get_soul_readiness():
         },
         {
             "id": "mysql",
-            "label": "MySQL 已启用",
-            "ok": mysql_enabled,
-            "hint": "config/infra/db.yaml → mysql.enabled",
+            "label": "MySQL 已启用" if mysql_blocking else "Storage backend 可用",
+            "ok": mysql_enabled if mysql_blocking else True,
+            "hint": "config/infra/db.yaml → mysql.enabled" if mysql_blocking else f"storage.backend={storage_backend}",
         },
         {
             "id": "profile",
@@ -178,6 +180,8 @@ def get_soul_readiness():
         "ready": required_ok and soul_running,
         "speak_ready": speak_ready,
         "persona_enabled": persona_enabled,
+        "storage_backend": storage_backend,
+        "storage_json_root": db_cfg.storage.json_root,
         "mysql_enabled": mysql_enabled,
         "llm_ready": llm_ready,
         "react_ready": react_ready,

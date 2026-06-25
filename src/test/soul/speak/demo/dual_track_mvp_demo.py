@@ -17,7 +17,7 @@ if str(SRC) not in sys.path:
 from config.llm_core.config import LLMConfig
 from agent.soul.presence.share_desire import ShareDesire
 from agent.soul.speak.llm.engine import SpeakLLMEngine
-from agent.soul.speak.orchestrator.blocks.guidance import SpeakContextDistiller
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance import SpeakContextDistiller
 from agent.soul.speak.service import SpeakService
 from infra.llm import BaseLLM
 from infra.llm.llm import OpenAILLM

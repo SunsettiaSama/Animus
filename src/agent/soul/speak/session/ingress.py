@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent.soul.speak.orchestrator.runtime.orchestrator_thread import OrchestratorThread
+    from agent.soul.speak.pipelines.request_driven.orchestrator.runtime.orchestrator_thread import OrchestratorThread
 
 
 class SessionOrchestratorIngress:

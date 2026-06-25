@@ -13,6 +13,7 @@ import * as streaming           from '../streaming.js';
 import * as history             from '../history.js';
 import { getChannelId }         from '../channel.js';
 import { getSpeakDeliveryMode, isSimulatedDelivery } from '../speak_delivery.js';
+import { getSpeakPipeline }     from '../speak_pipeline.js';
 import { goWorkspace }         from '../router.js';
 import { showToast }           from '../shared/toast.js';
 
@@ -34,7 +35,7 @@ function _closeSpeakSession() {
 }
 
 function _speakStreamOpts() {
-  return { deliveryMode: getSpeakDeliveryMode() };
+  return { deliveryMode: getSpeakDeliveryMode(), pipeline: getSpeakPipeline() };
 }
 
 function _msgDraft() {
@@ -46,6 +47,7 @@ function _speakSessionOpts(genId, streamCtrl) {
     sessionId: S.sessionId || S.convId || getChannelId(),
     channelId: S.channelId || getChannelId(),
     deliveryMode: getSpeakDeliveryMode(),
+    pipeline: getSpeakPipeline(),
     typingIdleMs: 3000,
     getDraft: _msgDraft,
     onEvent: (kind, text, meta) => streamCtrl?.onEvent(kind, text, meta),
@@ -97,6 +99,7 @@ async function _finishTurn(streamCtrl, payload) {
 
 function _bindTurnCallbacks(session, streamCtrl) {
   session.setDeliveryMode(getSpeakDeliveryMode());
+  session.setPipeline(getSpeakPipeline());
   session.setTurnCallbacks({
     onEvent: (kind, text, meta) => streamCtrl?.onEvent(kind, text, meta),
     onTurnStart: () => {
@@ -435,6 +438,11 @@ export function initSpeakDeliverySync() {
   window.addEventListener('speak:delivery_mode', e => {
     if (_speakSession?.isConnected?.()) {
       _speakSession.setDeliveryMode(e.detail);
+    }
+  });
+  window.addEventListener('speak:pipeline', e => {
+    if (_speakSession?.isConnected?.()) {
+      _speakSession.setPipeline(e.detail);
     }
   });
 }

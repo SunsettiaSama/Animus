@@ -170,7 +170,7 @@ class TaoLoop:
     ):
         if cfg.persona.enabled and cfg.db is None:
             raise ValueError(
-                "Soul 已启用（persona.enabled）但未配置 TaoConfig.db（MySQL）"
+                "Soul 已启用（persona.enabled）但未配置 TaoConfig.db"
             )
 
         self._llm = llm   # canonical handle from LLMService — shared by all sub-components
@@ -192,12 +192,14 @@ class TaoLoop:
             self._life = self._soul.life.api
             self._soul_memory = self._soul.memory.api
         elif cfg.persona.enabled:
-            _mysql_cfg = cfg.db.mysql
-            if not _mysql_cfg.enabled:
+            _backend = cfg.db.resolved_storage_backend()
+            _mysql = None
+            if _backend == "mysql" and not cfg.db.mysql.enabled:
                 raise ValueError(
-                    "Soul 记忆需要 MySQL 已启用（config/infra/db.yaml）"
+                    "Soul storage backend=mysql，但 MySQL 未启用（config/infra/db.yaml）"
                 )
-            _mysql = _mysql_cfg.build_client()
+            if _backend == "mysql":
+                _mysql = cfg.db.mysql.build_client()
             self._soul = SoulService(
                 life_dir=cfg.storage.life_dir,
                 persona_cfg=cfg.persona,
@@ -205,6 +207,9 @@ class TaoLoop:
                 llm_service=llm_service,
                 primary_llm=self._llm,
                 cfg=SoulConfig.load_default(),
+                db_cfg=cfg.db,
+                storage_backend=_backend,
+                json_root=cfg.db.storage.json_root,
             )
             self._soul.start()
             self._persona = self._soul.persona.service

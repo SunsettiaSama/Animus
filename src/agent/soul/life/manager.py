@@ -167,6 +167,12 @@ class LifeManager:
     def set_story_port(self, port) -> None:
         self._virtual.set_story_port(port)
 
+    def set_gm_answerer(self, answerer) -> None:
+        self._virtual.set_gm_answerer(answerer)
+
+    def set_story_arc_max_steps(self, max_steps: int) -> None:
+        self._virtual.set_story_arc_max_steps(max_steps)
+
     def bind_story_world(self, world_id: str) -> None:
         token = world_id.strip() or "default"
         self._profile.world_id = token

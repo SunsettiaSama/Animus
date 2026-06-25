@@ -3,16 +3,16 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from test.soul.speak.compose_helpers import finish_turn_for_test as finish_turn_bundle
-from agent.soul.speak.orchestrator.bundle import SpeakPromptBundle
-from agent.soul.speak.orchestrator.guidance.control import (
+from agent.soul.speak.pipelines.request_driven.orchestrator.bundle import SpeakPromptBundle
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.control import (
     GuidanceControlService,
     GuidancePlanInput,
     NARRATIVE_MAX_CHARS,
 )
-from agent.soul.speak.orchestrator.guidance.layer import SpeakGuidanceLayer
-from agent.soul.speak.orchestrator.io import OrchestratorIOHub
-from agent.soul.speak.orchestrator.io.inbound.guidance import GuidancePlanRequest
-from agent.soul.speak.orchestrator.persona import SpeakPersonaLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.layer import SpeakGuidanceLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.io import OrchestratorIOHub
+from agent.soul.speak.pipelines.request_driven.orchestrator.io.inbound.guidance import GuidancePlanRequest
+from agent.soul.speak.pipelines.request_driven.orchestrator.persona import SpeakPersonaLayer
 from agent.soul.speak.session.manage.coordinator import SessionSocialManager
 from config.soul.presence.config import SHARE_INTENT_QUEUE_MAX_ITEMS
 
@@ -82,7 +82,7 @@ def test_finish_turn_bundle_injects_guidance_narrative():
             recall_preview="- 上次在纳塔地底见过蜥蜴",
         ),
     )
-    from agent.soul.speak.orchestrator.director.types import DirectorPlan, ModuleDecision
+    from agent.soul.speak.pipelines.request_driven.orchestrator.director.types import DirectorPlan, ModuleDecision
 
     director_plan = DirectorPlan(
         session_id="tao",
@@ -131,14 +131,14 @@ def test_clear_control_arc():
 def test_recall_candidates_penalize_repeat_pick():
     from types import SimpleNamespace
 
-    from agent.soul.speak.orchestrator.guidance.memory.candidates import (
+    from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.memory.candidates import (
         build_recall_candidates_from_pull,
     )
-    from agent.soul.speak.orchestrator.guidance.memory.pick_weights import (
+    from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.memory.pick_weights import (
         PICK_PENALTY_FACTOR,
         PICK_WEIGHT_FLOOR,
     )
-    from agent.soul.speak.orchestrator.queue.memory import ComposeMemoryBuffer
+    from agent.soul.speak.pipelines.request_driven.orchestrator.queue.memory import ComposeMemoryBuffer
 
     buffer = ComposeMemoryBuffer()
     session_id = "tao"
@@ -162,12 +162,12 @@ def test_recall_candidates_penalize_repeat_pick():
 
 
 def test_planner_json_emit_resolves_queue_index():
-    from agent.soul.speak.orchestrator.guidance.control.planner import (
+    from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.control.planner import (
         GuidancePlanInput,
         _state_from_parsed,
         _ParsedPlan,
     )
-    from agent.soul.speak.orchestrator.guidance.share.candidates import SharePlannerCandidate
+    from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.share.candidates import SharePlannerCandidate
 
     data = GuidancePlanInput(
         session_id="tao",

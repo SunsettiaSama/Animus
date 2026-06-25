@@ -23,14 +23,16 @@ class StateApplier:
         self._stores = stores
 
     def apply(self, world_id: str, patch: StatePatch) -> None:
+        move_to_location_id = patch.move_to_location_id
         if patch.move_to_location_id:
             loc = self._stores.lore.get_location(patch.move_to_location_id)
             if loc is None or loc.get("world_id") != world_id:
-                raise ValueError(f"invalid move_to location: {patch.move_to_location_id}")
+                move_to_location_id = None
+        entity_deltas: dict[str, dict] = {}
         for entity_id, delta in patch.entity_deltas.items():
             ent = self._stores.lore.get_entity(entity_id)
             if ent is None or ent.get("world_id") != world_id:
-                raise ValueError(f"invalid entity delta: {entity_id}")
+                continue
             raw = ent.get("state_json")
             if isinstance(raw, str):
                 state = json.loads(raw) if raw else {}
@@ -38,7 +40,15 @@ class StateApplier:
                 state = dict(raw)
             else:
                 state = {}
+            valid_delta: dict = {}
             for key in delta:
-                if key not in state and key not in ("active", "visible", "mixing"):
-                    raise ValueError(f"entity state key not allowed: {key}")
-        self._stores.runtime.apply_patch(world_id, patch)
+                if key in state or key in ("active", "visible", "mixing"):
+                    valid_delta[key] = delta[key]
+            if valid_delta:
+                entity_deltas[entity_id] = valid_delta
+        sanitized = StatePatch(
+            move_to_location_id=move_to_location_id,
+            entity_deltas=entity_deltas,
+            flags=dict(patch.flags),
+        )
+        self._stores.runtime.apply_patch(world_id, sanitized)

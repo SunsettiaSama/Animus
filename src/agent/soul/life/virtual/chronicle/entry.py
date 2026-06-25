@@ -39,6 +39,8 @@ class VirtualChronicleEntry:
     dice_tendency: str = ""
     emotion_label: str = ""
     salience: float = 0.0
+    story_event_id: str = ""
+    scene_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -53,6 +55,8 @@ class VirtualChronicleEntry:
             "dice_tendency": self.dice_tendency,
             "emotion_label": self.emotion_label,
             "salience": self.salience,
+            "story_event_id": self.story_event_id,
+            "scene_id": self.scene_id,
         }
 
     @classmethod
@@ -69,4 +73,6 @@ class VirtualChronicleEntry:
             dice_tendency=d.get("dice_tendency", ""),
             emotion_label=d.get("emotion_label", ""),
             salience=float(d.get("salience", 0.0)),
+            story_event_id=d.get("story_event_id", ""),
+            scene_id=d.get("scene_id", ""),
         )

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from agent.soul.speak.io.outbound.stream import SpeakStreamEvent
 from state import get_state
 
-from agent.soul.speak.orchestrator.prompt_trace import get_prompt_trace
+from agent.soul.speak.pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
 
 from webui.speak_typing_sim import SimulatedTypingStreamPort
 
@@ -65,10 +65,12 @@ class WebUISpeakStreamPort:
 def _serialize_turn_result(result) -> dict[str, Any]:
     output = result.output.to_dict() if result.output is not None else {}
     silence_policy = result.meta.get("silence_policy")
+    pipeline = result.meta.get("pipeline")
     return {
         "session_id": result.session_id,
         "answer": result.answer,
         "session_state": result.meta.get("session_state", "finish"),
+        "pipeline": pipeline if isinstance(pipeline, str) else None,
         "queued": bool(result.meta.get("queued", False)),
         "interrupt": bool(result.meta.get("interrupt", False)),
         "recorded": result.recorded,
@@ -80,13 +82,20 @@ def _serialize_turn_result(result) -> dict[str, Any]:
     }
 
 
-def _submit_user_message(soul, session_id: str, text: str) -> dict[str, Any]:
+def _submit_user_message(
+    soul,
+    session_id: str,
+    text: str,
+    *,
+    pipeline: str | None = None,
+) -> dict[str, Any]:
     return soul.speak_submit_user_input(
         session_id,
         text,
         stream=True,
         mode="inbound",
         record=True,
+        pipeline=pipeline,
     )
 
 
@@ -218,6 +227,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
     delivery_mode = str(first.get("delivery_mode", "stream")).strip().lower()
     if delivery_mode not in ("stream", "simulated"):
         delivery_mode = "stream"
+    pipeline = str(first.get("pipeline", "legacy_qa")).strip() or "legacy_qa"
     if not gen_id:
         await websocket.send_json({"type": "error", "message": "missing gen_id"})
         await websocket.close()
@@ -288,6 +298,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
             "gen_id": gen_id,
             "session_id": session_id,
             "delivery_mode": delivery_mode,
+            "pipeline": pipeline,
         })
         soul.seed_session_warm_spread(session_id)
         soul.arm_enter_greeting(session_id)
@@ -309,6 +320,10 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                     port = port.inner
                 soul.bind_speak_stream_port(port)
                 soul.speak_set_delivery_mode(delivery_mode)
+
+            msg_pipeline = str(msg.get("pipeline", "")).strip()
+            if msg_pipeline:
+                pipeline = msg_pipeline
 
             if msg_type == "typing_pulse":
                 typing = bool(msg.get("typing", False))
@@ -367,11 +382,13 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                     soul,
                     session_id,
                     question,
+                    pipeline=pipeline,
                 )
                 await _send_json({
                     "type": "user_ack",
                     "gen_id": gen_id,
                     "question": question,
+                    "pipeline": pipeline,
                     **ack,
                 })
                 continue
@@ -388,6 +405,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                         stream=True,
                         mode="inbound",
                         record=True,
+                        pipeline=pipeline,
                     )
                     turn_payload["result"] = _serialize_turn_result(result)
                 except Exception as exc:
@@ -410,6 +428,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                 "type": "turn_start",
                 "gen_id": gen_id,
                 "question": question,
+                "pipeline": pipeline,
             })
 
             worker = threading.Thread(target=_run_turn, name="webui-speak-turn", daemon=True)

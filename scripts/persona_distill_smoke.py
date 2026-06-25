@@ -21,12 +21,12 @@ if hasattr(sys.stderr, "reconfigure"):
 from agent.soul.persona.distill import PersonaDistillPack, PersonaDistillWriter
 from agent.soul.persona.profile.profile import PersonaProfile
 from agent.soul.persona.self_concept.concept import SelfConcept
-from agent.soul.speak.orchestrator import SpeakPromptBundle
-from agent.soul.speak.orchestrator.persona import collect_persona_layer
-from agent.soul.speak.orchestrator.scene import SpeakSceneLayer
-from agent.soul.speak.orchestrator.guidance import SpeakGuidanceLayer
-from agent.soul.speak.orchestrator.system import build_system_layer
-from agent.soul.speak.orchestrator.system.output_format import SpeakOutputFormat
+from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakPromptBundle
+from agent.soul.speak.pipelines.request_driven.orchestrator.persona import collect_persona_layer
+from agent.soul.speak.pipelines.request_driven.orchestrator.scene import SpeakSceneLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance import SpeakGuidanceLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.system import build_system_layer
+from agent.soul.speak.pipelines.request_driven.orchestrator.system.output_format import SpeakOutputFormat
 from agent.soul.speak.io.outbound.stream import parse_agent_output
 from agent.soul.speak.llm.engine import SpeakLLMEngine
 from config.llm_core.config import LLMConfig
@@ -81,7 +81,7 @@ def _empty_presence_snap() -> SimpleNamespace:
 
 
 def _print_llm_turn(*, turn: int, user_text: str, system: str, reply: str) -> None:
-    _sep(f"??{turn} ??· ??? LLM ????)
+    _sep(f"??{turn} ?? ??? LLM ????)
     print(f"[HumanMessage] ({len(user_text)} chars)\n{user_text}\n", flush=True)
     print(f"[SystemMessage] ({len(system)} chars)\n{system}\n", flush=True)
     print(f"[Assistant ??] ({len(reply)} chars)\n{reply}\n", flush=True)
@@ -133,7 +133,7 @@ def _simulate_turns(
         )
         system = bundle.build_system()
 
-        _sep(f"??{i} ??· ??????)
+        _sep(f"??{i} ?? ??????)
         print(
             json.dumps(
                 {

@@ -11,17 +11,17 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from agent.soul.presence.share_desire import ShareDesire
-from agent.soul.speak.orchestrator.blocks.context import ContextBlock, context_snapshot
-from agent.soul.speak.orchestrator.blocks.core.base import BlockContext
-from agent.soul.speak.orchestrator.bundle import SpeakPromptBundle
-from agent.soul.speak.orchestrator.director.decide import decide_plan
-from agent.soul.speak.orchestrator.blocks.guidance.context import SpeakContextDistiller
-from agent.soul.speak.orchestrator.blocks.guidance.layer import SpeakGuidanceLayer
-from agent.soul.speak.orchestrator.orchestrator import SpeakOrchestrator
-from agent.soul.speak.orchestrator.blocks.persona import SpeakPersonaLayer
-from agent.soul.speak.orchestrator.blocks.scene import SpeakSceneLayer
-from agent.soul.speak.orchestrator.blocks.system.build import build_system_layer
-from agent.soul.speak.orchestrator.blocks.system.reply_style import SpeakReplyStyle
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.context import ContextBlock, context_snapshot
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.core.base import BlockContext
+from agent.soul.speak.pipelines.request_driven.orchestrator.bundle import SpeakPromptBundle
+from agent.soul.speak.pipelines.request_driven.orchestrator.director.decide import decide_plan
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.context import SpeakContextDistiller
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.layer import SpeakGuidanceLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.orchestrator import SpeakOrchestrator
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.persona import SpeakPersonaLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.scene import SpeakSceneLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.system.build import build_system_layer
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.system.reply_style import SpeakReplyStyle
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 
 SESSION = "ctx-smoke"

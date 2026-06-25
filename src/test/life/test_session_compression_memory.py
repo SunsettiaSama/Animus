@@ -5,30 +5,30 @@ from agent.soul.life.experience.unit_layer.promote.policy import should_promote_
 from agent.soul.memory.io.session.buffer import _parse_valence
 from agent.soul.memory.io.session import DialogueCompressionBlock
 from agent.soul.memory.domain import Valence
-from agent.soul.speak.orchestrator.guidance.context.structured_distill import distill_compression_block
-from agent.soul.speak.orchestrator.guidance.context.chunk_types import DialogueContextChunk
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.context.structured_distill import distill_compression_block
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.context.chunk_types import DialogueContextChunk
 
 
 def test_compression_unit_carries_session_and_block_index():
     block = DialogueCompressionBlock(
         session_id="sess-1",
         block_index=2,
-        summary="这轮对话让我印象深刻",
+        summary="侄曰印",
         emotion_label="专注",
         salience=0.72,
-        transcript="用户：你好\n我：你好",
+        transcript="没\n遥",
     )
     unit = build_unit_from_compression(block, interactor_id="alice")
     assert unit.situation.session_id == "sess-1"
     assert unit.situation.turn_index == 3
-    assert "印象深刻" in unit.feeling.salience_note
+    assert "印" in unit.feeling.salience_note
 
 
 def test_compression_block_promotes_via_regex_when_explicit():
     block = DialogueCompressionBlock(
         session_id="sess-1",
         block_index=0,
-        summary="意外变故，久久不能平静",
+        summary="剩镁貌平",
         salience=0.8,
     )
     unit = build_unit_from_compression(block)
@@ -37,7 +37,7 @@ def test_compression_block_promotes_via_regex_when_explicit():
 
 def test_structured_distill_fallback_without_llm():
     batch = [
-        DialogueContextChunk(user_text="今天天气不错", agent_text="是的"),
+        DialogueContextChunk(user_text="", agent_text="堑"),
     ]
     block = distill_compression_block(
         None,

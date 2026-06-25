@@ -8,7 +8,7 @@ from .entry import VirtualChronicleEntry, VirtualChronicleKind
 def virtual_entry_from_unit(unit: ExperienceUnit) -> VirtualChronicleEntry | None:
     """ExperienceUnit → VirtualChronicleEntry（仅虚拟 source）。"""
     ctx = read_virtual_context(unit)
-    hint = unit.situation.narration or unit.action.content
+    hint = unit.situation.narration or unit.situation.perception or unit.action.content
 
     if unit.source == "surprise":
         kind = VirtualChronicleKind.surprise
@@ -40,6 +40,8 @@ def virtual_entry_from_unit(unit: ExperienceUnit) -> VirtualChronicleEntry | Non
         dice_tendency=ctx.dice_tendency if ctx else "",
         emotion_label=unit.feeling.emotion_label,
         salience=unit.feeling.salience,
+        story_event_id=ctx.story_event_id if ctx else "",
+        scene_id=ctx.scene_id if ctx else "",
     )
 
 

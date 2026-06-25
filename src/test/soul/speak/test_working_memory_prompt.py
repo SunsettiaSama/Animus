@@ -3,15 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
-from agent.soul.speak.orchestrator.guidance.context.chunk_types import DialogueContextChunk
-from agent.soul.speak.orchestrator.guidance.context.distiller import SpeakContextDistiller
-from agent.soul.speak.orchestrator.guidance.context.render import render_session_working_memory
-from agent.soul.speak.orchestrator.guidance import SpeakGuidanceLayer
-from agent.soul.speak.orchestrator.persona import SpeakPersonaLayer
-from agent.soul.speak.orchestrator.guidance.memory.render import render_similar_memories_block
-from agent.soul.speak.orchestrator import SpeakOrchestrator, SpeakPromptBundle
-from agent.soul.speak.orchestrator.scene import SpeakSceneLayer
-from agent.soul.speak.orchestrator.system import SpeakSystemLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.context.chunk_types import DialogueContextChunk
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.context.distiller import SpeakContextDistiller
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.context.render import render_session_working_memory
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance import SpeakGuidanceLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.persona import SpeakPersonaLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.memory.render import render_similar_memories_block
+from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakOrchestrator, SpeakPromptBundle
+from agent.soul.speak.pipelines.request_driven.orchestrator.scene import SpeakSceneLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.system import SpeakSystemLayer
 from agent.soul.presence.state.presence_state import PresenceState
 from agent.soul.presence.transition.static.lifecycle import apply_dialogue_session_boundary
 from agent.soul.speak.io.inbound.compose.render import render_presence

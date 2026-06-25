@@ -17,13 +17,21 @@ from agent.soul.memory.graph.networks.store.mysql.edges import MySQLEdgeStore
 from agent.soul.memory.graph.networks.store.mysql.interactors import MySQLInteractorStore
 from agent.soul.memory.graph.networks.store.mysql.nodes import MySQLNodeStore
 from agent.soul.memory.graph.networks.store.mysql.session_channels import MySQLSessionChannelStore
+from agent.soul.memory.graph.networks.store.json import (
+    JsonEdgeStore,
+    JsonInteractorStore,
+    JsonNodeStore,
+    JsonSessionChannelStore,
+)
 from agent.soul.memory.graph.networks.writer import NarrativeWriter
 from agent.soul.memory.rumination import RuminationService, RuminationWriter
 from agent.soul.memory.retriever import MemoryRetriever
 from agent.soul.memory.io.session import SessionMemoryBuffer, SessionMemoryChannel
 from agent.soul.memory.sleep import SleepConfig, SleepService
+from config.soul.memory.infra_config import SoulMemoryInfraConfig
 from config.soul.memory.service_config import MemoryServiceConfig
 from infra.memory import MemoryInfraService
+from infra.storage import JsonStorageService
 
 if TYPE_CHECKING:
     from infra.db.mysql import MySQLClient
@@ -32,19 +40,37 @@ if TYPE_CHECKING:
 
 def build_memory_service(
     llm: BaseLLM,
-    mysql_client: MySQLClient,
+    mysql_client: MySQLClient | None = None,
     cfg: MemoryServiceConfig | None = None,
     memory_infra: MemoryInfraService | None = None,
+    storage_backend: str = "mysql",
+    json_root: str = ".react/soul_db",
 ) -> MemoryService:
     if cfg is None:
         cfg = MemoryServiceConfig.load_default()
 
-    infra = memory_infra or MemoryInfraService.build()
-    nodes = MySQLNodeStore(mysql_client)
-    edges = MySQLEdgeStore(mysql_client)
-    interactors = MySQLInteractorStore(mysql_client)
-    session_channels = MySQLSessionChannelStore(mysql_client)
-    nodes.init_schema()
+    backend = storage_backend.strip().lower()
+    if backend == "json":
+        storage = JsonStorageService(json_root)
+        infra = memory_infra or MemoryInfraService(
+            cfg=SoulMemoryInfraConfig(enabled=False),
+            embedding=None,
+            vectors=None,
+        )
+        nodes = JsonNodeStore(storage)
+        edges = JsonEdgeStore(storage)
+        interactors = JsonInteractorStore(storage)
+        session_channels = JsonSessionChannelStore(storage)
+        nodes.init_schema()
+    else:
+        if mysql_client is None:
+            raise RuntimeError("mysql storage backend requires mysql_client")
+        infra = memory_infra or MemoryInfraService.build()
+        nodes = MySQLNodeStore(mysql_client)
+        edges = MySQLEdgeStore(mysql_client)
+        interactors = MySQLInteractorStore(mysql_client)
+        session_channels = MySQLSessionChannelStore(mysql_client)
+        nodes.init_schema()
 
     vectors = SemanticVectorIndex(infra) if infra.enabled else SemanticVectorIndex(None)
     from agent.soul.memory.domain import MemoryNetwork

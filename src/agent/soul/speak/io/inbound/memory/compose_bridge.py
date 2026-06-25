@@ -3,14 +3,14 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from agent.soul.speak.orchestrator.blocks.guidance.memory import (
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.memory import (
     RecallPickWeightPort,
     build_recall_candidates_from_pull,
     format_interactor_preview,
     format_recall_candidates,
     render_interactor_portrait_inject,
 )
-from agent.soul.speak.orchestrator.prompt_trace import get_prompt_trace
+from agent.soul.speak.pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
 
 from .gateway import InboundMemoryGateway
 from .request import (

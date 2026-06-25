@@ -13,7 +13,7 @@ from agent.soul.memory.graph.networks.block import MemoryBlock
 from agent.soul.memory.graph.networks.event.network import EventMemoryNetwork
 from agent.soul.memory.facade.interactor_portrait import InteractorPortraitSpeakResult
 from agent.soul.memory.graph.networks.social.network import SocialMemoryNetwork
-from agent.soul.memory.graph.networks.store.mysql.nodes import MySQLNodeStore
+from agent.soul.memory.graph.node_store import GraphNodeStore
 from agent.soul.memory.retriever import MemoryRetriever
 from agent.soul.memory.rumination import RuminationService
 from agent.soul.memory.io.hub import MemoryIO
@@ -52,7 +52,7 @@ class MemoryService:
         sleep: SleepService,
         retriever: MemoryRetriever,
         cfg: MemoryServiceConfig,
-        nodes: MySQLNodeStore,
+        nodes: GraphNodeStore,
         memory_infra: MemoryInfraService | None = None,
         worker: DomainWorker | None = None,
         query_dispatcher: EmergenceQueryDispatcher | None = None,

@@ -1,6 +1,7 @@
 from storyview.bridge import StoryWorldContextBridge
 from storyview.engine import StoryEngine, StoryviewNarrativeEngine
 from storyview.port import StoryLifePort, StoryPort
+from storyview.scene import SceneComposer
 from storyview.service import StoryService
 from storyview.types import (
     NarrativeBrief,
@@ -23,6 +24,7 @@ __all__ = [
     "SceneEdge",
     "SceneLocateResult",
     "SceneNetwork",
+    "SceneComposer",
     "ScenePacket",
     "SceneUnit",
     "StatePatch",

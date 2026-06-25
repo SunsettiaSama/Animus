@@ -1,5 +1,6 @@
 import * as soulMod from '../../modules/soul.js';
 import { syncSpeakDeliverySetting } from '../../speak_delivery.js';
+import { syncSpeakPipelineSetting } from '../../speak_pipeline.js';
 import { _v, _c, _si, _sc } from './_helpers.js';
 
 function _num(id, fallback = 0) {
@@ -14,6 +15,7 @@ function _int(id, fallback = 0) {
 
 export async function load() {
   syncSpeakDeliverySetting();
+  syncSpeakPipelineSetting();
 
   const [soul, mem, infra] = await Promise.all([
     soulMod.loadConfig().catch(() => null),

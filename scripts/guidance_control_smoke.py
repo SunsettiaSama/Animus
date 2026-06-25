@@ -55,60 +55,60 @@ def _bootstrap_guidance_modules():
     _ensure_pkg("agent", SRC / "agent")
     _ensure_pkg("agent.soul", SRC / "agent" / "soul")
     _ensure_pkg("agent.soul.speak", SRC / "agent" / "soul" / "speak")
-    _ensure_pkg("agent.soul.speak.orchestrator", SRC / "agent" / "soul" / "speak" / "orchestrator")
+    _ensure_pkg("agent.soul.speak.pipelines.request_driven.orchestrator", SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator")
     _ensure_pkg(
-        "agent.soul.speak.orchestrator.blocks",
-        SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.blocks",
+        SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "blocks",
     )
     _ensure_pkg(
-        "agent.soul.speak.orchestrator.blocks.guidance",
-        SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "guidance",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance",
+        SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "blocks" / "guidance",
     )
     _ensure_pkg(
-        "agent.soul.speak.orchestrator.blocks.guidance.runtime",
-        SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "guidance" / "runtime",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.runtime",
+        SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "blocks" / "guidance" / "runtime",
     )
     _ensure_pkg(
-        "agent.soul.speak.orchestrator.blocks.guidance.runtime.control",
-        SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "guidance" / "runtime" / "control",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.runtime.control",
+        SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "blocks" / "guidance" / "runtime" / "control",
     )
-    _ensure_pkg("agent.soul.speak.orchestrator.io", SRC / "agent" / "soul" / "speak" / "orchestrator" / "io")
+    _ensure_pkg("agent.soul.speak.pipelines.request_driven.orchestrator.io", SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "io")
     _ensure_pkg(
-        "agent.soul.speak.orchestrator.io.inbound",
-        SRC / "agent" / "soul" / "speak" / "orchestrator" / "io" / "inbound",
-    )
-    _ensure_pkg(
-        "agent.soul.speak.orchestrator.io.inbound.guidance",
-        SRC / "agent" / "soul" / "speak" / "orchestrator" / "io" / "inbound" / "guidance",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.io.inbound",
+        SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "io" / "inbound",
     )
     _ensure_pkg(
-        "agent.soul.speak.orchestrator.io.outbound",
-        SRC / "agent" / "soul" / "speak" / "orchestrator" / "io" / "outbound",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.io.inbound.guidance",
+        SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "io" / "inbound" / "guidance",
     )
     _ensure_pkg(
-        "agent.soul.speak.orchestrator.io.outbound.guidance",
-        SRC / "agent" / "soul" / "speak" / "orchestrator" / "io" / "outbound" / "guidance",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.io.outbound",
+        SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "io" / "outbound",
+    )
+    _ensure_pkg(
+        "agent.soul.speak.pipelines.request_driven.orchestrator.io.outbound.guidance",
+        SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "io" / "outbound" / "guidance",
     )
 
-    base = "agent.soul.speak.orchestrator.blocks.guidance.runtime.control"
+    base = "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.runtime.control"
     state = _load_module(
-        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/state.py",
+        "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/guidance/runtime/control/state.py",
         f"{base}.state",
     )
     _load_module(
-        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/store.py",
+        "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/guidance/runtime/control/store.py",
         f"{base}.store",
     )
     render = _load_module(
-        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/render.py",
+        "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/guidance/runtime/control/render.py",
         f"{base}.render",
     )
     planner = _load_module(
-        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/planner.py",
+        "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/guidance/runtime/control/planner.py",
         f"{base}.planner",
     )
     service = _load_module(
-        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/service.py",
+        "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/guidance/runtime/control/service.py",
         f"{base}.service",
     )
     control_pkg = sys.modules[base]
@@ -116,23 +116,23 @@ def _bootstrap_guidance_modules():
     control_pkg.GuidanceControlState = state.GuidanceControlState
     control_pkg.GuidanceTrigger = state.GuidanceTrigger
     control_pkg.GuidancePlanInput = planner.GuidancePlanInput
-    guidance_pkg = sys.modules["agent.soul.speak.orchestrator.blocks.guidance"]
+    guidance_pkg = sys.modules["agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance"]
     guidance_pkg.GuidanceControlService = service.GuidanceControlService
     guidance_pkg.GuidanceControlState = state.GuidanceControlState
     guidance_pkg.GuidanceTrigger = state.GuidanceTrigger
     guidance_pkg.GuidancePlanInput = planner.GuidancePlanInput
     guidance_pkg.render_control_arc = render.render_control_arc
     _load_module(
-        "agent/soul/speak/orchestrator/io/inbound/guidance/request.py",
-        "agent.soul.speak.orchestrator.io.inbound.guidance.request",
+        "agent/soul/speak/pipelines/request_driven/orchestrator/io/inbound/guidance/request.py",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.io.inbound.guidance.request",
     )
     inbound = _load_module(
-        "agent/soul/speak/orchestrator/io/inbound/guidance/gateway.py",
-        "agent.soul.speak.orchestrator.io.inbound.guidance.gateway",
+        "agent/soul/speak/pipelines/request_driven/orchestrator/io/inbound/guidance/gateway.py",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.io.inbound.guidance.gateway",
     )
     outbound = _load_module(
-        "agent/soul/speak/orchestrator/io/outbound/guidance/gateway.py",
-        "agent.soul.speak.orchestrator.io.outbound.guidance.gateway",
+        "agent/soul/speak/pipelines/request_driven/orchestrator/io/outbound/guidance/gateway.py",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.io.outbound.guidance.gateway",
     )
     return state, render, planner, service, inbound, outbound
 
@@ -193,7 +193,7 @@ def main() -> None:
     InboundGuidanceGateway = inbound_mod.InboundGuidanceGateway
     OutboundGuidanceGateway = outbound_mod.OutboundGuidanceGateway
     GuidancePlanRequest = sys.modules[
-        "agent.soul.speak.orchestrator.io.inbound.guidance.request"
+        "agent.soul.speak.pipelines.request_driven.orchestrator.io.inbound.guidance.request"
     ].GuidancePlanRequest
 
     from config.soul.presence.config import SHARE_INTENT_QUEUE_MAX_ITEMS
@@ -254,8 +254,8 @@ def main() -> None:
     engine = SpeakLLMEngine(LLM(llm_cfg))
     llm_control = GuidanceControlService(llm=engine)
     cand_types = _load_module(
-        "agent/soul/speak/orchestrator/blocks/guidance/runtime/control/candidate_types.py",
-        "agent.soul.speak.orchestrator.blocks.guidance.runtime.control.candidate_types",
+        "agent/soul/speak/pipelines/request_driven/orchestrator/blocks/guidance/runtime/control/candidate_types.py",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.runtime.control.candidate_types",
     )
     SharePlannerCandidate = cand_types.SharePlannerCandidate
     RecallPlannerCandidate = cand_types.RecallPlannerCandidate

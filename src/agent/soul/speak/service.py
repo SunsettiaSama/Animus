@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent.soul.speak.io.inbound.memory.recall import perform_recall_handoff
 
-from .orchestrator import (
+from .pipelines.request_driven.orchestrator import (
     ShareDesireComposer,
     SpeakContextDistiller,
     SpeakOrchestrator,
@@ -17,9 +17,9 @@ from .orchestrator import (
     SpeakReplyStyle,
     SpeakTurnMode,
 )
-from .orchestrator.blocks.guidance import GuidanceControlService
-from .orchestrator.io import OrchestratorIOHub
-from .orchestrator.runner import SpeakComposeRunner
+from .pipelines.request_driven.orchestrator.blocks.guidance import GuidanceControlService
+from .pipelines.request_driven.orchestrator.io import OrchestratorIOHub
+from .pipelines.request_driven.orchestrator.runner import SpeakComposeRunner
 from config.soul.presence.config import PROACTIVE_OPEN_THRESHOLD
 from .io.hub import SpeakIOHub
 from .io.inbound import SpeakDialogueBridge, SpeakIngestResult, SpeakInboundPort, ingest_question
@@ -29,9 +29,13 @@ from .io.inbound.drive import SpeakDriveBridge, SpeakDriveResult, SpeakDriveSnap
 from .io.inbound.memory import InboundMemoryGateway, SimilarMemoryPullResult
 from .session import SpeakSessionManager, SpeakSessionService
 from .session.queue import UserInputItem
-from .orchestrator.queue import QueueDecisionRunner
+from .session.turn import SessionTurnHost
+from .pipelines import SpeakPipelineRouter, normalize_speak_pipeline
+from .pipelines.legacy_qa import LegacyQAPipelineRunner
+from .pipelines.request_driven import RequestDrivenPipelineRunner
+from .pipelines.request_driven.orchestrator.queue import QueueDecisionRunner
 from .session.manage import SilenceBreakTurnSpec
-from .orchestrator.prompt_trace import get_prompt_trace
+from .pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
 from .session import SpeakFeelingChunk, SpeakSubjectiveChunk, SpeakTurnChunk
 from .session.lifecycle import SPEAK_SESSION_IDLE_SEC, SpeakSessionRegistry
 from .session.lifecycle import (
@@ -57,10 +61,10 @@ from .io.outbound.life import SpeakLifeLifecycleBridge, SpeakLifeOutboundBridge
 from .io.outbound.stream_hub import SpeakOutboundStreamHub
 from .io.inbound.hub import SpeakInboundHub
 from .io.outbound.stream.flush import SpeakFlushMode, SpeakTypingHoldEmitter
-from .orchestrator.turn_coordinator import OrchestratorTurnCoordinator
-from .orchestrator.directors import DirectorCoordinator, DirectorLLMCaller
-from .orchestrator.runtime import DeliveryExecutor, OrchestratorThread
-from .orchestrator.state import SnapshotBuilder, StateStore, print_session_snapshot
+from .pipelines.request_driven.orchestrator.turn_coordinator import OrchestratorTurnCoordinator
+from .pipelines.request_driven.orchestrator.directors import DirectorCoordinator, DirectorLLMCaller
+from .pipelines.request_driven.orchestrator.runtime import DeliveryExecutor, OrchestratorThread
+from .pipelines.request_driven.orchestrator.state import SnapshotBuilder, StateStore, print_session_snapshot
 from .session.snapshot_port import RegistrySessionSnapshotPort
 from .session.ingress import SessionOrchestratorIngress
 from .llm.director_engine import SpeakDirectorLLMEngine
@@ -269,6 +273,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 frame, mode=mode,
             ),
         )
+        self._bind_pipeline_router()
 
     @staticmethod
     def _build_semantic_boundary(embedder, threshold: float) -> SemanticSessionBoundary:
@@ -280,6 +285,36 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             embedding=EmbeddingSemanticBoundary(
                 embedder,
                 distance_threshold=threshold,
+            ),
+        )
+
+    def _bind_pipeline_router(self) -> None:
+        legacy_host = SessionTurnHost(
+            compose_bundle=self._compose_bundle,
+            begin_turn=self._session_manager.begin_turn,
+            llm=self._llm,
+            stream_pipeline=self._stream,
+            outbound_stream=self._outbound_stream,
+            record_turn=self._session_manager.record_turn,
+            schedule_compose=lambda sid: self._schedule_compose_prepare(sid),
+            refresh_similar_memories=self._memory_compose.refresh_similar_memories_after_turn,
+            refresh_interactor_portrait=self._refresh_interactor_portrait_on_bundle,
+            continue_share_handoff=self._continue_share_handoff,
+            continue_recall_handoff=self._continue_recall_handoff,
+            compose_from_queue=self._compose_from_queue,
+            parse_agent_output=parse_agent_output,
+            session_trace_cache=self.session_trace_cache,
+            before_compose_bundle=self._before_compose_bundle,
+            on_turn_complete_hook=self._on_compose_turn_complete,
+        )
+        self._pipeline_router = SpeakPipelineRouter(
+            legacy_qa=LegacyQAPipelineRunner(
+                manager=self._session_manager,
+                host=legacy_host,
+                interrupt_context_for=self._session_manager.interrupt_context_for,
+            ),
+            request_driven=RequestDrivenPipelineRunner(
+                run_request_driven_turn=self._run_request_driven_turn,
             ),
         )
 
@@ -594,7 +629,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         portrait,
     ) -> None:
         self._memory_compose.apply_similar_memories(bundle, similar)
-        from .orchestrator.blocks.persona import (
+        from .pipelines.request_driven.orchestrator.blocks.persona import (
             interactor_pull_from_memory_result,
         )
 
@@ -699,7 +734,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         return finished
 
     def _execute_enter_greeting(self, spec) -> None:
-        from .orchestrator.blocks.guidance.session_bridge import (
+        from .pipelines.request_driven.orchestrator.blocks.guidance.session_bridge import (
             resolve_enter_greeting_user_text,
         )
         from .session.manage.types import EnterGreetingTurnSpec
@@ -743,7 +778,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def seed_warm_spread(self, session_id: str, *, lines: list[str], unit_ids: list[str]) -> None:
         if not unit_ids:
             return
-        from .orchestrator.queue.memory import MemoryBufferItem
+        from .pipelines.request_driven.orchestrator.queue.memory import MemoryBufferItem
 
         self._orchestrator.compose_queue_hub.set_warm_spread(
             session_id,
@@ -756,7 +791,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         )
 
     def _execute_silence_break(self, spec: SilenceBreakTurnSpec) -> None:
-        from .orchestrator.blocks.guidance.session_bridge import (
+        from .pipelines.request_driven.orchestrator.blocks.guidance.session_bridge import (
             resolve_silence_break_user_text,
         )
 
@@ -914,7 +949,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         turn_index: int | None = None,
         share_queue_count: int | None = None,
     ) -> dict[str, object] | None:
-        from .orchestrator.io.inbound.guidance import GuidancePlanRequest
+        from .pipelines.request_driven.orchestrator.io.inbound.guidance import GuidancePlanRequest
 
         sid = session_id.strip()
         resolved_turn = (
@@ -1126,7 +1161,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         lines = self._session_manager.queues.flush_brew(session_id)
         if not lines or self._delivery_executor is None:
             return lines
-        from .orchestrator.state.core.delivery import ReplySegment, build_delivery_plan
+        from .pipelines.request_driven.orchestrator.state.core.delivery import ReplySegment, build_delivery_plan
 
         segments = [
             ReplySegment(text=line[:120], wait_ms=200, wait_reason="proactive_brew")
@@ -1483,7 +1518,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         stream: bool = False,
         mode: SpeakTurnMode = "inbound",
         record: bool = True,
+        pipeline: str | None = None,
     ) -> SpeakTurnResult:
+        selected_pipeline = normalize_speak_pipeline(pipeline)
         self._drain_async_delivery_queue()
         self._session_manager.open(session_id, trigger="user_message")
         submit = self._session_manager.submit_user_input(
@@ -1492,6 +1529,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             stream=stream,
             mode=mode,
             record=record,
+            pipeline=selected_pipeline,
         )
         if submit.queued:
             return SpeakTurnResult(
@@ -1504,6 +1542,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                     "queued": True,
                     "interrupt": submit.interrupt,
                     "session_state": "queued",
+                    "pipeline": selected_pipeline,
                 },
             )
 
@@ -1530,6 +1569,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             mode=mode,
             stream=stream,
             record=record,
+            pipeline=selected_pipeline,
         )
         result = self._process_user_inputs(session_id, initial=initial)
         self._drain_async_delivery_queue()
@@ -1557,7 +1597,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         return result
 
     def _run_one_user_turn(self, item: UserInputItem) -> SpeakTurnResult:
-        return self._run_request_driven_turn(item)
+        return self._pipeline_router.run(item)
 
     def _run_request_driven_turn(self, item: UserInputItem) -> SpeakTurnResult:
         sid = item.session_id.strip()

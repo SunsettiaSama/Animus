@@ -4,13 +4,13 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from infra.db.mysql import MySQLClient
+from infra.storage import JsonStorageService
 
 from .models import ExternalAccount
-from .store import MySQLAccountStore
+from .store import AccountStore, JsonAccountStore, MySQLAccountStore
 
 if TYPE_CHECKING:
-    pass
+    from infra.db.mysql import MySQLClient
 
 VisitorRegisteredHook = Callable[[str, str, dict], None]
 
@@ -20,7 +20,7 @@ class AccountService:
 
     def __init__(
         self,
-        store: MySQLAccountStore,
+        store: AccountStore,
         *,
         on_visitor_registered: VisitorRegisteredHook | None = None,
     ) -> None:
@@ -30,13 +30,21 @@ class AccountService:
     @classmethod
     def build(
         cls,
-        mysql_client: MySQLClient,
+        mysql_client: MySQLClient | None,
         *,
         on_visitor_registered: VisitorRegisteredHook | None = None,
         init_schema: bool = True,
+        storage_backend: str = "mysql",
+        json_root: str = ".react/soul_db",
     ) -> AccountService:
-        store = MySQLAccountStore(mysql_client)
-        if init_schema:
+        backend = storage_backend.strip().lower()
+        if backend == "json":
+            store: AccountStore = JsonAccountStore(JsonStorageService(json_root))
+        else:
+            if mysql_client is None:
+                raise RuntimeError("mysql account backend requires mysql_client")
+            store = MySQLAccountStore(mysql_client)
+        if init_schema and isinstance(store, MySQLAccountStore):
             store.init_schema()
         return cls(store, on_visitor_registered=on_visitor_registered)
 

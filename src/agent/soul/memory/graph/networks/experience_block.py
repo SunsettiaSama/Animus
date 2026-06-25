@@ -1,22 +1,45 @@
 ﻿from __future__ import annotations
 
-from agent.soul.life.experience.domain.anchor_codec import read_anchor_context
-from agent.soul.life.experience.domain.sources import REALITY_SOURCES
-from agent.soul.life.experience.domain.unit import ExperienceUnit
+import json
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .types import ExperienceBlock, ExperienceKind
 
+if TYPE_CHECKING:
+    from agent.soul.life.experience.domain.unit import ExperienceUnit
+
+_ANCHOR_CTX_PREFIX = "__actx:"
+_REALITY_SOURCES = frozenset({"user", "interaction"})
+
+
+@dataclass(frozen=True)
+class _AnchorContext:
+    session_id: str = "tao"
+    interactor_id: str = ""
+
+
+def _read_anchor_context(unit: ExperienceUnit) -> _AnchorContext | None:
+    raw = (unit.situation.prior_thought or "").strip()
+    if not raw.startswith(_ANCHOR_CTX_PREFIX):
+        return None
+    payload = json.loads(raw[len(_ANCHOR_CTX_PREFIX):])
+    return _AnchorContext(
+        session_id=str(payload.get("session_id", "tao")),
+        interactor_id=str(payload.get("interactor_id", "")),
+    )
+
 
 def classify_experience(unit: ExperienceUnit) -> ExperienceKind:
-    if read_anchor_context(unit) is not None:
+    if _read_anchor_context(unit) is not None:
         return ExperienceKind.anchor
-    if unit.source in REALITY_SOURCES:
+    if unit.source in _REALITY_SOURCES:
         return ExperienceKind.anchor
     return ExperienceKind.event
 
 
 def resolve_interactor_id(unit: ExperienceUnit) -> str:
-    ctx = read_anchor_context(unit)
+    ctx = _read_anchor_context(unit)
     if ctx is not None:
         interactor = (ctx.interactor_id or "").strip()
         if interactor:

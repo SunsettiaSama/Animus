@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from storyview.gm.resolve import ActionResolver
-from storyview.gm.scene import SceneComposer
+from storyview.gm.story import StoryDirector
+from storyview.gm.surprise import SurpriseLauncher
 from storyview.network import SceneNetwork
+from storyview.scene import SceneComposer
 from storyview.store.mysql import StoryStoreBundle
 from storyview.types import (
+    GMAnswer,
+    GMQuestion,
     NarrativeBrief,
     ResolvedOutcome,
     SceneCandidate,
     SceneLocateResult,
     ScenePacket,
     StoryBeat,
+    StoryBeatOutcome,
     StoryEventKind,
 )
 from storyview.worldview import StoryWorldview
@@ -36,6 +41,15 @@ class StoryEngine:
         )
         self._scene = SceneComposer(stores, llm=llm, scene_network=self._scene_network)
         self._resolve = ActionResolver(stores, llm=llm)
+        self._story = StoryDirector(
+            stores,
+            self._scene_network,
+            self._scene,
+            self._resolve,
+            llm=llm,
+        )
+        self._surprise: dict[str, SurpriseLauncher] = {}
+        self._last_outcome: dict[str, StoryBeatOutcome] = {}
 
     @property
     def worldview(self) -> StoryWorldview:
@@ -53,6 +67,13 @@ class StoryEngine:
             scene_network=self._scene_network,
         )
         self._resolve = ActionResolver(self._stores, llm=llm)
+        self._story = StoryDirector(
+            self._stores,
+            self._scene_network,
+            self._scene,
+            self._resolve,
+            llm=llm,
+        )
 
     def ensure_world(self, world_id: str) -> None:
         wv = self._worldview
@@ -172,10 +193,129 @@ class StoryEngine:
         cue: str,
         *,
         kind: StoryEventKind | str = StoryEventKind.fabricate,
+        scene_id: str | None = None,
+        transition_text: str = "",
     ) -> ScenePacket:
         self.ensure_world(world_id)
-        packet, _ = self._scene.open_scene(world_id, cue, kind=kind)
+        packet, _ = self._scene.open_scene(
+            world_id,
+            cue,
+            kind=kind,
+            scene_id=scene_id,
+            transition_text=transition_text,
+        )
         return packet
+
+    def ask_gm(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> GMQuestion:
+        self.ensure_world(world_id)
+        return self._story.ask(world_id, cue, kind=kind)
+
+    def answer_gm(
+        self,
+        question: GMQuestion,
+        answer: GMAnswer,
+        *,
+        with_dice: bool = True,
+    ) -> StoryBeatOutcome:
+        self.ensure_world(question.world_id)
+        outcome = self._story.answer(question, answer, with_dice=with_dice)
+        self._last_outcome[question.world_id] = outcome
+        return outcome
+
+    def ask_move(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> GMQuestion | None:
+        self.ensure_world(world_id)
+        return self._story.ask_move(world_id, cue, kind=kind)
+
+    def answer_move(
+        self,
+        question: GMQuestion,
+        answer: GMAnswer,
+        *,
+        with_dice: bool = False,
+    ) -> StoryBeatOutcome:
+        self.ensure_world(question.world_id)
+        outcome = self._story.answer_move(question, answer, with_dice=with_dice)
+        self._last_outcome[question.world_id] = outcome
+        return outcome
+
+    def orchestrate_beat(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+        answer_text: str | None = None,
+        with_dice: bool = True,
+    ) -> StoryBeatOutcome:
+        self.ensure_world(world_id)
+        outcome = self._story.orchestrate(
+            world_id,
+            cue,
+            kind=kind,
+            answer_text=answer_text,
+            with_dice=with_dice,
+        )
+        self._last_outcome[world_id] = outcome
+        return outcome
+
+    def surprise_probability(self, world_id: str) -> float:
+        return self._surprise_launcher(world_id).probability
+
+    def _surprise_launcher(self, world_id: str) -> SurpriseLauncher:
+        launcher = self._surprise.get(world_id)
+        if launcher is None:
+            launcher = SurpriseLauncher()
+            self._surprise[world_id] = launcher
+        return launcher
+
+    def tick_surprise(
+        self,
+        world_id: str,
+        elapsed_sec: float,
+    ) -> StoryBeatOutcome | None:
+        self.ensure_world(world_id)
+        if not self._surprise_launcher(world_id).tick(elapsed_sec=elapsed_sec):
+            return None
+        outcome = self.orchestrate_beat(
+            world_id,
+            "意外事件",
+            kind=StoryEventKind.surprise,
+            with_dice=True,
+        )
+        return outcome
+
+    def ask_surprise(
+        self,
+        world_id: str,
+        elapsed_sec: float,
+    ) -> GMQuestion | None:
+        self.ensure_world(world_id)
+        if not self._surprise_launcher(world_id).tick(elapsed_sec=elapsed_sec):
+            return None
+        return self.ask_gm(world_id, "意外事件", kind=StoryEventKind.surprise)
+
+    def last_beat_outcome(self, world_id: str) -> StoryBeatOutcome | None:
+        return self._last_outcome.get(world_id)
+
+    def distill_arc(
+        self,
+        world_id: str,
+        outcomes: list[StoryBeatOutcome],
+    ) -> str:
+        self.ensure_world(world_id)
+        return self._story.distill_arc(outcomes)
 
     def resolve_event(
         self,
@@ -184,12 +324,14 @@ class StoryEngine:
         intent: str,
         agent_narrative: str = "",
         with_dice: bool = True,
+        dice=None,
     ) -> ResolvedOutcome:
         return self._resolve.resolve(
             event_id,
             intent=intent,
             agent_narrative=agent_narrative,
             with_dice=with_dice,
+            dice=dice,
         )
 
     def snapshot_scene(self, world_id: str, cue: str = "") -> str:

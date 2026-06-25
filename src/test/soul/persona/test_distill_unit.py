@@ -10,7 +10,7 @@ from agent.soul.persona.distill import (
 )
 from agent.soul.persona.profile.profile import PersonaProfile
 from agent.soul.persona.self_concept.concept import Belief, BeliefStrength, SelfConcept
-from agent.soul.speak.orchestrator.persona import collect_persona_layer
+from agent.soul.speak.pipelines.request_driven.orchestrator.persona import collect_persona_layer
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 
 

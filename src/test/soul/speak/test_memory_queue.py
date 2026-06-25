@@ -9,11 +9,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 _spec = importlib.util.spec_from_file_location(
-    "agent.soul.speak.orchestrator.queue.memory",
-    SRC / "agent/soul/speak/orchestrator/queue/memory.py",
+    "agent.soul.speak.pipelines.request_driven.orchestrator.queue.memory",
+    SRC / "agent/soul/speak/pipelines/request_driven/orchestrator/queue/memory.py",
 )
 _mod = importlib.util.module_from_spec(_spec)
-sys.modules["agent.soul.speak.orchestrator.queue.memory"] = _mod
+sys.modules["agent.soul.speak.pipelines.request_driven.orchestrator.queue.memory"] = _mod
 _spec.loader.exec_module(_mod)
 
 MemoryBufferItem = _mod.MemoryBufferItem

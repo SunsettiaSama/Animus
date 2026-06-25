@@ -29,6 +29,9 @@ class VirtualUnitContext:
     landmark_id: str = ""
     dice_value: int = 0
     dice_tendency: str = ""
+    story_event_id: str = ""
+    scene_id: str = ""
+    question_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -36,6 +39,9 @@ class VirtualUnitContext:
             "landmark_id": self.landmark_id,
             "dice_value": self.dice_value,
             "dice_tendency": self.dice_tendency,
+            "story_event_id": self.story_event_id,
+            "scene_id": self.scene_id,
+            "question_id": self.question_id,
         }
 
     @classmethod
@@ -45,6 +51,9 @@ class VirtualUnitContext:
             landmark_id=str(d.get("landmark_id", "")),
             dice_value=int(d.get("dice_value", 0)),
             dice_tendency=str(d.get("dice_tendency", "")),
+            story_event_id=str(d.get("story_event_id", "")),
+            scene_id=str(d.get("scene_id", "")),
+            question_id=str(d.get("question_id", "")),
         )
 
 
@@ -56,6 +65,9 @@ def stamp_virtual_context(unit: ExperienceUnit, ctx: VirtualUnitContext) -> None
 
 def read_virtual_context(unit: ExperienceUnit) -> VirtualUnitContext | None:
     raw = (unit.situation.prior_thought or "").strip()
+    if raw.startswith("__pbx:"):
+        bundle = json.loads(raw[len("__pbx:"):])
+        raw = str(bundle.get("prior_thought", "")).strip()
     if not raw.startswith(_CTX_PREFIX):
         return None
     payload = json.loads(raw[len(_CTX_PREFIX):])

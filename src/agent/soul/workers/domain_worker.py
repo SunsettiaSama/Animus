@@ -57,7 +57,10 @@ class DomainWorker:
         def _wrapper() -> None:
             if future.cancelled():
                 return
-            future.set_result(task())
+            try:
+                future.set_result(task())
+            except BaseException as exc:
+                future.set_exception(exc)
 
         self.enqueue(_wrapper)
         return future

@@ -181,6 +181,7 @@ export class SpeakSession extends BaseSession {
     this._onTurnStart = opts.onTurnStart ?? (() => {});
     this._onError = opts.onError ?? (() => {});
     this._deliveryMode = opts.deliveryMode === 'simulated' ? 'simulated' : 'stream';
+    this._pipeline = opts.pipeline === 'request_driven' ? 'request_driven' : 'legacy_qa';
     this._typingIdleMs = opts.typingIdleMs === 5000 ? 5000 : 3000;
     this._getDraft = opts.getDraft ?? (() => '');
     this._typingPulseTimer = null;
@@ -203,6 +204,10 @@ export class SpeakSession extends BaseSession {
     this._deliveryMode = mode === 'simulated' ? 'simulated' : 'stream';
   }
 
+  setPipeline(pipeline) {
+    this._pipeline = pipeline === 'request_driven' ? 'request_driven' : 'legacy_qa';
+  }
+
   _wsPayload(extra = {}) {
     return {
       ...extra,
@@ -210,6 +215,7 @@ export class SpeakSession extends BaseSession {
       session_id: this._sessionId,
       channel_id: this._channelId,
       delivery_mode: this._deliveryMode,
+      pipeline: this._pipeline,
     };
   }
 

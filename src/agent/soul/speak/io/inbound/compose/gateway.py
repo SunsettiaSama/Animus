@@ -8,7 +8,7 @@ from .request import ComposePrepareRequest
 from .store import SpeakStatusStore, apply_presence_status_update
 
 if TYPE_CHECKING:
-    from agent.soul.speak.orchestrator.runner import SpeakComposeRunner
+    from agent.soul.speak.pipelines.request_driven.orchestrator.runner import SpeakComposeRunner
 
 
 class InboundComposeGateway:

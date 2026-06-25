@@ -30,7 +30,7 @@ if str(SRC) not in sys.path:
 from agent.soul.presence.share_desire import ShareDesire
 from agent.soul.speak.io.outbound.stream import parse_agent_output
 from agent.soul.speak.llm.engine import SpeakLLMEngine
-from agent.soul.speak.orchestrator.blocks.guidance import SpeakContextDistiller
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance import SpeakContextDistiller
 from agent.soul.speak.service import SpeakService, SpeakTurnResult
 from test.soul.speak._life_outbound_mock import RecordingSpeakLifeOutbound
 

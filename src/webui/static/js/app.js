@@ -52,6 +52,7 @@ import { startNew, handleSend, handleMicClick,
                                     from './screens/workspace.js';
 import { setAgentAvatar }           from './render.js';
 import { bindSpeakDeliverySetting } from './speak_delivery.js';
+import { bindSpeakPipelineSetting } from './speak_pipeline.js';
 
 // ── Module dependency injection ───────────────────────────────────────────────
 
@@ -305,6 +306,7 @@ async function boot() {
   initLifecycleListeners();
   initSidebar();
   bindSpeakDeliverySetting();
+  bindSpeakPipelineSetting();
   initSpeakDeliverySync();
 
   // Determine initial backend state

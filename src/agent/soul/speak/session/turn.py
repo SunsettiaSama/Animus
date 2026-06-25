@@ -4,9 +4,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..orchestrator import SpeakPromptBundle, SpeakTurnMode
-from ..orchestrator.assemble import build_turn_system, resolve_llm_user_text
-from ..orchestrator.prompt_trace import get_prompt_trace
+from ..pipelines.request_driven.orchestrator import SpeakPromptBundle, SpeakTurnMode
+from ..pipelines.request_driven.orchestrator.assemble import build_turn_system, resolve_llm_user_text
+from ..pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
 from ..io.outbound.stream import SpeakAgentOutput, SpeakStreamEvent, SpeakStreamPipeline
 from ..io.outbound.stream.channel import SpeakStreamChannel
 from ..llm.engine import SpeakLLMEngine

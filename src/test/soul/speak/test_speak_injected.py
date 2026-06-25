@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from agent.soul.speak.orchestrator.persona import (
+from agent.soul.speak.pipelines.request_driven.orchestrator.persona import (
     PersonaComposeService,
     collect_persona_layer,
     distill_self_narrative,
 )
-from agent.soul.speak.orchestrator.persona.render import render_traits
+from agent.soul.speak.pipelines.request_driven.orchestrator.persona.render import render_traits
 from agent.soul.speak.io.inbound.compose import collect_status_injected
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 from unittest.mock import MagicMock

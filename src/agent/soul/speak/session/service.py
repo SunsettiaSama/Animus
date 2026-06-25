@@ -192,6 +192,7 @@ class SpeakSessionService:
         stream: bool = False,
         mode: str = "inbound",
         record: bool = True,
+        pipeline: str | None = None,
     ) -> SubmitUserInputResult:
         self._social.on_user_message(session_id)
         return self._queues.submit_user_input(
@@ -200,6 +201,7 @@ class SpeakSessionService:
             stream=stream,
             mode=mode,
             record=record,
+            pipeline=pipeline,
         )
 
     def on_turn_complete(

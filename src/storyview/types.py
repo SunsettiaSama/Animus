@@ -111,3 +111,129 @@ class StoryBeat:
     emotion_label: str = ""
     emotion_intensity: float = 0.45
     chapter_hint: str = ""
+
+
+@dataclass(frozen=True)
+class GMQuestion:
+    question_id: str
+    world_id: str
+    kind: StoryEventKind | str
+    cue: str
+    scene_id: str
+    question: str
+    stakes: str = ""
+    choices: tuple[str, ...] = ()
+    open_choice: bool = True
+    constraints: str = ""
+    is_move: bool = False
+    move_target_scene_ids: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "question_id": self.question_id,
+            "world_id": self.world_id,
+            "kind": str(getattr(self.kind, "value", self.kind)),
+            "cue": self.cue,
+            "scene_id": self.scene_id,
+            "question": self.question,
+            "stakes": self.stakes,
+            "choices": list(self.choices),
+            "open_choice": self.open_choice,
+            "constraints": self.constraints,
+            "is_move": self.is_move,
+            "move_target_scene_ids": list(self.move_target_scene_ids),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> GMQuestion:
+        return cls(
+            question_id=str(data["question_id"]),
+            world_id=str(data["world_id"]),
+            kind=data.get("kind", StoryEventKind.fabricate.value),
+            cue=str(data.get("cue", "")),
+            scene_id=str(data.get("scene_id", "")),
+            question=str(data.get("question", "")),
+            stakes=str(data.get("stakes", "")),
+            choices=tuple(str(x) for x in data.get("choices", ()) or ()),
+            open_choice=bool(data.get("open_choice", True)),
+            constraints=str(data.get("constraints", "")),
+            is_move=bool(data.get("is_move", False)),
+            move_target_scene_ids=tuple(
+                str(x) for x in data.get("move_target_scene_ids", ()) or ()
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class GMAnswer:
+    question_id: str
+    text: str
+    intent: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "question_id": self.question_id,
+            "text": self.text,
+            "intent": self.intent,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> GMAnswer:
+        return cls(
+            question_id=str(data["question_id"]),
+            text=str(data.get("text", "")),
+            intent=str(data.get("intent", "")),
+        )
+
+
+@dataclass(frozen=True)
+class StoryInfluence:
+    salience: float
+    emotion_hint: str = ""
+    mood_span: str = ""
+    linger_days: int = 0
+    decision_importance: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "salience": self.salience,
+            "emotion_hint": self.emotion_hint,
+            "mood_span": self.mood_span,
+            "linger_days": self.linger_days,
+            "decision_importance": self.decision_importance,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> StoryInfluence:
+        if not data:
+            return cls(salience=0.5)
+        return cls(
+            salience=float(data.get("salience", 0.5)),
+            emotion_hint=str(data.get("emotion_hint", "")),
+            mood_span=str(data.get("mood_span", "")),
+            linger_days=int(data.get("linger_days", 0)),
+            decision_importance=str(data.get("decision_importance", "")),
+        )
+
+
+@dataclass(frozen=True)
+class GMExchange:
+    question: GMQuestion
+    answer: GMAnswer
+    scene_packet: ScenePacket
+    resolved: ResolvedOutcome
+    kind: str = "beat"
+
+
+@dataclass(frozen=True)
+class StoryBeatOutcome:
+    question: GMQuestion
+    answer: GMAnswer
+    scene_packet: ScenePacket
+    resolved: ResolvedOutcome
+    dice_value: int = 0
+    dice_tendency: str = ""
+    influence: StoryInfluence = field(default_factory=lambda: StoryInfluence(salience=0.5))
+    scene_candidates: tuple[SceneCandidate, ...] = ()
+    arc_steps: tuple[GMExchange, ...] = ()
+    objective_summary: str = ""

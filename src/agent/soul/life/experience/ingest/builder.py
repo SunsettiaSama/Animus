@@ -25,6 +25,47 @@ class ExperienceBuilder:
     def orchestrator(self) -> ExperienceOrchestrator:
         return self._orchestrator
 
+    def record_virtual_beat(
+        self,
+        narrative: str,
+        *,
+        perception: str = "",
+        action_summary: str = "",
+        emotion_text: str = "",
+        emotion_label: str = "",
+        valence_delta: float = 0.0,
+        arousal_delta: float = 0.0,
+        salience: float = 0.0,
+        action_kind: ExperienceActionKind = ExperienceActionKind.reasoning,
+        source: str = "narrative",
+        virtual_ctx: VirtualUnitContext | None = None,
+    ) -> ExperienceUnit:
+        narration = narrative.strip()
+        perception_text = perception.strip() or narration[:80]
+        action_text = action_summary.strip() or narration[:60]
+        unit = ExperienceUnit.make(
+            situation=ExperienceSituation(
+                perception=perception_text,
+                narration=narration,
+            ),
+            action=ExperienceAction(
+                kind=action_kind,
+                content=action_text,
+            ),
+            feeling=ExperienceFeeling(
+                valence_delta=valence_delta,
+                arousal_delta=arousal_delta,
+                salience=salience,
+                emotion_label=emotion_label or emotion_text[:24],
+                salience_note=emotion_text.strip() or narration[:80],
+            ),
+            source=source,
+        )
+        if virtual_ctx is not None:
+            stamp_virtual_context(unit, virtual_ctx)
+        self._orchestrator.ingest(unit)
+        return unit
+
     def record_story_beat(
         self,
         narrative_hint: str,
@@ -35,27 +76,16 @@ class ExperienceBuilder:
         action_kind: ExperienceActionKind = ExperienceActionKind.reasoning,
         virtual_ctx: VirtualUnitContext | None = None,
     ) -> ExperienceUnit:
-        unit = ExperienceUnit.make(
-            situation=ExperienceSituation(
-                narration=narrative_hint,
-            ),
-            action=ExperienceAction(
-                kind=action_kind,
-                content=narrative_hint,
-            ),
-            feeling=ExperienceFeeling(
-                valence_delta=valence_delta,
-                arousal_delta=arousal_delta,
-                salience=salience,
-                emotion_label=emotion_label,
-                salience_note=narrative_hint.strip(),
-            ),
+        return self.record_virtual_beat(
+            narrative_hint,
+            emotion_label=emotion_label,
+            valence_delta=valence_delta,
+            arousal_delta=arousal_delta,
+            salience=salience,
+            action_kind=action_kind,
             source="narrative",
+            virtual_ctx=virtual_ctx,
         )
-        if virtual_ctx is not None:
-            stamp_virtual_context(unit, virtual_ctx)
-        self._orchestrator.ingest(unit)
-        return unit
 
     def record_surprise(
         self,
@@ -65,28 +95,18 @@ class ExperienceBuilder:
         salience: float = 0.5,
         virtual_ctx: VirtualUnitContext | None = None,
     ) -> ExperienceUnit:
-        unit = ExperienceUnit.make(
-            situation=ExperienceSituation(
-                narration=narrative_hint,
-            ),
-            action=ExperienceAction(
-                kind=ExperienceActionKind.attending,
-                content=narrative_hint,
-            ),
-            feeling=ExperienceFeeling(
-                salience=salience,
-                salience_note=narrative_hint.strip(),
-            ),
-            source="surprise",
-        )
         ctx = virtual_ctx or VirtualUnitContext(
             trigger=VirtualUnitTrigger.surprise,
             dice_value=dice_value,
             dice_tendency=dice_tendency,
         )
-        stamp_virtual_context(unit, ctx)
-        self._orchestrator.ingest(unit)
-        return unit
+        return self.record_virtual_beat(
+            narrative_hint,
+            salience=salience,
+            action_kind=ExperienceActionKind.attending,
+            source="surprise",
+            virtual_ctx=ctx,
+        )
 
     def tick(self) -> list[ExperienceUnit]:
         return self._orchestrator.tick()

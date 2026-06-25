@@ -4,6 +4,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from agent.soul.speak.pipelines.types import DEFAULT_SPEAK_PIPELINE, SpeakPipelineName
+
 from ..pacing import SessionUtterancePacing
 
 SpeakTurnMode = Literal["inbound", "proactive"]
@@ -55,6 +57,7 @@ class SessionRuntime:
     pending_stream: bool = False
     pending_record: bool = True
     pending_mode: SpeakTurnMode = "inbound"
+    pending_pipeline: SpeakPipelineName = DEFAULT_SPEAK_PIPELINE
     brew_queue: list[BrewLine] = field(default_factory=list)
     director_generation: int = 0
     typing_idle_ms: int = 3000

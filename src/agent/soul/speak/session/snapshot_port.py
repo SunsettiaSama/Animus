@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
-from agent.soul.speak.orchestrator.state.core.types import (
+from agent.soul.speak.pipelines.request_driven.orchestrator.state.core.types import (
     DialogueSnapshot,
     SessionRuntimeSnapshot,
     SessionSignals,
 )
 
 if TYPE_CHECKING:
-    from agent.soul.speak.orchestrator.blocks.guidance import SpeakContextDistiller
+    from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance import SpeakContextDistiller
     from agent.soul.speak.session import SpeakSessionService
     from agent.soul.speak.session.lifecycle.hold.registry import SpeakSessionRegistry
 

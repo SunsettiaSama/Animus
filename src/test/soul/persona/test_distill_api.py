@@ -12,8 +12,8 @@ from agent.soul.persona.render_voice import (
     render_main_profile_from_snap,
     render_self_concept_from_snap,
 )
-from agent.soul.speak.orchestrator.system import build_system_layer
-from agent.soul.speak.orchestrator.system.output_format import SpeakOutputFormat
+from agent.soul.speak.pipelines.request_driven.orchestrator.system import build_system_layer
+from agent.soul.speak.pipelines.request_driven.orchestrator.system.output_format import SpeakOutputFormat
 from agent.soul.speak.io.outbound.stream import parse_agent_output
 from agent.soul.speak.llm.engine import SpeakLLMEngine
 from test.soul.persona._api_llm import api_llm_from_env
@@ -59,7 +59,7 @@ def test_distill_slices_shorter_than_full_render(tmp_path):
     assert pack.source_revision == revision
     assert slice_len < full_len
     assert 120 <= len(pack.dialogue_text()) <= 280
-    assert pack.dialogue_text().startswith("�?)
+    assert pack.dialogue_text().startswith("?)
 
 
 @pytest.mark.persona_distill_api
@@ -84,7 +84,7 @@ def test_speak_roleplay_with_dialogue_slice_only():
 
     engine = SpeakLLMEngine(llm)
     raw = engine.generate(
-        "请用你自己的口吻介绍你是谁，并说一句你会怎么跟我说话�?,
+        "请用你自己的口吻介绍你是谁，并说一句你会怎么跟我说话?,
         system=system_text,
     ).text
     parsed = parse_agent_output(raw)

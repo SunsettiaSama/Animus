@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from agent.soul.speak.orchestrator.blocks.core.base import BlockContext
-from agent.soul.speak.orchestrator.blocks.registry import BlockRegistry
-from agent.soul.speak.orchestrator.director.types import DirectorPlan, ModuleDecision
-from agent.soul.speak.orchestrator.frame import PreparedComposeFrame
-from agent.soul.speak.orchestrator.system.reply_style import SpeakReplyStyle
-from agent.soul.speak.orchestrator.system.build import build_system_layer
-from agent.soul.speak.orchestrator.system.role import SpeakTurnMode
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.core.base import BlockContext
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.registry import BlockRegistry
+from agent.soul.speak.pipelines.request_driven.orchestrator.director.types import DirectorPlan, ModuleDecision
+from agent.soul.speak.pipelines.request_driven.orchestrator.frame import PreparedComposeFrame
+from agent.soul.speak.pipelines.request_driven.orchestrator.system.reply_style import SpeakReplyStyle
+from agent.soul.speak.pipelines.request_driven.orchestrator.system.build import build_system_layer
+from agent.soul.speak.pipelines.request_driven.orchestrator.system.role import SpeakTurnMode
 
 
 def _default_modules() -> tuple[ModuleDecision, ...]:

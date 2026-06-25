@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent.soul.speak.orchestrator.scene.apply import apply_story_scene
-from agent.soul.speak.orchestrator.scene.collect import collect_story_scene
-from agent.soul.speak.orchestrator.scene.layer import SpeakSceneLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.scene.apply import apply_story_scene
+from agent.soul.speak.pipelines.request_driven.orchestrator.scene.collect import collect_story_scene
+from agent.soul.speak.pipelines.request_driven.orchestrator.scene.layer import SpeakSceneLayer
 
 
 @dataclass

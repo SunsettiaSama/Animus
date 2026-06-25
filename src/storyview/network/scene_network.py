@@ -26,6 +26,7 @@ class SceneNodeReadPort(Protocol):
 
 class SceneEdgeReadPort(Protocol):
     def out_edges(self, scene_id: str) -> list[SceneEdge]: ...
+    def in_edges(self, scene_id: str) -> list[SceneEdge]: ...
     def link(
         self,
         world_id: str,
@@ -107,6 +108,11 @@ class SceneNetwork:
 
     def out_edges(self, scene_id: str) -> list[SceneEdge]:
         return self._edges.out_edges(scene_id)
+
+    def in_edges(self, scene_id: str) -> list[SceneEdge]:
+        if hasattr(self._edges, "in_edges"):
+            return self._edges.in_edges(scene_id)  # type: ignore[attr-defined]
+        return []
 
     def resolve_current_scene_id(self, world_id: str) -> str | None:
         if self._runtime is None:

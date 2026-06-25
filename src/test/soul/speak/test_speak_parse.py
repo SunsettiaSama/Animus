@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.soul.speak.orchestrator.system.output_format import SpeakOutputFormat
+from agent.soul.speak.pipelines.request_driven.orchestrator.system.output_format import SpeakOutputFormat
 from agent.soul.speak.io.outbound.stream import SPEAK_PARSE_FIELDS, SpeakAgentOutput, parse_agent_output
 from agent.soul.speak.io.outbound.stream.pipeline import SpeakStreamPipeline
 from agent.soul.speak.tools.anchor import build_anchor_request
@@ -17,109 +17,109 @@ def test_compose_output_format_uses_protocol_tags():
     for tag in ("think", "speak", "action", "state"):
         assert f"[{tag}]" in prompt and f"[/{tag}]" in prompt
     assert "[anchor:" not in prompt
-    assert "?°å??°å?? not in prompt
+    assert "????? not in prompt
     assert "[observe:" not in prompt
-    assert "ä¸æ?¯æ¯è½®é?½å?é¡»è¯´è¯? in prompt
+    assert "ä¸?æ¯è½®??é¡»è¯´? in prompt
     assert "share" in prompt
-    assert "å¿?å¡? in prompt
+    assert "?? in prompt
 
 
 def test_build_anchor_request_disabled_until_tool_layer():
     req = build_anchor_request("search_knowledge")
     assert req["implemented"] is False
     assert req["tool"] == "search_knowledge"
-    assert "å·¥å?·å?ç?å±? in req["reason"]
+    assert "å·¥???? in req["reason"]
 
 
 def test_parse_core_tags_alternating():
     raw = (
-        "[think:??ç®??­æ?³ä?ä¸?]"
-        "[action:å¾®ç?]"
+        "[think:???????]"
+        "[action:å¾®?]"
         "[speak:ä½ å¥½????]"
-        "[action:?¹å¤´]"
-        "[speak:å¾?é«??´è§?°ä½ ??]"
+        "[action:?å¤´]"
+        "[speak:???è§?ä½ ??]"
         "[state:finish]"
     )
     parsed = parse_agent_output(raw)
-    assert parsed.thought == "??ç®??­æ?³ä?ä¸?
-    assert parsed.actions == ("å¾®ç?", "?¹å¤´")
-    assert parsed.speak == "ä½ å¥½????å¾?é«??´è§?°ä½ ??
+    assert parsed.thought == "???????
+    assert parsed.actions == ("å¾®?", "?å¤´")
+    assert parsed.speak == "ä½ å¥½???????è§?ä½ ??
     assert parsed.session_state == "finish"
     assert len(parsed.blocks) == 6
 
 
 def test_parse_optional_anchor_and_observe():
     raw = (
-        "[think:?¥ä?ä¸?]"
+        "[think:???]"
         "[anchor:search_knowledge]"
-        "[observe:å¤??¨æ??? ç???]"
-        "[speak:??è¿?è¾¹è?æ²¡è?ä¸?å·¥å?·ã??]"
+        "[observe:????????]"
+        "[speak:???è¾¹?æ²¡??å·¥???]"
         "[state:finish]"
     )
     parsed = parse_agent_output(raw)
     assert parsed.anchor_tool == "search_knowledge"
-    assert parsed.observe == "å¤??¨æ??? ç???"
-    assert parsed.speak == "??è¿?è¾¹è?æ²¡è?ä¸?å·¥å?·ã??
+    assert parsed.observe == "????????"
+    assert parsed.speak == "???è¾¹?æ²¡??å·¥???
 
 
 def test_parse_legacy_action_prefix():
-    raw = "[action:å¾®ç?] ä½ å¥½????
+    raw = "[action:å¾®?] ä½ å¥½????
     parsed = parse_agent_output(raw)
-    assert parsed.actions == ("å¾®ç?",)
+    assert parsed.actions == ("å¾®?",)
     assert parsed.speak == "ä½ å¥½????
 
 
 def test_parse_l2_bracket_tags_without_colon():
     raw = (
-        "[action]ä»?æ ??¬å¤¹ä¸­æ?¬èµ·å¤´ï??¨å·´?¨å·´?¼ç?
-        "[speak]??ï¼???ä¹?ä¼?ä¸è®°å¾??¢ï¼"
-        "[action]ä¸å¥½?æ?å?°æ? æ? å?????
-        "[speak]æ¥ï?åä??¢æ?¢è?ï¼?"
+        "[action]???å¤¹ä¸­?èµ·å¤´??å·´?å·´??
+        "[speak]???????ä¸è®°??ï¼"
+        "[action]ä¸å¥½??????????
+        "[speak]æ¥?å?????"
         "[state:finish]"
     )
     parsed = parse_agent_output(raw)
     assert parsed.actions == (
-        "ä»?æ ??¬å¤¹ä¸­æ?¬èµ·å¤´ï??¨å·´?¨å·´?¼ç?,
-        "ä¸å¥½?æ?å?°æ? æ? å?????,
+        "???å¤¹ä¸­?èµ·å¤´??å·´?å·´??,
+        "ä¸å¥½??????????,
     )
-    assert parsed.speak == "??ï¼???ä¹?ä¼?ä¸è®°å¾??¢ï¼æ¥ï?åä??¢æ?¢è?ï¼?"
+    assert parsed.speak == "???????ä¸è®°??ï¼æ¥?å?????"
     assert parsed.session_state == "finish"
     assert "[action]" not in parsed.speak
 
 
 def test_parse_l1_and_l2_mixed_in_one_turn():
-    raw = "[speak:æ ???æ ¼å¼][action]ä¸å?è¢«å?ä½?L2"
+    raw = "[speak:???æ ¼å¼][action]ä¸?è¢«??L2"
     parsed = parse_agent_output(raw)
-    assert parsed.speak == "æ ???æ ¼å¼"
-    assert parsed.actions == ("ä¸å?è¢«å?ä½?L2",)
+    assert parsed.speak == "???æ ¼å¼"
+    assert parsed.actions == ("ä¸?è¢«??L2",)
 
 
 def test_parse_plain_text_as_speak():
-    raw = "åªæ??æ­£æ????
+    raw = "åª??æ­£????
     parsed = parse_agent_output(raw)
-    assert parsed.speak == "åªæ??æ­£æ????
+    assert parsed.speak == "åª??æ­£????
     assert parsed.session_state == "finish"
 
 
 def test_parse_append_state():
-    raw = "[speak:?è¯´ä¸?å¥ã??][state:append]"
+    raw = "[speak:?è¯´?å¥??][state:append]"
     parsed = parse_agent_output(raw)
     assert parsed.session_state == "append"
-    assert parsed.speak == "?è¯´ä¸?å¥ã??
+    assert parsed.speak == "?è¯´?å¥??
 
 
 def test_parse_share_state():
-    raw = "[think:?³å??äº«][state:share]"
+    raw = "[think:???äº«][state:share]"
     parsed = parse_agent_output(raw)
     assert parsed.session_state == "share"
-    assert parsed.thought == "?³å??äº?
+    assert parsed.thought == "????
 
 
 def test_stream_flush_aligns_with_tags():
     raw = (
-        "[think:?¯]"
-        "[action:??å?ä½ ]"
-        "[speak:???¨ã??]"
+        "[think:?]"
+        "[action:???ä½ ]"
+        "[speak:?????]"
         "[state:finish]"
     )
     pipeline = SpeakStreamPipeline()
@@ -131,7 +131,7 @@ def test_stream_flush_aligns_with_tags():
 
 
 def test_stream_append_not_final():
-    raw = "[speak:ç¬¬ä?å¥ã??][state:append]"
+    raw = "[speak:ç¬¬?å¥??][state:append]"
     events = list(SpeakStreamPipeline().emit_parsed_output("tao", raw))
     finish = events[-1]
     assert finish.kind == "finish"
@@ -139,7 +139,7 @@ def test_stream_append_not_final():
 
 
 def test_stream_share_not_final():
-    raw = "[think:??å¤???äº«][state:share]"
+    raw = "[think:?????äº«][state:share]"
     events = list(SpeakStreamPipeline().emit_parsed_output("tao", raw))
     finish = events[-1]
     assert finish.kind == "finish"
@@ -149,8 +149,8 @@ def test_stream_share_not_final():
 
 def test_stream_flush_l2_bracket_tags():
     raw = (
-        "[think:?³ä?ä¸?]"
-        "[action]å¾®ç?"
+        "[think:???]"
+        "[action]å¾®?"
         "[speak]ä½ å¥½??
         "[state:finish]"
     )
@@ -158,6 +158,6 @@ def test_stream_flush_l2_bracket_tags():
     kinds = [event.kind for event in events]
     assert kinds == ["action", "speak", "state", "finish"]
     action = next(event for event in events if event.kind == "action")
-    assert action.text == "å¾®ç?"
+    assert action.text == "å¾®?"
     speak = next(event for event in events if event.kind == "speak")
     assert speak.text == "ä½ å¥½??

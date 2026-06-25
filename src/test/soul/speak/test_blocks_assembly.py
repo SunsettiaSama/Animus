@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.soul.speak.orchestrator.blocks.core.types import (
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.core.types import (
     VERSIONED_BLOCKS,
     TurnBlockAssembly,
 )

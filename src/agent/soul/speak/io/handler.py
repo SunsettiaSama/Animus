@@ -11,7 +11,7 @@ from infra.llm import BaseLLM
 from .actions import SpeakAction
 from ..session import SpeakFeelingChunk, SpeakSubjectiveChunk
 from ..llm.director_engine import SpeakDirectorLLMEngine
-from ..orchestrator.directors import DirectorLLMCaller
+from ..pipelines.request_driven.orchestrator.directors import DirectorLLMCaller
 from ..service import SpeakService
 
 if TYPE_CHECKING:
@@ -300,16 +300,19 @@ class SpeakHandler:
         text = str(payload.get("text", payload.get("user_text", "")))
         stream = bool(payload.get("stream", False))
         mode = str(payload.get("mode", "inbound"))
+        pipeline = payload.get("pipeline")
         result = self.api.run_turn(
             session_id,
             text,
             stream=stream,
             mode="proactive" if mode == "proactive" else "inbound",
+            pipeline=str(pipeline) if pipeline is not None else None,
         )
         return {
             "ok": True,
             "session_id": result.session_id,
             "answer": result.answer,
+            "pipeline": result.meta.get("pipeline"),
             "output": result.output.to_dict() if result.output else {},
             "session_state": result.meta.get("session_state", "finish"),
             "queued": bool(result.meta.get("queued", False)),

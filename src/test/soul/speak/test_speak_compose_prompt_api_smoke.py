@@ -30,7 +30,7 @@ if str(SRC) not in sys.path:
 from agent.soul.presence.share_desire import ShareDesire
 from agent.soul.speak.io.outbound.stream import parse_agent_output
 from agent.soul.speak.llm.engine import SpeakLLMEngine
-from agent.soul.speak.orchestrator import (
+from agent.soul.speak.pipelines.request_driven.orchestrator import (
     SpeakContextDistiller,
     SpeakOrchestrator,
     SpeakPromptBundle,
@@ -38,8 +38,8 @@ from agent.soul.speak.orchestrator import (
     build_turn_system,
     resolve_llm_user_text,
 )
-from agent.soul.speak.orchestrator.frame import PreparedComposeFrame
-from agent.soul.speak.orchestrator.session import RegistrySessionComposePort
+from agent.soul.speak.pipelines.request_driven.orchestrator.frame import PreparedComposeFrame
+from agent.soul.speak.pipelines.request_driven.orchestrator.session import RegistrySessionComposePort
 from agent.soul.speak.session import SpeakSessionService
 from agent.soul.speak.session.lifecycle import SpeakSessionRegistry
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill

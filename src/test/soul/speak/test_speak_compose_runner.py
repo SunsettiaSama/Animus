@@ -5,8 +5,8 @@ import time
 from unittest.mock import MagicMock
 
 from agent.soul.presence.share_desire import ShareDesire
-from agent.soul.speak.orchestrator import SpeakOrchestrator
-from agent.soul.speak.orchestrator.runner import SpeakComposeRunner
+from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakOrchestrator
+from agent.soul.speak.pipelines.request_driven.orchestrator.runner import SpeakComposeRunner
 from agent.soul.presence.state.dynamic.expectation.queue import ShareIntent, ShareIntentQueue
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent.soul.speak.orchestrator.bundle import SpeakPromptBundle
-from agent.soul.speak.orchestrator.guidance.context import SpeakContextDistiller
-from agent.soul.speak.orchestrator.orchestrator import SpeakOrchestrator
-from agent.soul.speak.orchestrator.persona import SpeakPersonaLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.bundle import SpeakPromptBundle
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.context import SpeakContextDistiller
+from agent.soul.speak.pipelines.request_driven.orchestrator.orchestrator import SpeakOrchestrator
+from agent.soul.speak.pipelines.request_driven.orchestrator.persona import SpeakPersonaLayer
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 
 

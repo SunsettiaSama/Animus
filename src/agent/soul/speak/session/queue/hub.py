@@ -5,13 +5,19 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from agent.soul.speak.pipelines.types import (
+    DEFAULT_SPEAK_PIPELINE,
+    SpeakPipelineName,
+    normalize_speak_pipeline,
+)
+
 from .share import SessionShareQueue
 from ..pacing import SessionUtterancePacing, UtteranceHoldPreset
 from .types import BrewLine, InterruptContext, SessionRuntime, SubmitUserInputResult, SpeakTurnMode
 from .user import SessionUserQueue, UserInputItem
 
 if TYPE_CHECKING:
-    from agent.soul.speak.orchestrator.queue.hub import ComposeQueueHub
+    from agent.soul.speak.pipelines.request_driven.orchestrator.queue.hub import ComposeQueueHub
 
 
 class SessionQueueHub:
@@ -99,14 +105,19 @@ class SessionQueueHub:
         stream: bool,
         record: bool,
         mode: SpeakTurnMode,
+        pipeline: SpeakPipelineName = DEFAULT_SPEAK_PIPELINE,
     ) -> None:
         runtime = self._runtime(session_id)
         with runtime.lock:
             runtime.pending_stream = stream
             runtime.pending_record = record
             runtime.pending_mode = mode
+            runtime.pending_pipeline = pipeline
 
-    def pop_pending_turn(self, session_id: str) -> tuple[str, bool, bool, SpeakTurnMode] | None:
+    def pop_pending_turn(
+        self,
+        session_id: str,
+    ) -> tuple[str, bool, bool, SpeakTurnMode, SpeakPipelineName] | None:
         runtime = self._runtime(session_id)
         with runtime.lock:
             text = runtime.pending_user_text.strip()
@@ -117,9 +128,11 @@ class SessionQueueHub:
                 runtime.pending_stream,
                 runtime.pending_record,
                 runtime.pending_mode,
+                runtime.pending_pipeline,
             )
             runtime.pending_user_text = ""
             runtime.pending_stream = False
+            runtime.pending_pipeline = DEFAULT_SPEAK_PIPELINE
             return payload
 
     def on_typing_pulse(
@@ -247,8 +260,10 @@ class SessionQueueHub:
         stream: bool = False,
         mode: str = "inbound",
         record: bool = True,
+        pipeline: str | None = None,
     ) -> SubmitUserInputResult:
         typed_mode: SpeakTurnMode = "inbound" if mode == "inbound" else "proactive"
+        selected_pipeline = normalize_speak_pipeline(pipeline)
         normalized = user_text.strip()
         if not normalized:
             return SubmitUserInputResult(notes=["session: empty user input"])
@@ -281,6 +296,7 @@ class SessionQueueHub:
                         mode=typed_mode,
                         stream=stream,
                         record=record,
+                        pipeline=selected_pipeline,
                         interrupted=True,
                     ),
                 )
@@ -293,6 +309,7 @@ class SessionQueueHub:
                         mode=typed_mode,
                         stream=stream,
                         record=record,
+                        pipeline=selected_pipeline,
                     ),
                 )
                 return SubmitUserInputResult(

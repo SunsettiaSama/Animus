@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from config.soul.memory.service_config import MemoryServiceConfig
-from infra.db.mysql import MySQLClient
 from infra.llm import BaseLLM
 from infra.memory import MemoryInfraService
 
@@ -16,6 +15,7 @@ from ._llm import resolve_module_llm
 from .actions import MemoryAction
 
 if TYPE_CHECKING:
+    from infra.db.mysql import MySQLClient
     from agent.soul.workers import DomainWorker
 
 __all__ = ["MemoryAction", "MemoryHandler"]
@@ -28,13 +28,15 @@ class MemoryHandler:
 
     def __init__(
         self,
-        mysql_client: MySQLClient,
+        mysql_client: MySQLClient | None,
         llm_service: LLMServicePort | None = None,
         llm_aux_name: str = DEFAULT_AUX_NAME,
         primary_llm: BaseLLM | None = None,
         cfg: MemoryServiceConfig | None = None,
         soul_config: SoulConfig | None = None,
         memory_infra: MemoryInfraService | None = None,
+        storage_backend: str = "mysql",
+        json_root: str = ".react/soul_db",
     ) -> None:
         self._mysql_client = mysql_client
         self._llm_service = llm_service
@@ -43,6 +45,8 @@ class MemoryHandler:
         self._cfg = cfg
         self._soul_config = soul_config
         self._memory_infra = memory_infra
+        self._storage_backend = storage_backend
+        self._json_root = json_root
         self._service: MemoryService | None = None
         self._worker: DomainWorker | None = None
 
@@ -68,12 +72,13 @@ class MemoryHandler:
             if llm is None:
                 raise RuntimeError("Memory service unavailable — no LLM resolved")
             cfg = self._cfg or MemoryServiceConfig.load_default()
-            infra = self._memory_infra or MemoryInfraService.build()
             self._service = MemoryService.build(
                 llm=llm,
                 mysql_client=self._mysql_client,
                 cfg=cfg,
-                memory_infra=infra,
+                memory_infra=self._memory_infra,
+                storage_backend=self._storage_backend,
+                json_root=self._json_root,
             )
             if self._worker is not None:
                 self._service.set_worker(self._worker)

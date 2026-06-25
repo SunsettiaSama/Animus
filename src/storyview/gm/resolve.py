@@ -5,7 +5,7 @@ import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from storyview.fate.dice import roll_d100
+from storyview.fate.dice import DiceResult, roll_d100
 from storyview.gm.canon import enforce_canon
 from storyview.gm.outline import OutlineTracker
 from storyview.gm.state_patch import StateApplier, parse_state_patch
@@ -13,15 +13,24 @@ from storyview.store.mysql import StoryStoreBundle
 from storyview.types import ResolvedOutcome, StatePatch
 from storyview.worldview import StoryWorldview
 
+_STORY_WORLD_ONLY_RULE = (
+    "避免真实世界日期、系统编排术语和格式标签；不要使用类似 6/25、2026、"
+    "第1拍、步骤、轮次、NARRATIVE、STATE_PATCH 的表达。"
+)
+
 _RESOLVE_SYSTEM = """\
-你是故事世界的客观叙事者（GM），用第二人称「你」描述行动结果。
+你是故事世界的主持人（GM），负责对角色行动做客观裁定。
 规则：
-- 依据命运骰基调决定顺逆，不得脱离给定场景
-- 100~180 字
+- 依据命运骰基调决定顺逆，但不得提及命运骰本身
+- 避免真实世界日期、系统编排术语和格式标签；不要使用类似 6/25、2026、第1拍、步骤、轮次、NARRATIVE、STATE_PATCH 的表达
+- 优先回答：行动是否有效、获得了什么新信息、付出了什么代价或形成了什么新约束
+- 每次反馈都要把局面往前推进，留下下一步可处理的明确落点
+- 只写外部可观察事实、场景变化、行动结果；不写角色内心、情绪、感悟
+- 第二人称「你」，80~150 字
 - 严格输出：
 
 [NARRATIVE]
-（第二人称结果）
+（客观裁定与局面推进）
 [/NARRATIVE]
 [STATE_PATCH]
 {"move_to_location_id": null, "entity_deltas": {}, "flags": {}}
@@ -35,6 +44,18 @@ def _extract_tag(raw: str, tag: str) -> str:
     if m is None:
         return ""
     return m.group(1).strip()
+
+
+def _strip_output_tags(text: str) -> str:
+    cleaned = re.sub(r"\[/?(?:NARRATIVE|STATE_PATCH)\]", "", text)
+    return cleaned.strip()
+
+
+def _clean_story_text(text: str) -> str:
+    cleaned = re.sub(r"\b20\d{2}[/-]\d{1,2}[/-]\d{1,2}\b", "某日", text)
+    cleaned = re.sub(r"\b\d{1,2}/\d{1,2}\b", "某日", cleaned)
+    cleaned = re.sub(r"第\s*\d+\s*拍[:：]?", "", cleaned)
+    return _strip_output_tags(cleaned)
 
 
 class ActionResolver:
@@ -51,6 +72,8 @@ class ActionResolver:
         intent: str,
         agent_narrative: str = "",
         with_dice: bool = True,
+        dice: DiceResult | None = None,
+        story_direction: str = "",
     ) -> ResolvedOutcome:
         event = self._stores.events.get(event_id)
         if event is None:
@@ -59,7 +82,10 @@ class ActionResolver:
             raise ValueError(f"story event not open: {event_id}")
         world_id = str(event["world_id"])
         scene_text = str(event.get("scene_text") or "")
-        dice = roll_d100() if with_dice else None
+        if dice is None and with_dice:
+            dice = roll_d100()
+        elif dice is None and not with_dice:
+            dice = None
         deviation, deviation_note = self._outline.check_deviation(world_id, intent)
         world_row = self._stores.world.get(world_id) or {}
         canon = self._stores.world.canon_rules(world_id)
@@ -81,6 +107,7 @@ class ActionResolver:
             agent_narrative=agent_narrative,
             dice_value=dice.value if dice else 0,
             dice_tendency=dice.tendency if dice else "",
+            story_direction=story_direction,
             world_time=str(runtime.get("world_time") or ""),
         )
         self._applier.apply(world_id, patch)
@@ -120,7 +147,7 @@ class ActionResolver:
             return None
         if not re.search(r"(走向|打开|看看|进入|离开|拿起|询问|对话|吧台|房间|门)", text):
             return None
-        from storyview.gm.scene import SceneComposer
+        from storyview.scene import SceneComposer
 
         composer = SceneComposer(self._stores, llm=self._llm)
         packet, _ = composer.open_scene(
@@ -145,6 +172,7 @@ class ActionResolver:
         agent_narrative: str,
         dice_value: int,
         dice_tendency: str,
+        story_direction: str,
         world_time: str,
     ) -> tuple[str, StatePatch]:
         if self._llm is None:
@@ -161,12 +189,14 @@ class ActionResolver:
             f"【参与方自叙（第一人称，仅供参考）】\n{agent_narrative.strip() or '（无）'}\n\n"
             f"【行动意图】\n{intent.strip()}"
             f"{dice_section}\n\n"
-            "写出第二人称行动结果，并给出 STATE_PATCH："
+            f"【本拍故事走向】\n{story_direction.strip() or '顺着角色行动自然推进。'}\n\n"
+            "请像跑团主持人一样给出这一拍的客观裁定：行动效果、后果或新信息、下一局面的落点。"
+            "不要写内心感受；不要只扩写感官细节。并给出 STATE_PATCH："
         )
         raw = self._llm.generate_messages(
             [SystemMessage(content=_RESOLVE_SYSTEM), HumanMessage(content=prompt)]
         ).strip()
-        narrative = _extract_tag(raw, "NARRATIVE") or raw
+        narrative = _clean_story_text(_extract_tag(raw, "NARRATIVE") or raw)
         patch = parse_state_patch(raw)
         cleaned = enforce_canon(narrative[:280], canon)
         return cleaned, patch

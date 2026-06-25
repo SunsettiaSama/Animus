@@ -1,5 +1,11 @@
 from storyview.gm.outline import OutlineTracker
 from storyview.gm.resolve import ActionResolver
-from storyview.gm.scene import SceneComposer
+from storyview.gm.story import StoryDirector
+from storyview.gm.surprise import SurpriseLauncher
 
-__all__ = ["SceneComposer", "ActionResolver", "OutlineTracker"]
+__all__ = [
+    "ActionResolver",
+    "OutlineTracker",
+    "StoryDirector",
+    "SurpriseLauncher",
+]

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from agent.soul.speak.orchestrator.blocks.core.base import BlockContext
-from agent.soul.speak.orchestrator.blocks.registry import BlockRegistry
-from agent.soul.speak.orchestrator.bundle import SpeakPromptBundle
-from agent.soul.speak.orchestrator.director.types import DirectorPlan, MemoryInjectPlan, ModuleDecision
-from agent.soul.speak.orchestrator.guidance.layer import SpeakGuidanceLayer
-from agent.soul.speak.orchestrator.system.reply_style import SpeakReplyStyle
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.core.base import BlockContext
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.registry import BlockRegistry
+from agent.soul.speak.pipelines.request_driven.orchestrator.bundle import SpeakPromptBundle
+from agent.soul.speak.pipelines.request_driven.orchestrator.director.types import DirectorPlan, MemoryInjectPlan, ModuleDecision
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.layer import SpeakGuidanceLayer
+from agent.soul.speak.pipelines.request_driven.orchestrator.system.reply_style import SpeakReplyStyle
 
 
 def test_registry_apply_invokes_memory_block():

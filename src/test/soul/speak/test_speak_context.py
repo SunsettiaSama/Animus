@@ -5,8 +5,8 @@ import time
 from unittest.mock import MagicMock
 
 from agent.soul.presence.share_desire import ShareDesire
-from agent.soul.speak.orchestrator import SpeakOrchestrator
-from agent.soul.speak.orchestrator.guidance.context import (
+from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakOrchestrator
+from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.context import (
     SpeakContextDistiller,
     normalize_one_sentence,
     render_dialogue_compressed,

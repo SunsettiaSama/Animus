@@ -48,11 +48,11 @@ def _load(relpath: str, fullname: str) -> object:
 
 
 def _stub_pick_weights() -> None:
-    pw = types.ModuleType("agent.soul.speak.orchestrator.blocks.guidance.runtime.memory.pick_weights")
+    pw = types.ModuleType("agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.runtime.memory.pick_weights")
     pw.PICK_WEIGHT_DEFAULT = 1.0
     pw.PICK_PENALTY_FACTOR = 0.38
     pw.PICK_WEIGHT_FLOOR = 0.15
-    sys.modules["agent.soul.speak.orchestrator.blocks.guidance.runtime.memory.pick_weights"] = pw
+    sys.modules["agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.runtime.memory.pick_weights"] = pw
 
 
 def _bootstrap() -> object:
@@ -62,11 +62,11 @@ def _bootstrap() -> object:
         ("agent.soul.speak", SRC / "agent" / "soul" / "speak"),
         ("agent.soul.speak.session", SRC / "agent" / "soul" / "speak" / "session"),
         ("agent.soul.speak.session.queue", SRC / "agent" / "soul" / "speak" / "session" / "queue"),
-        ("agent.soul.speak.orchestrator", SRC / "agent" / "soul" / "speak" / "orchestrator"),
-        ("agent.soul.speak.orchestrator.blocks", SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks"),
-        ("agent.soul.speak.orchestrator.blocks.memory", SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "memory"),
-        ("agent.soul.speak.orchestrator.blocks.guidance", SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "guidance"),
-        ("agent.soul.speak.orchestrator.blocks.guidance.runtime", SRC / "agent" / "soul" / "speak" / "orchestrator" / "blocks" / "guidance" / "runtime"),
+        ("agent.soul.speak.pipelines.request_driven.orchestrator", SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator"),
+        ("agent.soul.speak.pipelines.request_driven.orchestrator.blocks", SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "blocks"),
+        ("agent.soul.speak.pipelines.request_driven.orchestrator.blocks.memory", SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "blocks" / "memory"),
+        ("agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance", SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "blocks" / "guidance"),
+        ("agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.runtime", SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "blocks" / "guidance" / "runtime"),
         ("agent.soul.memory", SRC / "agent" / "soul" / "memory"),
         ("agent.soul.memory.emergence", SRC / "agent" / "soul" / "memory" / "emergence"),
         ("agent.soul.memory.graph", SRC / "agent" / "soul" / "memory" / "graph"),
@@ -75,16 +75,16 @@ def _bootstrap() -> object:
 
     _load("agent/soul/memory/graph/keywords.py", "agent.soul.memory.graph.keywords")
     _load("agent/soul/memory/emergence/line_dedup.py", "agent.soul.memory.emergence.line_dedup")
-    _load("agent/soul/speak/orchestrator/queue/memory.py", "agent.soul.speak.orchestrator.queue.memory")
-    _load("agent/soul/speak/orchestrator/blocks/memory/warm_buffer.py", "agent.soul.speak.orchestrator.blocks.memory.warm_buffer")
-    _load("agent/soul/speak/orchestrator/compose_cache.py", "agent.soul.speak.orchestrator.compose_cache")
-    return _load("agent/soul/speak/orchestrator/blocks/memory/warm_buffer.py", "agent.soul.speak.orchestrator.blocks.memory.warm_buffer")
+    _load("agent/soul/speak/pipelines/request_driven/orchestrator/queue/memory.py", "agent.soul.speak.pipelines.request_driven.orchestrator.queue.memory")
+    _load("agent/soul/speak/pipelines/request_driven/orchestrator/blocks/memory/warm_buffer.py", "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.memory.warm_buffer")
+    _load("agent/soul/speak/pipelines/request_driven/orchestrator/compose_cache.py", "agent.soul.speak.pipelines.request_driven.orchestrator.compose_cache")
+    return _load("agent/soul/speak/pipelines/request_driven/orchestrator/blocks/memory/warm_buffer.py", "agent.soul.speak.pipelines.request_driven.orchestrator.blocks.memory.warm_buffer")
 
 
 def main() -> int:
     warm_mod = _bootstrap()
     MemoryWarmBuffer = warm_mod.MemoryWarmBuffer
-    MemoryBufferItem = sys.modules["agent.soul.speak.orchestrator.queue.memory"].MemoryBufferItem
+    MemoryBufferItem = sys.modules["agent.soul.speak.pipelines.request_driven.orchestrator.queue.memory"].MemoryBufferItem
 
     _sep("memory warm buffer")
     buf = MemoryWarmBuffer(max_turn_gap=3)
@@ -120,7 +120,7 @@ def main() -> int:
     print("pick_weight u_kw_1:", buf.recall_pick_weight(sid, "u_kw_1"))
 
     _sep("compose cache")
-    cache_mod = sys.modules["agent.soul.speak.orchestrator.compose_cache"]
+    cache_mod = sys.modules["agent.soul.speak.pipelines.request_driven.orchestrator.compose_cache"]
     cache = cache_mod.SessionComposeCache(session_id=sid)
     cache.update_from_meta(
         {
@@ -145,8 +145,8 @@ def main() -> int:
 
     _sep("turn inject ledger")
     ledger_mod = _load(
-        "agent/soul/speak/orchestrator/turn_inject_ledger.py",
-        "agent.soul.speak.orchestrator.turn_inject_ledger",
+        "agent/soul/speak/pipelines/request_driven/orchestrator/turn_inject_ledger.py",
+        "agent.soul.speak.pipelines.request_driven.orchestrator.turn_inject_ledger",
     )
     store = ledger_mod.TurnInjectLedgerStore()
     ledger = store.ledger(sid, 2)

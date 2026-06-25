@@ -5,7 +5,7 @@ import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from ...orchestrator.blocks.guidance.session_bridge import (
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.session_bridge import (
     INITIATIVE_PROMPT as _INITIATIVE_PROMPT,
 )
 

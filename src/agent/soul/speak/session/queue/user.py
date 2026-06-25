@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
+from agent.soul.speak.pipelines.types import DEFAULT_SPEAK_PIPELINE, SpeakPipelineName
+
 from .types import SpeakTurnMode
 
 
@@ -13,6 +15,7 @@ class UserInputItem:
     mode: SpeakTurnMode = "inbound"
     stream: bool = False
     record: bool = True
+    pipeline: SpeakPipelineName = DEFAULT_SPEAK_PIPELINE
     interrupted: bool = False
 
 

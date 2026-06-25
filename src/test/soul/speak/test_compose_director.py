@@ -2,21 +2,21 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from agent.soul.speak.orchestrator.director.decide import decide_plan
-from agent.soul.speak.orchestrator.director.memory import (
+from agent.soul.speak.pipelines.request_driven.orchestrator.director.decide import decide_plan
+from agent.soul.speak.pipelines.request_driven.orchestrator.director.memory import (
     build_memory_inject_plan,
     is_short_ack,
 )
-from agent.soul.speak.orchestrator.director.service import ComposeDirector
-from agent.soul.speak.orchestrator.director.share import share_queue_full
-from agent.soul.speak.orchestrator.blocks.guidance import (
+from agent.soul.speak.pipelines.request_driven.orchestrator.director.service import ComposeDirector
+from agent.soul.speak.pipelines.request_driven.orchestrator.director.share import share_queue_full
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance import (
     GuidanceControlService,
     GuidancePlanInput,
 )
-from agent.soul.speak.orchestrator.blocks.registry import BlockRegistry
-from agent.soul.speak.orchestrator.pipeline.context import ComposePipelineContext
-from agent.soul.speak.orchestrator.io import OrchestratorIOHub
-from agent.soul.speak.orchestrator.io.inbound.guidance import GuidancePlanRequest
+from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.registry import BlockRegistry
+from agent.soul.speak.pipelines.request_driven.orchestrator.pipeline.context import ComposePipelineContext
+from agent.soul.speak.pipelines.request_driven.orchestrator.io import OrchestratorIOHub
+from agent.soul.speak.pipelines.request_driven.orchestrator.io.inbound.guidance import GuidancePlanRequest
 from config.soul.presence.config import SHARE_INTENT_QUEUE_MAX_ITEMS
 
 
@@ -125,7 +125,7 @@ def test_decide_share_queue_full_triggers_guidance_refresh():
 
 def test_director_store_generation_invalidation():
     director = ComposeDirector(MagicMock())
-    from agent.soul.speak.orchestrator.director.types import DirectorPlan
+    from agent.soul.speak.pipelines.request_driven.orchestrator.director.types import DirectorPlan
 
     plan = DirectorPlan(session_id="tao", target_turn_index=1, generation=0)
     director.save_plan(plan)

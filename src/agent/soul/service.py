@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from config.agent.persona_config import PersonaConfig
+from config.infra.db_config import DBConfig
 from config.storage import StorageConfig
 from config.soul.memory.service_config import MemoryServiceConfig
-from infra.db.mysql import MySQLClient
 from infra.llm import BaseLLM
 from infra.memory import MemoryInfraService
 
@@ -42,9 +43,11 @@ from .speak.io import SpeakOutboundRouter
 from .speak.io.handler import SpeakHandler
 
 if TYPE_CHECKING:
+    from infra.db.mysql import MySQLClient
     from agent.soul.life.narrative_context import StoryWorldContextSupplier
     from agent.soul.ports import ExternalOpportunitySupplier
     from agent.soul.speak.io.outbound.stream import SpeakStreamPort
+    from storyview.types import GMQuestion
 
 logger = logging.getLogger(__name__)
 
@@ -69,15 +72,21 @@ class SoulService:
         *,
         life_dir: str,
         persona_cfg: PersonaConfig,
-        mysql_client: MySQLClient,
+        mysql_client: MySQLClient | None = None,
         llm_service: LLMServicePort | None = None,
         primary_llm: BaseLLM | None = None,
         cfg: SoulConfig | None = None,
         memory_cfg: MemoryServiceConfig | None = None,
         memory_infra: MemoryInfraService | None = None,
+        db_cfg: DBConfig | None = None,
+        storage_backend: str | None = None,
+        json_root: str | None = None,
     ) -> None:
         self._cfg = cfg or SoulConfig.load_default()
         self._memory_cfg = memory_cfg or MemoryServiceConfig.load_default()
+        self._db_cfg = db_cfg or DBConfig.load_default()
+        self._storage_backend = storage_backend or self._db_cfg.resolved_storage_backend()
+        self._json_root = json_root or self._db_cfg.storage.json_root
         self._state = "idle"
         _storage = StorageConfig()
         self._life_dir = _storage.resolve_life_dir(life_dir)
@@ -124,6 +133,14 @@ class SoulService:
     @property
     def memory_config(self) -> MemoryServiceConfig:
         return self._memory_cfg
+
+    @property
+    def storage_backend(self) -> str:
+        return self._storage_backend
+
+    @property
+    def storage_json_root(self) -> str:
+        return self._json_root
 
     @property
     def state(self) -> str:
@@ -269,6 +286,8 @@ class SoulService:
         self._account_service = AccountService.build(
             self._mysql_client,
             on_visitor_registered=_on_registered,
+            storage_backend=self._storage_backend,
+            json_root=self._json_root,
         )
         return self._account_service
 
@@ -409,6 +428,7 @@ class SoulService:
         session_id: str = "tao",
         stream: bool = False,
         mode: str = "inbound",
+        pipeline: str | None = None,
     ) -> dict[str, Any]:
         """Speak ??????????????? ?? LLM ?? ??????? ?? ?????"""
         return self.dispatch(SoulRequest(
@@ -419,6 +439,7 @@ class SoulService:
                 "text": user_text,
                 "stream": stream,
                 "mode": mode,
+                "pipeline": pipeline,
             },
         ))
 
@@ -430,6 +451,7 @@ class SoulService:
         stream: bool = True,
         mode: str = "inbound",
         record: bool = True,
+        pipeline: str | None = None,
     ):
         """Speak ?????????????? SpeakService.run_turn??L0 ?????????? dispatch????"""
         if self._state != "running":
@@ -440,6 +462,7 @@ class SoulService:
             stream=stream,
             mode="proactive" if mode == "proactive" else "inbound",
             record=record,
+            pipeline=pipeline,
         )
 
     def speak_submit_user_input(
@@ -450,6 +473,7 @@ class SoulService:
         stream: bool = True,
         mode: str = "inbound",
         record: bool = True,
+        pipeline: str | None = None,
     ) -> dict[str, Any]:
         """Speak ???????????????????????"""
         if self._state != "running":
@@ -460,10 +484,12 @@ class SoulService:
             stream=stream,
             mode=mode,
             record=record,
+            pipeline=pipeline,
         )
         return {
             "queued": bool(submit.queued),
             "interrupt": bool(submit.interrupt),
+            "pipeline": pipeline,
             "notes": list(submit.notes),
         }
 
@@ -498,7 +524,7 @@ class SoulService:
 
     def speak_set_typing_idle_ms(self, session_id: str, *, ms: int = 3000) -> int:
         if self._state != "running":
-            raise RuntimeError(f"SoulService δ���У�state={self._state!r}��")
+            raise RuntimeError(f"SoulService is not running (state={self._state!r})")
         runtime = self._ensure_speak_service().session_manager.queues._runtime(session_id)
         runtime.typing_idle_ms = 5000 if ms >= 5000 else 3000
         return runtime.typing_idle_ms
@@ -562,6 +588,55 @@ class SoulService:
                 "context": context,
             },
         ))
+
+    def _answer_gm_question_with_speak(
+        self,
+        question: GMQuestion,
+        *,
+        session_id: str = "tao",
+    ) -> str:
+        speak = self._ensure_speak_service()
+        choices = "\n".join(
+            f"- {choice}"
+            for choice in question.choices
+            if str(choice).strip()
+        )
+        choice_mode = "可自由回应，不必局限于选项。"
+        if not question.open_choice:
+            choice_mode = "必须从给定选项中选择或用同义短句回答。"
+        context_parts = [
+            f"【故事主持问题】\n{question.question.strip()}",
+            f"【本拍线索】\n{question.cue.strip() or '（无）'}",
+        ]
+        if question.stakes.strip():
+            context_parts.append(f"【利害】\n{question.stakes.strip()}")
+        if choices.strip():
+            context_parts.append(f"【可选行动】\n{choices}")
+        if question.constraints.strip():
+            context_parts.append(f"【限制】\n{question.constraints.strip()}")
+        context_parts.append(f"【选择模式】\n{choice_mode}")
+        system = (
+            "你是 Soul，正在故事场景中回应主持人的问题。\n"
+            "规则：\n"
+            "- 只输出 Soul 的一句回答或行动意图，不解释、不复述主持问题\n"
+            "- 使用第一人称「我」\n"
+            "- 20~80 字，具体说明选择、意图或补充动作\n"
+            "- 避免元叙事和技术实现语境；不要提命运骰或概率\n"
+            "- 不要输出 JSON、markdown、标签或编号"
+        )
+        result = speak.generate(
+            session_id,
+            "\n\n".join(context_parts),
+            system=system,
+            context="",
+        )
+        text = re.sub(r"\s+", " ", result.text).strip()
+        text = re.sub(r"^[-*]\s*", "", text).strip()
+        if not text:
+            if question.choices:
+                return str(question.choices[0]).strip()
+            return "我先观察。"
+        return text[:120]
 
     def set_embedding_port(self, port: EmbeddingPort | None) -> None:
         """????? embedding ????"""
@@ -934,7 +1009,7 @@ class SoulService:
         tid = new_heartbeat_tick_id()
         presence_snap = self.presence.snapshot("tao")
         persona_snap = self.persona.service.snapshot()
-        from agent.soul.speak.orchestrator.persona import collect_persona_layer
+        from agent.soul.speak.pipelines.request_driven.orchestrator.persona import collect_persona_layer
 
         injected = collect_persona_layer(persona_snap=persona_snap)
         persona_profile = injected.dialogue.strip()
@@ -1283,6 +1358,8 @@ class SoulService:
                 cfg=self._memory_cfg,
                 soul_config=self._cfg,
                 memory_infra=self._memory_infra,
+                storage_backend=self._storage_backend,
+                json_root=self._json_root,
             )
         return self._memory_handler
 
@@ -1621,7 +1698,7 @@ class SoulService:
                     self.memory.api.bind_session_channel(sid, iid)
                 portrait_text = result.portrait_text.strip()
                 if not portrait_text and result.interactor_id.strip():
-                    from agent.soul.speak.orchestrator.guidance.memory import (
+                    from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.memory import (
                         render_interactor_portrait_for_prompt,
                     )
 
@@ -1976,7 +2053,12 @@ class SoulService:
             self._cfg.life_llm_aux_name,
             self._primary_llm,
         )
-        service = StoryService(self._mysql_client, llm=llm)
+        service = StoryService(
+            self._mysql_client,
+            llm=llm,
+            storage_backend=self._storage_backend,
+            json_root=self._json_root,
+        )
         service.init_schema()
         self._story_service = service
         self._story_port = StoryPort(service)
@@ -1996,6 +2078,7 @@ class SoulService:
         life_memory = LifeExperienceMemoryIO(self.memory.api.life_io)
         self.life.api.set_memory_port(life_memory)
         self.life.api.set_story_port(self._story_port)
+        self.life.api.set_gm_answerer(self._answer_gm_question_with_speak)
         profile = self.life.api.load_profile()
         world_id = profile.resolved_world_id()
         if not profile.world_id.strip():

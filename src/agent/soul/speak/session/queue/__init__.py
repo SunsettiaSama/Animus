@@ -1,5 +1,11 @@
 from .hub import SessionQueueHub
-from .types import InterruptContext, SessionRuntime, SpeakPushPhase, SubmitUserInputResult
+from .types import (
+    InterruptContext,
+    SessionRuntime,
+    SpeakPushPhase,
+    SpeakTurnMode,
+    SubmitUserInputResult,
+)
 from .user import SessionUserQueue, UserInputItem
 
 __all__ = [
@@ -8,6 +14,7 @@ __all__ = [
     "SessionRuntime",
     "SessionUserQueue",
     "SpeakPushPhase",
+    "SpeakTurnMode",
     "SubmitUserInputResult",
     "UserInputItem",
 ]
