@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from storyview.fate.dice import DiceResult
 from storyview.gm.resolve import ActionResolver
+from storyview.gm.state_patch import parse_state_patch
 from storyview.gm.story import StoryDirector
-from storyview.network import SceneNetwork
 from storyview.scene import SceneComposer
-from storyview.types import GMAnswer, SceneUnit, StoryEventKind
+from storyview.scene.network import SceneNetwork
+from storyview.types import (
+    ArcStartPolicy,
+    GMAnswer,
+    LocationSnapshotReason,
+    SceneUnit,
+    StoryEventKind,
+)
 
 
 class _FakeSceneNodes:
@@ -63,7 +70,30 @@ class _FakeRuntime:
         loc = self.ensure(world_id).get("current_location_id")
         if loc == "home-loc":
             return "scene-home"
+        if loc == "desk-loc":
+            return "scene-desk"
         return None
+
+    def snapshot_text(self, world_id: str) -> str:
+        row = self.ensure(world_id)
+        return str(row.get("snapshot") or "")
+
+
+class _FakeLocationSnapshots:
+    def __init__(self) -> None:
+        self._rows: list = []
+
+    def append(self, snapshot) -> str:
+        self._rows.append(snapshot)
+        return snapshot.snapshot_id
+
+    def last(self, world_id: str):
+        rows = [row for row in self._rows if row.world_id == world_id]
+        return rows[-1] if rows else None
+
+    def list_recent(self, world_id: str, *, limit: int = 10):
+        rows = [row for row in self._rows if row.world_id == world_id]
+        return rows[-limit:]
 
 
 class _FakeWorld:
@@ -126,12 +156,21 @@ class _FakeStores:
                             narrative="你在家里。",
                             location_id="home-loc",
                             tags=("home",),
-                        )
+                        ),
+                        SceneUnit(
+                            id="scene-desk",
+                            world_id="w1",
+                            name="窗边书桌",
+                            narrative="你在窗边书桌旁。",
+                            location_id="desk-loc",
+                            tags=("desk",),
+                        ),
                     ]
                 ),
                 "edges": _FakeSceneEdges(),
             },
         )()
+        self.location_snapshots = _FakeLocationSnapshots()
 
 
 def _director() -> StoryDirector:
@@ -140,6 +179,49 @@ def _director() -> StoryDirector:
     composer = SceneComposer(stores, llm=None, scene_network=network)
     resolver = ActionResolver(stores, llm=None)
     return StoryDirector(stores, network, composer, resolver, llm=None)
+
+
+def test_parse_state_patch_ignores_extra_text_after_json() -> None:
+    patch = parse_state_patch(
+        "[STATE_PATCH]\n"
+        '{"move_to_location_id": "home-loc", "entity_deltas": {}, "flags": {}}\n'
+        "主持补充了一句非 JSON 文本。\n"
+        "[/STATE_PATCH]"
+    )
+
+    assert patch.move_to_location_id == "home-loc"
+
+
+def test_parse_state_patch_tolerates_python_literals_and_trailing_comma() -> None:
+    patch = parse_state_patch(
+        "[STATE_PATCH]\n"
+        '{"move_to_location_id": None, "entity_deltas": {}, "flags": {},}\n'
+        "[/STATE_PATCH]"
+    )
+
+    assert patch.move_to_location_id is None
+
+
+def test_parse_state_patch_falls_back_on_malformed_entity_deltas() -> None:
+    patch = parse_state_patch(
+        "[STATE_PATCH]\n"
+        '{"move_to_location_id": "yard-loc", "entity_deltas": {broken}, "flags": {}}\n'
+        "[/STATE_PATCH]"
+    )
+
+    assert patch.move_to_location_id == "yard-loc"
+    assert patch.entity_deltas == {}
+    assert patch.flags == {}
+
+
+def test_parse_state_patch_ignores_line_comments() -> None:
+    patch = parse_state_patch(
+        "[STATE_PATCH]\n"
+        '{"move_to_location_id": null, "entity_deltas": {}, "flags": {}} // no move\n'
+        "[/STATE_PATCH]"
+    )
+
+    assert patch.move_to_location_id is None
 
 
 def test_ask_gm_returns_question_and_scene():
@@ -171,3 +253,47 @@ def test_answer_gm_with_fixed_dice():
     assert outcome.scene_packet.event_id
     assert outcome.resolved.resolution_text
     assert outcome.influence.salience > 0
+
+
+def test_ask_gm_with_journal_public_cue():
+    director = _director()
+    cue = (
+        "【触发来源】journal_landmark\n"
+        "【journal_landmark_id】lm-1\n"
+        "【公开预约意图】在雨后的庭院里观察一盏将熄未熄的灯"
+    )
+    question = director.ask("w1", cue, kind=StoryEventKind.landmark)
+    assert question.cue == cue
+    assert question.scene_id == "scene-home"
+    snapshots = director.list_location_snapshots("w1", limit=5)
+    assert snapshots
+    assert snapshots[-1].reason == LocationSnapshotReason.arc_start.value
+
+
+def test_home_start_policy_resets_to_home():
+    director = _director()
+    stores = director._stores
+    stores.runtime.ensure("w1")["current_location_id"] = "desk-loc"
+    question = director.ask(
+        "w1",
+        "观察灯",
+        kind=StoryEventKind.landmark,
+        start_policy=ArcStartPolicy.home,
+    )
+    assert question.scene_id == "scene-home"
+    assert stores.runtime.ensure("w1")["current_location_id"] == "home-loc"
+
+
+def test_answer_gm_records_location_snapshot():
+    director = _director()
+    question = director.ask("w1", "观察灯", kind=StoryEventKind.landmark)
+    before = len(director.list_location_snapshots("w1", limit=10))
+    answer = GMAnswer(
+        question_id=question.question_id,
+        text="你走近那盏灯。",
+        intent="走近灯",
+    )
+    director.answer(question, answer, with_dice=False)
+    after = director.list_location_snapshots("w1", limit=10)
+    assert len(after) >= before + 1
+    assert after[-1].reason == LocationSnapshotReason.gm_answer.value

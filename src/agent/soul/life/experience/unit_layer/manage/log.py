@@ -115,3 +115,26 @@ class ExperienceLog:
                 if d.get("id") == experience_id:
                     return ExperienceUnit.from_dict(d)
         return None
+
+    def upsert(self, unit: ExperienceUnit) -> ExperienceUnit:
+        if not self._path.exists():
+            return self.append(unit)
+        kept: list[str] = []
+        replaced = False
+        with open(self._path, encoding="utf-8") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                d = json.loads(raw)
+                if d.get("id") == unit.id:
+                    kept.append(json.dumps(unit.to_dict(), ensure_ascii=False))
+                    replaced = True
+                else:
+                    kept.append(raw)
+        if not replaced:
+            kept.append(json.dumps(unit.to_dict(), ensure_ascii=False))
+        with open(self._path, "w", encoding="utf-8") as f:
+            for line in kept:
+                f.write(line + "\n")
+        return unit

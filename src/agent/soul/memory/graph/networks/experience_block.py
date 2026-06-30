@@ -52,6 +52,14 @@ def resolve_interactor_id(unit: ExperienceUnit) -> str:
 
 
 def experience_raw_text(unit: ExperienceUnit) -> str:
+    episode = dict(unit.evidence.get("landmark_episode") or {})
+    if episode:
+        summary = str(episode.get("objective_summary") or "").strip()
+        journal = str(episode.get("subjective_journal") or "").strip()
+        intention = str(episode.get("intention") or "").strip()
+        merged = " ".join(part for part in (intention, summary, journal) if part)
+        if merged.strip():
+            return merged.strip()
     parts = [
         unit.situation.perception,
         unit.situation.narration,

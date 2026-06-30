@@ -10,6 +10,7 @@ from .node import FactualMemory
 from agent.soul.memory.graph.query import QueryEngine
 from agent.soul.memory.graph.traversal import GraphTraversal
 from agent.soul.memory.graph.node.create.archive import ExperienceArchiver
+from agent.soul.memory.graph.node.create.episode_subgraph import EpisodeSubgraphIngest
 from agent.soul.memory.graph.node.create.persist import NodePersister
 from agent.soul.memory.graph.node.maintain.forget import NodeForgetEngine
 from agent.soul.memory.graph.node.maintain.recall import record_recall_batch
@@ -47,6 +48,30 @@ class EventMemoryNetwork:
         self._forget = NodeForgetEngine()
         self._vectors = vectors
         self._enqueue_recall = enqueue_recall
+        self._episode_subgraph = EpisodeSubgraphIngest(
+            nodes,
+            edges,
+            self._persister,
+            archiver,
+            vectors=vectors,
+        )
+
+    def ingest_landmark_episode(
+        self,
+        unit: ExperienceUnit,
+        episode_payload: dict,
+        *,
+        agent_persona_narrative: str = "",
+    ) -> list[FactualMemory]:
+        from agent.soul.life.experience.domain.episode import LandmarkEpisode
+
+        episode = LandmarkEpisode.from_dict(episode_payload)
+        result = self._episode_subgraph.ingest(
+            unit,
+            episode,
+            agent_persona_narrative=agent_persona_narrative,
+        )
+        return result.nodes
 
     def ingest_event_experience(
         self,

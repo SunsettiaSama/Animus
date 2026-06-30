@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from ..domain.unit import (
     ExperienceAction,
     ExperienceActionKind,
@@ -39,6 +41,8 @@ class ExperienceBuilder:
         action_kind: ExperienceActionKind = ExperienceActionKind.reasoning,
         source: str = "narrative",
         virtual_ctx: VirtualUnitContext | None = None,
+        evidence: dict | None = None,
+        evidence_builder: Callable[[ExperienceUnit], dict] | None = None,
     ) -> ExperienceUnit:
         narration = narrative.strip()
         perception_text = perception.strip() or narration[:80]
@@ -63,6 +67,10 @@ class ExperienceBuilder:
         )
         if virtual_ctx is not None:
             stamp_virtual_context(unit, virtual_ctx)
+        if evidence_builder is not None:
+            unit.evidence = evidence_builder(unit)
+        elif evidence:
+            unit.evidence = dict(evidence)
         self._orchestrator.ingest(unit)
         return unit
 

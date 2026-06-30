@@ -25,6 +25,7 @@ _RESOLVE_SYSTEM = """\
 - 避免真实世界日期、系统编排术语和格式标签；不要使用类似 6/25、2026、第1拍、步骤、轮次、NARRATIVE、STATE_PATCH 的表达
 - 优先回答：行动是否有效、获得了什么新信息、付出了什么代价或形成了什么新约束
 - 每次反馈都要把局面往前推进，留下下一步可处理的明确落点
+- 若本拍线索来自 journal landmark 公开意图，不得引入 journal 未声明的新线索、角色、物件或悬疑支线
 - 只写外部可观察事实、场景变化、行动结果；不写角色内心、情绪、感悟
 - 第二人称「你」，80~150 字
 - 严格输出：
@@ -103,6 +104,7 @@ class ActionResolver:
             wv=wv,
             canon=canon,
             scene_text=scene_text,
+            cue=str(event.get("cue") or ""),
             intent=intent,
             agent_narrative=agent_narrative,
             dice_value=dice.value if dice else 0,
@@ -130,6 +132,7 @@ class ActionResolver:
             resolution_text=resolution,
             dice_value=dice.value if dice else 0,
             dice_tendency=dice.tendency if dice else "",
+            story_direction=story_direction.strip(),
             deviation=deviation,
             deviation_note=deviation_note,
             state_patch=patch,
@@ -168,6 +171,7 @@ class ActionResolver:
         wv: StoryWorldview,
         canon: dict,
         scene_text: str,
+        cue: str = "",
         intent: str,
         agent_narrative: str,
         dice_value: int,
@@ -190,6 +194,19 @@ class ActionResolver:
             f"【行动意图】\n{intent.strip()}"
             f"{dice_section}\n\n"
             f"【本拍故事走向】\n{story_direction.strip() or '顺着角色行动自然推进。'}\n\n"
+        )
+        if "journal_landmark" in cue:
+            prompt += (
+                "【公开 journal 意图约束】\n"
+                "本拍线索来自 Soul 预约的公开行动意图；"
+                "客观裁定只能推进该意图，不得新增 journal 未声明的线索、角色、物件或悬疑支线。\n\n"
+            )
+            if "journal_landmark_agenda" in cue:
+                prompt += (
+                    "本拍已绑定固定 scene 与互动 cards；"
+                    "裁定不得离开绑定 scene，不得引入 cards 未覆盖的新地点或物件。\n\n"
+                )
+        prompt += (
             "请像跑团主持人一样给出这一拍的客观裁定：行动效果、后果或新信息、下一局面的落点。"
             "不要写内心感受；不要只扩写感官细节。并给出 STATE_PATCH："
         )

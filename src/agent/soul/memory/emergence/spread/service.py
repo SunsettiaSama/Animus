@@ -41,6 +41,7 @@ class SpreadActivationService:
         hot_seed_top_k: int = 24,
         hot_max_hops: int = 4,
         point_top_k: int = 5,
+        precise_relevance_threshold: float = -1.0,
         associative_sigma: float = 0.15,
         hybrid_w_relevance: float = 0.6,
         hybrid_w_activation: float = 0.4,
@@ -67,6 +68,7 @@ class SpreadActivationService:
         self._hot_seed_top_k = hot_seed_top_k
         self._hot_max_hops = hot_max_hops
         self._point_top_k = point_top_k
+        self._precise_relevance_threshold = float(precise_relevance_threshold)
         self._associative_sigma = associative_sigma
         self._hybrid_w_relevance = hybrid_w_relevance
         self._hybrid_w_activation = hybrid_w_activation
@@ -120,7 +122,7 @@ class SpreadActivationService:
         self._enqueue(lambda: self.expand_hot_sync(cue))
 
     def query_point_async(self, cue: ActivationCue) -> None:
-        self._submit_query(lambda: self._run_point_query(cue))
+        self._submit_query(lambda: self.query_hybrid_sync(cue))
 
     def get_snapshot(self, session_id: str) -> ActivationSnapshot | None:
         return self._snapshots.get(session_id)
@@ -131,7 +133,7 @@ class SpreadActivationService:
     def activate_sync(self, cue: ActivationCue) -> ActivationSnapshot:
         return self._run_spread(cue, seed_top_k=self._seeds._seed_top_k, max_hops=self._max_hops)
 
-    def expand_hot_sync(self, cue: ActivationCue) -> HotEmergenceResult:
+    def query_spread_sync(self, cue: ActivationCue) -> HotEmergenceResult:
         seed_scores = self._resolve_seeds(cue, seed_top_k=self._hot_seed_top_k)
         activated = self._spread_from_seeds(cue, seed_scores, max_hops=self._hot_max_hops)
         units = self._nodes.get_many([n.unit_id for n in activated])
@@ -155,8 +157,22 @@ class SpreadActivationService:
         self._snapshots.put(snapshot)
         return result
 
+    def expand_hot_sync(self, cue: ActivationCue) -> HotEmergenceResult:
+        return self.query_spread_sync(cue)
+
+    def query_hybrid_sync(
+        self,
+        cue: ActivationCue,
+        *,
+        precise_relevance_threshold: float | None = None,
+    ) -> PointEmergenceResult:
+        return self._run_point_query(
+            cue,
+            precise_relevance_threshold=precise_relevance_threshold,
+        )
+
     def query_point_sync(self, cue: ActivationCue) -> PointEmergenceResult:
-        return self._run_point_query(cue)
+        return self.query_hybrid_sync(cue)
 
     def rumination_neighbors(
         self,
@@ -261,8 +277,16 @@ class SpreadActivationService:
             result.associative_unit_ids.append(uid)
         return result
 
-    def _run_point_query(self, cue: ActivationCue) -> PointEmergenceResult:
-        precise = self._hybrid_precise(cue)
+    def _run_point_query(
+        self,
+        cue: ActivationCue,
+        *,
+        precise_relevance_threshold: float | None = None,
+    ) -> PointEmergenceResult:
+        precise = self._hybrid_precise(
+            cue,
+            precise_relevance_threshold=precise_relevance_threshold,
+        )
         precise_lines = self._render_lines(precise)
         precise_ids = [s.unit.id for s in precise]
         result = PointEmergenceResult(
@@ -373,17 +397,30 @@ class SpreadActivationService:
             network_for=network_for,
         )
 
-    def _hybrid_precise(self, cue: ActivationCue) -> list[ScoredUnit]:
+    def _hybrid_precise(
+        self,
+        cue: ActivationCue,
+        *,
+        precise_relevance_threshold: float | None = None,
+    ) -> list[ScoredUnit]:
         text = self._cue_text(cue)
         if not text.strip():
             return []
-        return self._query.hybrid(
+        scored = self._query.hybrid(
             text,
             top_k=self._point_top_k,
             w_relevance=self._hybrid_w_relevance,
             w_activation=self._hybrid_w_activation,
             interactor_id=cue.interactor_id,
         )
+        threshold = (
+            self._precise_relevance_threshold
+            if precise_relevance_threshold is None
+            else float(precise_relevance_threshold)
+        )
+        if threshold < 0:
+            return scored
+        return [s for s in scored if s.relevance >= threshold]
 
     def _hybrid_associative(self, cue: ActivationCue) -> list[ScoredUnit]:
         text = self._cue_text(cue)

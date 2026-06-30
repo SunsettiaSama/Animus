@@ -113,6 +113,19 @@ class ExperienceGraphIngest:
         persona = agent_persona_narrative.strip()
         use_route = route if route is not None else self._llm is not None
 
+        episode_payload = dict(unit.evidence.get("landmark_episode") or {})
+        if episode_payload:
+            nodes = self._event.ingest_landmark_episode(
+                unit,
+                episode_payload,
+                agent_persona_narrative=persona,
+            )
+            return ExperienceIngestResult(
+                network=ExperienceKind.event,
+                reason="landmark_episode_subgraph",
+                nodes=list(nodes),
+            )
+
         if use_route:
             if self._llm is None:
                 raise RuntimeError("create_nodes(route=True) 需要 LLM")

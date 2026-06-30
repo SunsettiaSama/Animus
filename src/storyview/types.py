@@ -13,6 +13,19 @@ class StoryEventKind(str, Enum):
     snapshot = "snapshot"
 
 
+class ArcStartPolicy(str, Enum):
+    history = "history"
+    home = "home"
+
+
+class LocationSnapshotReason(str, Enum):
+    arc_start = "arc_start"
+    gm_answer = "gm_answer"
+    move = "move"
+    manual_apply = "manual_apply"
+    home_reset = "home_reset"
+
+
 @dataclass(frozen=True)
 class StatePatch:
     move_to_location_id: str | None = None
@@ -38,6 +51,59 @@ class StatePatch:
 
 
 @dataclass(frozen=True)
+class SceneCard:
+    id: str
+    title: str
+    description: str
+    affordances: tuple[str, ...] = ()
+    conditions: tuple[str, ...] = ()
+    entities: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "affordances": list(self.affordances),
+            "conditions": list(self.conditions),
+            "entities": list(self.entities),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SceneCard:
+        affordances_raw = data.get("affordances")
+        if affordances_raw is None:
+            affordances_raw = data.get("affordance") or []
+        if isinstance(affordances_raw, str):
+            affordances_raw = [affordances_raw]
+        conditions_raw = data.get("conditions") or []
+        if isinstance(conditions_raw, str):
+            conditions_raw = [conditions_raw]
+        entities_raw = data.get("entities") or []
+        if isinstance(entities_raw, str):
+            entities_raw = [entities_raw]
+        return cls(
+            id=str(data.get("id", "")).strip(),
+            title=str(data.get("title", "")).strip(),
+            description=str(
+                data.get("description")
+                or data.get("narrative")
+                or data.get("summary")
+                or ""
+            ).strip(),
+            affordances=tuple(
+                str(item).strip() for item in affordances_raw if str(item).strip()
+            ),
+            conditions=tuple(
+                str(item).strip() for item in conditions_raw if str(item).strip()
+            ),
+            entities=tuple(
+                str(item).strip() for item in entities_raw if str(item).strip()
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class SceneUnit:
     id: str
     world_id: str
@@ -45,6 +111,7 @@ class SceneUnit:
     narrative: str
     location_id: str | None = None
     tags: tuple[str, ...] = ()
+    meta: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -91,6 +158,7 @@ class ResolvedOutcome:
     resolution_text: str
     dice_value: int = 0
     dice_tendency: str = ""
+    story_direction: str = ""
     deviation: bool = False
     deviation_note: str = ""
     state_patch: StatePatch = field(default_factory=StatePatch)
@@ -111,6 +179,206 @@ class StoryBeat:
     emotion_label: str = ""
     emotion_intensity: float = 0.45
     chapter_hint: str = ""
+
+
+class SceneReviewStatus(str, Enum):
+    approved = "approved"
+    revision_required = "revision_required"
+    rejected = "rejected"
+
+
+@dataclass(frozen=True)
+class SceneDraft:
+    name: str
+    narrative: str
+    location_hint: str = ""
+    tags: tuple[str, ...] = ()
+    cards: tuple[SceneCard, ...] = ()
+    edges: tuple[str, ...] = ()
+    node_mutations: tuple[SceneNodeMutation, ...] = ()
+    reasoning: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "narrative": self.narrative,
+            "location_hint": self.location_hint,
+            "tags": list(self.tags),
+            "cards": [card.to_dict() for card in self.cards],
+            "edges": list(self.edges),
+            "node_mutations": [mutation.to_dict() for mutation in self.node_mutations],
+            "reasoning": self.reasoning,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SceneDraft:
+        data = _unwrap_scene_draft_payload(data)
+        cards_raw = data.get("cards") or []
+        cards = tuple(
+            SceneCard.from_dict(item) for item in cards_raw if isinstance(item, dict)
+        )
+        mutations_raw = data.get("node_mutations") or []
+        mutations = tuple(
+            SceneNodeMutation.from_dict(item)
+            for item in mutations_raw
+            if isinstance(item, dict)
+        )
+        name = (
+            data.get("name")
+            or data.get("scene_name")
+            or data.get("scene_title")
+            or data.get("title")
+            or ""
+        )
+        narrative = (
+            data.get("narrative")
+            or data.get("scene_summary")
+            or data.get("summary")
+            or data.get("description")
+            or ""
+        )
+        return cls(
+            name=str(name).strip(),
+            narrative=str(narrative).strip(),
+            location_hint=str(data.get("location_hint") or data.get("location") or "").strip(),
+            tags=tuple(str(item).strip() for item in data.get("tags", []) if str(item).strip()),
+            cards=cards,
+            edges=tuple(str(item).strip() for item in data.get("edges", []) if str(item).strip()),
+            node_mutations=mutations,
+            reasoning=str(data.get("reasoning", "")).strip(),
+        )
+
+
+def _unwrap_scene_draft_payload(data: dict) -> dict:
+    payload = data
+    outer_reasoning = str(payload.get("reasoning", "")).strip()
+    for key in ("draft", "output", "scene_draft", "approved_draft"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            payload = nested
+    if outer_reasoning and not str(payload.get("reasoning", "")).strip():
+        payload = dict(payload)
+        payload["reasoning"] = outer_reasoning
+    return payload
+
+
+@dataclass(frozen=True)
+class SceneNodeMutation:
+    scene_id: str
+    action: str
+    reason: str = ""
+    narrative: str = ""
+    tags: tuple[str, ...] = ()
+    cards: tuple[SceneCard, ...] = ()
+    card_ids: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "scene_id": self.scene_id,
+            "action": self.action,
+            "reason": self.reason,
+            "narrative": self.narrative,
+            "tags": list(self.tags),
+            "cards": [card.to_dict() for card in self.cards],
+            "card_ids": list(self.card_ids),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SceneNodeMutation:
+        cards_raw = data.get("cards") or []
+        return cls(
+            scene_id=str(data.get("scene_id", "")).strip(),
+            action=str(data.get("action", "")).strip(),
+            reason=str(data.get("reason", "")).strip(),
+            narrative=str(data.get("narrative", "")).strip(),
+            tags=tuple(str(item).strip() for item in data.get("tags", []) if str(item).strip()),
+            cards=tuple(
+                SceneCard.from_dict(item) for item in cards_raw if isinstance(item, dict)
+            ),
+            card_ids=tuple(
+                str(item).strip() for item in data.get("card_ids", []) if str(item).strip()
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class SceneReviewPatch:
+    field: str
+    value: str = ""
+    items: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "field": self.field,
+            "value": self.value,
+            "items": list(self.items),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SceneReviewPatch:
+        raw_items = data.get("items", [])
+        raw_value = data.get("value", "")
+        if not raw_items and isinstance(raw_value, list):
+            raw_items = raw_value
+            raw_value = ""
+        return cls(
+            field=str(data.get("field", "")).strip(),
+            value=str(raw_value).strip(),
+            items=tuple(str(item).strip() for item in raw_items if str(item).strip()),
+        )
+
+
+@dataclass(frozen=True)
+class SceneReviewResult:
+    status: SceneReviewStatus | str
+    reason: str = ""
+    patches: tuple[SceneReviewPatch, ...] = ()
+    approved_draft: SceneDraft | None = None
+
+    @property
+    def is_approved(self) -> bool:
+        token = str(getattr(self.status, "value", self.status)).strip().lower()
+        return token == SceneReviewStatus.approved.value
+
+
+@dataclass(frozen=True)
+class SceneGroundingPolicy:
+    allow_create: bool = True
+    match_threshold: int = 4
+    max_review_rounds: int = 3
+    attach_to_current: bool = True
+    allow_node_mutation: bool = False
+
+
+@dataclass(frozen=True)
+class SceneGroundingTraceEntry:
+    round: int
+    action: str
+    observation: str
+
+    def to_dict(self) -> dict:
+        return {
+            "round": self.round,
+            "action": self.action,
+            "observation": self.observation,
+        }
+
+
+@dataclass(frozen=True)
+class SceneGroundingResult:
+    scene_id: str
+    scene_name: str
+    matched_by: str = ""
+    score: int = 0
+    created: bool = False
+    cards: tuple[SceneCard, ...] = ()
+    trace: tuple[SceneGroundingTraceEntry, ...] = ()
+    blocked_reason: str = ""
+    narrative: str = ""
+
+    @property
+    def blocked(self) -> bool:
+        return bool(self.blocked_reason.strip()) and not self.scene_id.strip()
 
 
 @dataclass(frozen=True)
@@ -223,6 +491,47 @@ class GMExchange:
     scene_packet: ScenePacket
     resolved: ResolvedOutcome
     kind: str = "beat"
+    dice_value: int = 0
+    dice_tendency: str = ""
+    story_direction: str = ""
+    decision_importance: str = ""
+
+
+@dataclass(frozen=True)
+class AgentLocationSnapshot:
+    snapshot_id: str
+    world_id: str
+    scene_id: str
+    scene_text: str
+    location_id: str | None = None
+    reason: LocationSnapshotReason | str = LocationSnapshotReason.arc_start
+    source_event_id: str = ""
+    created_at: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "snapshot_id": self.snapshot_id,
+            "world_id": self.world_id,
+            "scene_id": self.scene_id,
+            "scene_text": self.scene_text,
+            "location_id": self.location_id,
+            "reason": str(getattr(self.reason, "value", self.reason)),
+            "source_event_id": self.source_event_id,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> AgentLocationSnapshot:
+        return cls(
+            snapshot_id=str(data.get("snapshot_id", "")),
+            world_id=str(data.get("world_id", "")),
+            scene_id=str(data.get("scene_id", "")),
+            scene_text=str(data.get("scene_text", "")),
+            location_id=data.get("location_id"),
+            reason=data.get("reason", LocationSnapshotReason.arc_start.value),
+            source_event_id=str(data.get("source_event_id", "")),
+            created_at=str(data.get("created_at", "")),
+        )
 
 
 @dataclass(frozen=True)

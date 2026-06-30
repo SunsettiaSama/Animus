@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from storyview.types import StatePatch
+from storyview.types import AgentLocationSnapshot, StatePatch
 
 if TYPE_CHECKING:
     from infra.db.mysql import MySQLClient
@@ -127,6 +127,67 @@ class StoryRuntimeStore:
                         "UPDATE story_entity SET state_json = %s WHERE id = %s",
                         (json.dumps(state, ensure_ascii=False), entity_id),
                     )
+
+
+class StoryLocationSnapshotStore:
+    def __init__(self, mysql_client: MySQLClient) -> None:
+        self._db = mysql_client
+
+    def append(self, snapshot: AgentLocationSnapshot) -> str:
+        now = _utcnow()
+        with self._db.conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO story_agent_location_snapshot
+                    (snapshot_id, world_id, scene_id, location_id, scene_text,
+                     reason, source_event_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        snapshot.snapshot_id,
+                        snapshot.world_id,
+                        snapshot.scene_id,
+                        snapshot.location_id,
+                        snapshot.scene_text,
+                        str(getattr(snapshot.reason, "value", snapshot.reason)),
+                        snapshot.source_event_id,
+                        now,
+                    ),
+                )
+        return snapshot.snapshot_id
+
+    def last(self, world_id: str) -> AgentLocationSnapshot | None:
+        with self._db.conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT * FROM story_agent_location_snapshot
+                    WHERE world_id = %s
+                    ORDER BY created_at DESC, snapshot_id DESC
+                    LIMIT 1
+                    """,
+                    (world_id,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return None
+        return AgentLocationSnapshot.from_dict(row)
+
+    def list_recent(self, world_id: str, *, limit: int = 10) -> list[AgentLocationSnapshot]:
+        with self._db.conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT * FROM story_agent_location_snapshot
+                    WHERE world_id = %s
+                    ORDER BY created_at DESC, snapshot_id DESC
+                    LIMIT %s
+                    """,
+                    (world_id, int(limit)),
+                )
+                rows = cur.fetchall() or []
+        return [AgentLocationSnapshot.from_dict(row) for row in rows]
 
 
 class StoryEventStore:

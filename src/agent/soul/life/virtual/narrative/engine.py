@@ -34,17 +34,24 @@ _SYSTEM = f"""\
 - 严格输出纯文本，无标题、无 markdown、无 JSON、无引号包裹"""
 
 _EMOTION_SYSTEM = f"""\
-你是内在生命体验叙事引擎，负责把客观发生转化为主观生命体验，并给出情感强度。
+你是内在生命体验叙事引擎，负责把客观发生整理成一段内部日记，并给出情感强度。
 
 {YOU_VOICE_RULES}
 
 规则：
 - 全部内容必须在角色世界内成立，像真实发生过的一小段经历
 - {_WORLD_ONLY_RULE}
-- 用自然语言写 100~160 字，像小说中的一段，克制具体
-- 重点写主观侧：身体感知、瞬间判断、内心松紧、事后余波
-- 不要复述客观动作流水账；客观动作只能作为少量触发线索
-- 不要复写主持反馈里的长句、物理细节和场景推进
+- 用自然语言写 170~240 字，像一段给未来记忆擢升使用的个人日记，克制具体
+- 现实骨架约占七成：写清你做过什么、看见什么、事情客观上如何变化
+- 主观体验约占三成：写身体感受、短暂判断、情绪余波
+- 相关记忆只能作为一小句牵连，不能覆盖或改写本次发生
+- 若提供了多拍主持与回应，日记要覆盖整段经历，不要只写最后一拍
+- 若提供了公开预约意图，把它当作这次日记的核心目的；客观弧中的旁支细节只能点缀，不能盖过该意图
+- 写成闭环：有起（为何做/留意什么）— 有过程（你做了什么、看见什么）— 有收（对这次目的的判断或余波，别停在半截动作）
+- 除客观事实外，必须写出主观看法：你怎么理解、怎么判断、这件事对你意味着什么；不要只罗列事件
+- 旁支物件或突发细节若出现，用一两句带过即可，不要抢过主线收束
+- 少用隐喻，不把物件写成活物，不把感受写成脱离现实的意识流
+- 不要复写主持反馈里的长句；可以用自己的日记口吻重述必要事实
 - 禁止输出「触发：/感知：/内心：/摘要：」等字段标签
 - 严格按以下标记输出，不能有其他内容：
 [NARRATIVE]
@@ -158,7 +165,7 @@ def _compact(text: str, *, limit: int) -> str:
 
 
 def _natural_narrative(raw: str) -> tuple[str, str]:
-    narrative = _compact(_clean_story_text(_extract_tag(raw, "NARRATIVE")), limit=150)
+    narrative = _compact(_clean_story_text(_extract_tag(raw, "NARRATIVE")), limit=240)
     perception = _compact(_clean_story_text(_extract_tag(raw, "PERCEPTION")), limit=80)
     if not narrative:
         raise ValueError("虚拟叙事缺少字段：NARRATIVE")
@@ -239,24 +246,55 @@ class NarrativeEngine:
         resolution_text: str,
         gm_question: str = "",
         soul_answer: str = "",
+        journal_intention: str = "",
+        journal_context: str = "",
         decision_importance: str = "",
         profile_narrative: str = "",
         continuity_memories: list[str] | None = None,
         world_background: str = "",
         default_intensity: float = 0.55,
+        episode_summary: str = "",
+        episode_steps=None,
     ) -> NarrativeDraft:
+        journal_section = ""
+        if journal_intention.strip():
+            journal_section = (
+                f"【公开预约意图（这次经历的目的）】\n{journal_intention.strip()}"
+            )
+            if journal_context.strip():
+                journal_section += f"\n背景：{journal_context.strip()}"
+            journal_section += "\n\n"
+        episode_section = ""
+        if episode_summary.strip():
+            episode_section = f"【经历骨架摘要】\n{episode_summary.strip()}\n\n"
+        step_section = ""
+        if episode_steps:
+            lines = []
+            for step in episode_steps:
+                lines.append(
+                    f"{step.step_index}. 你做：{step.soul_answer}；"
+                    f"看见/发生：{step.objective_result[:100]}"
+                )
+            step_section = "【各拍行动与客观结果】\n" + "\n".join(lines) + "\n\n"
         prompt = (
             f"【身份与状态】\n{profile_narrative or '（暂无）'}\n\n"
             f"【世界观背景】\n{_format_world_background(world_background)}\n\n"
-            f"【客观场景线索（只作背景，不要复述）】\n{objective_scene.strip() or '（无）'}\n\n"
-            f"【客观故事弧（世界已发生，只作事实边界）】\n{resolution_text.strip() or '（无）'}\n\n"
-            f"【主持与选择链】\n{gm_question.strip() or '（无）'}\n\n"
-            f"【最后的主动回应】\n{soul_answer.strip() or '（无）'}\n\n"
+            f"{journal_section}"
+            f"{episode_section}"
+            f"{step_section}"
+            f"【客观场景线索（可作为现实锚点）】\n{objective_scene.strip() or '（无）'}\n\n"
+            f"【客观故事弧（世界已发生，必须作为日记事实骨架）】\n{resolution_text.strip() or '（无）'}\n\n"
+            f"【各拍主持与回应】\n{gm_question.strip() or '（无）'}\n\n"
+            f"【各步主动回应】\n{soul_answer.strip() or '（无）'}\n\n"
             f"【这次决定的主观分量】\n{decision_importance.strip() or '普通的一次选择。'}\n\n"
             f"【相关记忆（最多 2 条）】\n{_format_continuity(continuity_memories or [])}\n"
             "\n"
-            "客观事件已经发生。请只写你对此的主观体验：不要复述事件经过，"
-            "只写它在你身上留下的感知、内心反应和余波。"
+            "客观事件已经发生。请写成一段完整闭环的内部经历日志（约 260~420 字），要求："
+            "开头回扣公开预约意图或触发背景；"
+            "中间按时间顺序写清你每一步做了什么、客观发生了什么变化，并穿插身体感受、疼痛、犹豫、判断与归因；"
+            "结尾给出你对目的是否达成、当前局面的判断与情绪余波，不要停在未完成的打算上；"
+            "不要写成条目清单或字段标签，不要引入 journal 未声明的新地点或悬疑支线；"
+            "相关记忆只能轻轻牵连一句，最后落到当下的身体感受与情绪余波。"
         )
         return self._generate_with_emotion(
             prompt,

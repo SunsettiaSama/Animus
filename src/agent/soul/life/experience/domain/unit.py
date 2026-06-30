@@ -173,6 +173,7 @@ class ExperienceUnit:
     ts:        str = field(default_factory=_now_iso)
     source:    str = ""
     id:        str = field(default_factory=_uid)
+    evidence:  dict = field(default_factory=dict)
 
     def should_promote_to_memory(self) -> bool:
         from agent.soul.life.experience.unit_layer.promote.policy import should_promote_to_memory
@@ -198,7 +199,7 @@ class ExperienceUnit:
         )
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "id":        self.id,
             "ts":        self.ts,
             "source":    self.source,
@@ -206,6 +207,9 @@ class ExperienceUnit:
             "action":    self.action.to_dict(),
             "feeling":   self.feeling.to_dict(),
         }
+        if self.evidence:
+            payload["evidence"] = dict(self.evidence)
+        return payload
 
     @classmethod
     def from_dict(cls, d: dict) -> ExperienceUnit:
@@ -216,4 +220,5 @@ class ExperienceUnit:
             situation=ExperienceSituation.from_dict(d.get("situation", {})),
             action=ExperienceAction.from_dict(d.get("action", {})),
             feeling=ExperienceFeeling.from_dict(d.get("feeling", {})),
+            evidence=dict(d.get("evidence") or {}),
         )

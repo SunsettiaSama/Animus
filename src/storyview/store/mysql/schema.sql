@@ -132,3 +132,16 @@ CREATE TABLE IF NOT EXISTS story_event_log (
     INDEX idx_story_log_world (world_id),
     INDEX idx_story_log_event (event_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS story_agent_location_snapshot (
+    snapshot_id       VARCHAR(36)   NOT NULL PRIMARY KEY,
+    world_id          VARCHAR(64)   NOT NULL,
+    scene_id          VARCHAR(36)   NOT NULL DEFAULT '',
+    location_id       VARCHAR(36)   DEFAULT NULL,
+    scene_text        TEXT,
+    reason            VARCHAR(40)   NOT NULL DEFAULT 'arc_start',
+    source_event_id   VARCHAR(36)   NOT NULL DEFAULT '',
+    created_at        DATETIME      NOT NULL,
+    INDEX idx_story_loc_snap_world (world_id),
+    INDEX idx_story_loc_snap_created (world_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

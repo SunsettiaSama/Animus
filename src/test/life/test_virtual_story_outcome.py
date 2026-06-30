@@ -126,6 +126,8 @@ def test_subjective_from_outcome_hides_dice_from_prompt():
         resolution_text="客观结果文本",
         gm_question="你打算怎么做？",
         soul_answer="你走近灯。",
+        journal_intention="在雨后的庭院里观察一盏将熄未熄的灯",
+        journal_context="雨后空气很静",
         profile_narrative="",
         continuity_memories=[],
         world_background="",
@@ -135,3 +137,5 @@ def test_subjective_from_outcome_hides_dice_from_prompt():
     assert "命运骰" not in llm.last_prompt
     assert "d100" not in llm.last_prompt
     assert "大体如预期" not in llm.last_prompt
+    assert "将熄未熄的灯" in llm.last_prompt
+    assert "雨后空气很静" in llm.last_prompt

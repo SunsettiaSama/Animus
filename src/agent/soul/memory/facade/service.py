@@ -267,10 +267,24 @@ class MemoryService:
         self.emergence.expand_hot_async(cue)
 
     def expand_hot_activation(self, cue: ActivationCue):
-        return self.emergence.spread.expand_hot_sync(cue)
+        return self.retrieve_spread(cue)
 
     def query_point_activation(self, cue: ActivationCue):
-        return self.emergence.spread.query_point_sync(cue)
+        return self.retrieve_hybrid(cue)
+
+    def retrieve_spread(self, cue: ActivationCue):
+        return self.emergence.spread.query_spread_sync(cue)
+
+    def retrieve_hybrid(
+        self,
+        cue: ActivationCue,
+        *,
+        precise_relevance_threshold: float | None = None,
+    ):
+        return self.emergence.spread.query_hybrid_sync(
+            cue,
+            precise_relevance_threshold=precise_relevance_threshold,
+        )
 
     def query_point_async(self, cue: ActivationCue) -> None:
         self.emergence.query_point_async(cue)

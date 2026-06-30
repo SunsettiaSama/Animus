@@ -3,6 +3,7 @@ from __future__ import annotations
 from storyview.store.mysql.lore_store import StoryLoreStore
 from storyview.store.mysql.runtime_store import (
     StoryEventStore,
+    StoryLocationSnapshotStore,
     StoryOutlineStore,
     StoryRuntimeStore,
 )
@@ -17,6 +18,7 @@ class StoryStoreBundle:
         self.lore = StoryLoreStore(mysql_client)
         self.scene = SceneStore(mysql_client)
         self.runtime = StoryRuntimeStore(mysql_client)
+        self.location_snapshots = StoryLocationSnapshotStore(mysql_client)
         self.events = StoryEventStore(mysql_client)
         self.outline = StoryOutlineStore(mysql_client)
 

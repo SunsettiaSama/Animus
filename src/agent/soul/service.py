@@ -52,6 +52,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class _MemoryNarrativeContextSupplier:
+    def __init__(self, service) -> None:
+        self._service = service
+
+    def refresh(self, layer, purpose, *, query: str = "") -> None:
+        _ = purpose
+        q = query.strip()
+        if not q:
+            layer.update_context(continuity_memories=[])
+            return
+        lines = self._service.workers.memory.submit(
+            lambda: self._service.memory.api.continuity_for_narrative(q)
+        ).result()
+        layer.update_context(continuity_memories=list(lines[:2]))
+
+
 class SoulService:
     """Soul ??????????????????????API ?????????start/stop ?????????
 
@@ -2077,6 +2093,9 @@ class SoulService:
 
         life_memory = LifeExperienceMemoryIO(self.memory.api.life_io)
         self.life.api.set_memory_port(life_memory)
+        self.life.api.set_narrative_context_supplier(
+            _MemoryNarrativeContextSupplier(self)
+        )
         self.life.api.set_story_port(self._story_port)
         self.life.api.set_gm_answerer(self._answer_gm_question_with_speak)
         profile = self.life.api.load_profile()
@@ -2085,7 +2104,9 @@ class SoulService:
             profile.world_id = world_id
             self.life.api.save_profile()
         self.life.api.bind_story_world(world_id)
-        from storyview import StoryWorldContextBridge
+        from storyview import StoryWorldContextBridge, ensure_default_world_scenes
+
+        ensure_default_world_scenes(story.engine, world_id)
 
         self.set_story_world_context_supplier(
             StoryWorldContextBridge(self._story_port, world_id=world_id)

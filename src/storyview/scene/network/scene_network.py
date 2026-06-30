@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from storyview.network.query import SceneQueryEngine
-from storyview.network.render import build_inject_text, render_scene_inject
+from storyview.scene.network.query import SceneQueryEngine
+from storyview.scene.network.render import build_inject_text, render_scene_inject
 from storyview.types import SceneCandidate, SceneEdge, SceneLocateResult, SceneUnit
 
 
@@ -113,6 +113,66 @@ class SceneNetwork:
         if hasattr(self._edges, "in_edges"):
             return self._edges.in_edges(scene_id)  # type: ignore[attr-defined]
         return []
+
+    def neighbor_scenes(
+        self,
+        world_id: str,
+        scene_id: str,
+        *,
+        depth: int = 1,
+    ) -> list[tuple[SceneUnit, SceneEdge, str]]:
+        if depth < 1:
+            return []
+        scene_by_id = {scene.id: scene for scene in self._nodes.list_by_world(world_id)}
+        visited = {scene_id}
+        frontier = {scene_id}
+        neighbors: list[tuple[SceneUnit, SceneEdge, str]] = []
+        for _ in range(depth):
+            next_frontier: set[str] = set()
+            for current_id in frontier:
+                for edge in self.out_edges(current_id):
+                    target = scene_by_id.get(edge.to_scene_id)
+                    if target is not None and target.id not in visited:
+                        neighbors.append((target, edge, "out"))
+                        visited.add(target.id)
+                        next_frontier.add(target.id)
+                for edge in self.in_edges(current_id):
+                    source = scene_by_id.get(edge.from_scene_id)
+                    if source is not None and source.id not in visited:
+                        neighbors.append((source, edge, "in"))
+                        visited.add(source.id)
+                        next_frontier.add(source.id)
+            frontier = next_frontier
+            if not frontier:
+                break
+        return neighbors
+
+    def search_scenes(
+        self,
+        world_id: str,
+        *,
+        name: str = "",
+        tag: str = "",
+        text: str = "",
+        limit: int = 10,
+    ) -> list[SceneUnit]:
+        name_q = name.strip().lower()
+        tag_q = tag.strip().lower()
+        text_q = text.strip().lower()
+        matched: list[SceneUnit] = []
+        for scene in self._nodes.list_by_world(world_id):
+            if name_q and name_q not in scene.name.lower():
+                continue
+            if tag_q and not any(tag_q in item.lower() for item in scene.tags):
+                continue
+            if text_q:
+                haystack = " ".join([scene.name, scene.narrative, " ".join(scene.tags)]).lower()
+                if text_q not in haystack:
+                    continue
+            matched.append(scene)
+            if len(matched) >= limit:
+                break
+        return matched
 
     def resolve_current_scene_id(self, world_id: str) -> str | None:
         if self._runtime is None:

@@ -11,12 +11,17 @@ from infra.storage import JsonStorageService
 from storyview.store.mysql import StoryStoreBundle as MySQLStoryStoreBundle
 from storyview.store.json import StoryStoreBundle as JsonStoryStoreBundle
 from storyview.types import (
+    AgentLocationSnapshot,
+    ArcStartPolicy,
     GMAnswer,
     GMQuestion,
     ResolvedOutcome,
     SceneCandidate,
+    SceneGroundingPolicy,
+    SceneGroundingResult,
     SceneLocateResult,
     ScenePacket,
+    SceneUnit,
     StoryBeatOutcome,
     StoryEventKind,
 )
@@ -161,6 +166,7 @@ class StoryService(DomainWorker):
         location_id: str | None = None,
         tags: list[str] | None = None,
         scene_id: str | None = None,
+        meta: dict | None = None,
     ) -> Future[str]:
         return self._run_world(
             world_id,
@@ -171,6 +177,23 @@ class StoryService(DomainWorker):
                 location_id=location_id,
                 tags=tags,
                 scene_id=scene_id,
+                meta=meta,
+            ),
+        )
+
+    def ground_scene_for_cue(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        policy: SceneGroundingPolicy | None = None,
+    ) -> Future[SceneGroundingResult]:
+        return self._run_world(
+            world_id,
+            lambda: self._engine.ground_scene_for_cue(
+                world_id,
+                cue,
+                policy=policy,
             ),
         )
 
@@ -228,6 +251,12 @@ class StoryService(DomainWorker):
             lambda: self._engine.locate_scene_candidates(world_id, query, limit=limit),
         )
 
+    def list_scenes(self, world_id: str) -> Future[list[SceneUnit]]:
+        return self._run_world(
+            world_id,
+            lambda: self._engine.list_scenes(world_id),
+        )
+
     def apply_scene(
         self,
         world_id: str,
@@ -250,10 +279,54 @@ class StoryService(DomainWorker):
         cue: str,
         *,
         kind: StoryEventKind | str = StoryEventKind.fabricate,
+        start_policy: ArcStartPolicy | str = ArcStartPolicy.history,
     ) -> Future[GMQuestion]:
         return self._run_world(
             world_id,
-            lambda: self._engine.ask_gm(world_id, cue, kind=kind),
+            lambda: self._engine.ask_gm(
+                world_id,
+                cue,
+                kind=kind,
+                start_policy=start_policy,
+            ),
+        )
+
+    def ask_gm_at_scene(
+        self,
+        world_id: str,
+        scene_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> Future[GMQuestion]:
+        return self._run_world(
+            world_id,
+            lambda: self._engine.ask_gm_at_scene(
+                world_id,
+                scene_id,
+                cue,
+                kind=kind,
+            ),
+        )
+
+    def current_location_snapshot(
+        self,
+        world_id: str,
+    ) -> Future[AgentLocationSnapshot | None]:
+        return self._run_world(
+            world_id,
+            lambda: self._engine.current_location_snapshot(world_id),
+        )
+
+    def list_location_snapshots(
+        self,
+        world_id: str,
+        *,
+        limit: int = 10,
+    ) -> Future[list[AgentLocationSnapshot]]:
+        return self._run_world(
+            world_id,
+            lambda: self._engine.list_location_snapshots(world_id, limit=limit),
         )
 
     def answer_gm(
@@ -351,16 +424,6 @@ class StoryService(DomainWorker):
         return self._run_world(
             world_id,
             lambda: self._engine.ask_surprise(world_id, elapsed_sec),
-        )
-
-    def distill_arc(
-        self,
-        world_id: str,
-        outcomes: list[StoryBeatOutcome],
-    ) -> Future[str]:
-        return self._run_world(
-            world_id,
-            lambda: self._engine.distill_arc(world_id, outcomes),
         )
 
     def distill_arc(

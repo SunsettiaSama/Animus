@@ -15,14 +15,29 @@ from ..narrative_context import (
 )
 from .chronicle import VirtualChronicleStore
 from storyview.port import StoryPort
-from storyview.types import GMAnswer, GMExchange, GMQuestion, StoryBeatOutcome, StoryEventKind
+from storyview.types import (
+    ArcStartPolicy,
+    GMAnswer,
+    GMExchange,
+    GMQuestion,
+    SceneGroundingPolicy,
+    StoryBeatOutcome,
+    StoryEventKind,
+)
 from .journal.filler import LandmarkFiller, NullLandmarkFiller
 from .journal.item import Landmark, LandmarkStatus
 from .journal.journal import LifeJournal
 from .journal.store import JournalStore
+from .journal.agenda import LandmarkAgenda, LandmarkAgendaStore, build_landmark_agenda_public_cue
+from .journal.contracts import LandmarkAgendaDraftResult, LandmarkAgendaPreviewResult
+from .journal.planner import JournalPlanner
 from .narrative import NarrativeEngine
 from .narrative.engine import NarrativeDraft
 from agent.soul.life.experience.domain.virtual_codec import VirtualUnitContext, VirtualUnitTrigger
+from agent.soul.life.virtual.episode.builder import (
+    attach_episode_memory_drafts,
+    build_landmark_episode,
+)
 from .surprise.generator import NullSurpriseGenerator, SurpriseGenerator
 
 
@@ -41,9 +56,17 @@ class VirtualLayer:
         chronicle: VirtualChronicleStore | None = None,
     ) -> None:
         self._builder = builder
+        self._llm = llm
         self._chronicle = chronicle or VirtualChronicleStore(life_dir)
         self._journal_store = JournalStore(life_dir)
         self._journal: LifeJournal = self._journal_store.load()
+        self._agenda_store = LandmarkAgendaStore(life_dir)
+        self._hot_experience_supplier: Callable[..., list] | None = None
+        self._journal_planner = JournalPlanner(
+            self,
+            self._agenda_store,
+            hot_experience_supplier=lambda **kwargs: self._hot_experiences(**kwargs),
+        )
         self._narrative: NarrativeEngine | None = (
             NarrativeEngine(llm) if llm is not None else None
         )
@@ -61,7 +84,12 @@ class VirtualLayer:
         self._story_port: StoryPort | None = None
         self._gm_answerer: Callable[[GMQuestion], str] | None = None
         self._story_arc_max_steps = 3
+        self._story_start_policy = ArcStartPolicy.history
+        self._scene_grounding_policy: SceneGroundingPolicy | None = None
         self._world_id: str = "default"
+        self._bound_scene_id: str = ""
+        self._bound_scene_name: str = ""
+        self._bound_scene_cards: list[dict] = []
 
     @property
     def builder(self) -> ExperienceBuilder:
@@ -102,6 +130,121 @@ class VirtualLayer:
             return 0.0
         return self._story_port.surprise_probability(self._world_id)
 
+    @property
+    def journal_planner(self) -> JournalPlanner:
+        return self._journal_planner
+
+    @property
+    def agenda_store(self) -> LandmarkAgendaStore:
+        return self._agenda_store
+
+    def require_llm(self) -> BaseLLM:
+        if self._llm is None:
+            raise RuntimeError("LLM not wired — agenda drafting requires an LLM")
+        return self._llm
+
+    def set_hot_experience_supplier(
+        self,
+        supplier: Callable[..., list] | None,
+    ) -> None:
+        self._hot_experience_supplier = supplier
+        self._journal_planner = JournalPlanner(
+            self,
+            self._agenda_store,
+            hot_experience_supplier=supplier,
+        )
+
+    def _hot_experiences(self, *, hours: int = 48) -> list:
+        if self._hot_experience_supplier is None:
+            return []
+        return self._hot_experience_supplier(hours=hours)
+
+    def compose_landmark_agenda_for_tomorrow(
+        self,
+        *,
+        target_date: str | None = None,
+        save: bool = True,
+    ) -> LandmarkAgendaDraftResult:
+        result = self._journal_planner.compose_draft(target_date=target_date)
+        if save:
+            self._journal_planner.save_agenda(result.agenda)
+        return result
+
+    def save_landmark_agenda(self, agenda: LandmarkAgenda) -> None:
+        self._journal_planner.save_agenda(agenda)
+
+    def latest_landmark_agendas(self, *, limit: int = 10) -> list[LandmarkAgenda]:
+        return self._journal_planner.latest_agendas(limit=limit)
+
+    def preview_landmark_agenda_story(
+        self,
+        agenda: LandmarkAgenda,
+    ) -> LandmarkAgendaPreviewResult:
+        if not agenda.scene_id.strip():
+            raise RuntimeError("LandmarkAgenda missing scene_id — preview requires grounded scene")
+        public_cue = build_landmark_agenda_public_cue(agenda)
+        port = self._require_story_port()
+        question = port.ask_gm_at_scene(
+            self._world_id,
+            agenda.scene_id,
+            public_cue,
+            kind=StoryEventKind.landmark,
+        )
+        fallback = agenda.steps[0] if agenda.steps else agenda.summary
+        answer = self._answer_gm_question(question, fallback=fallback)
+        return LandmarkAgendaPreviewResult(
+            agenda=agenda,
+            public_cue=public_cue,
+            question=question.question.strip(),
+            answer=answer.text.strip(),
+        )
+
+    def fill_landmark_agenda(self, agenda: LandmarkAgenda) -> dict:
+        if not agenda.scene_id.strip():
+            raise RuntimeError("LandmarkAgenda missing scene_id — fill requires grounded scene")
+        public_cue = build_landmark_agenda_public_cue(agenda)
+        query = " ".join(
+            part.strip()
+            for part in (agenda.title, agenda.summary, agenda.full_context, agenda.scene_name)
+            if part.strip()
+        )
+        self.ensure_narrative_context(NarrativePurpose.fill, query=query)
+        fallback = agenda.steps[0] if agenda.steps else agenda.summary
+        story_outcome = self._run_story_arc(
+            public_cue,
+            kind=StoryEventKind.landmark,
+            fallback_answer=fallback,
+            start_policy=self._story_start_policy,
+            scene_id=agenda.scene_id,
+        )
+        self.apply_world_background(story_outcome.scene_packet.scene_text)
+        draft, unit = self._subjective_from_outcome(
+            story_outcome,
+            salience=0.65,
+            trigger=VirtualUnitTrigger.landmark_agenda,
+            landmark_id=agenda.id,
+            journal_intention=agenda.summary,
+            journal_context=agenda.full_context,
+            default_intensity=0.65,
+            promotion_context=self._agenda_promotion_context(agenda, story_outcome),
+        )
+        agenda.mark_completed()
+        self.save_landmark_agenda(agenda)
+        payload = self._outcome_payload(
+            story_outcome,
+            draft=draft,
+            unit=unit,
+            trigger="landmark_agenda",
+            salience=0.65,
+            share_desire="moderate",
+            landmark_id=agenda.id,
+            intention=agenda.title,
+        )
+        payload["hint"] = unit.situation.narration
+        payload["landmark_agenda_id"] = agenda.id
+        payload["agenda"] = agenda.to_dict()
+        return payload
+
     def set_narrative_engine(self, engine: NarrativeEngine | None) -> None:
         self._narrative = engine
         if engine is not None:
@@ -137,8 +280,32 @@ class VirtualLayer:
     def set_story_arc_max_steps(self, max_steps: int) -> None:
         self._story_arc_max_steps = max(1, min(6, int(max_steps)))
 
+    def set_story_start_policy(self, policy: ArcStartPolicy | str) -> None:
+        token = str(getattr(policy, "value", policy)).strip().lower()
+        if token not in {ArcStartPolicy.history.value, ArcStartPolicy.home.value}:
+            raise ValueError(f"unsupported story start policy: {policy}")
+        self._story_start_policy = ArcStartPolicy(token)
+
+    def set_scene_grounding_policy(self, policy: SceneGroundingPolicy | None) -> None:
+        self._scene_grounding_policy = policy
+
+    @property
+    def scene_grounding_policy(self) -> SceneGroundingPolicy | None:
+        return self._scene_grounding_policy
+
     def set_world_id(self, world_id: str) -> None:
         self._world_id = world_id.strip() or "default"
+
+    def set_bound_scene(
+        self,
+        scene_id: str,
+        *,
+        scene_name: str = "",
+        scene_cards: list[dict] | None = None,
+    ) -> None:
+        self._bound_scene_id = scene_id.strip()
+        self._bound_scene_name = scene_name.strip()
+        self._bound_scene_cards = list(scene_cards or [])
 
     @property
     def world_id(self) -> str:
@@ -218,11 +385,42 @@ class VirtualLayer:
                     answer=item.answer,
                     scene_packet=item.scene_packet,
                     resolved=item.resolved,
+                    dice_value=item.dice_value,
+                    dice_tendency=item.dice_tendency,
+                    story_direction=item.resolved.story_direction,
+                    decision_importance=item.influence.decision_importance,
                 )
                 for item in outcomes
             ),
             objective_summary=objective_summary,
         )
+
+    def _build_public_landmark_cue(self, lm: Landmark) -> str:
+        parts = [
+            "【触发来源】journal_landmark",
+            f"【journal_landmark_id】{lm.id}",
+            f"【公开预约意图】{lm.intention.strip()}",
+        ]
+        if lm.context.strip():
+            parts.append(f"【公开预约背景】{lm.context.strip()}")
+        if self._bound_scene_id:
+            parts.append(f"【绑定场景】{self._bound_scene_name or self._bound_scene_id}")
+            parts.append(
+                "【场景约束】本次地标已绑定上述场景与场景卡；"
+                "主持不得离开绑定 scene，不得引入 journal 未声明的新地点。"
+            )
+            if self._bound_scene_cards:
+                card_lines = [
+                    f"- {card.get('title', card.get('id', 'card'))}：{str(card.get('description', ''))[:80]}"
+                    for card in self._bound_scene_cards[:6]
+                ]
+                parts.append("【场景卡】")
+                parts.extend(card_lines)
+        parts.append(
+            "【主持规则】以上意图为 Soul 与 storyview 共享的公开行动声明；"
+            "你只能据此主持问题和选项，不得替 Soul 决定最终行动或动机。"
+        )
+        return "\n".join(parts)
 
     def _run_story_arc(
         self,
@@ -231,19 +429,32 @@ class VirtualLayer:
         kind: StoryEventKind | str,
         fallback_answer: str = "",
         first_question: GMQuestion | None = None,
+        start_policy: ArcStartPolicy | str = ArcStartPolicy.history,
+        scene_id: str = "",
     ) -> StoryBeatOutcome:
         port = self._require_story_port()
         outcomes: list[StoryBeatOutcome] = []
         question = first_question
         current_cue = cue
         move_offered = False
+        forced_scene_id = scene_id.strip()
         for step in range(self._story_arc_max_steps):
             if question is None:
-                question = port.ask_gm(
-                    self._world_id,
-                    current_cue,
-                    kind=kind,
-                )
+                if step == 0 and forced_scene_id:
+                    question = port.ask_gm_at_scene(
+                        self._world_id,
+                        forced_scene_id,
+                        current_cue,
+                        kind=kind,
+                    )
+                else:
+                    policy = start_policy if step == 0 else ArcStartPolicy.history
+                    question = port.ask_gm(
+                        self._world_id,
+                        current_cue,
+                        kind=kind,
+                        start_policy=policy,
+                    )
             answer = self._answer_gm_question(
                 question,
                 fallback=fallback_answer if step == 0 else "",
@@ -255,7 +466,7 @@ class VirtualLayer:
             )
             outcomes.append(outcome)
             move_context = ""
-            if not move_offered:
+            if not move_offered and not forced_scene_id:
                 move_question = port.ask_move(
                     self._world_id,
                     current_cue,
@@ -407,6 +618,19 @@ class VirtualLayer:
         since = datetime.fromisoformat(since_iso.replace("Z", "+00:00"))
         return self._journal.count_written_since(since)
 
+    def _arc_dialogue_text(self, outcome: StoryBeatOutcome) -> str:
+        return "\n".join(
+            f"{idx}. 主持：{step.question.question.strip()} / 你：{step.answer.text.strip()}"
+            for idx, step in enumerate(outcome.arc_steps, start=1)
+        )
+
+    def _arc_soul_answers_text(self, outcome: StoryBeatOutcome) -> str:
+        return "\n".join(
+            f"{idx}. {step.answer.text.strip()}"
+            for idx, step in enumerate(outcome.arc_steps, start=1)
+            if step.answer.text.strip()
+        )
+
     def _subjective_from_outcome(
         self,
         outcome: StoryBeatOutcome,
@@ -414,7 +638,10 @@ class VirtualLayer:
         salience: float,
         trigger: VirtualUnitTrigger,
         landmark_id: str = "",
+        journal_intention: str = "",
+        journal_context: str = "",
         default_intensity: float | None = None,
+        promotion_context: str = "",
     ) -> tuple[NarrativeDraft | None, ExperienceUnit]:
         intensity = default_intensity
         if intensity is None:
@@ -424,21 +651,59 @@ class VirtualLayer:
         objective_arc = outcome.objective_summary.strip()
         if not objective_arc:
             objective_arc = outcome.resolved.resolution_text
-        arc_dialogue = "\n".join(
-            f"{idx}. 主持：{step.question.question.strip()} / 你：{step.answer.text.strip()}"
+        arc_dialogue = self._arc_dialogue_text(outcome)
+        arc_step_facts = "\n".join(
+            f"{idx}. {step.resolved.resolution_text.strip()}"
             for idx, step in enumerate(outcome.arc_steps, start=1)
+            if step.resolved.resolution_text.strip()
         )
+        soul_answers = self._arc_soul_answers_text(outcome)
+        resolution_text = objective_arc
+        if arc_step_facts:
+            resolution_text = f"{objective_arc}\n\n【各拍客观结果】\n{arc_step_facts}".strip()
+        story_query = " ".join(
+            part.strip()
+            for part in (
+                journal_intention,
+                journal_context,
+                outcome.scene_packet.scene_text,
+                resolution_text,
+                arc_dialogue,
+                soul_answers or outcome.answer.text,
+            )
+            if part.strip()
+        )
+        purpose = (
+            NarrativePurpose.surprise
+            if trigger == VirtualUnitTrigger.surprise
+            else NarrativePurpose.fill
+        )
+        self.ensure_narrative_context(purpose, query=story_query)
         if self._narrative is not None:
+            episode_for_prompt = None
+            if trigger in {VirtualUnitTrigger.landmark, VirtualUnitTrigger.landmark_agenda}:
+                episode_for_prompt = build_landmark_episode(
+                    outcome,
+                    landmark_id=landmark_id,
+                    intention=journal_intention,
+                    context=journal_context,
+                    scene_name=self._bound_scene_name,
+                    scene_cards=self._bound_scene_cards,
+                )
             draft = self._narrative.subjective_from_outcome(
-                objective_scene="",
-                resolution_text=objective_arc,
+                objective_scene=outcome.scene_packet.scene_text,
+                resolution_text=resolution_text,
                 gm_question=arc_dialogue or outcome.question.question,
-                soul_answer=outcome.answer.text,
+                soul_answer=soul_answers or outcome.answer.text,
+                journal_intention=journal_intention,
+                journal_context=journal_context,
                 decision_importance=outcome.influence.decision_importance,
                 profile_narrative=self._profile_narrative,
                 continuity_memories=self._continuity_memories,
                 world_background=self._world_background,
                 default_intensity=intensity,
+                episode_summary=episode_for_prompt.summary_text() if episode_for_prompt else "",
+                episode_steps=episode_for_prompt.arc_steps if episode_for_prompt else None,
             )
         narrative = draft.narrative if draft is not None else outcome.resolved.resolution_text
         emotion_text = draft.emotion_text if draft is not None else ""
@@ -447,6 +712,22 @@ class VirtualLayer:
         perception = draft.perception if draft is not None else ""
         action_summary = draft.action_summary if draft is not None else outcome.answer.text[:60]
         source = "surprise" if trigger == VirtualUnitTrigger.surprise else "narrative"
+        evidence_builder = None
+        if trigger in {VirtualUnitTrigger.landmark, VirtualUnitTrigger.landmark_agenda}:
+            def evidence_builder(unit: ExperienceUnit) -> dict:
+                episode = build_landmark_episode(
+                    outcome,
+                    landmark_id=landmark_id,
+                    intention=journal_intention,
+                    context=journal_context,
+                    experience_id=unit.id,
+                    scene_name=self._bound_scene_name,
+                    scene_cards=self._bound_scene_cards,
+                    draft=draft,
+                )
+                attach_episode_memory_drafts(episode, llm=self._llm)
+                unit.feeling.salience_note = episode.summary_text()[:240] or unit.feeling.salience_note
+                return {"landmark_episode": episode.to_dict()}
         unit = self._builder.record_virtual_beat(
             narrative,
             perception=perception,
@@ -462,8 +743,65 @@ class VirtualLayer:
                 scene_id=outcome.question.scene_id,
                 question_id=outcome.question.question_id,
             ),
+            evidence_builder=evidence_builder,
         )
+        if promotion_context.strip():
+            unit.feeling.salience_note = (
+                f"{unit.feeling.salience_note}\n\n{promotion_context.strip()}"
+            ).strip()
         return draft, unit
+
+    def _agenda_promotion_context(
+        self,
+        agenda: LandmarkAgenda,
+        outcome: StoryBeatOutcome,
+    ) -> str:
+        card_lines = [
+            f"- {card.title}：{card.description[:80]}"
+            for card in agenda.scene_cards
+        ]
+        arc_summary = outcome.objective_summary.strip() or outcome.resolved.resolution_text.strip()
+        parts = [
+            "【LandmarkAgenda 擢升上下文】",
+            f"title={agenda.title}",
+            f"summary={agenda.summary}",
+            f"full_context={agenda.full_context[:240]}",
+            f"scene_id={agenda.scene_id}",
+            f"scene_name={agenda.scene_name}",
+            "steps=" + "；".join(agenda.steps[:6]),
+            "success_criteria=" + "；".join(agenda.success_criteria[:4]),
+        ]
+        if card_lines:
+            parts.append("scene_cards:")
+            parts.extend(card_lines)
+        if agenda.grounding_trace:
+            parts.append(
+                "grounding_trace="
+                + " | ".join(
+                    f"{item.action}:{item.observation[:60]}"
+                    for item in agenda.grounding_trace[:4]
+                )
+            )
+        if arc_summary:
+            parts.append(f"gm_arc={arc_summary[:280]}")
+        return "\n".join(parts)
+
+    def _arc_step_payload(self, step: GMExchange) -> dict:
+        dice_value = int(getattr(step, "dice_value", 0) or step.resolved.dice_value or 0)
+        dice_tendency = str(getattr(step, "dice_tendency", "") or step.resolved.dice_tendency or "")
+        story_direction = str(getattr(step, "story_direction", "") or step.resolved.story_direction or "")
+        decision_importance = str(getattr(step, "decision_importance", "") or "")
+        return {
+            "gm_question": step.question.question,
+            "soul_answer": step.answer.text,
+            "scene_text": step.scene_packet.scene_text,
+            "resolution_text": step.resolved.resolution_text,
+            "scene_id": step.question.scene_id,
+            "dice_value": dice_value,
+            "dice_tendency": dice_tendency,
+            "story_direction": story_direction,
+            "decision_importance": decision_importance,
+        }
 
     def _outcome_payload(
         self,
@@ -477,6 +815,16 @@ class VirtualLayer:
         landmark_id: str = "",
         intention: str = "",
     ) -> dict:
+        gm_question = outcome.question.question
+        soul_answer = outcome.answer.text
+        if outcome.arc_steps:
+            arc_dialogue = self._arc_dialogue_text(outcome)
+            arc_answers = self._arc_soul_answers_text(outcome)
+            if arc_dialogue.strip():
+                gm_question = arc_dialogue
+            if arc_answers.strip():
+                soul_answer = arc_answers
+        episode_payload = dict(unit.evidence.get("landmark_episode") or {})
         return {
             "triggered": True,
             "trigger": trigger,
@@ -486,18 +834,14 @@ class VirtualLayer:
             "narrative": unit.situation.narration,
             "scene_text": outcome.scene_packet.scene_text,
             "resolution_text": outcome.objective_summary or outcome.resolved.resolution_text,
-            "gm_question": outcome.question.question,
-            "soul_answer": outcome.answer.text,
+            "gm_question": gm_question,
+            "soul_answer": soul_answer,
             "decision_importance": outcome.influence.decision_importance,
-            "arc_steps": [
-                {
-                    "gm_question": step.question.question,
-                    "soul_answer": step.answer.text,
-                    "scene_text": step.scene_packet.scene_text,
-                    "resolution_text": step.resolved.resolution_text,
-                }
-                for step in outcome.arc_steps
-            ],
+            "arc_steps": [self._arc_step_payload(step) for step in outcome.arc_steps],
+            "dice_trace": episode_payload.get("arc_steps") or [],
+            "episode": episode_payload,
+            "typed_memory_items": episode_payload.get("typed_memory_items") or [],
+            "rejected_memory_items": episode_payload.get("rejected_items") or [],
             "scene_id": outcome.question.scene_id,
             "story_event_id": outcome.scene_packet.event_id,
             "scene_candidates": [
@@ -565,15 +909,18 @@ class VirtualLayer:
         if lm is None or lm.status == LandmarkStatus.done:
             return None
 
+        public_cue = self._build_public_landmark_cue(lm)
         query = lm.intention.strip()
         if lm.context.strip():
             query = f"{query} {lm.context.strip()}"
         self.ensure_narrative_context(NarrativePurpose.fill, query=query)
         lm.mark_processing()
         story_outcome = self._run_story_arc(
-            query,
+            public_cue,
             kind=StoryEventKind.landmark,
             fallback_answer=lm.intention,
+            start_policy=self._story_start_policy,
+            scene_id=self._bound_scene_id,
         )
         self.apply_world_background(story_outcome.scene_packet.scene_text)
         draft, unit = self._subjective_from_outcome(
@@ -581,6 +928,8 @@ class VirtualLayer:
             salience=0.6,
             trigger=VirtualUnitTrigger.landmark,
             landmark_id=lm.id,
+            journal_intention=lm.intention,
+            journal_context=lm.context,
             default_intensity=0.6,
         )
         lm.mark_done(

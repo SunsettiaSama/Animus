@@ -17,6 +17,7 @@ def virtual_entry_from_unit(unit: ExperienceUnit) -> VirtualChronicleEntry | Non
         trigger = ctx.trigger.value if ctx else VirtualUnitTrigger.fabricate.value
         if trigger in (
             VirtualUnitTrigger.landmark.value,
+            VirtualUnitTrigger.landmark_agenda.value,
             VirtualUnitTrigger.landmark_plan.value,
         ):
             kind = VirtualChronicleKind.landmark

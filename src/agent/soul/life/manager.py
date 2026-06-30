@@ -19,7 +19,14 @@ from .virtual.chronicle import VirtualChronicleStore
 from .narrative_context import NarrativeContextSupplier, StoryWorldContextSupplier
 from .virtual.narrative import NarrativeEngine
 from .virtual.review import build_life_context_from_chronicle
+from .virtual.journal.contracts import (
+    LandmarkAgendaDraftResult,
+    LandmarkAgendaPreviewResult,
+    LandmarkPlanningStrategy,
+)
+from .virtual.journal.agenda import LandmarkAgenda
 from .service import LifeService
+from storyview.types import SceneGroundingPolicy
 
 
 class LifeManager:
@@ -59,6 +66,7 @@ class LifeManager:
         if self._virtual.narrative is not None:
             pipeline.set_collapser(self._virtual.narrative)
         self._life_service.set_experience_tick(pipeline.tick)
+        self._virtual.set_hot_experience_supplier(self.hot_experiences)
 
     def attach_dialogue_experience(self, pipeline: DialogueExperiencePipeline) -> None:
         self._dialogue_experience = pipeline
@@ -173,6 +181,21 @@ class LifeManager:
     def set_story_arc_max_steps(self, max_steps: int) -> None:
         self._virtual.set_story_arc_max_steps(max_steps)
 
+    def set_story_start_policy(self, policy) -> None:
+        self._virtual.set_story_start_policy(policy)
+
+    def set_scene_grounding_policy(self, policy: SceneGroundingPolicy | None) -> None:
+        self._virtual.set_scene_grounding_policy(policy)
+
+    def set_bound_scene(
+        self,
+        scene_id: str,
+        *,
+        scene_name: str = "",
+        scene_cards: list[dict] | None = None,
+    ) -> None:
+        self._virtual.set_bound_scene(scene_id, scene_name=scene_name, scene_cards=scene_cards)
+
     def bind_story_world(self, world_id: str) -> None:
         token = world_id.strip() or "default"
         self._profile.world_id = token
@@ -193,6 +216,45 @@ class LifeManager:
     def compose_landmark(self) -> dict | None:
         return self._virtual.compose_landmark()
 
+    def compose_landmark_agenda_for_tomorrow(
+        self,
+        *,
+        target_date: str | None = None,
+        save: bool = True,
+    ) -> LandmarkAgendaDraftResult:
+        return self._virtual.compose_landmark_agenda_for_tomorrow(
+            target_date=target_date,
+            save=save,
+        )
+
+    def save_landmark_agenda(self, agenda: LandmarkAgenda) -> None:
+        self._virtual.save_landmark_agenda(agenda)
+
+    def latest_landmark_agendas(self, *, limit: int = 10) -> list[LandmarkAgenda]:
+        return self._virtual.latest_landmark_agendas(limit=limit)
+
+    def preview_landmark_agenda_story(
+        self,
+        agenda: LandmarkAgenda,
+    ) -> LandmarkAgendaPreviewResult:
+        return self._virtual.preview_landmark_agenda_story(agenda)
+
+    def fill_landmark_agenda(self, agenda: LandmarkAgenda) -> dict:
+        return self._virtual.fill_landmark_agenda(agenda)
+
+    def compose_landmark_with_strategy(
+        self,
+        strategy: LandmarkPlanningStrategy,
+        *,
+        target_date: str | None = None,
+        save: bool = True,
+    ):
+        return self._virtual.journal_planner.compose(
+            strategy,
+            target_date=target_date,
+            save=save,
+        )
+
     def trigger_due_landmarks(self) -> dict:
         return self._life_service.trigger_due_landmarks()
 
@@ -202,9 +264,13 @@ class LifeManager:
     def run_surprise_tick(self, elapsed_sec: float) -> dict:
         return self._virtual.tick_surprise(elapsed_sec=elapsed_sec)
 
-    def fill_due_landmarks(self) -> list[dict]:
+    def fill_due_landmarks(self, *, only_ids: list[str] | None = None) -> list[dict]:
+        due = list(self._virtual.due_landmarks())
+        if only_ids:
+            wanted = {token.strip() for token in only_ids if token.strip()}
+            due = [lm for lm in due if lm.id in wanted]
         filled: list[dict] = []
-        for lm in list(self._virtual.due_landmarks()):
+        for lm in due:
             item = self._virtual.fill_landmark(lm.id)
             if item is not None:
                 filled.append(item)

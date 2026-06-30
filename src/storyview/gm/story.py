@@ -15,13 +15,17 @@ from storyview.fate.dice import (
     roll_story_direction,
 )
 from storyview.gm.resolve import ActionResolver
-from storyview.network import SceneNetwork
 from storyview.scene import SceneComposer
+from storyview.scene.cards import scene_cards
+from storyview.scene.network import SceneNetwork
 from storyview.store.mysql import StoryStoreBundle
 from storyview.types import (
+    AgentLocationSnapshot,
+    ArcStartPolicy,
     GMAnswer,
     GMExchange,
     GMQuestion,
+    LocationSnapshotReason,
     ResolvedOutcome,
     SceneCandidate,
     ScenePacket,
@@ -41,8 +45,11 @@ _ASK_SYSTEM = """\
 你是故事主持（GM），向角色提出一个具体问题，引导本拍行动。
 规则：
 - 基于当前场景与本拍线索
+- 若线索来自 journal landmark 公开预约意图，只能围绕该意图主持，不得替角色决定最终行动或动机
+- journal landmark 时不得引入 journal 未声明的新线索、角色、物件或悬疑支线；问题与选项只能推进该意图本身
 - 只问一个问题，15~40 字，第二人称「你」
 - 可给 0~3 个可选行动；若必须限制行动范围，OPEN_CHOICE 输出 false
+- 选项必须可执行，并受当前位置快照与场景约束
 - 禁止元叙事：不得提到测试、脚本、代码、模型、API、LLM
 - 避免真实世界日期、系统编排术语和格式标签；不要使用类似 6/25、2026、第1拍、步骤、轮次、NARRATIVE、STATE_PATCH 的表达
 - 严格输出：
@@ -128,15 +135,201 @@ class StoryDirector:
     def pending_question(self, question_id: str) -> GMQuestion | None:
         return self._pending.get(question_id)
 
+    def _snapshot_store(self):
+        return getattr(self._stores, "location_snapshots", None)
+
+    def _record_location_snapshot(
+        self,
+        world_id: str,
+        *,
+        scene: SceneUnit,
+        scene_text: str,
+        reason: LocationSnapshotReason | str,
+        source_event_id: str = "",
+    ) -> AgentLocationSnapshot | None:
+        store = self._snapshot_store()
+        if store is None:
+            return None
+        snapshot = AgentLocationSnapshot(
+            snapshot_id=str(uuid.uuid4()),
+            world_id=world_id,
+            scene_id=scene.id,
+            scene_text=scene_text.strip() or scene.narrative.strip(),
+            location_id=scene.location_id,
+            reason=reason,
+            source_event_id=source_event_id,
+        )
+        store.append(snapshot)
+        return snapshot
+
+    def _apply_scene_to_runtime(
+        self,
+        world_id: str,
+        scene: SceneUnit,
+        *,
+        reason: LocationSnapshotReason | str,
+        scene_text: str = "",
+        source_event_id: str = "",
+    ) -> None:
+        if scene.location_id:
+            self._stores.runtime.apply_patch(
+                world_id,
+                StatePatch(move_to_location_id=scene.location_id),
+            )
+        text = scene_text.strip() or scene.narrative.strip()
+        if text:
+            self._stores.runtime.update_snapshot(world_id, text)
+        self._record_location_snapshot(
+            world_id,
+            scene=scene,
+            scene_text=text,
+            reason=reason,
+            source_event_id=source_event_id,
+        )
+
+    def _resolve_arc_start(
+        self,
+        world_id: str,
+        *,
+        start_policy: ArcStartPolicy | str = ArcStartPolicy.history,
+    ) -> tuple[SceneUnit | None, str]:
+        policy = str(getattr(start_policy, "value", start_policy))
+        home = self._find_home_scene(world_id)
+
+        if policy == ArcStartPolicy.home.value:
+            if home is not None:
+                self._apply_scene_to_runtime(
+                    world_id,
+                    home,
+                    reason=LocationSnapshotReason.home_reset,
+                )
+                return home, "home"
+            return None, "home_missing"
+
+        current_id = self._scene_network.resolve_current_scene_id(world_id)
+        if current_id is None:
+            store = self._snapshot_store()
+            if store is not None:
+                last = store.last(world_id)
+                if last is not None and last.scene_id:
+                    current_id = last.scene_id
+                    if last.location_id:
+                        self._stores.runtime.apply_patch(
+                            world_id,
+                            StatePatch(move_to_location_id=last.location_id),
+                        )
+
+        if current_id:
+            scene = self._scene_network.get(current_id)
+            if scene is not None:
+                return scene, "history"
+
+        if home is not None:
+            self._apply_scene_to_runtime(
+                world_id,
+                home,
+                reason=LocationSnapshotReason.home_reset,
+            )
+            return home, "home_fallback"
+
+        return None, "locator"
+
+    def current_location_snapshot(self, world_id: str) -> AgentLocationSnapshot | None:
+        store = self._snapshot_store()
+        if store is None:
+            return None
+        return store.last(world_id)
+
+    def list_location_snapshots(
+        self,
+        world_id: str,
+        *,
+        limit: int = 10,
+    ) -> list[AgentLocationSnapshot]:
+        store = self._snapshot_store()
+        if store is None:
+            return []
+        return store.list_recent(world_id, limit=limit)
+
     def ask(
         self,
         world_id: str,
         cue: str,
         *,
         kind: StoryEventKind | str = StoryEventKind.fabricate,
+        start_policy: ArcStartPolicy | str = ArcStartPolicy.history,
     ) -> GMQuestion:
         self._stores.world.ensure(world_id)
-        scene, candidates = self._pick_scene(world_id, cue)
+        start_scene, _ = self._resolve_arc_start(world_id, start_policy=start_policy)
+        current_id = start_scene.id if start_scene is not None else None
+        scene, candidates = self._pick_scene(
+            world_id,
+            cue,
+            current_scene_id=current_id,
+        )
+        if start_scene is None or start_scene.id != scene.id:
+            self._apply_scene_to_runtime(
+                world_id,
+                scene,
+                reason=LocationSnapshotReason.arc_start,
+                scene_text=scene.narrative,
+            )
+        else:
+            self._record_location_snapshot(
+                world_id,
+                scene=scene,
+                scene_text=self._stores.runtime.snapshot_text(world_id) or scene.narrative,
+                reason=LocationSnapshotReason.arc_start,
+            )
+        question_id = str(uuid.uuid4())
+        question_text, stakes, choices, open_choice, constraints = self._compose_question(
+            world_id=world_id,
+            cue=cue,
+            kind=kind,
+            scene=scene,
+        )
+        gm_question = GMQuestion(
+            question_id=question_id,
+            world_id=world_id,
+            kind=kind,
+            cue=cue.strip(),
+            scene_id=scene.id,
+            question=question_text,
+            stakes=stakes,
+            choices=tuple(choices),
+            open_choice=open_choice,
+            constraints=constraints,
+        )
+        self._pending[question_id] = gm_question
+        return gm_question
+
+    def ask_at_scene(
+        self,
+        world_id: str,
+        scene_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> GMQuestion:
+        self._stores.world.ensure(world_id)
+        scene = self._scene_network.get(scene_id)
+        if scene is None:
+            raise ValueError(f"unknown scene: {scene_id}")
+        current_id = self._scene_network.resolve_current_scene_id(world_id)
+        if current_id != scene.id:
+            self._apply_scene_to_runtime(
+                world_id,
+                scene,
+                reason=LocationSnapshotReason.arc_start,
+                scene_text=scene.narrative,
+            )
+        else:
+            self._record_location_snapshot(
+                world_id,
+                scene=scene,
+                scene_text=self._stores.runtime.snapshot_text(world_id) or scene.narrative,
+                reason=LocationSnapshotReason.arc_start,
+            )
         question_id = str(uuid.uuid4())
         question_text, stakes, choices, open_choice, constraints = self._compose_question(
             world_id=world_id,
@@ -193,6 +386,15 @@ class StoryDirector:
             scene_id=question.scene_id,
             transition_text=transition,
         )
+        resolved_scene = self._scene_network.get(question.scene_id)
+        if resolved_scene is not None:
+            self._record_location_snapshot(
+                question.world_id,
+                scene=resolved_scene,
+                scene_text=packet.scene_text,
+                reason=LocationSnapshotReason.gm_answer,
+                source_event_id=packet.event_id,
+            )
         if dice is None and with_dice:
             dice = roll_d100()
         story_direction = roll_story_direction()
@@ -302,12 +504,18 @@ class StoryDirector:
                 question.world_id,
                 StatePatch(move_to_location_id=target_scene.location_id),
             )
-        from storyview.network.render import build_inject_text
+        from storyview.scene.network.render import build_inject_text
 
         transition = f"移动到相邻场景：{target_scene.name}"
         scene_text = build_inject_text(target_scene, transition_text=transition)
         if scene_text.strip():
             self._stores.runtime.update_snapshot(question.world_id, scene_text)
+        self._record_location_snapshot(
+            question.world_id,
+            scene=target_scene,
+            scene_text=scene_text,
+            reason=LocationSnapshotReason.move,
+        )
         packet = ScenePacket(
             event_id="",
             world_id=question.world_id,
@@ -384,8 +592,9 @@ class StoryDirector:
         answer_text: str | None = None,
         dice: DiceResult | None = None,
         with_dice: bool = True,
+        start_policy: ArcStartPolicy | str = ArcStartPolicy.history,
     ) -> StoryBeatOutcome:
-        question = self.ask(world_id, cue, kind=kind)
+        question = self.ask(world_id, cue, kind=kind, start_policy=start_policy)
         text = (answer_text or "").strip() or self._default_answer(cue, kind)
         answer = GMAnswer(
             question_id=question.question_id,
@@ -417,8 +626,12 @@ class StoryDirector:
         self,
         world_id: str,
         cue: str,
+        *,
+        current_scene_id: str | None = None,
     ) -> tuple[SceneUnit, list[SceneCandidate]]:
-        current_id = self._scene_network.resolve_current_scene_id(world_id)
+        current_id = current_scene_id
+        if current_id is None:
+            current_id = self._scene_network.resolve_current_scene_id(world_id)
         home = self._find_home_scene(world_id)
         if current_id is None and home is not None:
             current_id = home.id
@@ -491,8 +704,33 @@ class StoryDirector:
             f"【场景】\n{scene.name}：{scene.narrative[:200]}\n\n"
             f"【本拍类型】\n{_kind_value(kind)}\n\n"
             f"【线索】\n{cue.strip() or '（无）'}\n\n"
-            "提出主持问题："
         )
+        cards = scene_cards(scene)
+        if cards:
+            prompt += "【绑定场景互动卡片】\n"
+            for card in cards:
+                affordances = "、".join(card.affordances) if card.affordances else "（无）"
+                conditions = "、".join(card.conditions) if card.conditions else "（无）"
+                prompt += (
+                    f"- {card.title}：{card.description[:80]}；"
+                    f"可互动：{affordances}；使用条件：{conditions}\n"
+                )
+            prompt += "\n"
+        if "journal_landmark" in cue:
+            prompt += (
+                "【公开 journal 意图】\n"
+                "以上线索包含 Soul 预约的公开行动意图；"
+                "你只能据此提出问题和可选行动，不得替角色决定最终选择或内心动机。"
+                "不要新增 journal 未声明的线索、角色、物件或悬疑支线；"
+                "选项只能围绕该意图的可观察行动展开。"
+            )
+            if "journal_landmark_agenda" in cue:
+                prompt += (
+                    "议程已绑定固定 scene 与 cards；"
+                    "不得离开绑定 scene，不得引入 cards 未覆盖的新地点或物件。"
+                )
+            prompt += "\n\n"
+        prompt += "提出主持问题："
         raw = self._llm.generate_messages(
             [SystemMessage(content=_ASK_SYSTEM), HumanMessage(content=prompt)]
         ).strip()

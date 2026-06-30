@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from storyview.network.render import build_inject_text
+from storyview.scene.network.render import build_inject_text
 from storyview.types import SceneCandidate, SceneEdge, SceneLocateResult, SceneUnit
 
 
@@ -12,6 +12,7 @@ def _tokenize(query: str) -> list[str]:
 def _score_scene(scene: SceneUnit, tokens: list[str]) -> int:
     if not tokens:
         return 0
+    query_text = "".join(tokens).lower()
     haystack = " ".join(
         [
             scene.name,
@@ -20,6 +21,13 @@ def _score_scene(scene: SceneUnit, tokens: list[str]) -> int:
         ]
     ).lower()
     score = 0
+    scene_name = scene.name.strip().lower()
+    if scene_name and scene_name in query_text:
+        score += 6
+    for tag in scene.tags:
+        tag_text = tag.strip().lower()
+        if tag_text and tag_text in query_text:
+            score += 3
     for token in tokens:
         needle = token.lower()
         if needle in scene.name.lower():
@@ -33,7 +41,10 @@ def _score_edge(edge: SceneEdge, tokens: list[str]) -> int:
     if not tokens:
         return 0
     text = edge.transition_text.lower()
+    query_text = "".join(tokens).lower()
     score = 0
+    if text.strip() and text.strip() in query_text:
+        score += 4
     for token in tokens:
         if token.lower() in text:
             score += 3
@@ -87,7 +98,11 @@ class SceneQueryEngine:
                         matched_by="edge",
                     )
 
-        if current_scene_id and not any(_score_scene(scene_by_id[sid], tokens) for sid in [current_scene_id] if sid in scene_by_id):
+        if current_scene_id and not any(
+            _score_scene(scene_by_id[sid], tokens)
+            for sid in [current_scene_id]
+            if sid in scene_by_id
+        ):
             current = scene_by_id.get(current_scene_id)
             if current is not None and not tokens:
                 inject = build_inject_text(current)
@@ -106,7 +121,11 @@ class SceneQueryEngine:
                 best_scene = scene
 
         if best_scene is not None and best_score > 0:
-            matched_by = "scene_name" if any(t.lower() in best_scene.name.lower() for t in tokens) else "scene_narrative"
+            matched_by = (
+                "scene_name"
+                if any(t.lower() in best_scene.name.lower() for t in tokens)
+                else "scene_narrative"
+            )
             inject = build_inject_text(best_scene)
             return SceneLocateResult(
                 scene=best_scene,

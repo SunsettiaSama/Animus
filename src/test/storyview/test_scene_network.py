@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from storyview.network.query import SceneQueryEngine
-from storyview.network.render import render_scene_inject
-from storyview.network.scene_network import SceneNetwork
-from storyview.types import SceneEdge, SceneUnit
+from storyview.scene.network.query import SceneQueryEngine
+from storyview.scene.network.render import render_scene_inject
+from storyview.scene.network.scene_network import SceneNetwork
+from storyview.scene.cards import cards_to_meta
+from storyview.types import SceneCard, SceneEdge, SceneUnit
 
 
 class _MemoryNodeStore:
@@ -30,6 +31,7 @@ class _MemoryNodeStore:
             narrative=narrative,
             location_id=location_id,
             tags=tuple(tags or ()),
+            meta=dict(meta or {}),
         )
         return sid
 
@@ -148,6 +150,30 @@ def test_render_scene_inject_adds_header():
     text = network.scene_inject_text("w1", "")
     assert text.startswith("【你所处的场景】")
     assert "茶壶" in text
+
+
+def test_scene_inject_includes_cards():
+    network = _build_network(None)
+    scene_id = network.upsert_scene(
+        "w1",
+        name="北坡岩棚",
+        narrative="岩棚下有固定观察点。",
+        scene_id="scene-rock",
+        meta=cards_to_meta(
+            [
+                SceneCard(
+                    id="card-1",
+                    title="湿度计",
+                    description="固定在苔藓旁的读数器。",
+                    affordances=("读取湿度",),
+                    conditions=("读数前完成校准",),
+                )
+            ]
+        ),
+    )
+    result = network.locate("w1", "北坡岩棚", current_scene_id=scene_id)
+    assert "可互动卡片" in result.inject_text
+    assert "湿度计" in result.inject_text
 
 
 def test_query_engine_scores_narrative():

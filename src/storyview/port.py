@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from storyview.service import StoryService
 from storyview.types import (
+    AgentLocationSnapshot,
+    ArcStartPolicy,
     GMAnswer,
     GMQuestion,
     ResolvedOutcome,
     SceneCandidate,
+    SceneGroundingPolicy,
+    SceneGroundingResult,
     SceneLocateResult,
     ScenePacket,
+    SceneUnit,
     StoryBeatOutcome,
     StoryEventKind,
 )
@@ -76,6 +81,7 @@ class StoryPort:
         location_id: str | None = None,
         tags: list[str] | None = None,
         scene_id: str | None = None,
+        meta: dict | None = None,
     ) -> str:
         return self._service.upsert_scene(
             world_id,
@@ -84,6 +90,20 @@ class StoryPort:
             location_id=location_id,
             tags=tags,
             scene_id=scene_id,
+            meta=meta,
+        ).result()
+
+    def ground_scene_for_cue(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        policy: SceneGroundingPolicy | None = None,
+    ) -> SceneGroundingResult:
+        return self._service.ground_scene_for_cue(
+            world_id,
+            cue,
+            policy=policy,
         ).result()
 
     def link_scenes(
@@ -132,6 +152,9 @@ class StoryPort:
             limit=limit,
         ).result()
 
+    def list_scenes(self, world_id: str) -> list[SceneUnit]:
+        return self._service.list_scenes(world_id).result()
+
     def apply_scene(
         self,
         world_id: str,
@@ -151,8 +174,40 @@ class StoryPort:
         cue: str,
         *,
         kind: StoryEventKind | str = StoryEventKind.fabricate,
+        start_policy: ArcStartPolicy | str = ArcStartPolicy.history,
     ) -> GMQuestion:
-        return self._service.ask_gm(world_id, cue, kind=kind).result()
+        return self._service.ask_gm(
+            world_id,
+            cue,
+            kind=kind,
+            start_policy=start_policy,
+        ).result()
+
+    def ask_gm_at_scene(
+        self,
+        world_id: str,
+        scene_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> GMQuestion:
+        return self._service.ask_gm_at_scene(
+            world_id,
+            scene_id,
+            cue,
+            kind=kind,
+        ).result()
+
+    def current_location_snapshot(self, world_id: str) -> AgentLocationSnapshot | None:
+        return self._service.current_location_snapshot(world_id).result()
+
+    def list_location_snapshots(
+        self,
+        world_id: str,
+        *,
+        limit: int = 10,
+    ) -> list[AgentLocationSnapshot]:
+        return self._service.list_location_snapshots(world_id, limit=limit).result()
 
     def answer_gm(
         self,

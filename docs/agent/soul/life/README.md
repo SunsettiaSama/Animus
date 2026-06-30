@@ -56,7 +56,7 @@ src/agent/soul/life/
 ├── virtual/                  # 虚拟叙事层
 │   ├── layer.py              # VirtualLayer
 │   ├── chronicle/            # VirtualChronicleStore
-│   ├── journal/              # LifeJournal / Landmark / dice / filler
+│   ├── journal/              # LifeJournal / Landmark / 手账状态
 │   ├── narrative/            # NarrativeEngine
 │   ├── surprise/             # SurpriseGenerator
 │   └── review/               # 日终回顾上下文
@@ -127,11 +127,23 @@ user_text + agent_reply
 **叙事地标（主动）**
 
 ```
-LifeJournal.add_landmark()
-    → roll_d100() → LandmarkFiller.fill()
-    → ExperienceBuilder.record_story_beat()
-    → ingest → chronicle
+compose_landmark()
+    → NarrativeEngine.compose_landmark_intent()
+    → LifeJournal.add_landmark()
+    → plan_landmark 预体验入账（trigger=landmark_plan）
+
+到点后：
+LifeManager.fill_due_landmarks()
+    → VirtualLayer.fill_landmark()
+    → journal_landmark 公开 cue
+    → StoryPort.ask_gm()/answer_gm()/distill_arc()
+    → NarrativeEngine.subjective_from_outcome()
+    → ExperienceBuilder.record_virtual_beat(trigger=landmark)
+    → Landmark.mark_done(narrative, experience_id)
+    → ingest → hot log / virtual chronicle / journal.json
 ```
+
+`journal` 只保存手账状态：地标意图、背景、触发时间、状态、完成后的主观日记与 `experience_id`。客观场景推进由 storyview 负责；主观日记由 `subjective_from_outcome()` 根据客观故事弧回写。
 
 ### 交会折叠
 
@@ -143,7 +155,7 @@ LifeJournal.add_landmark()
 
 | 协议 | 作用 | 占位 |
 |---|---|---|
-| `LandmarkFiller` | 地标 → 情节文本 | `NullLandmarkFiller` |
+| `NarrativeEngine` | 地标构思 / 主观日记 / 交会折叠 | 无 LLM 时 landmark 构思不可用 |
 | `ExperienceCollapser` | 交会折叠 | `NullCollapser` |
 | `MemoryIngestPort` | 体验擢升 → 记忆图 | 经 `life.io.memory.LifeExperienceMemoryIO` → `memory.io.life` |
 

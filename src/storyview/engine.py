@@ -3,17 +3,24 @@ from __future__ import annotations
 from storyview.gm.resolve import ActionResolver
 from storyview.gm.story import StoryDirector
 from storyview.gm.surprise import SurpriseLauncher
-from storyview.network import SceneNetwork
+from storyview.scene.network import SceneNetwork
 from storyview.scene import SceneComposer
+from storyview.scene.grounding import SceneGroundingService
 from storyview.store.mysql import StoryStoreBundle
 from storyview.types import (
+    AgentLocationSnapshot,
+    ArcStartPolicy,
     GMAnswer,
     GMQuestion,
+    LocationSnapshotReason,
     NarrativeBrief,
     ResolvedOutcome,
     SceneCandidate,
+    SceneGroundingPolicy,
+    SceneGroundingResult,
     SceneLocateResult,
     ScenePacket,
+    SceneUnit,
     StoryBeat,
     StoryBeatOutcome,
     StoryEventKind,
@@ -50,6 +57,15 @@ class StoryEngine:
         )
         self._surprise: dict[str, SurpriseLauncher] = {}
         self._last_outcome: dict[str, StoryBeatOutcome] = {}
+        self._grounding = SceneGroundingService(
+            stores,
+            self._scene_network,
+            llm=llm,
+        )
+
+    @property
+    def grounding(self) -> SceneGroundingService:
+        return self._grounding
 
     @property
     def worldview(self) -> StoryWorldview:
@@ -72,6 +88,11 @@ class StoryEngine:
             self._scene_network,
             self._scene,
             self._resolve,
+            llm=llm,
+        )
+        self._grounding = SceneGroundingService(
+            self._stores,
+            self._scene_network,
             llm=llm,
         )
 
@@ -100,6 +121,7 @@ class StoryEngine:
         location_id: str | None = None,
         tags: list[str] | None = None,
         scene_id: str | None = None,
+        meta: dict | None = None,
     ) -> str:
         self.ensure_world(world_id)
         return self._scene_network.upsert_scene(
@@ -109,7 +131,18 @@ class StoryEngine:
             location_id=location_id,
             tags=tags,
             scene_id=scene_id,
+            meta=meta,
         )
+
+    def ground_scene_for_cue(
+        self,
+        world_id: str,
+        cue: str,
+        *,
+        policy: SceneGroundingPolicy | None = None,
+    ) -> SceneGroundingResult:
+        self.ensure_world(world_id)
+        return self._grounding.ground_scene_for_cue(world_id, cue, policy=policy)
 
     def link_scenes(
         self,
@@ -157,6 +190,10 @@ class StoryEngine:
         self.ensure_world(world_id)
         return self._scene_network.locate_candidates(world_id, query, limit=limit)
 
+    def list_scenes(self, world_id: str) -> list[SceneUnit]:
+        self.ensure_world(world_id)
+        return self._scene_network.list_scenes(world_id)
+
     def apply_scene(
         self,
         world_id: str,
@@ -164,22 +201,20 @@ class StoryEngine:
         *,
         transition_text: str = "",
     ) -> SceneLocateResult:
-        from storyview.network.render import build_inject_text
-        from storyview.types import StatePatch
+        from storyview.scene.network.render import build_inject_text
 
         self.ensure_world(world_id)
         scene = self._scene_network.get(scene_id)
         if scene is None:
             raise ValueError(f"unknown scene: {scene_id}")
-        if scene.location_id:
-            self._stores.runtime.apply_patch(
-                world_id,
-                StatePatch(move_to_location_id=scene.location_id),
-            )
         inject = build_inject_text(scene, transition_text=transition_text)
-        snapshot = inject.strip() or scene.narrative.strip()
-        if snapshot:
-            self._stores.runtime.update_snapshot(world_id, snapshot)
+        snapshot_text = inject.strip() or scene.narrative.strip()
+        self._story._apply_scene_to_runtime(
+            world_id,
+            scene,
+            reason=LocationSnapshotReason.manual_apply,
+            scene_text=snapshot_text,
+        )
         return SceneLocateResult(
             scene=scene,
             transition_text=transition_text,
@@ -212,9 +247,34 @@ class StoryEngine:
         cue: str,
         *,
         kind: StoryEventKind | str = StoryEventKind.fabricate,
+        start_policy: ArcStartPolicy | str = ArcStartPolicy.history,
     ) -> GMQuestion:
         self.ensure_world(world_id)
-        return self._story.ask(world_id, cue, kind=kind)
+        return self._story.ask(world_id, cue, kind=kind, start_policy=start_policy)
+
+    def ask_gm_at_scene(
+        self,
+        world_id: str,
+        scene_id: str,
+        cue: str,
+        *,
+        kind: StoryEventKind | str = StoryEventKind.fabricate,
+    ) -> GMQuestion:
+        self.ensure_world(world_id)
+        return self._story.ask_at_scene(world_id, scene_id, cue, kind=kind)
+
+    def current_location_snapshot(self, world_id: str) -> AgentLocationSnapshot | None:
+        self.ensure_world(world_id)
+        return self._story.current_location_snapshot(world_id)
+
+    def list_location_snapshots(
+        self,
+        world_id: str,
+        *,
+        limit: int = 10,
+    ) -> list[AgentLocationSnapshot]:
+        self.ensure_world(world_id)
+        return self._story.list_location_snapshots(world_id, limit=limit)
 
     def answer_gm(
         self,

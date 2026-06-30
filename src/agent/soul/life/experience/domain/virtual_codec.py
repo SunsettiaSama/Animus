@@ -15,6 +15,7 @@ class VirtualUnitTrigger(str, Enum):
     """虚拟层产生 ExperienceUnit 时的触发类型。"""
 
     landmark = "landmark"
+    landmark_agenda = "landmark_agenda"
     landmark_plan = "landmark_plan"
     surprise = "surprise"
     wander = "wander"

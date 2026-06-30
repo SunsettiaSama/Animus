@@ -108,6 +108,7 @@ def build_memory_service(
         hot_seed_top_k=cfg.hot_seed_top_k,
         hot_max_hops=cfg.hot_max_hops,
         point_top_k=cfg.point_query_top_k,
+        precise_relevance_threshold=cfg.point_precise_relevance_threshold,
         associative_sigma=cfg.associative_sigma,
         hybrid_w_relevance=cfg.hybrid_w_relevance,
         hybrid_w_activation=cfg.hybrid_w_activation,

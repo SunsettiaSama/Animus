@@ -5,7 +5,7 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from storyview.gm.canon import enforce_canon, lore_context_block
-from storyview.network import SceneNetwork, render_scene_inject
+from storyview.scene.network import SceneNetwork, render_scene_inject
 from storyview.store.mysql import StoryStoreBundle
 from storyview.types import ScenePacket, StoryEventKind
 from storyview.worldview import StoryWorldview
@@ -91,7 +91,7 @@ class SceneComposer:
             scene = self._scene_network.get(scene_id)
             if scene is None:
                 raise ValueError(f"unknown scene: {scene_id}")
-            from storyview.network.render import build_inject_text
+            from storyview.scene.network.render import build_inject_text
 
             scene_inject = build_inject_text(scene, transition_text=transition_text)
             if scene.location_id:

@@ -26,6 +26,18 @@ def _parse_tags(raw: Any) -> tuple[str, ...]:
     return tuple(str(item).strip() for item in data if str(item).strip())
 
 
+def _parse_meta(raw: Any) -> dict:
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        data = json.loads(raw) if raw else {}
+    elif isinstance(raw, dict):
+        data = raw
+    else:
+        return {}
+    return dict(data) if isinstance(data, dict) else {}
+
+
 def _row_to_scene(row: dict) -> SceneUnit:
     return SceneUnit(
         id=str(row["id"]),
@@ -34,6 +46,7 @@ def _row_to_scene(row: dict) -> SceneUnit:
         narrative=str(row.get("narrative") or ""),
         location_id=str(row["location_id"]) if row.get("location_id") else None,
         tags=_parse_tags(row.get("tags_json")),
+        meta=_parse_meta(row.get("meta_json")),
     )
 
 

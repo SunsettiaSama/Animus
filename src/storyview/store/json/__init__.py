@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from infra.storage import JsonStorageService
-from storyview.types import SceneEdge, SceneUnit, StatePatch
+from storyview.types import AgentLocationSnapshot, SceneEdge, SceneUnit, StatePatch
 
 
 def _utc_str() -> str:
@@ -27,6 +27,9 @@ def _parse_json(raw: Any, default):
 
 def _row_to_scene(row: dict) -> SceneUnit:
     tags = _parse_json(row.get("tags_json"), [])
+    meta = _parse_json(row.get("meta_json"), {})
+    if not isinstance(meta, dict):
+        meta = {}
     return SceneUnit(
         id=str(row["id"]),
         world_id=str(row["world_id"]),
@@ -34,6 +37,7 @@ def _row_to_scene(row: dict) -> SceneUnit:
         narrative=str(row.get("narrative") or ""),
         location_id=str(row["location_id"]) if row.get("location_id") else None,
         tags=tuple(str(item).strip() for item in tags if str(item).strip()),
+        meta=dict(meta),
     )
 
 
@@ -432,6 +436,36 @@ class StoryRuntimeStore:
             self._lore.update_entity_state(entity_id, state)
 
 
+class StoryLocationSnapshotStore:
+    def __init__(self, storage: JsonStorageService) -> None:
+        self._rows = storage.collection("story/location_snapshots")
+
+    def append(self, snapshot: AgentLocationSnapshot) -> str:
+        row = snapshot.to_dict()
+        if not row.get("created_at"):
+            row["created_at"] = _utc_str()
+        self._rows.upsert(snapshot.snapshot_id, row)
+        return snapshot.snapshot_id
+
+    def last(self, world_id: str) -> AgentLocationSnapshot | None:
+        rows = self._rows.filter(lambda row: row.get("world_id") == world_id)
+        if not rows:
+            return None
+        rows.sort(
+            key=lambda row: (str(row.get("created_at") or ""), str(row.get("snapshot_id") or "")),
+            reverse=True,
+        )
+        return AgentLocationSnapshot.from_dict(rows[0])
+
+    def list_recent(self, world_id: str, *, limit: int = 10) -> list[AgentLocationSnapshot]:
+        rows = self._rows.filter(lambda row: row.get("world_id") == world_id)
+        rows.sort(
+            key=lambda row: (str(row.get("created_at") or ""), str(row.get("snapshot_id") or "")),
+            reverse=True,
+        )
+        return [AgentLocationSnapshot.from_dict(row) for row in rows[: int(limit)]]
+
+
 class StoryEventStore:
     def __init__(self, storage: JsonStorageService) -> None:
         self._events = storage.collection("story/events")
@@ -542,6 +576,7 @@ class StoryStoreBundle:
         self.lore = StoryLoreStore(service)
         self.scene = SceneStore(service)
         self.runtime = StoryRuntimeStore(service, self.lore)
+        self.location_snapshots = StoryLocationSnapshotStore(service)
         self.events = StoryEventStore(service)
         self.outline = StoryOutlineStore(service)
 
