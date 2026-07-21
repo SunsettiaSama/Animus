@@ -33,6 +33,8 @@ from .session.turn import SessionTurnHost
 from .pipelines import SpeakPipelineRouter, normalize_speak_pipeline
 from .pipelines.legacy_qa import LegacyQAPipelineRunner
 from .pipelines.request_driven import RequestDrivenPipelineRunner
+from .pipelines.rhythm import RhythmPipelineRunner
+from .pipelines.rhythm.state import RhythmStateStore
 from .pipelines.request_driven.orchestrator.queue import QueueDecisionRunner
 from .session.manage import SilenceBreakTurnSpec
 from .pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
@@ -192,6 +194,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._delivery_mode = "stream"
         self._director_llm = director_llm_engine or SpeakDirectorLLMEngine()
         self._state_store = StateStore()
+        self._rhythm_store = RhythmStateStore()
         self._snapshot_port: RegistrySessionSnapshotPort | None = None
         self._snapshot_builder: SnapshotBuilder | None = None
         self._director_coordinator: DirectorCoordinator | None = None
@@ -307,6 +310,25 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             before_compose_bundle=self._before_compose_bundle,
             on_turn_complete_hook=self._on_compose_turn_complete,
         )
+        self._rhythm_runner = RhythmPipelineRunner(
+            compose_bundle=self._compose_bundle,
+            llm=self._llm,
+            stream_pipeline=self._stream,
+            outbound_stream=self._outbound_stream,
+            rhythm_store=self._rhythm_store,
+            director_generate=self._rhythm_director_generate,
+            current_turn_index=self.session_registry.current_turn_index,
+            begin_turn=self._session_manager.begin_turn,
+            record_dialogue=self.record_dialogue,
+            on_turn_complete=self._on_compose_turn_complete,
+            peek_share=self._session_manager.queues.share_queue.peek_session,
+            pop_share_at=self._session_manager.queues.share_queue.pop_at,
+            typing_snapshot=self._rhythm_typing_snapshot,
+            working_memory=self.session_working_memory_block,
+            context_distill=self._rhythm_context_distill,
+            affect_every_k=2,
+            on_scene_every_k=3,
+        )
         self._pipeline_router = SpeakPipelineRouter(
             legacy_qa=LegacyQAPipelineRunner(
                 manager=self._session_manager,
@@ -316,7 +338,35 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             request_driven=RequestDrivenPipelineRunner(
                 run_request_driven_turn=self._run_request_driven_turn,
             ),
+            rhythm=self._rhythm_runner,
         )
+
+    def _rhythm_director_generate(self, system: str, user: str) -> str:
+        raw = self._director_llm_caller.generate_json(
+            system=system,
+            user=user,
+            director="rhythm",
+        ).strip()
+        if not raw:
+            raw = self._llm.generate(user, system=system).text.strip()
+        if not raw:
+            raise RuntimeError("rhythm director: empty LLM output")
+        return raw
+
+    def _rhythm_typing_snapshot(self, session_id: str) -> dict[str, object]:
+        runtime = self._session_manager.queues._runtime(session_id)
+        with runtime.lock:
+            snap = dict(runtime.snapshot_typing())
+            snap["push_phase"] = runtime.phase
+        return snap
+
+    def _rhythm_context_distill(self, session_id: str) -> str:
+        if self._context is None:
+            return ""
+        return self._context.context_distill_block(session_id)
+
+    def review_rhythm_session(self, session_id: str) -> dict[str, object]:
+        return self._rhythm_runner.review_session(session_id)
 
     def _bind_session_social(self) -> None:
         social = self._session_manager.social
@@ -1002,6 +1052,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             self._context.reset_session(session_id)
         self._orchestrator.clear_persona_compose(session_id)
         self._orchestrator.clear_guidance_control_arc(session_id)
+        self._rhythm_store.clear_session(session_id)
         if self._presence is not None:
             self._presence.apply_dialogue_session_boundary(session_id)
 

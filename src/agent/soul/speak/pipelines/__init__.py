@@ -1,3 +1,4 @@
+from .rhythm import RhythmPipelineRunner
 from .router import SpeakPipelineRouter
 from .types import (
     DEFAULT_SPEAK_PIPELINE,
@@ -8,6 +9,7 @@ from .types import (
 
 __all__ = [
     "DEFAULT_SPEAK_PIPELINE",
+    "RhythmPipelineRunner",
     "SpeakPipelineName",
     "SpeakPipelineRouter",
     "SpeakPipelineRunner",

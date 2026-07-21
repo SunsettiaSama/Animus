@@ -83,8 +83,8 @@
 
 1. 用户在 Web 控制台发来一条消息。
 2. Speak 打开或复用会话，读取当前 session 状态、近期对话、persona、presence 和 memory。
-3. Orchestrator / directors 生成这一轮的交付计划：要不要说、说什么、分几段、等待多久。
-4. Delivery executor 通过 WebSocket 把分段回复推到前端。
+3. 默认走 `legacy_qa`：compose 后由主会话 LLM 生成回复并流式推送；后台可预组装下一轮导演计划。演进轨 `request_driven` 由 directors 管节奏 / 门控（回复者闭合见 [speak README](./agent/soul/speak/README.md)）。
+4. 出站经 WebSocket 推到前端；新轨另有 `DeliveryExecutor` 按分段计划推送。
 5. 对话结果写入 Life，触发 memory / persona / presence 的后续更新。
 6. Heartbeat 在后台继续整理体验、刷新叙事，并判断未来是否需要主动出现。
 

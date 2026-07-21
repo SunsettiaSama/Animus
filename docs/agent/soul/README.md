@@ -113,8 +113,7 @@ src/agent/soul/
 ├── access.py            # 只读 action 白名单
 ├── ports.py             # LLM / Embedding / Tao 跨模块 Protocol
 ├── handlers/
-│   ├── api/             # life / memory / persona action → handler
-│   └── tao/             # BaseTaoHandler、Tao 工具与 Prompt 块
+│   └── api/             # life / memory / persona action → handler
 ├── workers/             # SoulWorkers + DomainWorker
 ├── memory/              # 记忆图 + facade + io（session/life）+ emergence / rumination / sleep
 ├── heartbeat/
@@ -132,13 +131,15 @@ src/agent/soul/
 │   ├── transition/      # wake/sleep、boundary、life_sync、interaction
 │   └── service.py       # PresenceService
 └── speak/
-    ├── compose/         # Prompt 组装（persona/presence/share/recall/context）
-    ├── io/              # inbound / outbound / stream
+    ├── pipelines/       # legacy_qa（默认）+ request_driven（导演轨）
+    ├── io/              # inbound / outbound / stream / SpeakHandler
     ├── session/         # 生命周期、打断队列、语义边界
     ├── llm/             # SpeakLLMEngine
     ├── drive.py         # SpeakDriveBridge（presence → should_speak）
     └── service.py       # SpeakService
 ```
+
+Tao 侧工具与 Prompt 块在 `agent/adapters/soul_tao/`（不在 `soul/handlers/tao/`）。Speak 详情见 [speak/README.md](./speak/README.md)。
 
 ---
 
@@ -147,8 +148,8 @@ src/agent/soul/
 ```
 用户输入
     → SpeakService.run_turn
-        → compose（persona + presence + share + context）
-        → LLM / stream outbound
+        → 默认 legacy_qa：compose → 主 LLM → stream
+        → 可选 request_driven：导演交付计划 → DeliveryExecutor（回复者闭合见 speak README）
         → record_turn → LifeExperienceStack.record_dialogue_turn
             → DialogueExperiencePipeline → Presence 直写
             → ExperienceOrchestrator.ingest → memory / chronicle

@@ -1,103 +1,166 @@
 # agent/soul/speak
 
-**对话编排子系统**：在 Soul 域内完成 Prompt 组装 → LLM 推理 → 流式出站 → 体验记账的全链路。与 `TaoLoop` 并行存在——HTTP / WebUI 对话可走 `SpeakService.run_turn`；ReAct 环仍通过 Tao 工具访问 Soul 各域。
+**对话编排子系统**：在 Soul 域内完成会话入站 → Prompt 组装 → 生成 / 交付 → 流式出站 → 体验记账。与 `TaoLoop` 并行——HTTP / WebUI 走 `SpeakService.run_turn`；ReAct 环经 Tao 工具访问 Soul 各域。
 
 源码：`src/agent/soul/speak/`。
 
 ---
 
-## 顶层导出
+## 设计目标：导演 vs 回复者
 
-```python
-from agent.soul.speak import (
-    SpeakService, SpeakHandler, SpeakTurnResult,
-    SpeakPromptComposer, SpeakPromptBundle,
-    SpeakDriveBridge, SpeakDriveResult,
-    SpeakOutboundRouter, SpeakStreamPipeline,
-    SpeakSessionRegistry, parse_agent_output,
-    SpeakAction,
-)
-```
+| 角色 | 职责 | 代码落点 |
+|---|---|---|
+| **导演（Director）** | 节奏与门控：说不说、分几段、等多久；下轮 prompt 块 refresh / include | `pipelines/request_driven/orchestrator/directors/`、`director/` |
+| **回复者（Responder）** | 用组装好的 persona / presence / guidance / scene，由**主会话 LLM**生成角色台词 | 意图：`session/turn.py` → `SpeakLLMEngine`；见下方「当前缺口」 |
+
+另有一层 **前台 / 后台** 编排：前台出本轮回复，后台预组装下一轮 `DirectorPlan` / `PreparedComposeFrame`（见 `OrchestratorTurnCoordinator`、demo `src/test/soul/speak/demo/dual_track_mvp_demo.py`）。
 
 ---
 
-## 目录结构
+## 管线双轨
+
+```text
+SpeakPipelineName = "legacy_qa" | "request_driven"
+DEFAULT_SPEAK_PIPELINE = "legacy_qa"    # 当前生产默认
+```
+
+| 管线 | 入口 | 谁写正文 | 状态 |
+|---|---|---|---|
+| **`legacy_qa`** | `LegacyQAPipelineRunner` → `run_session_turn` | 主会话 LLM | **默认、可跑**；仍会踢后台 Compose 预组装 |
+| **`request_driven`** | `RequestDrivenPipelineRunner` → `_run_request_driven_turn` | 现状由 `TurnDeliveryDirector` 写 `segments[].text` | 演进主线，**回复者未闭合** |
+
+路由：
+
+```text
+SpeakService.run_turn(..., pipeline=None)
+  → normalize_speak_pipeline
+  → UserInputItem.pipeline
+  → SpeakPipelineRouter.run → LegacyQA | RequestDriven
+```
+
+显式指定：`run_turn(..., pipeline="request_driven")` 或 handler payload `pipeline`。
+
+源码：`pipelines/types.py`、`pipelines/router.py`、`service.py`。
+
+---
+
+## 源码顶层
 
 ```
 src/agent/soul/speak/
-├── service.py              # SpeakService — 编排主入口
-├── drive.py                  # SpeakDriveBridge — presence 冲动 → should_speak
-├── ports.py                  # Speak*Port 协议
-├── compose/
-│   ├── composer.py           # SpeakPromptComposer
-│   ├── bundle.py             # SpeakPromptBundle / SpeakTurnMode
-│   ├── runner.py             # SpeakComposeRunner（后台预组装）
-│   ├── frame.py              # PreparedComposeFrame
-│   ├── reply_style.py
-│   ├── context/              # SpeakContextDistiller（多轮压缩）
-│   ├── injected/             # persona / status 注入块
-│   ├── recall/               # perform_recall_handoff
-│   ├── share/                # ShareDesireComposer（分享冲动 handoff）
-│   └── system/               # system prompt / output_format
+├── service.py                 # SpeakService — 门面、管线绑定、两轨回合
+├── drive.py                   # SpeakDriveBridge — presence → should_speak
+├── ports.py                   # Speak*Port
+├── pipelines/
+│   ├── types.py               # DEFAULT_SPEAK_PIPELINE / normalize
+│   ├── router.py              # SpeakPipelineRouter
+│   ├── legacy_qa/             # 一问一答：compose → 主 LLM → stream
+│   └── request_driven/
+│       └── orchestrator/      # 导演族、Compose、State、Delivery
+│           ├── directors/     # DirectorCoordinator + 各导演
+│           ├── director/      # ComposeDirector / decide_plan / plan store
+│           ├── blocks/        # persona / guidance / memory / scene / …
+│           ├── runtime/       # OrchestratorThread / DeliveryExecutor
+│           ├── session/       # orchestrator 侧 session port
+│           └── turn_coordinator.py
 ├── io/
-│   ├── handler.py            # SpeakHandler（Soul dispatch 入口）
-│   ├── actions.py            # SpeakAction 常量
-│   ├── inbound/              # 用户输入、compose gateway、memory gateway
-│   │   ├── ingest.py
-│   │   ├── bridge.py         # SpeakDialogueBridge
-│   │   ├── compose/          # InboundComposeGateway（presence 更新触发 prepare）
-│   │   ├── memory/           # InboundMemoryGateway / RecallRequest
-│   │   # 会话 registry 见 speak/session/，经 SpeakService.session_registry 访问
-│   └── outbound/
-│       ├── router.py         # SpeakOutboundRouter（stream / presence / text）
-│       ├── deliver.py
-│       └── stream/           # pipeline / parse / flush / protocol
-├── session/
-│   ├── service.py            # SpeakSessionManager
-│   ├── turn.py               # run_session_turn
-│   ├── chunk.py              # SpeakTurnChunk / 主观字段解析
-│   ├── lifecycle/            # registry、语义边界、idle 超时
-│   └── queue/                # user / compose 队列、打断决策
-├── llm/engine.py             # SpeakLLMEngine
-└── tools/                    # anchor / tao_delegate
+│   ├── handler.py             # SpeakHandler（Soul dispatch）
+│   ├── inbound/               # compose / memory / drive / presence / session
+│   └── outbound/              # router / stream / life
+├── session/                   # SpeakSessionManager、turn、队列、打断
+├── llm/                       # SpeakLLMEngine（主会话 + 导演调用共用载体）
+└── tools/                     # anchor / tao_delegate
 ```
+
+顶层已无独立 `compose/`；组装逻辑在 `pipelines/request_driven/orchestrator/`。
+
+---
+
+## 导演清单（`DirectorCoordinator`）
+
+入站并行第一批：`Outline` + `UserIntent` + `TurnDelivery` → `ModuleInject` → Memory/Share/Social → `SpeakGate`。
+
+| 导演 | 决策 | LLM |
+|---|---|---|
+| `OutlineDirector` | rhythm_phase / step_label / step_goal | 是（失败 fallback） |
+| `UserIntentDirector` | intent + confidence | 是 |
+| `TurnDeliveryDirector` | 分段 + wait_ms + continuity；**现状含正文 text** | 是 |
+| `SpeakGateDirector` | listen \| speak \| hold \| brew | 是 |
+| `ModuleInjectDirector` | 写 `DirectorPlan` 块 refresh（可微调） | 规则为主 |
+| `MemoryInjectDirector` | emergence / keyword / portrait 启发式 | 否（多进 cache） |
+| `ShareImpulseDirector` | share preview include | 否 |
+| `SocialArmDirector` | silence / social armed 透传 | 否 |
+| `InterruptDirector` | push 中 reorder / cancel_unsent | 否 |
+
+并存：`director/ComposeDirector` + `decide_plan`（后台预组装仍走此路径）。与 `ModuleInjectDirector` 同写 `DirectorPlanStore`，尚未统一。
+
+导演 LLM：`DirectorLLMCaller`（低时延、并发门控）；不可用时走 `fallback_director_output`。
 
 ---
 
 ## 核心流程
 
-### 被动对话（`RUN_TURN`）
+### 默认轨：`legacy_qa`
 
 ```
-SpeakHandler._run_turn
-    → SpeakService.run_turn
-        ├─ SpeakSessionManager.submit_user_input
-        │     ├─ agent 仍在 outward → 入 user_queue + InterruptContext
-        │     └─ QueueDecisionRunner（LLM 决策 maintain / drop / reorder）
-        ├─ _compose_bundle
-        │     ├─ 优先 session compose queue / async PreparedComposeFrame
-        │     └─ 否则 SpeakPromptComposer.compose（sync fallback）
-        ├─ run_session_turn
-        │     ├─ LLM generate / stream_generate
-        │     ├─ share handoff / recall handoff（二次 LLM）
-        │     └─ parse_agent_output（think / speak / state / recall / share 标签）
-        ├─ SpeakStreamPipeline
-        │     parse → flush(segment|token_batch) → SpeakStreamChannel
-        └─ record_turn → LifeExperienceStack.record_dialogue_turn
+SpeakService.run_turn
+  → normalize → legacy_qa
+  → _kick_for_upcoming_turn          # 后台：ComposeDirector / TurnCoordinator
+  → SpeakPipelineRouter
+  → LegacyQAPipelineRunner
+  → run_session_turn
+       compose_bundle → build_turn_system
+       SpeakLLMEngine.generate / stream     ← 回复者（主模型）
+       parse_agent_output → SpeakStreamPipeline
+       record → LifeExperienceStack
 ```
 
-### 主动 outbound（presence 驱动）
+### 演进轨：`request_driven`（现状）
+
+```
+SpeakService.run_turn(..., pipeline="request_driven")
+  → _kick_for_upcoming_turn
+  → OrchestratorThread.submit_user_input_sync
+       → DirectorCoordinator.on_user_input
+            TurnDelivery → pending_delivery_plan（含 text）
+            SpeakGate → speak_gate
+  → _compose_bundle                  # 组装，但当前不喂主 LLM
+  → DeliveryExecutor.execute(segments)   # 推送导演写出的 text
+  → record（若有 answer）
+```
+
+### 主动 outbound（presence）
 
 ```
 presence.discharge / expectation scan
-    → SoulService._emit_presence_speak(SpeakRequest)
-    → SpeakOutboundRouter.emit_presence
-    → SpeakService.handle_proactive / deliver_agent_message
+  → SoulService._emit_presence_speak(SpeakRequest)
+  → SpeakOutboundRouter.emit_presence
+  → SpeakService.handle_proactive / deliver_agent_message
 ```
 
 ### 内驱评估
 
-`SpeakDriveBridge` 读取 `PresenceService.snapshot()`，经 `ShareDesireComposer.evaluate_drive()` 判断 `should_speak`（分享意愿或 `impulse_level` 达阈值）。供 heartbeat、expectation scan 与外部 API 查询。
+`SpeakDriveBridge` 读 `PresenceService.snapshot()`，经 `ShareDesireComposer.evaluate_drive()` 判断 `should_speak`。
+
+---
+
+## 当前缺口（补「最后一环」前的状态）
+
+按严重度：
+
+1. **回复者未闭合**：设计上导演只管节奏 / 注入，正文应由主 LLM 生成；`request_driven` 现状把正文交给 `TurnDeliveryDirector`，compose 不进主模型。
+2. **默认不走新轨**：`DEFAULT_SPEAK_PIPELINE = "legacy_qa"`（构筑降级后的生产选择）。
+3. **delivery plan 交接**：`OrchestratorThread._maybe_notify_delivery` 会 `take_pending_delivery_plan`；`_run_request_driven_turn` 主要读 pending / sync 返回值，易出现 `no_delivery_segments` / 空 answer。
+4. **双导演未统一**：`ComposeDirector` 与 `DirectorCoordinator` / `ModuleInject` 并存；Memory/Share/Social 部分只进 `director_cache`。
+5. **降级过粗**：导演 LLM 不可用时交付常落成固定短句 fallback。
+
+目标闭合形态（意图）：
+
+```text
+导演 → DeliveryPlan（节奏：段数 / wait / gate，不含角色长文）
+Compose → 主 LLM（回复者）→ 分段正文
+DeliveryExecutor → 按 plan 推送
+```
 
 ---
 
@@ -106,7 +169,7 @@ presence.discharge / expectation scan
 | Action | 说明 |
 |---|---|
 | `open_session` / `close_session` | 会话生命周期 |
-| `run_turn` | 完整一轮 compose → LLM → stream → record |
+| `run_turn` | 完整一轮（经管线路由） |
 | `record_dialogue` | 仅记账（无 LLM） |
 | `deliver` / `generate` / `generate_stream` | 出站 / 生成变体 |
 | `drive_snapshot` / `evaluate_drive` | 内驱快照与评估 |
@@ -114,15 +177,26 @@ presence.discharge / expectation scan
 
 ---
 
-## 与 Soul 其它域的集成
+## 与 Soul 其它域
 
 | 域 | 集成点 |
 |---|---|
-| **presence** | compose 注入当下态；status listener → InboundComposeGateway 预组装；drive 读 impulse / share |
-| **persona** | compose 注入 ProfileBlock / SelfConceptBlock（经 SoulService 快照） |
-| **memory** | recall handoff → InboundMemoryGateway；压缩块 / 涌现 / 画像经 `memory.io.session` |
+| **presence** | compose / persona 块注入当下态；drive 读 impulse / share；主动 outbound |
+| **persona** | identity / self_concept / presence 块经 orchestrator blocks |
+| **memory** | recall handoff、warm buffer、emergence / portrait 注入计划 |
 | **life/experience** | `record_turn` → `LifeExperienceStack.record_dialogue_turn` |
-| **SoulService** | lazy wiring `_ensure_speak_service()`；`speak_turn()` 门面 |
+| **SoulService** | `speak_turn`（Command）/ `speak_run_turn`（Orchestration 热路径） |
+
+---
+
+## 建议阅读顺序
+
+1. `pipelines/types.py` — 默认管线  
+2. `service.py` — `run_turn` / `_run_request_driven_turn` / `_bind_pipeline_router`  
+3. `pipelines/request_driven/orchestrator/directors/coordinator.py` — 导演编排  
+4. `pipelines/request_driven/orchestrator/directors/turn_delivery.py` — 当前正文生产点  
+5. `session/turn.py` — legacy 回复者对照  
+6. `pipelines/request_driven/orchestrator/runtime/orchestrator_thread.py` — pending / delivery 交接  
 
 ---
 

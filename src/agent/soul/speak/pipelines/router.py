@@ -9,10 +9,12 @@ class SpeakPipelineRouter:
         *,
         legacy_qa: SpeakPipelineRunner,
         request_driven: SpeakPipelineRunner,
+        rhythm: SpeakPipelineRunner,
     ) -> None:
         self._runners: dict[SpeakPipelineName, SpeakPipelineRunner] = {
             "legacy_qa": legacy_qa,
             "request_driven": request_driven,
+            "rhythm": rhythm,
         }
 
     def run(self, item):
