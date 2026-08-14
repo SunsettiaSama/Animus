@@ -14,15 +14,25 @@ def _kwargs(cfg: DownloadConfig) -> dict:
     kw: dict = {}
     if cfg.token:
         kw["token"] = cfg.token
-    if cfg.endpoint:
-        kw["endpoint"] = cfg.endpoint
+    else:
+        # Public repos: force anonymous. Auto-picked HF tokens make
+        # hf-mirror 308-redirect to huggingface.co and break metadata checks.
+        kw["token"] = False
     return kw
+
+
+def _apply_endpoint(cfg: DownloadConfig) -> None:
+    # huggingface_hub reads the mirror from HF_ENDPOINT; the old
+    # snapshot_download(endpoint=...) kwarg is ignored on current versions.
+    if cfg.endpoint:
+        os.environ["HF_ENDPOINT"] = cfg.endpoint.rstrip("/")
 
 
 def download(cfg: DownloadConfig) -> str:
     assert cfg.repo_id, "repo_id must not be empty"
     assert cfg.local_dir, "local_dir must not be empty"
 
+    _apply_endpoint(cfg)
     base_kw = _kwargs(cfg)
 
     if cfg.filename:

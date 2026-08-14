@@ -1,85 +1,72 @@
 # agent/soul/heartbeat
 
-Soul 侧 **主动心跳**：周期性读取调度清单、驱动 Soul 各域演化 checklist，并与 **`runtime.scheduler.SchedulerEngine`** 通过协议对接。持久化服务组装见 **`agent/service.py`** 中的 `AgentService`。
+Soul heartbeat 是由 `SoulService` 自行启动的周期演化系统。它拥有独立线程和 checklist，不由 `runtime.scheduler.SchedulerEngine` 定时驱动。
 
----
+## 当前结构
 
-## 目录结构
-
-```
+```text
 src/agent/soul/heartbeat/
-├── module.py               # HeartbeatModule — tick()、活跃时段、Life 钩子
-├── orchestrator.py         # HeartbeatOrchestrator — checklist 到期项 → dispatch
-├── checklist/              # ChecklistRegistry / 调度项注册
-├── checker.py              # HeartbeatChecker — LLM precheck / escalate
-├── task_runner.py          # TaskRunner — TaskExecutorProtocol
-├── worker.py               # SoulEvolutionWorker — 重任务异步队列
-├── bridge.py               # memory tick → EmotionalSignal → presence
-├── evolution.py            # wander 演化步骤
-├── evolution_capture.py    # EvolutionCapture
-├── profiles.py             # make_default_scheduler_config()
-├── core_service.py         # HeartbeatCoreService — 注入窗口与邮箱
-├── inject_mailbox.py       # HeartbeatInjectMailbox
-└── tick_log.py             # HeartbeatTickLog
+├── core_service.py       HeartbeatCoreService：周期线程、注入窗口、邮箱
+├── module.py             HeartbeatModule：活跃时段、wake/sleep、tick
+├── orchestrator.py       到期 checklist 的同步执行/重任务入队
+├── checklist/            ChecklistRegistry 与默认项目
+├── worker.py             SoulEvolutionWorker
+├── bridge.py             MemoryHeartbeatResult → Presence
+├── evolution.py          wander 辅助
+├── evolution_capture.py  演化结果捕获
+├── inject_mailbox.py     下一轮会话注入邮箱
+├── tick_log.py           tick 本地日志
+├── task_runner.py        Scheduler task executor 适配
+└── config.py             SoulHeartbeatConfig
 ```
 
----
+源码中没有 `checker.py`、`HeartbeatChecker` 或读取 `HEARTBEAT.md` 的 precheck 流程。
 
-## 双轨心跳
+## 运行关系
 
-### 1. HeartbeatModule（清单 precheck）
-
-1. **`TemporalClock`** 触发 `heartbeat.tick()`。
-2. **`HeartbeatModule.tick()`**：活跃时段外 skip；读取 `HEARTBEAT.md`；可选 Life 日终钩子；调用 **`HeartbeatChecker.precheck`**。
-3. Precheck 返回 `HEARTBEAT_OK` 或 `ESCALATE` → `SubAgentRunner`。
-4. **`HeartbeatCoreService`**（可选）：独立线程将摘要写入 **`HeartbeatInjectMailbox`**。
-
-### 2. HeartbeatOrchestrator（Soul 演化 checklist）
-
-`SoulService.bind_heartbeat()` 后可用：
-
-```
-HeartbeatOrchestrator.run_due()
-    → 扫描 ChecklistRegistry 到期项
-    → 轻量项：soul.dispatch(SoulRequest) 同步执行
-    → 重项：SoulEvolutionWorker 异步（wander / forget_scan / plan_landmark / run_monthly_drift）
+```text
+SoulService.start()
+  ├── HeartbeatModule.start_evolution_worker()
+  └── HeartbeatCoreService.start()
+        └── daemon thread（poll_interval_sec）
+              ├── 刷新延迟注入
+              ├── 可选 preflight_instruction
+              └── HeartbeatModule.tick()
+                    ├── active hours 外：Presence sleep，tick skip
+                    ├── active hours 内：Presence wake
+                    └── HeartbeatOrchestrator.run_due()
 ```
 
-重项判定见 `orchestrator._HEAVY_ITEM_KEYS`。
+`HeartbeatCoreService` 把非空 `HeartbeatTickResult.detail_for_inject` 放入 `HeartbeatInjectMailbox`。`inject_window_mode=user` 直接按窗口投递；`agent` 模式会用辅助 LLM 判定 `INJECT/DEFER`。
 
-典型 checklist 动作：memory wander、life landmark、persona drift、presence expectation scan、life surprise tick 等。
+当前 checklist tick 通常只填写 outcome/reason，未必产生 `detail_for_inject`；因此“心跳一定向下一轮对话注入摘要”不是可保证能力。
 
-### memory → presence 桥
+## checklist 与重任务
 
-`bridge.py`：`MemoryHeartbeatResult` → `EmotionalSignal` → `PresenceService.receive_heartbeat_signal`。
+轻量项目直接调用 `SoulService`，重项目进入 `SoulEvolutionWorker`。当前重任务键包括：
 
----
+- Memory：wander、forget scan、sleep
+- Life：plan landmark
+- Persona：monthly drift
 
-## 配置入口
+其它项目包括 landmark trigger、surprise、Presence expectation/external scan、wake/sleep 等。Memory wander 的情绪信号会经 `heartbeat/bridge.py` 写入 Presence。
 
-- **`HeartbeatConfig`**：`runtime/scheduler/heartbeat_config.py`，嵌套在 **`SchedulerConfig.heartbeat`**。
-- **`SoulConfig`**：`config/soul/config.py` — checklist 间隔、presence wake 等 Soul 域参数。
+## 与 Scheduler 的边界
 
----
+Heartbeat 主循环、活跃时段和 checklist 均不要求 Scheduler。
 
-## 与调度运行时关系
+仍存在两处可选关联：
 
-| 组件 | 包路径 | 职责 |
-|---|---|---|
-| `SchedulerEngine` | `runtime.scheduler.engine` | 门面：TaskStore + TemporalClock |
-| `TaskRunner` | `agent.soul.heartbeat.task_runner` | 执行到点任务 |
-| `HeartbeatModule` | `agent.soul.heartbeat.module` | 清单 precheck / escalate |
-| `HeartbeatOrchestrator` | `agent.soul.heartbeat.orchestrator` | Soul 域 checklist 编排 |
-| `AgentService` | `agent.service` | start() 时创建 Engine 并回注依赖 |
+1. `HeartbeatOrchestrator._format_recent_tasks()` 在已注入 scheduler engine 时读取最近完成任务，供 Life scheduler digest 使用。
+2. 配置了 `preflight_instruction` 时，`HeartbeatCoreService` 会要求 scheduler engine，并通过 `SubAgentRunner` 执行一次 preflight。
 
-引擎层 **不 import agent**；心跳与执行器通过 **`HeartbeatProtocol`** / **`TaskExecutorProtocol`** 注入。
+第二项是显式配置才启用的附加能力；没有 scheduler engine 时会跳过，不影响 heartbeat tick。它不是 `HEARTBEAT.md` checker，也不是每个 checklist 项之前的 precheck。
 
----
+`task_runner.py` 是运行时 Scheduler 的执行器适配，不代表 Scheduler 驱动 Soul heartbeat。
 
-## 相关文档
+## 生命周期与接入状态
 
-- [runtime 调度器](../../../runtime/README.md)
-- [agent/service](../../service/README.md)
-- [life/README.md](../life/README.md)（landmark / wander 钩子）
-- [presence/README.md](../presence/README.md)（wake / emotional signal）
-- [agent/soul/README.md](../README.md)（SoulService.bind_heartbeat）
+- `SoulService.start()` 总会确保 `HeartbeatModule`、evolution worker 与 core thread 启动。
+- `SoulService.stop()` 停止 core thread和 evolution worker。
+- `bind_scheduler_engine()` 可选；未绑定时 heartbeat 仍运行。
+- 邮箱只有被会话层消费时才会进入 prompt；仅启动 core service 不等于用户可见。

@@ -1,53 +1,76 @@
 # runtime / scheduler
 
-**运行时调度层**：任务持久化、独立时钟线程、以及与 Agent 层解耦的 **`HeartbeatProtocol`** / **`TaskExecutorProtocol`**。实现位于 **`src/runtime/scheduler/`**，不含对 `agent.*` 的硬依赖（具体执行器与心跳由 Soul 侧注入）。
+`src/runtime/scheduler/` 是与 Agent 实现解耦的任务调度层：持久化任务、轮询到期任务，并通过注入的 `TaskExecutorProtocol` 执行。生产 WebUI 中的宿主是 `AgentService`。
 
----
+## 主要模块
 
-## 目录结构
-
-```
+```text
 src/runtime/scheduler/
-├── engine.py           # SchedulerEngine — 门面 API（schedule_once / cron / cancel / list_timeline）
-├── clock.py            # TemporalClock — daemon 线程驱动触发
-├── store.py            # TaskStore — JSON 持久化任务状态
-├── task.py             # ScheduledTask、Trigger、TaskStatus、DeliveryMode
-├── config.py           # SchedulerConfig（含 heartbeat: HeartbeatConfig）
-├── heartbeat_config.py # HeartbeatConfig
-├── heartbeat_iface.py  # HeartbeatProtocol（TemporalClock 仅依赖此协议）
-├── executor.py         # TaskExecutorProtocol
-├── timeline.py / timeline_service.py
-├── event_bus.py / journal.py / shadow.py / command.py
-└── ...
+├── engine.py            SchedulerEngine 门面
+├── clock.py             TemporalClock 独立 daemon 线程与 asyncio loop
+├── store.py             TaskStore（tasks.json）
+├── task.py              ScheduledTask / Trigger / TaskStatus / DeliveryMode
+├── config.py            SchedulerConfig
+├── executor.py          TaskExecutorProtocol
+├── heartbeat_iface.py   可选的旧 heartbeat 协议
+├── heartbeat_config.py  旧 clock heartbeat hook 的配置
+├── timeline.py          按日 JSONL 的 TimelineStore
+├── timeline_service.py  TimelineService 门面
+├── journal.py           写入 history 的 WorkJournal
+└── event*.py / shadow.py / command.py
 ```
 
----
+## SchedulerEngine 与 TemporalClock
 
-## SchedulerEngine
+构造签名为：
 
-- 构造：`SchedulerEngine(cfg, executor, heartbeat=None, timeline=None, notify_fn=None, …)`。
-- **`executor`**：`agent.soul.heartbeat.task_runner.TaskRunner`（或其它实现协议的类型）。
-- **`heartbeat`**：`agent.soul.heartbeat.module.HeartbeatModule`（实现 `HeartbeatProtocol`）。
-- **`start()` / `stop()`**：启动或停止内部 **`TemporalClock`** 线程（与 uvicorn asyncio 隔离）。
+```python
+SchedulerEngine(cfg, executor, heartbeat=None, timeline=None,
+                notify_fn=None, journal=None, channel_router=None)
+```
 
----
+当前 `AgentService.start()` 始终使用 `heartbeat=None`。因此 `TemporalClock` 只负责：
 
-## SchedulerConfig
+1. 启动时把遗留的 `running` 任务恢复为 `pending`；
+2. 按 `poll_interval` 查找到期任务，并在 `max_concurrent` 限制内调用 `executor.run()`；
+3. 每日清理超过 `task_retention_days` 的终态任务。
 
-- **`scheduler_dir`**：默认 `.react/scheduler/`（任务库、结果、`HEARTBEAT.md` 等路径锚点）。
-- **`heartbeat`**：`HeartbeatConfig`（清单路径、活跃时段、核心心跳线程开关等）。
-- **`profiles`**：任务使用的 `SubAgentProfile` 名称映射；默认值由 **`agent.soul.heartbeat.profiles.make_default_scheduler_config()`** 注入。
+`TemporalClock` 仍保留可选 `HeartbeatProtocol` 分支，但这是旧扩展点，不是当前 Soul 心跳链。Soul 的 `HeartbeatModule` 由 `SoulService` 持有，`HeartbeatCoreService` 独立驱动。
 
----
+## 调度 API
 
-## TaoLoop 集成
+`SchedulerEngine` 当前提供：
 
-当 **`TaoConfig.scheduler`** 非空且未注入全局 engine 时，`TaoLoop` 可就地构造 **`SchedulerEngine`** 并注册 `scheduler_add` / `scheduler_list` / `scheduler_cancel` 等工具（见 `agent/react/action/tools/impl/`）。
+- `schedule_once()`、`schedule_interval()`、`schedule_cron()`
+- `cancel()`、`pause()`、`resume()`、`get()`、`list_timeline()`
+- `pause_clock()`、`resume_clock()`
+- `schedule_daily_planner()`、`schedule_daily_review()`
 
----
+`list_timeline()` 返回的是 `TaskStore` 中的任务列表；事件时间线由独立的 `TimelineService.read()` / `append()` 管理。
+
+## 配置与持久化
+
+`SchedulerConfig.scheduler_dir` 默认是 `.react/scheduler`，其中 `TaskStore` 创建 `tasks.json` 和 `results/`。`profiles` 默认空，由 Agent 层的 `make_default_scheduler_config()` 注入 `SubAgentProfile`。
+
+`SchedulerConfig.heartbeat` 只配置上述可选旧 hook；它不代表 Soul 心跳已接入 scheduler。
+
+## AppState 启动装配
+
+WebUI 的装配入口在 `src/webui/state.py` 和 `src/webui/app.py`：
+
+1. `get_state()` 首次调用创建 `AppState`。
+2. `AppState.__post_init__()` 解析项目路径，并装配 `BackgroundTaskRunner`、`LLMService`、三个本地推理 manager、sandbox、service registry、工具与 bot 服务。
+3. WebUI startup 把后续工作提交到后台：加载 LLM 配置并启动 `LLMService`。
+4. `do_soul_init()` 创建并启动作为主运行时的 `SoulService`；Speak 与 Soul heartbeat 在此链中就绪。
+5. 装配 Worker state。
+6. 最后创建并启动 `AgentService`，再把 `agent_service.engine` 保存到 `state.scheduler_engine`。
+
+因此 scheduler 是 Soul/Speak 启动后的宿主服务，不是 WebUI 对话的初始化入口。shutdown 优先停止 `AgentService`；它会连同 Soul 和 scheduler clock 一起停止。
+
+旧 `TaoLoop` 在注入全局 engine 时注册 `scheduler_add`、`scheduler_list`、`scheduler_cancel`；未注入且配置了 scheduler 时仍可创建 loop 私有 engine。WebUI factory 优先使用 `AppState.scheduler_engine`。
 
 ## 相关文档
 
 - [agent/soul/heartbeat/README.md](../agent/soul/heartbeat/README.md)
 - [agent/service/README.md](../agent/service/README.md)
-- [storage/README.md](../storage/README.md) — `.react/scheduler/` 布局
+- [storage/README.md](../storage/README.md)

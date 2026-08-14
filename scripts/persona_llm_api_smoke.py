@@ -60,25 +60,25 @@ def _bootstrap() -> None:
         ("agent.soul.persona.distill", SRC / "agent" / "soul" / "persona" / "distill"),
         ("agent.soul.speak", SRC / "agent" / "soul" / "speak"),
         ("agent.soul.speak.llm", SRC / "agent" / "soul" / "speak" / "llm"),
-        ("agent.soul.speak.pipelines.request_driven.orchestrator", SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator"),
+        ("agent.soul.speak.responders.request_driven.orchestrator", SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator"),
         (
-            "agent.soul.speak.pipelines.request_driven.orchestrator.persona",
+            "agent.soul.speak.responders.request_driven.orchestrator.persona",
             SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "persona",
         ),
         (
-            "agent.soul.speak.pipelines.request_driven.orchestrator.persona.compose",
+            "agent.soul.speak.responders.request_driven.orchestrator.persona.compose",
             SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "persona" / "compose",
         ),
         (
-            "agent.soul.speak.pipelines.request_driven.orchestrator.persona.identity",
+            "agent.soul.speak.responders.request_driven.orchestrator.persona.identity",
             SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "persona" / "identity",
         ),
         (
-            "agent.soul.speak.pipelines.request_driven.orchestrator.persona.narrative",
+            "agent.soul.speak.responders.request_driven.orchestrator.persona.narrative",
             SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "persona" / "narrative",
         ),
         (
-            "agent.soul.speak.pipelines.request_driven.orchestrator.persona.presence",
+            "agent.soul.speak.responders.request_driven.orchestrator.persona.presence",
             SRC / "agent" / "soul" / "speak" / "pipelines" / "request_driven" / "orchestrator" / "persona" / "presence",
         ),
         (
@@ -96,48 +96,48 @@ def _bootstrap() -> None:
     _load_module("agent/soul/speak/llm/engine.py", "agent.soul.speak.llm.engine")
     _load_module("agent/soul/voice_rules.py", "agent.soul.voice_rules")
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/limits.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.limits",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/limits.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.limits",
     )
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/prompt_rules.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.prompt_rules",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/prompt_rules.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.prompt_rules",
     )
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/compose/state.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.compose.state",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/compose/state.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.compose.state",
     )
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/compose/records.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.compose.records",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/compose/records.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.compose.records",
     )
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/compose/input.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.compose.input",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/compose/input.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.compose.input",
     )
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/compose/refine.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.compose.refine",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/compose/refine.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.compose.refine",
     )
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/compose/store.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.compose.store",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/compose/store.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.compose.store",
     )
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/identity/collect.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.identity.collect",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/identity/collect.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.identity.collect",
     )
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/presence/collect.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.presence.collect",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/presence/collect.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.presence.collect",
     )
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/narrative/distill.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.narrative.distill",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/narrative/distill.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.narrative.distill",
     )
     _load_module(
-        "agent/soul/speak/pipelines/request_driven/orchestrator/persona/compose/service.py",
-        "agent.soul.speak.pipelines.request_driven.orchestrator.persona.compose.service",
+        "agent/soul/speak/responders/request_driven/orchestrator/persona/compose/service.py",
+        "agent.soul.speak.responders.request_driven.orchestrator.persona.compose.service",
     )
 
 
@@ -175,8 +175,8 @@ def main() -> None:
     from agent.soul.persona.profile.profile import PersonaProfile
     from agent.soul.persona.self_concept.concept import SelfConcept
     from agent.soul.speak.llm.engine import SpeakLLMEngine
-    from agent.soul.speak.pipelines.request_driven.orchestrator.persona.compose.service import PersonaComposeService
-    from agent.soul.speak.pipelines.request_driven.orchestrator.persona.narrative.distill import distill_self_narrative
+    from agent.soul.speak.responders.request_driven.orchestrator.persona.compose.service import PersonaComposeService
+    from agent.soul.speak.responders.request_driven.orchestrator.persona.narrative.distill import distill_self_narrative
     from infra.llm import LLM
 
     cfg = _load_llm_config()

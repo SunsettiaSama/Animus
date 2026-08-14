@@ -39,13 +39,28 @@ class WebUIBridge:
         return mgr.get(WEBUI_SESSION_ID) if mgr is not None else None
 
     def get_status(self) -> dict:
+        deprecated = {
+            "deprecated": True,
+            "warning": (
+                "Legacy ReAct/ConvLoop status. WebUI primary runtime is Soul/Speak "
+                "(/api/speak/status, /ws/speak/run)."
+            ),
+        }
         if self._state.react_init_error:
-            return {"status": "error", "detail": self._state.react_init_error}
+            return {
+                "status": "error",
+                "detail": self._state.react_init_error,
+                **deprecated,
+            }
         if not self.is_ready():
             if not self._state.react_init_event.is_set():
-                return {"status": "initializing"}
-            return {"status": "not_initialized"}
-        return {"status": "ready", "is_streaming": self._state.is_streaming}
+                return {"status": "initializing", **deprecated}
+            return {"status": "not_initialized", **deprecated}
+        return {
+            "status": "ready",
+            "is_streaming": self._state.is_streaming,
+            **deprecated,
+        }
 
     # ── Streaming ─────────────────────────────────────────────────────────────
 

@@ -111,7 +111,10 @@ class SemanticVectorIndex:
             self._infra.remove_unit(node_id)
 
     def embed_query(self, text: str) -> list[float]:
+        """查询向量；模型未预热完成时返回空，避免在主路径上触发加载。"""
         if self._infra is None or self._infra.embedding is None:
+            return []
+        if not self._infra.embedding.is_ready():
             return []
         return self._infra.embedding.embed_query(text)
 

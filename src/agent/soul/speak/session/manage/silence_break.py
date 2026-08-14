@@ -134,7 +134,9 @@ class SilenceBreakManager:
     _handler: SilenceBreakHandler | None = None
     _rng: Callable[[], float] = field(default_factory=lambda: random.random)
     _now_fn: Callable[[], datetime] = field(default_factory=lambda: _utcnow)
-    _worker: DomainWorker = field(default_factory=lambda: DomainWorker("speak-silence-break-worker"))
+    _worker: DomainWorker = field(
+        default_factory=lambda: DomainWorker("speak-silence-break-worker", owner="speak"),
+    )
     _llm: SpeakLLMEngine | None = None
 
     def clear_session(self, session_id: str) -> None:
@@ -154,6 +156,8 @@ class SilenceBreakManager:
         self._worker.start()
 
     def stop_worker(self) -> None:
+        for sid in list(self._states):
+            self.clear_session(sid)
         self._worker.stop()
 
     def pop_armed_turn(self, session_id: str) -> SilenceBreakTurnSpec | None:

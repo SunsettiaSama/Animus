@@ -54,7 +54,7 @@ def _fail(label: str, detail: str = "") -> None:
     print(f"  {_red('[!!]')}  {label}" + (f"  {detail}" if detail else ""))
 
 def _section(title: str) -> None:
-    print(f"\n{_bold(_cyan(f'── {title}'))}")
+    print(f"\n{_bold(_cyan(f'-- {title}'))}")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -76,38 +76,38 @@ def ensure_searxng(skip: bool) -> None:
     _section("SearXNG")
 
     if skip:
-        _warn("SearXNG", "已跳过（--no-searxng）")
+        _warn("SearXNG", "skipped (--no-searxng)")
         return
 
     mgr = _make_searxng_manager()
 
     if not mgr._docker_available():
-        _warn("Docker", "daemon 不可用或未安装")
-        _warn("SearXNG", "将由 SearchEngine 自动降级到 Tavily / DDG")
+        _warn("Docker", "daemon is unavailable or not installed")
+        _warn("SearXNG", "SearchEngine will fall back to Tavily / DDG")
         return
 
     raw = mgr._container_status()
 
     if raw.startswith("Up"):
-        _ok("SearXNG 容器", f"already running  →  {mgr.url}")
+        _ok("SearXNG container", f"already running -> {mgr.url}")
         return
 
     if raw:
-        _warn("SearXNG 容器", f"状态: {raw}  →  正在重新启动…")
+        _warn("SearXNG container", f"status: {raw} -> restarting")
     else:
-        _warn("SearXNG 容器", "首次创建容器，正在拉取镜像（可能需要数分钟）…")
+        _warn("SearXNG container", "creating container; pulling image may take several minutes")
         if paths.searxng_settings_yml.exists():
-            _ok("SearXNG 配置", f"挂载 {paths.searxng_settings_yml.name}")
+            _ok("SearXNG config", f"mounting {paths.searxng_settings_yml.name}")
         else:
-            _warn("SearXNG 配置", "settings.yml 不存在，使用镜像默认配置")
+            _warn("SearXNG config", "settings.yml not found; using image defaults")
 
     mgr.start()
 
-    _warn("SearXNG 容器", "等待服务就绪…")
+    _warn("SearXNG container", "waiting for service readiness")
     if mgr.wait_until_up():
-        _ok("SearXNG 容器", f"running  →  {mgr.url}")
+        _ok("SearXNG container", f"running -> {mgr.url}")
     else:
-        _fail("SearXNG 容器", "超时：容器未能进入 Up 状态，请查看 docker logs react-searxng")
+        _fail("SearXNG container", "timeout: container did not reach Up state; check docker logs react-searxng")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -115,26 +115,26 @@ def ensure_searxng(skip: bool) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def check_search() -> str:
-    _section("搜索后端")
+    _section("Search backend")
     from infra.network.search.engine import SearchEngine
     engine = SearchEngine()
     name = engine.active_backend_name
-    _ok("搜索后端", f"active = {name!r}")
+    _ok("Search backend", f"active = {name!r}")
     return name
 
 
 def check_llm(config_path: Path):
-    _section("LLM 配置")
+    _section("LLM config")
     from config.llm_core.config import LLMConfig
     if not config_path.exists():
-        _warn("LLM 配置文件", f"不存在: {config_path}")
-        _warn("提示", "WebUI 启动后可在界面手动配置模型")
+        _warn("LLM config file", f"not found: {config_path}")
+        _warn("Hint", "configure the model manually in WebUI after startup")
         return None
     cfg = LLMConfig.from_yaml(str(config_path))
     if not cfg.model:
-        _warn("LLM 配置", "model 字段为空，WebUI 启动后需手动配置")
+        _warn("LLM config", "model is empty; configure it manually in WebUI after startup")
         return cfg
-    _ok("LLM 配置", f"model={cfg.model!r}  base_url={cfg.base_url or '(默认)'}")
+    _ok("LLM config", f"model={cfg.model!r}  base_url={cfg.base_url or '(default)'}")
     return cfg
 
 
@@ -143,7 +143,7 @@ def check_llm(config_path: Path):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _build_tao(llm_cfg) -> object:
-    _section("TaoLoop 初始化")
+    _section("TaoLoop init")
     from config.storage import StorageConfig
     from config.agent.memory.memory_config import MemoryConfig
     from config.agent.tao_config import TaoConfig
@@ -170,7 +170,7 @@ def _build_tao(llm_cfg) -> object:
     tool_descs = manager.primary_descriptions()
     cat_summary = manager.category_summary()
     tao        = TaoLoop(llm=llm, executor=executor, tool_descriptions=tool_descs, cfg=cfg, tool_category_summary=cat_summary)
-    _ok("TaoLoop", f"工具 {len(tool_descs)} 个  max_steps={cfg.max_steps}")
+    _ok("TaoLoop", f"tools={len(tool_descs)}  max_steps={cfg.max_steps}")
     return tao
 
 
@@ -179,34 +179,34 @@ def _build_tao(llm_cfg) -> object:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def run_check(llm_config: Path, no_searxng: bool) -> None:
-    print(_bold("\n=== ReAct 服务检查 ==="))
+    print(_bold("\n=== ReAct Service Check ==="))
     ensure_searxng(no_searxng)
     check_search()
     check_llm(llm_config)
-    print(f"\n{_green('检查完成。')}\n")
+    print(f"\n{_green('Check complete.')}\n")
 
 
 def run_cli(llm_config: Path, no_searxng: bool) -> None:
-    print(_bold("\n=== ReAct CLI 模式 ==="))
+    print(_bold("\n=== ReAct CLI Mode ==="))
     ensure_searxng(no_searxng)
     check_search()
     cfg = check_llm(llm_config)
 
     if cfg is None or not cfg.model:
         raise RuntimeError(
-            "CLI 模式需要有效的 LLM 配置（model 字段非空）。\n"
-            f"请检查: {llm_config}"
+            "CLI mode requires a valid LLM config with a non-empty model.\n"
+            f"Check: {llm_config}"
         )
 
     tao = _build_tao(cfg)
-    print(f"\n{_bold('开始对话')}  输入 exit 退出\n")
+    print(f"\n{_bold('Chat started')}  type exit to quit\n")
 
     while True:
         question = input(_cyan("> ")).strip()
         if not question:
             continue
         if question.lower() in ("exit", "quit", "q"):
-            print("再见。")
+            print("Goodbye.")
             break
         answer = tao.run(question)
         print(f"\n{answer}\n")
@@ -222,19 +222,36 @@ def run_webui(host: str, port: int, llm_config: Path, no_searxng: bool) -> None:
         datefmt="%H:%M:%S",
     )
 
-    print(_bold("\n=== ReAct WebUI 模式 ==="))
+    print(_bold("\n=== ReAct WebUI Mode ==="))
     ensure_searxng(no_searxng)
     check_search()
     check_llm(llm_config)
-    print(f"\n{_bold('启动 WebUI')}  →  http://{host}:{port}\n")
-    _dist = SRC / "webui" / "static" / "dist" / "index.html"
-    if not _dist.is_file():
+    print(f"\n{_bold('Starting WebUI')} -> http://{host}:{port}\n")
+    _index = SRC / "webui" / "index.html"
+    _static = SRC / "webui" / "static"
+    if not _index.is_file():
         _warn(
-            "前端未构建",
-            f"未找到 {_dist.relative_to(ROOT)} — 请先执行: cd src/webui/frontend && npm ci && npm run build",
+            "WebUI entry missing",
+            f"not found: {_index.relative_to(ROOT)}",
         )
+    if not _static.is_dir():
+        _warn("WebUI static assets missing", f"not found: {_static.relative_to(ROOT)}")
 
-    uvicorn.run("webui.app:app", host=host, port=port, reload=False, timeout_graceful_shutdown=30)
+    # Import the current WebUI app object in-process so CLI args can configure
+    # the same AppState singleton used by app startup and routers.
+    from webui import app as webui_app_module
+    from state import get_state
+
+    state = get_state()
+    state.llm_config_yaml = str(llm_config)
+
+    uvicorn.run(
+        webui_app_module.app,
+        host=host,
+        port=port,
+        reload=False,
+        timeout_graceful_shutdown=30,
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -244,37 +261,37 @@ def run_webui(host: str, port: int, llm_config: Path, no_searxng: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="run.py",
-        description="ReAct Agent 统一启动入口",
+        description="ReAct Agent unified launcher",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "示例：\n"
-            "  python src/run.py                      # 启动 WebUI（自动管理 SearXNG）\n"
-            "  python src/run.py --mode cli           # 交互式 CLI\n"
-            "  python src/run.py --check              # 仅检查服务状态\n"
-            "  python src/run.py --no-searxng         # 跳过 Docker/SearXNG\n"
+            "Examples:\n"
+            "  python src/run.py                      # start WebUI and manage SearXNG\n"
+            "  python src/run.py --mode cli           # interactive CLI\n"
+            "  python src/run.py --check              # check service status only\n"
+            "  python src/run.py --no-searxng         # skip Docker/SearXNG\n"
             "  python src/run.py --mode webui --host 0.0.0.0 --port 8300\n"
         ),
     )
     parser.add_argument(
         "--mode", choices=["webui", "cli"], default="webui",
-        help="启动模式（默认 webui）",
+        help="startup mode (default: webui)",
     )
     parser.add_argument("--host", default=_run_cfg.webui.host,
-                        help="WebUI 监听地址（默认 127.0.0.1）")
+                        help="WebUI listen address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=_run_cfg.webui.port,
-                        help="WebUI 监听端口（默认 8300）")
+                        help="WebUI listen port (default: 8300)")
     parser.add_argument(
         "--llm-config", type=Path, default=_DEFAULT_LLM_CONFIG,
         dest="llm_config", metavar="PATH",
-        help="LLM 配置文件路径（默认 config/llm_core/config.yaml）",
+        help="LLM config path (default: config/llm_core/config.yaml)",
     )
     parser.add_argument(
         "--no-searxng", action="store_true", dest="no_searxng",
-        help="跳过 SearXNG Docker 容器管理（手动管理或使用其他后端）",
+        help="skip SearXNG Docker container management",
     )
     parser.add_argument(
         "--check", action="store_true",
-        help="仅检查配置与服务状态，不启动任何进程",
+        help="check config and service status without starting processes",
     )
     args = parser.parse_args()
 

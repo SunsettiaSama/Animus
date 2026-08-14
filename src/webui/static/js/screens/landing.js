@@ -1,23 +1,13 @@
 /**
  * screens/landing.js — Workstation / Landing screen logic.
  *
- * Responsibilities:
- *   - Refresh all module workstation cards.
- *   - Render the "recent conversations" list.
- *   - Wire quick-start card click handlers.
+ * Single conversation entry; Plan/Benchmark/Scheduler are tool views only.
  */
 
-import { http, PATHS }         from '../api.js';
-import { bus }                 from '../eventBus.js';
-import { goWorkspace, goPlan,
-         goBenchmark, goScheduler } from '../router.js';
+import { goPlan, goBenchmark, goScheduler } from '../router.js';
 
-let _modules = null;   // injected by app.js to avoid circular deps
+let _modules = null;
 
-/**
- * Provide module references needed for workstation card updates.
- * Called from app.js during boot.
- */
 export function registerModules(mods) {
   _modules = mods;
 }
@@ -43,22 +33,26 @@ export async function loadWorkstation() {
   ]);
 }
 
-/** Wire landing-screen quick-start cards and the refresh button. */
-export function bindLanding({ onStartReact }) {
-  document.querySelector('[data-action="start-react"]')?.addEventListener('click', onStartReact);
-  document.querySelector('[data-action="start-plan"]')?.addEventListener('click', () => {
+/** Wire landing-screen quick-start: one conversation CTA + tool links. */
+export function bindLanding({ onStartReact, onStartConversation }) {
+  const start = onStartConversation || onStartReact;
+  document.querySelector('[data-action="start-conversation"]')?.addEventListener('click', start);
+  // Legacy attribute kept briefly for any cached HTML; still maps to conversation.
+  document.querySelector('[data-action="start-react"]')?.addEventListener('click', start);
+
+  document.querySelector('[data-action="open-plan"]')?.addEventListener('click', () => {
     goPlan();
     import('/static/js/modules/plan.js').then(m => m.init());
   });
-  document.querySelector('[data-action="start-benchmark"]')?.addEventListener('click', () => {
+  document.querySelector('[data-action="open-benchmark"]')?.addEventListener('click', () => {
     goBenchmark();
-    import('/static/js/screens/benchmark.js').then(m => m.init()).catch(() =>
-      import('/static/js/modules/benchmark.js').then(m => m.init()));
+    import('/static/js/modules/benchmark.js').then(m => m.init());
   });
-  document.querySelector('[data-action="start-scheduler"]')?.addEventListener('click', () => {
+  document.querySelector('[data-action="open-scheduler"]')?.addEventListener('click', () => {
     goScheduler();
     import('/static/js/modules/scheduler.js').then(m => m.init());
   });
+
   document.getElementById('btn-refresh-ws')?.addEventListener('click', () => {
     loadWorkstation();
     import('../history.js').then(m => {

@@ -12,8 +12,8 @@ from agent.soul.persona.render_voice import (
     render_main_profile_from_snap,
     render_self_concept_from_snap,
 )
-from agent.soul.speak.pipelines.request_driven.orchestrator.system import build_system_layer
-from agent.soul.speak.pipelines.request_driven.orchestrator.system.output_format import SpeakOutputFormat
+from agent.soul.speak.responders.request_driven.orchestrator.system import build_system_layer
+from agent.soul.speak.responders.request_driven.orchestrator.system.output_format import SpeakOutputFormat
 from agent.soul.speak.io.outbound.stream import parse_agent_output
 from agent.soul.speak.llm.engine import SpeakLLMEngine
 from test.soul.persona._api_llm import api_llm_from_env

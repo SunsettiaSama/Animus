@@ -87,7 +87,7 @@ class HeartbeatCoreService:
         self._thread.start()
         hb_info(
             logger,
-            "[HeartbeatCore] started — poll=%ds mode=%s",
+            "[HeartbeatCore] started - poll=%ds mode=%s",
             self._cfg.poll_interval_sec,
             self._cfg.inject_window_mode,
         )
@@ -119,7 +119,7 @@ class HeartbeatCoreService:
         if not window_ok:
             with self._deferred_lock:
                 self._deferred = text
-            hb_debug(logger, "[HeartbeatCore] inject deferred — outside user inject window")
+            hb_debug(logger, "[HeartbeatCore] inject deferred - outside user inject window")
             return
         mode = (self._cfg.inject_window_mode or "user").strip().lower()
         if mode == "agent":
@@ -130,7 +130,7 @@ class HeartbeatCoreService:
             else:
                 with self._deferred_lock:
                     self._deferred = text
-                hb_debug(logger, "[HeartbeatCore] inject deferred — agent chose DEFER")
+                hb_debug(logger, "[HeartbeatCore] inject deferred - agent chose DEFER")
             return
         self._mailbox.offer(text)
         with self._deferred_lock:
@@ -167,11 +167,11 @@ class HeartbeatCoreService:
             return
         soul = self._heartbeat._soul
         if soul is None:
-            hb_warning(logger, "[HeartbeatCore] preflight skipped — soul not wired")
+            hb_warning(logger, "[HeartbeatCore] preflight skipped - soul not wired")
             return
         engine = soul.scheduler_engine
         if engine is None:
-            hb_warning(logger, "[HeartbeatCore] preflight skipped — scheduler_engine not wired")
+            hb_warning(logger, "[HeartbeatCore] preflight skipped - scheduler_engine not wired")
             return
         from agent.profile import SubAgentProfile
         from agent.runner import SubAgentRunner

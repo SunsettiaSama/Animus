@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from agent.soul.presence.share_desire import ShareDesire
-from agent.soul.speak.pipelines.request_driven.orchestrator.share import ShareDesireComposer
+from agent.soul.speak.responders.request_driven.orchestrator.share import ShareDesireComposer
 from agent.soul.speak.llm.engine import SpeakLLMEngine
 from agent.soul.speak.io.outbound.stream import parse_agent_output
 from agent.soul.speak.io.outbound.stream.flush import split_sentences
@@ -99,7 +99,7 @@ def test_speak_service_run_turn_records_dialogue():
     snap.interaction.impulse_level = 0.0
     presence.snapshot.return_value = snap
 
-    from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakOrchestrator
+    from agent.soul.speak.responders.request_driven.orchestrator import SpeakOrchestrator
     from agent.soul.speak.service import SpeakService
 
     life_out = RecordingSpeakLifeOutbound()

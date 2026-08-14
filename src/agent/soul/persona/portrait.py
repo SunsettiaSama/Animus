@@ -7,8 +7,8 @@ import sys
 
 logger = logging.getLogger(__name__)
 
-# 子画像（persona_distill.slices）面向「扮演该角色的 LLM 服务」注入，按下游分片。
-# Speak 仅允许使用 dialogue 切片，不得注入 built_profile / self_concept 全文。
+# 子画像（persona_distill.slices）按下游分片。
+# Speak 角色仅允许 dialogue；Speak 导演仅允许 director；不得注入主画像全文。
 SLICE_ROLE_LLM_TARGETS: dict[str, str] = {
     "general": "通用身份名片（角色 LLM）",
     "dialogue": "即时对话 Speak（角色 LLM）",
@@ -17,10 +17,13 @@ SLICE_ROLE_LLM_TARGETS: dict[str, str] = {
     "memory_anchor": "记忆压缩锚定（角色 LLM）",
 }
 
+SLICE_DIRECTOR_LLM_TARGETS: dict[str, str] = {
+    "director": "对话导演 Speak（导演 LLM，精简行为指引）",
+}
+
 _MAIN_PORTRAIT_WARNING = (
-    "[persona] 正在拉取主画像（built_profile / self_concept），非蒸馏子画像；"
-    "若用于 Speak 对话注入，行为可能不符合预期。"
-    "Speak 应仅使用 persona_distill.slices.dialogue。"
+    "[persona] main portrait requested (built_profile / self_concept), not a distilled slice; "
+    "Speak dialogue injection should use persona_distill.slices.dialogue only."
 )
 
 

@@ -11,7 +11,7 @@
  */
 
 import { S, set }                   from './state.js';
-import { http, PATHS, pollUntilReady } from './api.js';
+import { http, PATHS, pollUntilSpeakReady } from './api.js';
 import * as settings                from './settings.js';
 import { getChannelId, requireChannelId } from './channel.js';
 import { ensureAccountReady, bindAccountGate } from './screens/account_gate.js';
@@ -47,12 +47,12 @@ import { startNew, handleSend, handleMicClick,
          initTTSHandler, initLifecycleListeners,
          initSidebar, initSpeakDeliverySync, openKBPanel,
          rebuildFromHistory, prepareConversationSwitch,
-         openProactiveSession,
+         openProactiveSession, openConversation,
          registerModules as regWorkspace }
                                     from './screens/workspace.js';
 import { setAgentAvatar }           from './render.js';
 import { bindSpeakDeliverySetting } from './speak_delivery.js';
-import { bindSpeakPipelineSetting } from './speak_pipeline.js';
+import { bindSpeakResponderSetting } from './speak_responder.js';
 
 // ── Module dependency injection ───────────────────────────────────────────────
 
@@ -61,9 +61,10 @@ regLanding({ llmMod, reactMod, memoryMod, personaMod,
 regWorkspace({ voiceMod, knowledgeMod });
 
 history.setCallbacks({
-  onLoad: msgs => rebuildFromHistory(msgs),
+  onLoad: (msgs, workItems) => rebuildFromHistory(msgs, workItems),
   onToast: text => bus.emit('toast', text),
   onBeforeSwitch: () => prepareConversationSwitch(),
+  onOpenConversation: convId => openConversation(convId),
 });
 
 // ── Module callbacks (all toast → bus) ───────────────────────────────────────
@@ -104,14 +105,17 @@ personaMod.setCallbacks({
   },
 });
 
+let _proactiveOpenChain = Promise.resolve();
+
 notifyMod.setCallbacks({
   onShow: _toast,
   onHide: () => {},
-  onAgentProactiveSession: payload => {
-    openProactiveSession(payload).catch(e => showToast(String(e.message || e)));
+  onProactiveAvailable: payload => {
+    _proactiveOpenChain = _proactiveOpenChain
+      .then(() => openProactiveSession(payload))
+      .catch(e => showToast(String(e.message || e)));
   },
 });
-notifyMod.connect();
 
 // ── Scheduler form helpers ────────────────────────────────────────────────────
 
@@ -135,7 +139,14 @@ async function createSchedulerTask() {
   const triggerType = document.querySelector('input[name="sched-trigger-radio"]:checked')?.value ?? 'once';
   const delivery      = $('sched-delivery')?.value      ?? 'push';
   const replyChannel  = $('sched-reply-channel')?.value ?? '';
-  const reply_target  = replyChannel ? { type: replyChannel } : null;
+  const reply_target  = replyChannel
+    ? {
+        type: replyChannel,
+        ...(replyChannel === 'webui'
+          ? { channel_id: S.channelId ?? '', session_id: S.sessionId ?? '' }
+          : {}),
+      }
+    : null;
   const payload = {
     name:             $('sched-name')?.value ?? '',
     instruction:      $('sched-instruction')?.value ?? '',
@@ -200,8 +211,8 @@ function _bind() {
   on('plan-btn-home',   'click', () => { goHome(); loadWorkstation(); });
   on('bench-btn-home',  'click', () => { goHome(); loadWorkstation(); });
   on('sched-btn-home',  'click', () => { goHome(); loadWorkstation(); });
-  // Quick-start landing cards (also wires start-plan/benchmark/scheduler/btn-refresh-ws)
-  bindLanding({ onStartReact: startNew });
+  // Quick-start: single conversation entry (+ tool links on landing)
+  bindLanding({ onStartConversation: startNew, onStartReact: startNew });
 
   // Benchmark screen
   on('bench-btn-run-all', 'click', () => benchMod.runAll());
@@ -293,6 +304,13 @@ function _bind() {
   window.onChannelChange      = () => settings.onChannelChange?.();
 }
 
+async function _enterDefaultWorkspace() {
+  const channelId = requireChannelId();
+  set('channelId', channelId);
+  notifyMod.connect(channelId);
+  await startNew();
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function boot() {
@@ -306,40 +324,38 @@ async function boot() {
   initLifecycleListeners();
   initSidebar();
   bindSpeakDeliverySetting();
-  bindSpeakPipelineSetting();
+  bindSpeakResponderSetting();
   initSpeakDeliverySync();
 
-  // Determine initial backend state
+  // Determine initial backend state — Soul/Speak is the primary ready signal.
   const status = await llmMod.fetchStatus().catch(() => null);
   if (status?.initialized) set('llmModel', status.model);
 
-  const reactStatus = await reactMod.fetchStatus().catch(() => null);
-  if (reactStatus?.status === 'ready') {
-    set('reactReady', true);
-    await speakMod.fetchStatus().catch(() => {});
-  } else if (reactStatus?.status === 'initializing') {
-    bus.emit('toast', 'ReAct initializing…');
-    pollUntilReady()
+  await speakMod.fetchStatus().catch(() => {});
+  const readiness = await soulMod.fetchReadiness().catch(() => null);
+  updateReactBadge();
+
+  if (!S.speakReady) {
+    bus.emit('toast', 'Soul Speak initializing…');
+    pollUntilSpeakReady()
       .then(async () => {
-        set('reactReady', true);
+        await speakMod.fetchStatus().catch(() => {});
+        await soulMod.fetchReadiness().catch(() => {});
         updateReactBadge();
-        bus.emit('toast', 'ReAct ready');
-        speakMod.fetchStatus().then(() => updateReactBadge()).catch(() => {});
+        bus.emit('toast', 'Speak ready');
         const ready = await ensureAccountReady().catch(e => {
           showToast(e.message);
           return false;
         });
         if (ready) {
-          set('channelId', requireChannelId());
-          loadWorkstation();
+          await _enterDefaultWorkspace();
         }
       })
-      .catch(() => {});
+      .catch(e => {
+        showToast('Soul Speak init failed: ' + (e.message || e));
+      });
   }
 
-  await speakMod.fetchStatus().catch(() => {});
-  await soulMod.fetchReadiness().catch(() => {});
-  updateReactBadge();
   personaMod.loadConfig().then(p => {
     if (p?.enabled && p.profile?.name) setAgentAvatar(p.profile.name.charAt(0));
   }).catch(() => {});
@@ -349,7 +365,7 @@ async function boot() {
     settings.open('persona');
     const tab = await import('./settings/tabs/persona.js');
     await tab.save();
-    await reactMod.init({});
+    showToast('Persona 已保存；请重启 WebUI 以重新 bootstrap Soul');
   });
   document.getElementById('mc-persona-body')?.addEventListener('soul:build', async () => {
     await soulMod.rebuildPersona(false).catch(e => showToast(e.message));
@@ -358,26 +374,29 @@ async function boot() {
 
   bindAccountGate();
   bus.on('account:selected', async () => {
-    set('channelId', requireChannelId());
-    loadWorkstation();
+    await _enterDefaultWorkspace();
     history.renderSidebar().catch(() => {});
     history.renderRecentLanding(document.getElementById('landing-recent')).catch(() => {});
   });
 
-  if (S.reactReady) {
+  if (S.speakReady || readiness?.soul_running) {
     const ready = await ensureAccountReady().catch(e => {
       showToast(e.message);
       return false;
     });
     if (ready) {
-      set('channelId', requireChannelId());
-      loadWorkstation();
+      await _enterDefaultWorkspace();
       history.renderSidebar().catch(() => {});
       history.renderRecentLanding(document.getElementById('landing-recent')).catch(() => {});
     }
   } else {
-    set('channelId', getChannelId());
-    loadWorkstation();
+    const ready = await ensureAccountReady().catch(() => false);
+    if (ready) {
+      await _enterDefaultWorkspace();
+    } else {
+      set('channelId', getChannelId());
+      goWorkspace();
+    }
     history.renderSidebar().catch(() => {});
     history.renderRecentLanding(document.getElementById('landing-recent')).catch(() => {});
   }

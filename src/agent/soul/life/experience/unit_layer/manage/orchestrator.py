@@ -124,7 +124,8 @@ class ExperienceUnitManager:
         promoted: list[ExperienceUnit] = []
         for unit in hot:
             if unit.source == "collision":
-                continue
+                # collision 已在折叠时即时 promote；仍允许补漏
+                pass
             if unit.id not in self._memory_ingested_ids:
                 self._promote_to_memory(unit)
                 promoted.append(unit)
@@ -132,7 +133,7 @@ class ExperienceUnitManager:
         return promoted
 
     def _stamp_presence_bundle_on_unit(self, unit: ExperienceUnit) -> None:
-        if unit.source in ("narrative", "surprise"):
+        if unit.source in ("narrative", "surprise", "collision"):
             from agent.soul.life.anchor.presence_bundle import (
                 presence_bundle_from_unit,
                 stamp_presence_bundle,
@@ -187,7 +188,7 @@ class ExperienceUnitManager:
 
         collision_unit = ExperienceUnit.make(
             situation=ExperienceSituation(
-                session_id=ref.situation.session_id,
+                session_id=ref.situation.session_id or "tao",
                 turn_index=ref.situation.turn_index,
                 narration=merged_text,
                 prior_thought="；".join(prior_parts),
@@ -213,9 +214,12 @@ class ExperienceUnitManager:
             source="collision",
         )
 
+        self._stamp_presence_bundle_on_unit(collision_unit)
         self._log.append(collision_unit)
         self._write_collision_chronicle(collision_unit, merged_text, has_user=has_user)
         self._promote_to_memory(collision_unit)
+        # 交会结果必须压入 Presence（share/toward_user），否则长时间尺度主动开口断链
+        self._notify_after_ingest(collision_unit)
 
     def _notify_after_ingest(self, unit: ExperienceUnit) -> None:
         if self._after_ingest is not None:

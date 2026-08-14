@@ -25,17 +25,16 @@
     <p class="account-gate-hint">账号与 Soul 记忆身份一一对应；无密码，本地选择即可。</p>
     <div id="account-gate-list" class="account-gate-list"></div>
     <div class="account-gate-create-row">
-      <input id="account-gate-name" type="text" placeholder="显示名称（如：荧）" maxlength="80" />
+      <input id="account-gate-name" type="text" value="荧" placeholder="显示名称（默认：荧）" maxlength="80" />
       <button id="account-gate-create" type="button" class="btn-primary">创建并进入</button>
     </div>
-    <button id="account-gate-refresh" type="button" class="btn-secondary">刷新列表</button>
   </div>
 </div>
 
 <!-- ══════════════════════════════════
      LANDING SCREEN  (Workstation)
 ══════════════════════════════════ -->
-<div id="s-landing">
+<div id="s-landing" class="hidden">
   <div class="ws-shell">
 
     <!-- Header -->
@@ -77,11 +76,11 @@
           <div class="mc-body" id="mc-llm-body"><span style="color:var(--text3)">Loading…</span></div>
         </div>
 
-        <!-- ReAct Agent -->
-        <div class="module-card" data-tab="model">
+        <!-- Soul Speak primary dialogue runtime -->
+        <div class="module-card" data-tab="soul">
           <div class="mc-header">
-            <span class="mc-icon">⚡</span>
-            <span class="mc-title">ReAct Agent</span>
+            <span class="mc-icon">💬</span>
+            <span class="mc-title">Soul Speak</span>
             <span class="mc-badge off" id="mc-react-badge">—</span>
             <button class="mc-settings-btn icon-btn" title="设置">⚙</button>
           </div>
@@ -156,22 +155,18 @@
       </div>
     </div>
 
-    <!-- Quick Start -->
+    <!-- Quick Start — single conversation entry -->
     <div class="ws-section">
       <div class="ws-section-title">Quick Start</div>
       <div class="ws-quick-btns">
-        <button class="ws-big-btn accent" data-action="start-react">
-          <span>💬</span><span>开始对话</span>
+        <button class="ws-big-btn accent" data-action="start-conversation">
+          <span>💬</span><span>新对话</span>
         </button>
-        <button class="ws-big-btn" data-action="start-plan">
-          <span>🗂</span><span>Plan Mode</span>
-        </button>
-        <button class="ws-big-btn" data-action="start-benchmark">
-          <span>🧪</span><span>Benchmark Suite</span>
-        </button>
-        <button class="ws-big-btn" data-action="start-scheduler">
-          <span>🗓</span><span>Scheduler</span>
-        </button>
+      </div>
+      <div class="ws-tools-row">
+        <button class="ws-tool-link" data-action="open-plan" type="button">Plan 工具</button>
+        <button class="ws-tool-link" data-action="open-benchmark" type="button">Benchmark</button>
+        <button class="ws-tool-link" data-action="open-scheduler" type="button">Scheduler</button>
       </div>
     </div>
 
@@ -187,15 +182,24 @@
 <!-- ══════════════════════════════════
      WORKSPACE SCREEN
 ══════════════════════════════════ -->
-<div id="s-workspace" class="hidden">
+<div id="s-workspace" class="codex-workspace">
 
   <aside id="sidebar">
     <div class="sidebar-hdr">
-      <span class="logo-text">对话</span>
+      <span class="logo-text">Animus</span>
       <div class="sidebar-hdr-actions">
         <button id="btn-new-chat" class="icon-btn" title="新对话">＋</button>
         <button id="btn-sidebar-toggle" class="sidebar-toggle-btn icon-btn" title="收起侧栏">◀</button>
       </div>
+    </div>
+    <div class="sidebar-sort-bar">
+      <label class="sidebar-sort-label" for="sidebar-sort-mode">排序</label>
+      <select id="sidebar-sort-mode" class="sidebar-sort-select" title="历史排序">
+        <option value="time_desc" selected>时间 · 新→旧</option>
+        <option value="time_asc">时间 · 旧→新</option>
+        <option value="title_asc">名称 · A→Z</option>
+        <option value="title_desc">名称 · Z→A</option>
+      </select>
     </div>
     <div id="sidebar-list"></div>
   </aside>
@@ -208,23 +212,33 @@
         <span id="tb-typing" class="tb-typing-wrap hidden" aria-hidden="true">
           <span class="speak-typing-spinner"></span>
         </span>
-        <span id="tb-title">对话</span>
+        <span id="tb-title">New chat</span>
         <span id="tb-proactive-dot" class="tb-proactive-dot" title="Agent 渴望与你互动"></span>
         <span id="tb-persona-badge" class="persona-badge hidden">🎭 Persona</span>
         <span id="tb-mem-loading" class="mem-loading-badge hidden"><span class="spin">⟳</span>加载记忆中…</span>
       </div>
       <div class="topbar-right">
-        <button id="btn-speak-trace" class="icon-btn" title="主进程打印本 session 提示词与记忆缓存">🪵</button>
-        <button id="btn-open-kb" class="icon-btn" title="知识库">📚</button>
         <button id="btn-settings-topbar" class="icon-btn" title="Settings">⚙</button>
       </div>
     </div>
 
+    <div class="workspace-body">
     <div id="msgs">
       <div class="empty-state" id="empty-hint">
         <span class="empty-icon">💬</span>
         <span>Type a message below to begin</span>
       </div>
+    </div>
+
+    <aside id="work-monitor-panel" class="work-monitor-panel hidden">
+      <div class="work-mon-hdr">
+        <span data-role="mon-title">任务监控</span>
+        <button id="btn-work-monitor-close" class="icon-btn" type="button" title="关闭">✕</button>
+      </div>
+      <div class="work-mon-body" data-role="mon-body">
+        <div class="work-mon-empty">暂无任务</div>
+      </div>
+    </aside>
     </div>
 
     <!-- Plan sub-panel: embedded live progress tracker for multi-agent plans -->
@@ -249,7 +263,7 @@
 
     <div id="input-area">
       <div class="input-wrapper">
-        <textarea id="msg-input" rows="1" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
+        <textarea id="msg-input" rows="1" placeholder="发消息…"></textarea>
         <button id="btn-mic" title="语音输入（点击开始录音，再次点击停止）"><span class="sound-wave"><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span></button>
         <button id="btn-send">↑</button>
       </div>
@@ -519,8 +533,8 @@
           <div class="section-divider">ReAct Agent</div>
           <div class="toggle-row" style="margin-bottom:16px">
             <div class="toggle-label">
-              <span class="toggle-title">启用工具层（Agent 模式）</span>
-              <span class="toggle-desc">开启后新建对话将使用 ReAct 模式，Agent 会通过推理步骤调用工具；关闭则使用纯对话 Chat 模式。</span>
+              <span class="toggle-title">启用 Worker / 工具能力</span>
+              <span class="toggle-desc">不影响主对话入口。开启后 Worker 可在确认后执行任务与调用工具；关闭则仅保留普通 Speak 对话。</span>
             </div>
             <label class="switch"><input type="checkbox" id="s-tools-enabled"><span class="slider"></span></label>
           </div>
@@ -848,7 +862,6 @@
           <div class="form-group">
             <label>Speak Pipeline</label>
             <select id="s-speak-pipeline">
-              <option value="legacy_qa">Legacy QA（一问一答）</option>
               <option value="request_driven">Request Driven（新管线）</option>
             </select>
           </div>

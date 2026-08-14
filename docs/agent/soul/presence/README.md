@@ -1,118 +1,97 @@
 # agent/soul/presence
 
-**当下态子系统**：以多维度 FSM 描述 Agent 第一人称「在场」状态——情感、生理、认知、感知为静态维度；期待、冲动、分享意愿为动态交互层。冲动累积后可经 `SoulService` 触发主动 Speak outbound。
+Presence 维护按 session 隔离的当下态、互动期待、冲动与分享队列。它不是 `SoulRequest` domain；外部调用应经 `SoulService` 编排方法，域内调用使用 `PresenceService`/`PresenceGateway`。
 
-源码：`src/agent/soul/presence/`。
+## 当前模块
 
----
-
-## 顶层导出
-
-```python
-from agent.soul.presence import (
-    PresenceService, PresenceSnapshot, PresenceGateway,
-    Expectation, ImpulseDischarge, ShareDesire,
-    PresenceState, PresenceContext, PresenceEvent,
-    compose_self_narrative, PresenceStateBlock,
-)
-```
-
----
-
-## 目录结构
-
-```
+```text
 src/agent/soul/presence/
-├── service.py                # PresenceService — 域服务主入口
-├── gateway.py                # PresenceGateway — 入站 trigger / capture
-├── discharge.py              # ImpulseDischarge — 冲动释放 → outbound
-├── share_desire.py           # ShareDesire 权重与 patch
-├── expectation.py            # Expectation 聚合类型
-├── narrative.py              # compose_self_narrative
-├── state_block.py            # PresenceStateBlock → PromptBlock
-├── store.py                  # PresenceStateStore 持久化
-├── actions.py                # PresenceAction（orchestrator 调度用）
+├── service.py / gateway.py
 ├── state/
-│   ├── presence_state.py     # PresenceState 根
-│   ├── static/               # affect / somatic / cognition / perception / narrative
-│   └── dynamic/              # interaction / events / expectation（queue/scanner/package/intent）
-└── transition/
-    ├── router.py             # PresenceTransitionRouter
-    ├── init/                 # wake / sleep
-    ├── static/               # lifecycle / life_sync
-    ├── dynamic/              # boundary / life_meta / edges
-    └── interaction.py        # PresenceInteraction（期待 + 冲动 + 分享队列）
+│   ├── presence_state.py
+│   ├── static/                     affect/somatic/cognition/perception/narrative
+│   ├── dynamic/                    interaction/events/kind
+│   └── dynamic/expectation/        queue/scanner/package/state/intent
+├── transition/
+│   ├── init/                       wake/sleep
+│   ├── static/                     lifecycle/life_sync
+│   └── dynamic/                    boundary/life_meta/edges
+├── init_expectation/               persona → 分享期待档位
+├── unit_distill/                   近期体验画像蒸馏
+├── io/speak/                       主动发话协议
+└── store.py                        life_dir/presence_state.json
 ```
 
----
+## 公共导出
 
-## 状态模型
+`agent.soul.presence` 当前导出：
 
-### 静态维度（`state/static/`）
+- 服务与入口：`PresenceService`、`PresenceGateway`
+- 状态：`PresenceSnapshot`、`PresenceState`、`PresenceContext`
+- 事件/触发：`PresenceEvent`、`PresenceEventKind`、`PresenceTrigger`、`PresenceTriggerKind`
+- 结果：`GatewayResult`、`PresenceIngestResult`、transition result/outcome
+- 互动：`Expectation`、`ExpectationState`、`ImpulseDischarge`、`ShareDesire`
+- Prompt/存储：`PresenceStateBlock`、`PresenceStateStore`
 
-均为 Agent 第一人称自叙（字符串），不再使用结构化效价/强度：
+不存在单独的 `PresenceHandler` 或 Presence domain dispatch。
 
-| 维度 | 字段 |
-|---|---|
-| 情感 `affect` | `narrative` |
-| 生理 `somatic` | `narrative` |
-| 认知 `cognition` | `working_memory` / `thinking` |
-| 感知 `perception` | `narrative` |
+## `PresenceService` 主要 API
 
-### 动态交互层（`state/dynamic/` + `transition/interaction.py`）
+读取：
 
-不属于 FSM 静态维度，由 `PresenceInteraction` 承载：
+- `snapshot(session_id)`
+- `compose_self_narrative(session_id)`
+- `is_awake()`、`affect_narrative()`
+- `share_queue_size()`
 
-- **期待**（`expectation/`）：queue、scanner、package、intent
-- **冲动**：`impulse_level` / `impulse_reason`，达阈值触发 outbound
-- **分享意愿**（`ShareDesire`）：与 Speak compose share handoff 联动
+状态与边界：
 
----
+- `gateway`/`interface.boundary(event, context=...)`
+- `ingest()` / `dispatch()` / `trigger()`
+- `patch_static()`、`set_working_memory()`
+- `wake_up()`、`sleep()`、`apply_dialogue_session_boundary()`
+- `sync_from_life()`、`sync_life_bundle()`、`on_unit_ingested()`
 
-## 核心流程
+互动与出站准备：
 
-### 起床 / 休眠
+- `scan_expectation()`：只扫描并更新 Presence，不直接发送。
+- `discharge_accumulated()`：折叠 share queue，返回 `ImpulseDischarge`。
+- `pop_share_intent()` / `pop_top_share_intents()` / `consume_share_at()`
+- `receive_heartbeat_signal()`
 
-心跳在每日 `presence_wake_at` 调度 `transition/init/wake.py`，以 LLM 生成四维度自叙完成 FSM 初始化；清醒窗口由 `HeartbeatConfig.active_hours_start/end` 控制，窗口外自动休眠。
+真正触发 Speak 的入口在 `SoulService.run_expectation_scan()`、`ingest_presence_event()`、`initiate_presence_conversation()` 等编排方法。
 
-### Life ↔ Presence 双向绑定
+## Life、Persona 与 Heartbeat
 
-`LifeExperienceStack.bind_presence()`：
+- `LifeExperienceStack.bind_presence()` 把 dialogue/life pipelines 和 ingest 后同步接到 Presence。
+- 每批 ExperienceUnit 可更新 lingering mood；达到批次且绑定了 LLM 时才运行 `unit_distill`。
+- Persona 启动时通过 `init_expectation/` 解析分享档位，并热更新 Speak 阈值。
+- Heartbeat 控制 active-hours wake/sleep，并把 Memory emotional signal 写入 affect。
 
-- 对话体验直写 Presence
-- `ExperienceOrchestrator.after_ingest` → `presence.pull_and_sync_from_life`
+未绑定 Life stack 时 `sync_from_life()` 会抛错；未绑定 unit-distill LLM 时只跳过近期画像蒸馏，不代表该能力已运行。
 
-### 主动 outbound
+## 主动发话的实际边界
 
+```text
+Presence scan/discharge
+  → SoulService
+  ├── 当前有活跃对话：share intent 延迟注入现有 Speak session
+  └── 无活跃对话：PresenceIOHub.speak
+      → SpeakPresenceInboundBridge
+      → Speak/Life 内部会话与体验记录
+      → 注册的 agent-initiated handler
 ```
-ImpulseDischarge / expectation scan
-    → SoulService._emit_presence_speak
-    → SpeakOutboundRouter
-```
 
-`SpeakDriveBridge` 读取 snapshot 评估 `should_speak`。
+`PresenceService.scan_expectation()` 本身不发送消息。只有 Soul 完成 IO 接线且外层注册了 handler/stream 时，消息才可能到达 UI。没有外部 handler 时仅有内部 ack 和记账，必须标注为未外发。
 
-### 心跳信号
+## Tao adapters
 
-`MemoryHeartbeatResult` → `EmotionalSignal` → `presence.receive_heartbeat_signal`（见 `heartbeat/bridge.py`）。
+Presence 没有 `handlers/tao/`。Tao Prompt 适配在：
 
----
+- `src/agent/adapters/soul_tao/blocks/presence_block.py`
+- `src/agent/adapters/soul_tao/blocks/` 中的 self-narrative block
+- `src/agent/adapters/soul_tao/persona_prompt.py`（从 `SoulService.query_persona()` 同时组装 Persona 与 Presence）
 
-## PresenceService 职责摘要
+## 持久化
 
-| 能力 | 说明 |
-|---|---|
-| `snapshot()` | 只读当下态 + interaction |
-| `ingest_event()` / gateway | 外部事件 / 对话 capture |
-| `pull_and_sync_from_life()` | 从体验热窗口同步 narrative |
-| `run_expectation_scan()` | 扫描期待队列，可能触发 speak |
-| `discharge()` | 冲动释放 |
-| status listener | 注册后通知 Speak InboundComposeGateway |
-
----
-
-## 相关文档
-
-- [speak/README.md](../speak/README.md)（outbound / compose / drive）
-- [life/README.md](../life/README.md)（LifeExperienceStack.bind_presence）
-- [heartbeat/README.md](../heartbeat/README.md)（wake / wander 信号）
+`PresenceStateStore` 把所有 session 的 state、interaction、awake、last_wake_date 写到 `<life_dir>/presence_state.json`。这是 Life 目录文件，不随 Memory/Storyview 的 MySQL/JSON backend 切换。

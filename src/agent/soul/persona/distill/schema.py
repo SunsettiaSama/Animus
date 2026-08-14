@@ -5,7 +5,14 @@ from datetime import datetime, timezone
 
 PERSONA_DISTILL_SCHEMA_VERSION = "persona_distill_v1"
 
-SLICE_IDS = ("general", "dialogue", "story", "reasoning", "memory_anchor")
+SLICE_IDS = (
+    "general",
+    "dialogue",
+    "story",
+    "reasoning",
+    "memory_anchor",
+    "director",
+)
 
 
 def _now_iso() -> str:
@@ -14,16 +21,17 @@ def _now_iso() -> str:
 
 @dataclass
 class PersonaDistillPack:
-    """五切片蒸馏产物（子画像）。
+    """蒸馏子画像切片。
 
-    各切片均为面向「扮演该角色的 LLM 服务」的自然语言 system 片段，
-    按下游模块注入，职责互不重叠。Speak 对话仅允许使用 slices["dialogue"]。
+    各切片按下游模块注入，职责互不重叠。Speak 角色对话仅允许使用
+    slices["dialogue"]；Speak 导演侧使用 slices["director"]（精简行为指引）。
     主画像（built_profile / self_concept 全文）不得接入 Speak。
     """
 
     schema_version: str = PERSONA_DISTILL_SCHEMA_VERSION
     source_revision: str = ""
     distilled_at: str = ""
+    source_snapshot: str = ""
     slices: dict[str, str] = field(default_factory=dict)
 
     def slice(self, key: str) -> str:
@@ -32,11 +40,15 @@ class PersonaDistillPack:
     def dialogue_text(self) -> str:
         return self.slice("dialogue")
 
+    def director_text(self) -> str:
+        return self.slice("director")
+
     def is_current(self, revision: str) -> bool:
         return (
             self.schema_version == PERSONA_DISTILL_SCHEMA_VERSION
             and self.source_revision.strip() == revision.strip()
             and bool(self.slices)
+            and bool(self.source_snapshot.strip())
         )
 
     def to_dict(self) -> dict:
@@ -44,6 +56,7 @@ class PersonaDistillPack:
             "schema_version": self.schema_version,
             "source_revision": self.source_revision,
             "distilled_at": self.distilled_at,
+            "source_snapshot": self.source_snapshot,
             "slices": dict(self.slices),
         }
 
@@ -56,6 +69,7 @@ class PersonaDistillPack:
             schema_version=str(d.get("schema_version", PERSONA_DISTILL_SCHEMA_VERSION)),
             source_revision=str(d.get("source_revision", "")),
             distilled_at=distilled_at,
+            source_snapshot=str(d.get("source_snapshot", "")).strip(),
             slices=slices,
         )
 
@@ -64,5 +78,6 @@ class PersonaDistillPack:
         return cls(
             source_revision=source_revision,
             distilled_at=_now_iso(),
+            source_snapshot="",
             slices={},
         )

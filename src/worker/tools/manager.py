@@ -1,0 +1,534 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from langchain_core.tools import BaseTool
+
+from .executor import ActionExecutor
+from .builtin.registry import ToolPackage
+from .builtin import (
+    Base64Action,
+    CalculatorAction,
+    FileExistsAction,
+    FileListAction,
+    FileReadAction,
+    FileWriteAction,
+    GenerateUUIDAction,
+    GetDatetimeAction,
+    GetWeekdayAction,
+    HashAction,
+    HttpRequestAction,
+    JsonQueryAction,
+    NoteDeleteAction,
+    NoteReadAction,
+    NoteWriteAction,
+    PythonRunAction,
+    RandomChoiceAction,
+    RandomNumberAction,
+    RegexExtractAction,
+    StringTransformAction,
+    TextDiffAction,
+    ToolMeta,
+    ToolRegistry,
+    ToolSearchAction,
+    UnitConverterAction,
+    WeatherAction,
+    WebSearchAction,
+    WordCountAction,
+)
+from .builtin.impl.web_fetch import WebFetchAction
+from .builtin.impl.knowledge_hybrid_search import KnowledgeHybridSearchAction
+from .builtin.impl.knowledge_save import KnowledgeSaveAction
+from .builtin.impl.knowledge_list import KnowledgeListAction
+from .builtin.impl.scheduler_add import SchedulerAddAction
+from .builtin.impl.scheduler_list import SchedulerListAction
+from .builtin.impl.scheduler_cancel import SchedulerCancelAction
+from .builtin.commands.lookup import CommandLookupAction
+from .builtin.commands.runners import (
+    BashRunAction,
+    CmdRunAction,
+    PowershellRunAction,
+)
+
+if TYPE_CHECKING:
+    from .mcp.registry import MCPRegistry, MCPToolInfo
+    from .skill.registry import SkillRegistry, SkillMeta
+
+# 默认主要工具（在 prompt 中展示给 Agent 的 5 个）
+DEFAULT_PRIMARY: list[str] = [
+    "calculator",
+    "get_datetime",
+    "web_search",
+    "unit_converter",
+    "word_count",
+]
+
+# Prompt 中额外暴露的查找入口（不上架整包工具）
+PROMPT_LOOKUP_TOOLS: list[str] = [
+    "tool_search",
+    "command_lookup",
+]
+
+# 潜伏 shell 执行器：可调用但不进 prompt tool_list
+LATENT_SHELL_TOOLS: list[str] = [
+    "powershell_run",
+    "bash_run",
+    "cmd_run",
+]
+
+# 不应进入默认 registry 的遗留实现
+EXCLUDED_FROM_ONLINE: frozenset[str] = frozenset(
+    {
+        "plan_status",
+        "plan_wait",
+        "plan_skip",
+        "plan_patch",
+    }
+)
+
+# ── 内置工具包定义 ─────────────────────────────────────────────────────────────
+# 分离主 agent（Planner）与子 agent（Executor / SubAgent）的工具套组边界。
+# 包名即可被 SubAgentProfile.tool_package / PlannerConfig.tool_package 直接引用。
+
+BUILTIN_PACKAGES: list[ToolPackage] = [
+    ToolPackage(
+        name="planner",
+        tools=[
+            # 草稿本（规划推理必备）
+            "note_write", "note_read", "note_delete",
+            # 搜索与知识
+            "web_search", "web_fetch", "knowledge_hybrid_search",
+        ],
+        description="主 agent（Planner）工具包：草稿本 + 搜索 + 知识检索，供规划推理使用",
+    ),
+    ToolPackage(
+        name="executor",
+        tools=[
+            # 基础计算与时间
+            "calculator", "get_datetime", "get_weekday", "unit_converter",
+            # 搜索
+            "web_search",
+            # 文本处理
+            "word_count", "string_transform", "regex_extract", "text_diff",
+            # 数据
+            "json_query",
+            # 草稿本（中间结果暂存）
+            "note_write", "note_read", "note_delete",
+            # 文件（只读，写须显式升级为 code/analyst）
+            "file_read",
+        ],
+        description="通用执行子 agent 工具包：计算 + 搜索 + 文本 + 草稿本 + 文件只读",
+    ),
+    ToolPackage(
+        name="researcher",
+        tools=[
+            # 网络搜索与抓取
+            "web_search", "web_fetch", "http_request",
+            # 知识库完整读写
+            "knowledge_hybrid_search", "knowledge_save", "knowledge_list",
+            # 草稿本（研究草稿/摘录）
+            "note_write", "note_read", "note_delete",
+            # 成果落盘
+            "file_write", "file_read",
+            # 文本处理
+            "json_query", "regex_extract", "word_count",
+        ],
+        description="研究型子 agent 工具包：网络搜索 + 知识库读写 + 草稿本 + 成果落盘",
+    ),
+    ToolPackage(
+        name="analyst",
+        tools=[
+            # 计算与换算
+            "calculator", "unit_converter", "get_datetime",
+            # 数据处理
+            "python_run", "json_query", "regex_extract", "text_diff",
+            # 文本统计
+            "word_count", "string_transform",
+            # 数据文件 I/O
+            "file_read", "file_write", "file_list",
+            # 草稿本（中间结论暂存）
+            "note_write", "note_read",
+        ],
+        description="分析型子 agent 工具包：计算 + 数据处理 + 文件 I/O + 草稿本",
+    ),
+    ToolPackage(
+        name="code",
+        tools=[
+            # 代码执行
+            "python_run",
+            # 文件系统完整访问
+            "file_read", "file_write", "file_list", "file_exists",
+            # 网络下载（获取外部资源）
+            "http_request", "web_fetch",
+            # 数据处理
+            "json_query", "regex_extract",
+            # 时间（脚本依赖）
+            "get_datetime",
+            # 草稿本（调试/日志暂存）
+            "note_write", "note_read",
+        ],
+        description="代码执行子 agent 工具包：Python + 文件系统 + 网络下载 + 数据处理",
+    ),
+    ToolPackage(
+        name="filesystem",
+        tools=["file_read", "file_write", "file_list", "file_exists"],
+        description="文件系统子 agent 工具包（只含文件操作）",
+    ),
+    ToolPackage(
+        name="knowledge",
+        tools=["knowledge_hybrid_search", "knowledge_save", "knowledge_list"],
+        description="知识库子 agent 工具包",
+    ),
+    ToolPackage(
+        name="network",
+        tools=[
+            "web_search", "web_fetch", "http_request",
+            # 结果暂存与落盘
+            "note_write", "note_read",
+            "file_write",
+            "json_query",
+        ],
+        description="网络请求子 agent 工具包：搜索 + 抓取 + HTTP + 结果暂存",
+    ),
+    ToolPackage(
+        name="full",
+        tools=[
+            # math / time
+            "calculator", "get_datetime", "get_weekday",
+            # search / network
+            "weather", "web_search", "web_fetch", "http_request",
+            # conversion / text
+            "unit_converter", "word_count", "string_transform",
+            "base64", "hash", "text_diff",
+            # data
+            "json_query", "regex_extract",
+            # random
+            "random_number", "random_choice", "generate_uuid",
+            # workspace / notes
+            "note_write", "note_read", "note_delete",
+            # filesystem
+            "file_read", "file_write", "file_list", "file_exists",
+            # code
+            "python_run",
+            # knowledge
+            "knowledge_hybrid_search", "knowledge_save", "knowledge_list",
+            # scheduler
+            "scheduler_add", "scheduler_list", "scheduler_cancel",
+        ],
+        description="全量工具包：开放所有已实现工具权限，供测试与研究型任务使用",
+    ),
+]
+
+
+def _build_default_registry() -> ToolRegistry:
+    """构建包含所有内置工具的默认注册表。"""
+    reg = ToolRegistry()
+    reg.add(CalculatorAction,      category="math",       tags=["计算", "数学", "表达式", "calculator"])
+    reg.add(GetDatetimeAction,     category="time",       tags=["时间", "日期", "时区", "datetime"])
+    reg.add(GetWeekdayAction,      category="time",       tags=["星期", "日期", "weekday"])
+    reg.add(WeatherAction,         category="search",     tags=["天气", "weather", "城市"])
+    reg.add(WebSearchAction,       category="search",     tags=["搜索", "互联网", "duckduckgo", "查询"])
+    reg.add(WebFetchAction,        category="search",     tags=["网页", "抓取", "全文", "url", "fetch"])
+    reg.add(UnitConverterAction,   category="conversion", tags=["换算", "单位", "长度", "重量", "温度", "面积"])
+    reg.add(WordCountAction,       category="text",       tags=["字数", "统计", "文本", "字符"])
+    reg.add(StringTransformAction, category="text",       tags=["字符串", "大小写", "反转", "文本处理"])
+    reg.add(Base64Action,          category="text",       tags=["base64", "编码", "解码"])
+    reg.add(HashAction,            category="text",       tags=["哈希", "md5", "sha256", "加密"])
+    reg.add(RandomNumberAction,    category="random",     tags=["随机", "随机数", "random"])
+    reg.add(RandomChoiceAction,    category="random",     tags=["随机", "选择", "抽签"])
+    reg.add(GenerateUUIDAction,    category="random",     tags=["uuid", "唯一标识符", "随机"])
+    reg.add(KnowledgeHybridSearchAction, category="knowledge", tags=["知识库", "混合检索", "语义搜索", "关键词", "hybrid", "knowledge"])
+    reg.add(KnowledgeSaveAction,   category="knowledge",  tags=["知识库", "保存", "写入", "学习"])
+    reg.add(KnowledgeListAction,   category="knowledge",  tags=["知识库", "列表", "领域", "已知边界"])
+    reg.add(SchedulerAddAction,    category="scheduler",  tags=["调度", "预约", "时间轴", "定时", "scheduler", "once", "interval"])
+    reg.add(SchedulerListAction,   category="scheduler",  tags=["调度", "时间轴", "列表", "查看", "scheduler"])
+    reg.add(SchedulerCancelAction, category="scheduler",  tags=["调度", "取消", "时间轴", "cancel", "scheduler"])
+    reg.add(JsonQueryAction,       category="data",       tags=["json", "jsonpath", "查询", "提取", "数据"])
+    reg.add(RegexExtractAction,    category="data",       tags=["正则", "提取", "匹配", "regex", "pattern"])
+    reg.add(TextDiffAction,        category="data",       tags=["差异", "对比", "diff", "文本比较"])
+    reg.add(FileReadAction,        category="filesystem", tags=["文件", "读取", "本地", "file", "read"])
+    reg.add(FileWriteAction,       category="filesystem", tags=["文件", "写入", "保存", "file", "write"])
+    reg.add(FileListAction,        category="filesystem", tags=["目录", "文件列表", "ls", "file", "list"])
+    reg.add(FileExistsAction,      category="filesystem", tags=["文件", "存在", "检查", "file", "exists"])
+    reg.add(HttpRequestAction,     category="network",    tags=["http", "请求", "api", "rest", "post", "get"])
+    reg.add(PythonRunAction,       category="code",       tags=["python", "代码", "执行", "计算", "脚本"])
+    reg.add(NoteWriteAction,       category="workspace",  tags=["笔记", "草稿本", "记录", "note", "write"])
+    reg.add(NoteReadAction,        category="workspace",  tags=["笔记", "草稿本", "读取", "note", "read"])
+    reg.add(NoteDeleteAction,      category="workspace",  tags=["笔记", "草稿本", "删除", "note", "delete"])
+    reg.add(CommandLookupAction,   category="command",    tags=["命令", "目录", "powershell", "bash", "cmd", "lookup"])
+    reg.add(PowershellRunAction,   category="command",    tags=["powershell", "shell", "执行"])
+    reg.add(BashRunAction,         category="command",    tags=["bash", "shell", "执行"])
+    reg.add(CmdRunAction,          category="command",    tags=["cmd", "winnt", "shell", "执行"])
+
+    for pkg in BUILTIN_PACKAGES:
+        reg.register_package(pkg)
+
+    return reg
+
+
+class ToolManager:
+    """
+    分级工具管理器。
+
+    层级结构
+    --------
+    Layer 1 — primary tools（5 个，始终在 prompt 中展示）
+    Layer 2 — tool_search（特殊元工具，始终展示，用于扩展发现）
+    Layer 3 — full registry（executor 预加载全部工具，含 skill + mcp）
+
+    扩展注册
+    --------
+    - skill_registry : SkillRegistry  →  技能合并进 ToolRegistry（可搜索）
+    - mcp_registry   : MCPRegistry    →  MCP 工具加载为 BaseTool 实例注入 executor
+
+    LangChain 接口
+    -------------
+    - as_langchain_tools()       → 全量 BaseTool 列表（含 skill、mcp）
+    - primary_langchain_tools()  → 仅主要工具 + tool_search 的 BaseTool 列表
+    """
+
+    def __init__(
+        self,
+        registry: ToolRegistry | None = None,
+        primary_names: list[str] | None = None,
+        skill_registry: SkillRegistry | None = None,
+        mcp_registry: MCPRegistry | None = None,
+    ) -> None:
+        self._registry: ToolRegistry = registry or _build_default_registry()
+        self._primary_names: list[str] = primary_names or list(DEFAULT_PRIMARY)
+        self._skill_registry: SkillRegistry | None = skill_registry
+        self._mcp_registry: MCPRegistry | None = mcp_registry
+
+        if skill_registry:
+            self._merge_skills(skill_registry)
+
+    # --- 内部合并 ---
+
+    def _merge_skills(self, skill_registry: SkillRegistry) -> None:
+        """将 SkillRegistry 中的技能合并进主 ToolRegistry。"""
+        for action_cls, category, tags in skill_registry.to_tool_entries():
+            self._registry.add(action_cls, category=category, tags=tags)
+
+    # --- 属性 ---
+
+    @property
+    def registry(self) -> ToolRegistry:
+        return self._registry
+
+    @property
+    def skill_registry(self) -> SkillRegistry | None:
+        return self._skill_registry
+
+    @property
+    def mcp_registry(self) -> MCPRegistry | None:
+        return self._mcp_registry
+
+    @property
+    def primary_names(self) -> list[str]:
+        return list(self._primary_names)
+
+    # --- 动态挂载 ---
+
+    def mount_skill_registry(self, skill_registry: SkillRegistry) -> None:
+        """运行时挂载技能注册表（自动合并进 ToolRegistry）。"""
+        self._skill_registry = skill_registry
+        self._merge_skills(skill_registry)
+
+    def mount_mcp_registry(self, mcp_registry: MCPRegistry) -> None:
+        """运行时挂载 MCP 注册表（build_executor 时自动加载工具）。"""
+        self._mcp_registry = mcp_registry
+
+    # --- executor 构建 ---
+
+    def build_executor(
+        self,
+        allowed_actions: list[str] | None = None,
+    ) -> ActionExecutor:
+        """
+        构建 ActionExecutor。
+
+        注册顺序：
+        1. ToolRegistry 中的全量工具（class 注册）
+        2. MCP 工具（BaseTool 实例，通过 register_lc_tool）
+        3. ToolSearchAction / CommandLookupAction（实例注入）
+        """
+        executor = ActionExecutor()
+
+        for meta in self._registry.all():
+            executor.register(meta.action_cls)
+
+        if self._mcp_registry:
+            for tool in self._mcp_registry.load_all():
+                executor.register_lc_tool(tool)
+
+        executor.register_instance(ToolSearchAction(manager=self))
+        executor.register_instance(CommandLookupAction())
+        if allowed_actions is not None:
+            executor.restrict_to(set(allowed_actions))
+        return executor
+
+    def prompt_tool_names(self) -> list[str]:
+        """Lean prompt surface: primary tools + lookup entry points only."""
+        names = list(self._primary_names)
+        for name in PROMPT_LOOKUP_TOOLS:
+            if name not in names:
+                names.append(name)
+        return names
+
+    def resolve_allowed_actions(
+        self,
+        package_or_tools: str | list[str] | None,
+    ) -> list[str]:
+        """Package tools + lookup tools + latent shell runners (callable set)."""
+        resolved = self.resolve_tools(package_or_tools) or []
+        allowed: list[str] = []
+        for name in resolved:
+            if name not in allowed:
+                allowed.append(name)
+        for name in PROMPT_LOOKUP_TOOLS:
+            if name not in allowed:
+                allowed.append(name)
+        for name in LATENT_SHELL_TOOLS:
+            if name not in allowed:
+                allowed.append(name)
+        return allowed
+
+    # --- 工具包解析 ---
+
+    def resolve_tools(self, package_or_tools: str | list[str] | None) -> list[str] | None:
+        """将包名或工具列表统一解析为工具名列表。
+
+        · None              → None（调用方使用 DEFAULT_PRIMARY）
+        · str               → 查包注册表展开；未找到则当普通工具名处理
+        · list[str]         → 原样返回（可含包名，逐项展开）
+        """
+        if package_or_tools is None:
+            return None
+        if isinstance(package_or_tools, str):
+            resolved = self._registry.resolve_tools(package_or_tools)
+            return resolved if resolved else [package_or_tools]
+        # list: 逐项尝试展开包名
+        result: list[str] = []
+        for item in package_or_tools:
+            expanded = self._registry.resolve_tools(item)
+            if expanded:
+                result.extend(expanded)
+            else:
+                result.append(item)
+        return result
+
+    # --- prompt 描述 ---
+
+    def primary_descriptions(self, names: list[str] | None = None) -> dict[str, str]:
+        """
+        返回用于构建 prompt 的工具描述字典。
+
+        names 为 None 时使用 prompt_tool_names()；空列表则返回空。
+        不把潜伏 shell / 全包工具塞进描述。
+        """
+        if names is not None and names == []:
+            return {}
+        selected = list(names) if names is not None else self.prompt_tool_names()
+        result: dict[str, str] = {}
+        for name in selected:
+            if name == "tool_search":
+                result[name] = ToolSearchAction.model_fields["description"].default
+                continue
+            if name == "command_lookup":
+                result[name] = CommandLookupAction.model_fields["description"].default
+                continue
+            meta = self._registry.get(name)
+            if meta:
+                result[name] = meta.description
+        return result
+
+    # --- 搜索（跨 tool/skill/mcp） ---
+
+    def search(self, query: str, top_k: int = 5) -> list[ToolMeta]:
+        """
+        搜索全量工具库（含 skill），排除已在 prompt 中展示的主要工具。
+
+        MCP 工具不在 ToolRegistry 中，单独通过 search_mcp() 查询。
+        """
+        return self._registry.search(
+            query,
+            top_k=top_k,
+            exclude=self._primary_names + ["tool_search"],
+        )
+
+    def search_mcp(self, query: str, top_k: int = 5) -> list[MCPToolInfo]:
+        """在已加载的 MCP 工具中搜索（需先调用 mcp_registry.load_tools）。"""
+        if self._mcp_registry is None:
+            return []
+        return self._mcp_registry.search(query, top_k)
+
+    def search_skills(self, query: str, top_k: int = 5) -> list[SkillMeta]:
+        """在 SkillRegistry 中搜索技能（与 ToolRegistry 搜索结果可能重叠）。"""
+        if self._skill_registry is None:
+            return []
+        return self._skill_registry.search(query, top_k)
+
+    # --- LangChain 接口 ---
+
+    def as_langchain_tools(self) -> list[BaseTool]:
+        """
+        全量 BaseTool 列表，含 tool/skill/mcp + tool_search。
+
+        可直接传入任意 LangChain Agent（create_react_agent 等）。
+        """
+        tools: list[BaseTool] = self._registry.as_langchain_tools()
+        if self._mcp_registry:
+            tools.extend(self._mcp_registry.load_all())
+        tools.append(ToolSearchAction(manager=self))
+        return tools
+
+    def primary_langchain_tools(self) -> list[BaseTool]:
+        """主要工具 + tool_search 的 BaseTool 列表（轻量 Agent 使用）。"""
+        tools = self._registry.as_langchain_tools(self._primary_names)
+        tools.append(ToolSearchAction(manager=self))
+        return tools
+
+    # --- 工具目录摘要（注入 prompt 用） ---
+
+    def category_summary(self) -> str:
+        """类别计数摘要；不 dump 工具名列表。"""
+        from collections import defaultdict
+
+        groups: dict[str, list[str]] = defaultdict(list)
+        for meta in self._registry.all():
+            groups[meta.category].append(meta.name)
+
+        total = sum(len(names) for names in groups.values())
+        lines = [f"[可用工具类别 — 共 {total} 个工具，仅展示类别]"]
+        for category in sorted(groups):
+            lines.append(f"  {category}({len(groups[category])})")
+        lines.append("→ 使用 tool_search(query) 查看普通工具详细说明")
+        lines.append("→ 使用 command_lookup(query) 查看 PowerShell/bash/WinNT 命令")
+        lines.append("→ 查到的说明会进入上下文 observation，不要臆造未检索到的工具")
+        return "\n".join(lines)
+
+    # --- 工具信息（API 层使用） ---
+
+    def all_tool_info(self) -> list[dict]:
+        tool_info = [
+            {
+                "name": m.name,
+                "description": m.description,
+                "category": m.category,
+                "tags": m.tags,
+                "source": "tool",
+                "is_primary": m.name in self._primary_names,
+            }
+            for m in self._registry.all()
+        ]
+        if self._mcp_registry:
+            for info in self._mcp_registry.loaded_tool_info():
+                tool_info.append({
+                    "name": info.name,
+                    "description": info.description,
+                    "category": "mcp",
+                    "tags": ["mcp", info.server_name],
+                    "source": "mcp",
+                    "is_primary": False,
+                })
+        return tool_info

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from typing import Any
 
 from fastapi import APIRouter, WebSocket
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from agent.soul.speak.io.outbound.stream import SpeakStreamEvent
+from agent.soul.speak.io.outbound.websocket import WebSocketSpeakStreamPort
 from state import get_state
 
-from agent.soul.speak.pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
+from agent.soul.speak.responders.request_driven.orchestrator.prompt_trace import get_prompt_trace
 
 from webui.speak_typing_sim import SimulatedTypingStreamPort
 
@@ -18,48 +20,9 @@ from .soul import _resolve_soul, _soul_or_400
 
 router = APIRouter()
 
-# 前端须在 localStorage 持久化 channel session_id，经 WS 传入；不再使用固定 webui。
-
 
 class SpeakResetRequest(BaseModel):
     session_id: str = Field(default="")
-
-
-class WebUISpeakStreamPort:
-    """将 SpeakStreamEvent 桥接到 asyncio 队列，供 WebSocket 推送。"""
-
-    def __init__(
-        self,
-        loop: asyncio.AbstractEventLoop,
-        queue: asyncio.Queue,
-        *,
-        gen_id: str,
-    ) -> None:
-        self._loop = loop
-        self._queue = queue
-        self._gen_id = gen_id
-        self._closed = False
-
-    def close(self) -> None:
-        self._closed = True
-        self._loop.call_soon_threadsafe(
-            self._queue.put_nowait,
-            {"type": "__port_closed__"},
-        )
-
-    def emit(self, session_id: str, event: SpeakStreamEvent) -> None:
-        if self._closed:
-            return
-        payload = {
-            "type": "speak_event",
-            "gen_id": self._gen_id,
-            "session_id": session_id,
-            "kind": event.kind,
-            "text": event.text,
-            "final": event.final,
-            "meta": dict(event.meta),
-        }
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, payload)
 
 
 def _serialize_turn_result(result) -> dict[str, Any]:
@@ -87,7 +50,7 @@ def _submit_user_message(
     session_id: str,
     text: str,
     *,
-    pipeline: str | None = None,
+    responder: str | None = None,
 ) -> dict[str, Any]:
     return soul.speak_submit_user_input(
         session_id,
@@ -95,7 +58,7 @@ def _submit_user_message(
         stream=True,
         mode="inbound",
         record=True,
-        pipeline=pipeline,
+        responder=responder,
     )
 
 
@@ -103,7 +66,7 @@ def _submit_user_message(
 def get_speak_status():
     soul = _resolve_soul()
     if soul is None:
-        return {"status": "unavailable", "ready": False, "reason": "Soul 未初始化"}
+        return {"status": "unavailable", "ready": False, "reason": "Soul ????"}
     running = soul.is_running
     speak_ready = running and soul.speak_initialized
     return {
@@ -114,6 +77,34 @@ def get_speak_status():
     }
 
 
+@router.get("/api/speak/notify")
+async def speak_notify_stream(channel_id: str = "") -> StreamingResponse:
+    """Notify SSE?? channel ????????????????"""
+    state = get_state()
+    queue: asyncio.Queue = asyncio.Queue()
+    detach = state.attach_notify_subscriber(channel_id.strip(), queue)
+
+    async def _generate():
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+
+    async def _stream():
+        try:
+            async for chunk in _generate():
+                yield chunk
+        finally:
+            detach()
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 class SpeakTraceRequest(BaseModel):
     session_id: str = Field(default="")
     enabled: bool = True
@@ -121,7 +112,7 @@ class SpeakTraceRequest(BaseModel):
 
 @router.get("/api/speak/session/{session_id}/trace")
 def get_speak_session_trace(session_id: str):
-    """trace 开关存于进程内全局表，不依赖 Soul 是否已 start。"""
+    """trace ?????????????? Soul ??? start?"""
     sid = session_id.strip()
     trace = get_prompt_trace()
     return {
@@ -161,16 +152,16 @@ def get_speak_session_debug(session_id: str):
         "cache": None,
         "soul_ready": False,
         "module_trace_hint": (
-            "开启 trace 后下一轮对话会在主进程 stdout 打印各模块原文；"
-            "含 persona/status/memory/distiller/LLM system+user"
+            "?? trace ??????????? stdout ????????"
+            "? persona/status/memory/distiller/LLM system+user"
         ),
     }
     soul = _resolve_soul()
     if soul is None or not soul.is_running:
-        payload["reason"] = "Soul 未运行，暂无 session 缓存（可先 start Soul 再发消息）"
+        payload["reason"] = "Soul ?????? session ????? start Soul ?????"
         return payload
     if not soul.speak_initialized:
-        payload["reason"] = "Speak 未就绪"
+        payload["reason"] = "Speak ???"
         return payload
     payload["soul_ready"] = True
     payload["cache"] = soul.speak_session_trace_cache(sid)
@@ -205,7 +196,7 @@ def reset_speak_session(
 
 @router.websocket("/ws/speak/run")
 async def ws_speak_run(websocket: WebSocket) -> None:
-    """Speak 双向会话：同一条 WebSocket 可多轮 user_message，流式事件持续下行。"""
+    """Speak ???????? WebSocket ??? user_message??????????"""
     state = get_state()
     await websocket.accept()
     unregister_ws = state.register_websocket(websocket)
@@ -227,7 +218,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
     delivery_mode = str(first.get("delivery_mode", "stream")).strip().lower()
     if delivery_mode not in ("stream", "simulated"):
         delivery_mode = "stream"
-    pipeline = str(first.get("pipeline", "legacy_qa")).strip() or "legacy_qa"
+    pipeline = str(first.get("pipeline", "request_driven")).strip() or "request_driven"
     if not gen_id:
         await websocket.send_json({"type": "error", "message": "missing gen_id"})
         await websocket.close()
@@ -235,12 +226,12 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
 
     soul, err = _soul_or_400()
     if err is not None:
-        await websocket.send_json({"type": "error", "message": "Soul 未就绪"})
+        await websocket.send_json({"type": "error", "message": "Soul ???"})
         await websocket.close()
         return
 
     if not soul.is_running:
-        await websocket.send_json({"type": "error", "message": "Soul 未运行"})
+        await websocket.send_json({"type": "error", "message": "Soul ???"})
         await websocket.close()
         return
 
@@ -253,9 +244,9 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
     event_q: asyncio.Queue = asyncio.Queue()
     inbound_q: asyncio.Queue = asyncio.Queue()
     send_lock = asyncio.Lock()
-    base_port = WebUISpeakStreamPort(loop, event_q, gen_id=gen_id)
+    base_port = WebSocketSpeakStreamPort(loop, event_q, gen_id=gen_id)
     if delivery_mode == "simulated":
-        port: WebUISpeakStreamPort | SimulatedTypingStreamPort = SimulatedTypingStreamPort(
+        port: WebSocketSpeakStreamPort | SimulatedTypingStreamPort = SimulatedTypingStreamPort(
             inner=base_port,
             loop=loop,
         )
@@ -314,7 +305,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
             if msg_delivery in ("stream", "simulated"):
                 delivery_mode = msg_delivery
                 if delivery_mode == "simulated" and not isinstance(port, SimulatedTypingStreamPort):
-                    base_port = port if isinstance(port, WebUISpeakStreamPort) else port.inner
+                    base_port = port if isinstance(port, WebSocketSpeakStreamPort) else port.inner
                     port = SimulatedTypingStreamPort(inner=base_port, loop=loop)
                 elif delivery_mode == "stream" and isinstance(port, SimulatedTypingStreamPort):
                     port = port.inner
@@ -382,7 +373,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                     soul,
                     session_id,
                     question,
-                    pipeline=pipeline,
+                    responder=pipeline,
                 )
                 await _send_json({
                     "type": "user_ack",
@@ -405,7 +396,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                         stream=True,
                         mode="inbound",
                         record=True,
-                        pipeline=pipeline,
+                        responder=pipeline,
                     )
                     turn_payload["result"] = _serialize_turn_result(result)
                 except Exception as exc:

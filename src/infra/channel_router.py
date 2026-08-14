@@ -51,7 +51,7 @@ class ChannelRouter:
         with self._lock:
             fn = self._handlers.get(target.channel)
         if fn is None:
-            logger.warning("[ChannelRouter] no handler for channel %r — message dropped", target.channel)
+            logger.warning("[ChannelRouter] no handler for channel %r - message dropped", target.channel)
             return
         fn(target, title, message)
 

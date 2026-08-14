@@ -138,7 +138,7 @@ class AgentSession:
             text = self._send_queue.get()
             if text is None:
                 break
-            logger.info("[AgentSession] %s → %r", self._id, text[:80])
+            logger.info("[AgentSession] %s -> %r", self._id, text[:80])
             future = asyncio.run_coroutine_threadsafe(self._reply_fn(text), loop)
             try:
                 future.result()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from agent.soul.speak.pipelines.request_driven.orchestrator.system import build_system_layer
-from agent.soul.speak.pipelines.request_driven.orchestrator.reply_style import SpeakReplyStyle
+from agent.soul.speak.responders.request_driven.orchestrator.system import build_system_layer
+from agent.soul.speak.responders.request_driven.orchestrator.reply_style import SpeakReplyStyle
 
 
 def test_inbound_role_mentions_live_session_window():

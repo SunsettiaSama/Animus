@@ -340,7 +340,13 @@ def benchmark_run_live(body: dict):
         state = get_state()
 
         if state.active_tao is None:
-            yield "data: " + json.dumps({"error": "Agent not initialized. Configure LLM first."}) + "\n\n"
+            yield "data: " + json.dumps({
+                "error": (
+                    "Legacy live benchmark unavailable: active_tao not initialized. "
+                    "WebUI primary runtime is Soul/Speak; call /api/react/init for legacy TaoLoop."
+                ),
+                "deprecated": True,
+            }) + "\n\n"
             return
 
         if state.is_streaming:

@@ -68,9 +68,11 @@ def vllm_start():
             status_code=400,
             content={"error": "LLM not initialized. Set a model via /api/init first."},
         )
+    from infra.llm.service import _resolve_local_model
+    model = _resolve_local_model(state.llm_cfg.model)
     cfg = _load_vllm_config()
-    state.vllm_manager.start(state.llm_cfg.model, cfg)
-    return {"status": "starting", "model": state.llm_cfg.model}
+    state.vllm_manager.start(model, cfg)
+    return {"status": "starting", "model": model}
 
 
 @router.post("/api/vllm/stop")

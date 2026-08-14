@@ -21,6 +21,8 @@ from agent.soul.memory.io.life import (
     LifeIODeps,
     LifeMemoryChannel,
     LifeMemoryIO,
+    SleepFilterChannel,
+    SleepFilterConfig,
 )
 from agent.soul.memory.io.session import (
     DialogueTurnInbound,
@@ -94,6 +96,15 @@ class MemoryService:
             self._session_io = session_io
         else:
             self._session_io = SessionSpeakIO(compression=compression, deps=io_deps)
+        sleep_filter = SleepFilterChannel(
+            SleepFilterConfig(
+                enabled=bool(getattr(cfg, "sleep_filter_enabled", True)),
+                min_salience=float(getattr(cfg, "sleep_filter_min_salience", 0.0)),
+                reject_unanchored_internal_thought=bool(
+                    getattr(cfg, "sleep_filter_reject_unanchored_internal_thought", True)
+                ),
+            )
+        )
         life_deps = LifeIODeps(
             event=self._event,
             social=self._social,
@@ -102,6 +113,7 @@ class MemoryService:
             enqueue_write=self._enqueue_write,
             agent_persona_narrative=self._agent_persona_narrative,
             llm=llm,
+            sleep_filter=sleep_filter,
         )
         if life_io is not None:
             self._life_io = life_io
@@ -146,9 +158,31 @@ class MemoryService:
         else:
             fn()
 
-    def init_infra(self) -> None:
-        if self._memory_infra is not None:
-            self._memory_infra.warm_up()
+    def init_infra(self, *, on_ready: Callable[[], None] | None = None) -> None:
+        """后台预热 embedding / Qdrant，避免阻塞 Soul 主启动路径。
+
+        ``on_ready`` 在 warm_up 完成后回调（例如预热 hot spread）；无 infra 时仍立即调用。
+        """
+        infra = self._memory_infra
+        if infra is None:
+            if on_ready is not None:
+                on_ready()
+            return
+
+        from infra.threading import get_thread_registry
+
+        def _warm() -> None:
+            infra.warm_up()
+            if on_ready is not None:
+                on_ready()
+
+        lease = get_thread_registry().request(
+            "memory",
+            "embedding-warm-up",
+            _warm,
+            daemon=True,
+        )
+        lease.start()
 
     def get_unit(self, unit_id: str) -> BaseNode | None:
         return self._nodes.get(unit_id)

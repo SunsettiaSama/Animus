@@ -53,26 +53,32 @@ def _persona_file_flags() -> dict[str, bool]:
 
 
 def _resolve_soul():
+    """Prefer AppState.soul_service (Soul-first boot); legacy TaoLoop is fallback."""
     state = get_state()
-    tao = getattr(state, "active_tao", None)
-    if tao is not None:
-        soul = getattr(tao, "_soul", None)
-        if soul is not None:
-            return soul
+    soul = getattr(state, "soul_service", None)
+    if soul is not None:
+        return soul
     agent = getattr(state, "agent_service", None)
     if agent is not None:
-        return getattr(agent, "_soul_service", None)
+        agent_soul = getattr(agent, "_soul_service", None)
+        if agent_soul is not None:
+            return agent_soul
+    tao = getattr(state, "active_tao", None)
+    if tao is not None:
+        return getattr(tao, "_soul", None)
     return None
 
 
 def _soul_or_400():
     soul = _resolve_soul()
     if soul is None:
+        state = get_state()
+        reason = getattr(state, "soul_init_error", "") or "请确认 persona 已启用且 LLM 已加载"
         return None, JSONResponse(
             status_code=400,
             content={
                 "status": "error",
-                "detail": "Soul 未就绪：请先初始化 ReAct（persona + storage backend）。",
+                "detail": f"Soul 未就绪：{reason}",
             },
         )
     return soul, None
@@ -121,11 +127,10 @@ def get_soul_readiness():
         getattr(state, "llm_service", None) is not None
         and getattr(state.llm_service, "handle", None) is not None
     )
-    react_ready = getattr(state, "conv_loop", None) is not None
-
     soul = _resolve_soul()
     soul_state = getattr(soul, "state", None) if soul is not None else None
     soul_running = bool(soul is not None and soul.is_running)
+    soul_init_error = str(getattr(state, "soul_init_error", "") or "")
 
     speak_ready = bool(soul_running and soul is not None and soul.speak_initialized)
 
@@ -155,10 +160,10 @@ def get_soul_readiness():
             "hint": "Settings → Persona → 填写并保存画像",
         },
         {
-            "id": "react",
-            "label": "ReAct / Soul 已初始化",
-            "ok": react_ready and soul is not None,
-            "hint": "保存 Persona 后点击「重新初始化 Soul」",
+            "id": "soul",
+            "label": "Soul 已初始化",
+            "ok": soul is not None,
+            "hint": soul_init_error or "WebUI 启动时自动 bootstrap Soul",
         },
         {
             "id": "built_profile",
@@ -171,7 +176,7 @@ def get_soul_readiness():
             "id": "soul_running",
             "label": "Soul 运行中",
             "ok": soul_running,
-            "hint": "完成 ReAct 初始化后自动 start()",
+            "hint": soul_init_error or "Soul bootstrap 完成后自动 start()",
         },
     ]
 
@@ -184,7 +189,7 @@ def get_soul_readiness():
         "storage_json_root": db_cfg.storage.json_root,
         "mysql_enabled": mysql_enabled,
         "llm_ready": llm_ready,
-        "react_ready": react_ready,
+        "soul_init_error": soul_init_error,
         "soul_state": soul_state,
         "soul_running": soul_running,
         "files": files,
@@ -372,4 +377,9 @@ def visitor_bind(body: VisitorBindBody):
     soul, err = _soul_or_400()
     if err is not None:
         return err
+    if soul.accounts.get(body.account_id) is None:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": f"Unknown account_id {body.account_id!r}"},
+        )
     return soul.bind_visitor(body.account_id, body.channel_id)

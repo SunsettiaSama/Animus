@@ -3,14 +3,14 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.memory import (
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.memory import (
     RecallPickWeightPort,
     build_recall_candidates_from_pull,
     format_interactor_preview,
     format_recall_candidates,
     render_interactor_portrait_inject,
 )
-from agent.soul.speak.pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
+from agent.soul.speak.responders.request_driven.orchestrator.prompt_trace import get_prompt_trace
 
 from .gateway import InboundMemoryGateway
 from .request import (
@@ -223,15 +223,13 @@ class InboundMemoryComposeBridge:
             session_id=bundle.session_id,
             pick_weights=self._recall_pick_weights,
         )
-        preview = format_recall_candidates(recall_candidates)
-        if preview:
-            bundle.guidance.recall_preview = preview
+        planner_preview = format_recall_candidates(recall_candidates)
+        if planner_preview:
+            bundle.meta["guidance_recall_preview_for_planner"] = planner_preview
             bundle.meta["guidance_recall_candidates"] = recall_candidates
 
-        all_ids = merged_ids
-        if all_ids:
-            bundle.meta.setdefault("activated_memory_ids", [])
-            bundle.meta["activated_memory_ids"].extend(all_ids)
+        if merged_ids:
+            bundle.meta["available_memory_ids"] = list(merged_ids)
 
         if pulled.spilled.lines or pulled.spilled.unit_ids:
             bundle.meta["memory_spill"] = {

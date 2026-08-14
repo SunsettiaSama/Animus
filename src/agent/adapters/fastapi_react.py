@@ -21,6 +21,9 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
     @router.post("/api/react/init", response_model=None)
     @router.post("/api/react/reinit", response_model=None)
     def react_init(req: ReactInitRequest):
+        from agent.adapters.soul_bootstrap import warn_legacy_react
+
+        warn_legacy_react("/api/react/init")
         state = get_state()
         if state.llm_service is None or state.llm_service.handle is None:
             return JSONResponse(status_code=400, content={"error": "LLM not initialized."})
@@ -47,7 +50,11 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
             state.react_init_event.set()
 
         state.task_runner.submit("react_init", _run, on_error=_on_error)
-        return {"status": "initializing"}
+        return {
+            "status": "initializing",
+            "deprecated": True,
+            "warning": "Legacy ReAct init; primary runtime is Soul/Speak.",
+        }
 
     # ── Status ────────────────────────────────────────────────────────────────
 
@@ -206,6 +213,9 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
 
     @router.websocket("/ws/react/run")
     async def ws_react_run(websocket: WebSocket) -> None:
+        from agent.adapters.soul_bootstrap import warn_legacy_react
+
+        warn_legacy_react("/ws/react/run")
         state = get_state()
         await websocket.accept()
         unregister_ws = state.register_websocket(websocket)
@@ -219,7 +229,11 @@ def create_react_router(get_state: Callable[[], Any]) -> APIRouter:
             bridge = WebUIBridge(state)
 
             if not bridge.is_ready():
-                await websocket.send_json({"type": "error", "message": "ReAct not initialized."})
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Legacy ReAct not initialized. Prefer /ws/speak/run.",
+                    "deprecated": True,
+                })
                 return
 
             if not state.try_start_streaming(gen_id):

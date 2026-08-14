@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from agent.soul.speak.pipelines.rhythm.contracts import RhythmPlan, ShareItem
-from agent.soul.speak.pipelines.rhythm.share import (
+from agent.soul.speak.responders.rhythm.contracts import RhythmPlan, ShareItem
+from agent.soul.speak.responders.rhythm.share import (
     build_share_handoff,
     commit_share_after_speak,
 )

@@ -38,11 +38,11 @@ class NtfyNotifier:
     ) -> None:
         cfg = self._cfg
         if not cfg.enabled:
-            logger.debug("[NtfyNotifier] disabled — message skipped")
+            logger.debug("[NtfyNotifier] disabled - message skipped")
             return
         t = topic or cfg.topic
         if not t:
-            logger.warning("[NtfyNotifier] topic not set — message skipped")
+            logger.warning("[NtfyNotifier] topic not set - message skipped")
             return
 
         server = cfg.server_url.rstrip("/")

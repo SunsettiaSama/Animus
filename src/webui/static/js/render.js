@@ -12,16 +12,41 @@
  *   showEmptyState(mode)
  */
 
+import {
+  META_LABEL,
+  META_PHASE,
+  META_SESSION_STATE,
+  bubbleKindForField,
+  fieldLabel,
+  resolveRenderField,
+} from './speak_render_protocol.js';
+
 const _msgsEl = () => document.getElementById('msgs');
 const _esc    = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 // ── Agent avatar (unified, configurable) ──────────────────────────────────────
 let _agentAvatar = '⚡';
 export function setAgentAvatar(v) { _agentAvatar = v || '⚡'; }
-const _ts     = () => {
-  const d = new Date();
+const _ts     = (iso) => {
+  const d = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(d.getTime())) {
+    const now = new Date();
+    return `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+  }
   return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
 };
+
+function _fmtThreadStamp(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${mo}-${da} ${h}:${mi}`;
+}
 
 // ── Markdown ──────────────────────────────────────────────────────────────────
 
@@ -63,18 +88,41 @@ export function showEmptyState(mode = 'chat') {
 
 // ── User message ──────────────────────────────────────────────────────────────
 
-export function appendUserMsg(text) {
+export function appendUserMsg(text, meta = {}) {
   const el = _msgsEl();
   if (!el) return;
   el.querySelector('.empty-state')?.remove();
   const div = document.createElement('div');
   div.className = 'message user';
+  if (meta.title_key) div.dataset.titleKey = meta.title_key;
   div.innerHTML = `
     <div class="msg-avatar">U</div>
     <div class="msg-body">
       <div class="msg-bubble">${_esc(text)}</div>
-      <span class="msg-time">${_ts()}</span>
+      <span class="msg-time">${_ts(meta.created_at)}</span>
     </div>`;
+  el.appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+/** 旧历史段分隔：title + created_at，同名 title 靠时间戳区分。 */
+export function appendThreadMarker(title, createdAt, meta = {}) {
+  const el = _msgsEl();
+  if (!el) return null;
+  el.querySelector('.empty-state')?.remove();
+  const div = document.createElement('div');
+  div.className = 'thread-marker';
+  const key = meta.title_key || `${title}@@${createdAt || ''}`;
+  div.dataset.titleKey = key;
+  const stamp = _fmtThreadStamp(createdAt);
+  div.innerHTML = `
+    <div class="thread-marker-line"></div>
+    <div class="thread-marker-body">
+      <span class="thread-marker-title">${_esc(title || '对话')}</span>
+      ${stamp ? `<span class="thread-marker-time">${_esc(stamp)}</span>` : ''}
+    </div>
+    <div class="thread-marker-line"></div>`;
   el.appendChild(div);
   scrollBottom();
   return div;
@@ -1004,15 +1052,20 @@ export function appendStepStrip() {
   };
 }
 
-// ── Speak stream (Soul tag-based streaming) ───────────────────────────────────
+// ── Speak stream（按协议字段渲染；不做字符串标签提取）──────────────────────────
 
-const _SPEAK_TAG = {
+const _SPEAK_FIELD_UI = {
   thought: { tag: 'think', cls: 'speak-thought' },
-  action:  { tag: 'action', cls: 'speak-action' },
-  state:   { tag: 'state', cls: 'speak-state' },
+  body: { tag: 'body', cls: 'speak-action' },
+  wait: { tag: 'wait', cls: 'speak-state' },
+  silence: { tag: 'silence', cls: 'speak-state' },
+  typing: { tag: 'typing', cls: 'speak-chunk' },
+  finish: { tag: 'finish', cls: 'speak-state' },
+  // 非 character 字段：会话态 / 观测
   observe: { tag: 'observe', cls: 'speak-observe' },
-  anchor:  { tag: 'anchor', cls: 'speak-anchor' },
-  chunk:   { tag: '…', cls: 'speak-chunk' },
+  anchor: { tag: 'anchor', cls: 'speak-anchor' },
+  chunk: { tag: '…', cls: 'speak-chunk' },
+  session: { tag: 'state', cls: 'speak-state' },
 };
 
 function _shortSpeakText(text, max = 28) {
@@ -1197,7 +1250,7 @@ export function appendSpeakStream(opts = {}) {
   }
 
   function _handleStreamChunk(kind, text, meta = {}) {
-    const phase = meta.phase;
+    const phase = meta[META_PHASE] ?? meta.phase;
     const chunk = String(text ?? '');
 
     if (simulated && kind === 'speak' && phase === 'simulated') {
@@ -1273,7 +1326,7 @@ export function appendSpeakStream(opts = {}) {
     if (!_chunkPill) return;
     const { wrap, pill } = _chunkPill;
     _chunkPill = null;
-    const cfg = _SPEAK_TAG.thought;
+    const cfg = _SPEAK_FIELD_UI.thought;
     pill.className = `step-pill pill-done ${cfg.cls}`;
     const short = _shortSpeakText(text);
     pill.innerHTML =
@@ -1289,43 +1342,57 @@ export function appendSpeakStream(opts = {}) {
         pill.classList.toggle('expanded');
       });
     }
-    _events.push({ kind: 'thought', text, meta: {} });
+    _events.push({ kind: 'thought', text, meta: { field: 'thought' } });
     scrollBottom();
   }
 
   function _addTagPill(kind, text, meta = {}) {
-    if (_chunkPill && kind === 'thought') {
+    if (_chunkPill && (kind === 'thought' || resolveRenderField(kind, meta) === 'thought')) {
       _finalizeChunkPill('think', text);
       return;
     }
     _clearChunkPill();
 
-    const cfg = _SPEAK_TAG[kind] ?? { tag: kind, cls: '' };
+    const field = resolveRenderField(kind, meta);
+    let cfgKey = field;
+    let label = fieldLabel(field) || (meta[META_LABEL] ? String(meta[META_LABEL]) : '');
+    let detailText = text;
+
+    if (field === 'wait' || field === 'silence') {
+      cfgKey = field;
+      label = fieldLabel(field);
+      const seconds = meta.seconds ?? (meta.wait_ms != null ? Number(meta.wait_ms) / 1000 : null);
+      detailText = seconds != null ? `${field} ${seconds}s` : field;
+    } else if (field === 'thought') {
+      label = _shortSpeakText(text) || fieldLabel(field);
+    } else if (field == null && kind === 'state') {
+      cfgKey = 'session';
+      const sessionState = String(meta[META_SESSION_STATE] || text || 'state');
+      label = sessionState;
+      detailText = sessionState;
+    } else if (kind === 'observe') {
+      cfgKey = 'observe';
+      label = _shortSpeakText(text) || 'observe';
+    } else if (kind === 'anchor') {
+      cfgKey = 'anchor';
+      label = _shortSpeakText(text) || 'anchor';
+    }
+
+    const cfg = _SPEAK_FIELD_UI[cfgKey] ?? { tag: label || kind, cls: '' };
     const wrap = document.createElement('div');
     wrap.className = 'step-pill-wrap';
     const pill = document.createElement('button');
     pill.className = `step-pill pill-done ${cfg.cls}`;
 
-    let label = cfg.tag;
-    let detailText = text;
-    if (kind === 'state') {
-      label = meta.session_state || text || 'state';
-      detailText = meta.session_state || text;
-    } else if (kind === 'observe') {
-      label = _shortSpeakText(text) || 'observe';
-    } else if (kind === 'thought') {
-      label = _shortSpeakText(text) || 'think';
-    }
-
     pill.innerHTML =
       `<span class="pill-step">${cfg.tag}</span>` +
       `<span class="pill-sep">·</span>` +
-      `<span class="pill-label">${_esc(label)}</span>` +
+      `<span class="pill-label">${_esc(label || cfg.tag)}</span>` +
       `<span class="pill-check">✓</span>`;
 
     if (detailText && String(detailText).trim()) {
-      const detail = _mkSpeakDetail(cfg.tag.toUpperCase(), detailText, {
-        markdown: kind === 'thought' || kind === 'observe',
+      const detail = _mkSpeakDetail(String(cfg.tag).toUpperCase(), detailText, {
+        markdown: field === 'thought' || kind === 'observe',
       });
       wrap.appendChild(detail);
       pill.addEventListener('click', () => {
@@ -1343,6 +1410,7 @@ export function appendSpeakStream(opts = {}) {
   return {
     el,
     onEvent(kind, text, meta = {}) {
+      const field = resolveRenderField(kind, meta);
       switch (kind) {
         case 'agent_typing':
           if (meta.active === false) _hideTypingIndicator();
@@ -1350,12 +1418,15 @@ export function appendSpeakStream(opts = {}) {
           break;
         case 'tag':
           _clearChunkPill();
-          if (meta.tag === 'think') {
+          if (meta.tag === 'think' || field === 'thought') {
             if (simulated) _showTypingIndicator();
             else _ensureChunkPill();
-          } else if (meta.tag === 'speak' || meta.tag === 'action') {
-            if (simulated && meta.tag === 'speak') _showTypingIndicator();
-            else _ensureOpenBubble(meta.tag);
+          } else if (meta.tag === 'speak' || meta.tag === 'action' || field === 'speak' || field === 'body') {
+            if (simulated && (meta.tag === 'speak' || field === 'speak')) _showTypingIndicator();
+            else {
+              const bubbleKind = bubbleKindForField(field) || (meta.tag === 'action' ? 'action' : 'speak');
+              _ensureOpenBubble(bubbleKind);
+            }
           }
           break;
         case 'chunk':

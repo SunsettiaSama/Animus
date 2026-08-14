@@ -4,6 +4,7 @@ from infra.sandbox import SandboxManager
 from infra.task_runner import BackgroundTaskRunner
 from infra.searxng_manager import SearXNGManager
 from infra.service_registry import ServiceRegistry
+from infra.threading import ThreadLease, ThreadRegistry, get_thread_registry
 from infra.llm.base import BaseVLLMManager
 from infra.llm.official import OfficialVLLMManager
 from infra.llm.custom import CustomVLLMManager
@@ -23,6 +24,18 @@ def __getattr__(name: str):
         from infra.db import RedisClient
 
         return RedisClient
+    if name in (
+        "AgentService",
+        "BaseAgent",
+        "ObservationUnit",
+        "ThoughtActionUnit",
+        "Timeline",
+        "Unit",
+        "UserUnit",
+    ):
+        from infra import agent as _agent
+
+        return getattr(_agent, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -35,6 +48,9 @@ __all__ = [
     "SandboxManager",
     "SearXNGManager",
     "ServiceRegistry",
+    "ThreadLease",
+    "ThreadRegistry",
+    "get_thread_registry",
     "BaseVLLMManager",
     "OfficialVLLMManager",
     "CustomVLLMManager",
@@ -47,4 +63,11 @@ __all__ = [
     "LLM",
     "LLMHandle",
     "LLMService",
+    "AgentService",
+    "BaseAgent",
+    "Timeline",
+    "Unit",
+    "UserUnit",
+    "ThoughtActionUnit",
+    "ObservationUnit",
 ]

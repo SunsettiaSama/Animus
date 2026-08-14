@@ -4,9 +4,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..pipelines.request_driven.orchestrator import SpeakPromptBundle, SpeakTurnMode
-from ..pipelines.request_driven.orchestrator.assemble import build_turn_system, resolve_llm_user_text
-from ..pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
+from ..responders.request_driven.orchestrator import SpeakPromptBundle, SpeakTurnMode
+from ..responders.request_driven.orchestrator.assemble import build_turn_system, resolve_llm_user_text
+from ..responders.request_driven.orchestrator.prompt_trace import get_prompt_trace
 from ..io.outbound.stream import SpeakAgentOutput, SpeakStreamEvent, SpeakStreamPipeline
 from ..io.outbound.stream.channel import SpeakStreamChannel
 from ..llm.engine import SpeakLLMEngine
@@ -94,8 +94,19 @@ def _generate_with_outbound(
     answer = llm_result.text
     if on_partial is not None and answer.strip():
         on_partial(answer.strip())
-    events = list(host.stream_pipeline.emit_parsed_output(session_id, answer))
-    return parse(answer), events
+    from ..io.outbound.execute import execute_outbound, outbound_from_parsed
+
+    parsed = parse(answer)
+    request = outbound_from_parsed(
+        session_id,
+        thought=parsed.thought,
+        speak=parsed.speak or answer,
+        actions=parsed.actions,
+        observe=parsed.observe,
+        user_text=user_text,
+    )
+    result = execute_outbound(request, emit_fn=host.stream_pipeline._emit)
+    return parsed, result.events
 
 
 def _resolve_handoff(

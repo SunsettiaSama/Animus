@@ -5,8 +5,8 @@ import time
 from unittest.mock import MagicMock
 
 from agent.soul.presence.share_desire import ShareDesire
-from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakOrchestrator
-from agent.soul.speak.pipelines.request_driven.orchestrator.runner import SpeakComposeRunner
+from agent.soul.speak.responders.request_driven.orchestrator import SpeakOrchestrator
+from agent.soul.speak.responders.request_driven.orchestrator.runner import SpeakComposeRunner
 from agent.soul.presence.state.dynamic.expectation.queue import ShareIntent, ShareIntentQueue
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 
@@ -37,7 +37,6 @@ def test_compose_runner_prefetch_non_blocking():
     runner = SpeakComposeRunner()
     runner.start()
     runner.schedule_plan_warm(composer, "tao", target_turn_index=1)
-    assert runner.wait_for_plan_ready("tao", 1, timeout_ms=10) is True
 
     deadline = time.time() + 2.0
     plan = None

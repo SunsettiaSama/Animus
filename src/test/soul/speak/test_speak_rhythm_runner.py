@@ -2,9 +2,9 @@
 
 Manual smoke (with a real SpeakService + LLM wired):
   python -c "from agent.soul.speak.service import SpeakService; ..."
-  service.run_turn(sid, '在吗', pipeline='rhythm')          # speak path
-  service.run_turn(sid, '先别回', pipeline='rhythm')         # listen/hold path
-  service.run_turn(sid, '', mode='proactive', pipeline='rhythm')  # proactive
+  service.run_turn(sid, '在吗', responder='rhythm')          # speak path
+  service.run_turn(sid, '先别回', responder='rhythm')         # listen/hold path
+  service.run_turn(sid, '', mode='proactive', responder='rhythm')  # proactive
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ from dataclasses import dataclass, field
 
 from agent.soul.speak.io.outbound.stream import SpeakStreamChannel, SpeakStreamPipeline
 from agent.soul.speak.llm.engine import SpeakLLMEngine
-from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakPromptBundle
-from agent.soul.speak.pipelines.rhythm.runner import RhythmPipelineRunner
-from agent.soul.speak.pipelines.rhythm.state import RhythmStateStore
+from agent.soul.speak.responders.request_driven.orchestrator import SpeakPromptBundle
+from agent.soul.speak.responders.rhythm.runner import RhythmPipelineRunner
+from agent.soul.speak.responders.rhythm.state import RhythmStateStore
 from agent.soul.speak.session.queue import UserInputItem
 
 
@@ -148,7 +148,7 @@ def _make_runner(*, gate: str, reply_text: str = "嗯，我在。") -> RhythmPip
 def test_rhythm_runner_listen_does_not_call_reply_llm():
     runner = _make_runner(gate="listen")
     result = runner.run(
-        UserInputItem(session_id="s1", user_text="先别回我", pipeline="rhythm")
+        UserInputItem(session_id="s1", user_text="先别回我", responder="rhythm")
     )
     assert result.answer == ""
     assert "rhythm_no_speak" in result.notes
@@ -165,7 +165,7 @@ def test_rhythm_runner_speak_returns_answer_and_records():
         reply_text="[speak]嗯，我在。[/speak][state]finish[/state]",
     )
     result = runner.run(
-        UserInputItem(session_id="s1", user_text="在吗？", pipeline="rhythm", record=True)
+        UserInputItem(session_id="s1", user_text="在吗？", responder="rhythm", record=True)
     )
     assert "嗯，我在" in result.answer
     assert result.recorded
@@ -185,7 +185,7 @@ def test_rhythm_runner_proactive_mode_allowed_with_empty_user_text():
             session_id="s1",
             user_text="",
             mode="proactive",
-            pipeline="rhythm",
+            responder="rhythm",
             record=True,
         )
     )
@@ -258,7 +258,7 @@ def test_rhythm_runner_share_commits_only_after_speak():
         on_scene_every_k=99,
     )
     result = runner.run(
-        UserInputItem(session_id="s1", user_text="说说看", pipeline="rhythm")
+        UserInputItem(session_id="s1", user_text="说说看", responder="rhythm")
     )
     assert result.answer
     assert len(queue) == 1
@@ -315,7 +315,7 @@ def test_rhythm_runner_listen_does_not_commit_share():
         on_scene_every_k=99,
     )
     result = runner.run(
-        UserInputItem(session_id="s1", user_text="先别说", pipeline="rhythm")
+        UserInputItem(session_id="s1", user_text="先别说", responder="rhythm")
     )
     assert result.answer == ""
     assert "rhythm_no_speak" in result.notes

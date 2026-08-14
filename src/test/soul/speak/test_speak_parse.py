@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.soul.speak.pipelines.request_driven.orchestrator.system.output_format import SpeakOutputFormat
+from agent.soul.speak.responders.request_driven.orchestrator.system.output_format import SpeakOutputFormat
 from agent.soul.speak.io.outbound.stream import SPEAK_PARSE_FIELDS, SpeakAgentOutput, parse_agent_output
 from agent.soul.speak.io.outbound.stream.pipeline import SpeakStreamPipeline
 from agent.soul.speak.tools.anchor import build_anchor_request

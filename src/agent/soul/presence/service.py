@@ -213,6 +213,8 @@ class PresenceService:
         result = self.trigger(PresenceTrigger.life_sync(bundle))
         self._persist(bundle.session_id)
         sync = result.outcome.life_sync
+        # 仅通知状态；不在此 scan（scan 会 drain 队列，需由 Soul speak_if_ready 路径开口）
+        self._notify_status_update(self.snapshot(bundle.session_id or "tao"))
         return {
             "static_notes": list(sync.static_notes) if sync else [],
             "dynamic_notes": list(sync.dynamic_notes) if sync else [],

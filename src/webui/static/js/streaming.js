@@ -139,9 +139,11 @@ export class ReactSession extends BaseSession {
 let _current = null;
 
 export function startSession(session) {
-  if (_current) {
-    _current.abort();
-    _current.close();
+  if (_current && _current !== session) {
+    // Speak 长连接勿发 abort：否则服务端刚 arm_enter_greeting 就被拆掉，主动问候永远进不来
+    if (typeof _current.close === 'function') {
+      _current.close();
+    }
     _current = null;
   }
   _current = session;
@@ -180,17 +182,30 @@ export class SpeakSession extends BaseSession {
     this._onUserAck = opts.onUserAck ?? (() => {});
     this._onTurnStart = opts.onTurnStart ?? (() => {});
     this._onError = opts.onError ?? (() => {});
+    this._onWorkEvent = opts.onWorkEvent ?? (() => {});
     this._deliveryMode = opts.deliveryMode === 'simulated' ? 'simulated' : 'stream';
-    this._pipeline = opts.pipeline === 'request_driven' ? 'request_driven' : 'legacy_qa';
+    this._pipeline = 'request_driven';
     this._typingIdleMs = opts.typingIdleMs === 5000 ? 5000 : 3000;
     this._getDraft = opts.getDraft ?? (() => '');
     this._typingPulseTimer = null;
     this._connected = false;
     this._aborted = false;
+    this._workHold = false;
+    this._turnResolvers = [];
+    this._connectPromise = null;
+    this._reconnectTimer = null;
+    this._shouldReconnect = false;
+    this._connectionEpoch = 0;
+    this._proactiveResolvers = new Map();
+    this._completedProactive = new Set();
   }
 
   isConnected() {
     return this._connected && this._ws?.readyState === WebSocket.OPEN;
+  }
+
+  get sessionId() {
+    return this._sessionId;
   }
 
   setTurnCallbacks(opts = {}) {
@@ -198,6 +213,39 @@ export class SpeakSession extends BaseSession {
     if (opts.onTurnFinish) this._onTurnFinish = opts.onTurnFinish;
     if (opts.onUserAck) this._onUserAck = opts.onUserAck;
     if (opts.onTurnStart) this._onTurnStart = opts.onTurnStart;
+    if (opts.onWorkEvent) this._onWorkEvent = opts.onWorkEvent;
+  }
+
+  sendWorkFrame(payload) {
+    if (!payload || typeof payload !== 'object') return false;
+    if (!this.isConnected()) return false;
+    this._send({ ...payload, gen_id: this._genId, session_id: this._sessionId });
+    return true;
+  }
+
+  acknowledgeProactive(deliveryId) {
+    const id = String(deliveryId ?? '').trim();
+    if (!id || !this.isConnected()) return false;
+    this._send({
+      type: 'proactive_ack',
+      delivery_id: id,
+      ...this._wsPayload(),
+    });
+    this._completedProactive.add(id);
+    const resolve = this._proactiveResolvers.get(id);
+    if (resolve) {
+      this._proactiveResolvers.delete(id);
+      resolve();
+    }
+    return true;
+  }
+
+  waitForProactiveDelivery(deliveryId) {
+    const id = String(deliveryId ?? '').trim();
+    if (!id || this._completedProactive.has(id)) return Promise.resolve();
+    return new Promise(resolve => {
+      this._proactiveResolvers.set(id, resolve);
+    });
   }
 
   setDeliveryMode(mode) {
@@ -205,7 +253,7 @@ export class SpeakSession extends BaseSession {
   }
 
   setPipeline(pipeline) {
-    this._pipeline = pipeline === 'request_driven' ? 'request_driven' : 'legacy_qa';
+    this._pipeline = 'request_driven';
   }
 
   _wsPayload(extra = {}) {
@@ -237,10 +285,30 @@ export class SpeakSession extends BaseSession {
   }
 
   _handleMessage(msg) {
-    if (msg.gen_id && msg.gen_id !== this._genId) return;
+    if (msg.gen_id && msg.gen_id !== this._genId && !String(msg.type || '').startsWith('work_')) {
+      return;
+    }
+
+    if (String(msg.type || '').startsWith('work_')) {
+      this._onWorkEvent(msg);
+      // Release turn waiter so UI leaves streaming while waiting for confirmation.
+      if (
+        msg.type === 'work_confirmation_required'
+        || msg.type === 'work_declined'
+        || msg.type === 'work_started'
+      ) {
+        this._workHold = msg.type === 'work_confirmation_required' || msg.type === 'work_started';
+        const resolve = this._turnResolvers.shift();
+        if (resolve) {
+          resolve({ type: 'work_pending', work_id: msg.work_id, work_type: msg.type });
+        }
+      }
+      return;
+    }
 
     if (msg.type === 'turn_start') {
       this._onTurnStart(msg);
+      return;
     }
 
     if (msg.type === 'speak_event') {
@@ -281,56 +349,87 @@ export class SpeakSession extends BaseSession {
     });
   }
 
+  _scheduleReconnect() {
+    if (!this._shouldReconnect || this._closed || this._reconnectTimer) return;
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this.connect().then(
+        () => {},
+        () => this._scheduleReconnect(),
+      );
+    }, 1000);
+  }
+
+  connect() {
+    if (this.isConnected()) return Promise.resolve(this);
+    if (this._connectPromise) return this._connectPromise;
+
+    this._closed = false;
+    this._shouldReconnect = true;
+    const epoch = ++this._connectionEpoch;
+    const ws = wsFactory(this._path);
+    this._ws = ws;
+
+    this._connectPromise = new Promise((resolve, reject) => {
+      ws.onopen = () => {
+        if (epoch !== this._connectionEpoch || this._closed) {
+          ws.close();
+          reject(new Error('Speak connection superseded'));
+          return;
+        }
+        this._connected = true;
+        ws.send(JSON.stringify({
+          type: 'session_open',
+          ...this._wsPayload(),
+        }));
+        this.sendTypingIdleMs();
+        this.startTypingPulse(this._getDraft);
+        resolve(this);
+      };
+
+      ws.onmessage = evt => {
+        let msg;
+        try {
+          msg = JSON.parse(evt.data);
+        } catch (e) {
+          this._onError(new Error(`Malformed WebSocket frame: ${e.message}`));
+          return;
+        }
+        this._handleMessage(msg);
+      };
+
+      ws.onerror = () => {
+        if (!this._connected) reject(new Error('WebSocket connection error'));
+      };
+
+      ws.onclose = () => {
+        if (epoch !== this._connectionEpoch) return;
+        this._connected = false;
+        this.stopTypingPulse();
+        while (this._turnResolvers.length) {
+          this._turnResolvers.shift()?.({ type: 'disconnected' });
+        }
+        this._scheduleReconnect();
+      };
+    }).finally(() => {
+      if (epoch === this._connectionEpoch) this._connectPromise = null;
+    });
+
+    return this._connectPromise;
+  }
+
   async run(question) {
     const first = String(question ?? '').trim();
-    if (!first) {
-      this._onError(new Error('empty question'));
-      return;
-    }
+    await this.connect();
+    if (!first) return { type: 'session_open' };
 
-    await this._open();
-    this._connected = true;
-    this._turnResolvers = [];
-    this._turnRejectors = [];
-
-    this._ws.onmessage = evt => {
-      let msg;
-      try {
-        msg = JSON.parse(evt.data);
-      } catch (e) {
-        this._onError(new Error(`Malformed WebSocket frame: ${e.message}`));
-        return;
-      }
-      this._handleMessage(msg);
-    };
-
-    this._ws.onerror = () => {
-      this._connected = false;
-      this._onError(new Error('WebSocket connection error'));
-    };
-
-    this._ws.onclose = () => {
-      this._connected = false;
-    };
-
-    this._send({
-      type: 'start',
-      question: first,
-      ...this._wsPayload(),
-    });
-    this.sendTypingIdleMs();
-    this.startTypingPulse(this._getDraft);
-
-    const result = await this._waitTurn();
-    if (result?.type === 'error') {
-      this._onError(new Error(result.message ?? 'Speak error'));
-    }
-    return result;
+    return this.sendTurn(first);
   }
 
   async sendTurn(question) {
     const text = String(question ?? '').trim();
-    if (!text || !this.isConnected()) return null;
+    if (!text) return null;
+    if (!this.isConnected()) await this.connect();
     this._send({
       type: 'user_message',
       question: text,
@@ -376,6 +475,16 @@ export class SpeakSession extends BaseSession {
   }
 
   close() {
+    this._shouldReconnect = false;
+    this._connectionEpoch += 1;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    this._connectPromise = null;
+    this._connected = false;
+    for (const resolve of this._proactiveResolvers.values()) resolve();
+    this._proactiveResolvers.clear();
     this.stopTypingPulse();
     super.close();
   }
@@ -386,3 +495,17 @@ export class SpeakSession extends BaseSession {
     this._send({ type: 'abort', gen_id: this._genId });
   }
 }
+
+/** Work frame types handled by SpeakSession (same WS). */
+export const WORK_EVENT_TYPES = [
+  'work_intent_detected',
+  'work_confirmation_required',
+  'work_declined',
+  'work_started',
+  'work_progress',
+  'work_monitor',
+  'work_finished',
+  'work_failed',
+  'work_aborted',
+  'work_fallback_to_speak',
+];

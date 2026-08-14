@@ -1,117 +1,87 @@
-# agent/soul/persona — 人格演化子系统
+# agent/soul/persona
 
-实现代码位于 **`src/agent/soul/persona/`**。`TaoLoop` 与 `SpeakService` 通过 `PersonaManager` / `PersonaService` 挂载画像与自我概念块。
+Persona 是静态画像、体验聚类 buffer、慢变 self concept 与面向对话的 persona distill。快变情绪和当下状态属于 Presence。
 
-本模块是 **「画像 + 体验 buffer + 慢变 self_concept」** 三层结构；快变情绪在 **`PresenceState.affect`**，不在 persona 域。
+## 当前结构
 
----
-
-## 职责边界
-
-| 域 | 职责 |
-|---|---|
-| **Persona** | 静态画像、体验聚类元数据、月度 self_concept 漂移 |
-| **Presence** | 快变情绪、当下自叙 FSM |
-| **Memory** | 对话事实记录与检索 |
-
----
-
-## 目录结构
-
-```
+```text
 src/agent/soul/persona/
-├── manager.py              # PersonaManager — TaoLoop / 内部主入口
-├── service.py              # PersonaService — Soul dispatch 包装
-├── builder.py              # ProfileBuilder（LLM 初始化画像）
-├── profile/                # 静态画像
-│   ├── profile.py          PersonaProfile
-│   ├── block.py            ProfileBlock
-│   └── store.py            ProfileStore → profile.json
-├── buffer/                 # 体验聚类 + 月度漂移调度
-│   ├── buffer.py           ExperienceBuffer
-│   ├── store.py            ExperienceBufferStore
-│   ├── clustering.py       主题聚类
-│   ├── consolidation.py
-│   └── drift_writer.py     MonthlyDriftUpdater
-└── self_concept/           # 慢变自我叙事
-    ├── concept.py          SelfConcept（信念分级 emerging → core）
-    ├── block.py            SelfConceptBlock
-    └── store.py            SelfConceptStore
+├── manager.py / service.py
+├── profile/                 原始/构建后画像与 Prompt block
+├── buffer/                  cluster signal、持久化、月度 drift
+├── self_concept/            belief、block、store
+├── distill/                 对话切片 schema/writer/store/ensure/render
+├── builder.py
+├── portrait.py
+└── render_voice.py
 ```
 
----
+`distill/` 是当前正式组成，不应只描述为 profile + buffer + self_concept 三层。
 
-## 架构总览
+## `PersonaManager` / `PersonaService`
 
-```
-PersonaManager
-       │
-       ├── profile/       → ProfileStore → profile.json
-       ├── buffer/       → ExperienceBufferStore → buffer 状态
-       └── self_concept/ → SelfConceptStore → self_concept.json
-```
+`PersonaManager` 持有状态与存储，`PersonaService` 是 Soul handler 使用的域服务包装。
 
-- **profile**：静态身份描述，可经 `ProfileBuilder` LLM 初始化
-- **buffer**：从 memory drift units 聚类主题，驱动月度 self_concept 更新
-- **self_concept**：**仅**月度漂移写入；提供 `query_bias_keywords()` 供检索偏置
+主要 API：
 
----
+- `snapshot()`：profile、buffer 摘要、self_concept、attention keywords，以及可用时的 `persona_distill`。
+- `buffer_snapshot(include_signals=...)`
+- `record_cluster_signals()`：Memory persona clusters → buffer。
+- `run_monthly_drift(force=False, month="")`
+- `portrait_revision()` / `portrait_for_narrative()`
+- `all_blocks()` / `bias_query()`
+- `reload_profile()` / `rebuild_profile()`
+- `reset_self_concept()`
+- `ensure_distill()` / `get_distill()`
+- `sync_presence_expectation()`：根据 persona 选择 Presence 分享档位。
 
-## Prompt 注入
+`snapshot()` 会同步 ensure distill；没有 LLM 或输入不足时 distill 可能为空，调用方必须处理缺失，不能假设一定有 dialogue slice。
 
-`PersonaManager.all_blocks()` 顺序产出：
+## 写入与 worker
+
+`SoulService._wire_workers()`：
+
+- 把 `SoulWorkers.persona` 注入 Persona。
+- 注入 Memory drift port 和 Memory embedder。
+- Memory wander 的 cluster candidates 经 persona worker 写入 buffer。
+- monthly drift 是 Heartbeat 重任务，使用 buffer + Memory drift units 更新 self concept。
+
+未注入 worker 时 manager 会同步执行写入；未注入 Memory port/embedder 时月度 drift 的数据/聚类能力受限，不应描述为完整后台演化。
+
+## Prompt 与 distill
+
+`PersonaManager.all_blocks()` 仍只直接返回：
 
 1. `ProfileBlock`
-2. `SelfConceptBlock`（非空时）
+2. 非空时的 `SelfConceptBlock`
 
-Speak compose 层通过 `injected/persona/` 注入 persona 快照；Tao 通道经 `handlers/tao/blocks/` 注册块。
+Speak 的 request-driven compose 另外读取 persona snapshot/distill。`PersonaDistillPack` 提供按用途的切片，dialogue slice 由 `ensure_distill()` 生成或从 store 读取。
 
-**L3 检索偏置**：`bias_query(query)` 将 self_concept 关键词附加到查询字符串。
+## Soul API
 
----
+Persona 的 Soul dispatch actions 定义在 `agent/soul/handlers/api/actions.py`，包括 snapshot、buffer、monthly drift、reload/rebuild profile、portrait、reset 与 distill 相关操作。外部优先使用 `SoulService.get_persona_snapshot()` / `query_persona()`：
 
-## PersonaAction（Soul dispatch）
+- `get_persona_snapshot()` 只返回 Persona。
+- `query_persona()` 额外叠加 Presence state、affect 与 self narrative。
 
-| Action | 说明 |
-|---|---|
-| `get_snapshot` | 完整 snapshot |
-| `get_buffer` | buffer 状态 |
-| `run_monthly_drift` | 月度 self_concept 漂移（重任务，orchestrator 异步） |
-| `rebuild_profile` / `reload_profile` | 画像重建 |
-| `portrait_revision` / `portrait_for_narrative` | 叙事用人像 |
-| `reset_self_concept` | 重置自我概念 |
+## Tao adapters
 
----
+当前路径是 `src/agent/adapters/soul_tao/`：
 
-## API 摘录
+- `persona.py`：`TaoPersonaHandler`，仅处理 Tao run；monthly drift 不经 Tao。
+- `persona_prompt.py`：从 Soul query 组装 Profile、SelfConcept、Presence blocks。
+- `tools/persona.py`：`soul_persona` ReAct action。
+- `blocks/presence_block.py`：Presence Prompt block。
 
-```python
-from agent.soul.persona import PersonaManager, PersonaService
-from config.agent.persona_config import PersonaConfig
+不存在 `agent/soul/handlers/tao/blocks/` 或 `speak/injected/persona/` 这类当前路径。
 
-mgr = PersonaManager(cfg=PersonaConfig(enabled=True), llm=llm)
-mgr.all_blocks()
-mgr.bias_query(query)
-mgr.snapshot()
-```
+## 持久化
 
----
+Persona 使用 `StorageConfig.resolve_persona_dir()` 后的目录，主要包括：
 
-## 持久化布局
+- `profile.json` 与构建后 profile 文件
+- `self_concept.json`
+- buffer state/meta
+- persona distill store
 
-```
-.react/persona/
-├── profile.json
-├── self_concept.json
-└── buffer/                  # ExperienceBufferStore 状态文件
-```
-
----
-
-## 相关文档
-
-- [presence/README.md](../presence/README.md)（快变 affect）
-- [memory/README.md](../memory/README.md)（drift units → buffer 聚类）
-- [speak/README.md](../speak/README.md)（compose persona 注入）
-
-历史文档 `docs/agent/react/persona/README.md` 保留为重定向。
+这些文件不随 Soul 的 Memory/Accounts/Storyview storage backend 切换。

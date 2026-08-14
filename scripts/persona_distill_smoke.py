@@ -21,12 +21,12 @@ if hasattr(sys.stderr, "reconfigure"):
 from agent.soul.persona.distill import PersonaDistillPack, PersonaDistillWriter
 from agent.soul.persona.profile.profile import PersonaProfile
 from agent.soul.persona.self_concept.concept import SelfConcept
-from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakPromptBundle
-from agent.soul.speak.pipelines.request_driven.orchestrator.persona import collect_persona_layer
-from agent.soul.speak.pipelines.request_driven.orchestrator.scene import SpeakSceneLayer
-from agent.soul.speak.pipelines.request_driven.orchestrator.guidance import SpeakGuidanceLayer
-from agent.soul.speak.pipelines.request_driven.orchestrator.system import build_system_layer
-from agent.soul.speak.pipelines.request_driven.orchestrator.system.output_format import SpeakOutputFormat
+from agent.soul.speak.responders.request_driven.orchestrator import SpeakPromptBundle
+from agent.soul.speak.responders.request_driven.orchestrator.persona import collect_persona_layer
+from agent.soul.speak.responders.request_driven.orchestrator.scene import SpeakSceneLayer
+from agent.soul.speak.responders.request_driven.orchestrator.guidance import SpeakGuidanceLayer
+from agent.soul.speak.responders.request_driven.orchestrator.system import build_system_layer
+from agent.soul.speak.responders.request_driven.orchestrator.system.output_format import SpeakOutputFormat
 from agent.soul.speak.io.outbound.stream import parse_agent_output
 from agent.soul.speak.llm.engine import SpeakLLMEngine
 from config.llm_core.config import LLMConfig

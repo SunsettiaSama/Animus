@@ -1,196 +1,128 @@
 # agent/soul/life
 
-**生命体验子系统**：在 Tao 会话、Speak 对话与心跳之间，以「体验 → 客观记录 → 手账 → 叙事」结构持续累积 Agent 的主观生命状态。虚拟叙事层（`virtual/`）与现实锚点层（`anchor/`）并列；共享 `LifeExperienceStack` 编排对话与生活两条 pipeline。
+Life 把对话、主动事件和虚拟叙事整理成 `ExperienceUnit`，维护热体验、客观 chronicle、主观 journal，并通过 `storyview.StoryPort` 推进故事世界。
 
-源码：`src/agent/soul/life/`。
+## 当前目录
 
----
-
-## 顶层导出
-
-```python
-from agent.soul.life import (
-    LifeManager, LifeService,
-    ExperienceUnit, ExperienceBuilder, ExperienceOrchestrator,
-    LifeExperiencePipeline,
-    ChronicleEntry, ChronicleStore,
-    AnchorChronicleStore, AnchorLayer, RealityAnchorLayer,
-    LifeJournal, Landmark, LandmarkFiller, roll_d100,
-    VirtualLayer, NarrativeEngine, SurpriseGenerator,
-    LifeProfile, LifeProfileBlock, JournalBlock,
-)
-```
-
-对话体验栈（经 `SoulService.experience`）：
-
-```python
-from agent.soul.life.experience.stack import LifeExperienceStack
-```
-
----
-
-## 目录结构
-
-```
+```text
 src/agent/soul/life/
-├── manager.py                # LifeManager — 统一对外入口
-├── service.py                # LifeService — 后台线程（landmark / surprise tick）
-├── orchestrator.py           # 生活层编排（与 experience/orchestrator 区分）
-├── block.py                  # LifeProfileBlock / JournalBlock
-├── profile.py                # LifeProfile / LifeProfileStore
-├── ports.py                  # 跨层 Protocol
-├── life_bridge.py            # LifeContextInput
-├── narrative_context.py      # StoryWorldContextSupplier
-├── io/                       # 对外 I/O 边界
-│   ├── hub.py                # LifeIOHub（speak + memory）
-│   ├── speak/                # LifeSpeakIO — Speak 入站体验
-│   └── memory/               # LifeExperienceMemoryIO — Memory 出站擢升
+├── manager.py / service.py
+├── io/
+│   ├── speak/                       Speak 入站
+│   └── memory/                      Memory 出站
 ├── experience/
-│   ├── stack.py              # LifeExperienceStack（共享编排器 + 双 pipeline）
-│   ├── orchestrator.py       # ingest / 擢升 / 折叠 / chronicle 路由
-│   ├── pipeline.py           # LifeExperiencePipeline（非对话生活体验）
-│   ├── builder.py            # ExperienceBuilder
-│   ├── unit.py / log.py / collapser.py / sources.py
-│   ├── incident.py           # LifeIncident
-│   └── dialogue/             # DialogueExperiencePipeline / coordinator / working_memory
-├── virtual/                  # 虚拟叙事层
-│   ├── layer.py              # VirtualLayer
-│   ├── chronicle/            # VirtualChronicleStore
-│   ├── journal/              # LifeJournal / Landmark / 手账状态
-│   ├── narrative/            # NarrativeEngine
-│   ├── surprise/             # SurpriseGenerator
-│   └── review/               # 日终回顾上下文
-└── anchor/                   # 现实锚点层
-    ├── layer.py              # AnchorLayer / RealityAnchorLayer
-    ├── chronicle/            # AnchorChronicleStore
-    ├── inbound/              # digest 吸收外部事件
-    ├── outbound/             # ProactiveOutboundPort
-    └── presence_bundle.py    # Presence 体验 bundle
+│   ├── domain/                      ExperienceUnit、source、codec
+│   ├── hub/stack.py                 LifeExperienceStack
+│   ├── dialogue/                    对话 pipeline/session/working memory
+│   ├── ingest/                      builder、life pipeline、incident、presence
+│   ├── unit_layer/
+│   │   ├── create/
+│   │   ├── manage/                  log、orchestrator、collapser
+│   │   └── promote/                 memory policy/dispatch/port
+│   └── skills/                      压缩块体验编写入口
+├── virtual/
+│   ├── chronicle/
+│   ├── episode/
+│   ├── journal/
+│   │   ├── agenda/
+│   │   └── legacy/
+│   ├── narrative/
+│   ├── review/
+│   └── surprise/
+└── anchor/
+    ├── chronicle/
+    ├── inbound/
+    └── outbound/
 ```
 
----
+旧文档中的 `experience/builder.py`、`experience/pipeline.py`、`experience/orchestrator.py`、`virtual/journal/agenda.py` 等平铺路径已不再对应当前代码。
 
-## 架构分层
+## Experience 架构
 
-### 四层职责
-
-| 层 | 模块 | 时态 | 职责 |
-|---|---|---|---|
-| **体验层** | `experience/` | 先验·即时 | 原始输入 → ExperienceUnit |
-| **编排层** | `ExperienceOrchestrator` | 无状态·机械 | 热存储 + 显著性擢升 + 交会折叠 + chronicle |
-| **事实层** | `virtual/chronicle/` + `anchor/chronicle/` | 过去·客观 | 虚拟 / 锚点两套永久账本 |
-| **手账层** | `virtual/journal/` | 当下·主观 | 地标议程与自述 |
-
-### LifeExperienceStack
-
-```
+```text
 LifeExperienceStack
-├── orchestrator          # 共享 ExperienceOrchestrator
-├── dialogue              # DialogueExperiencePipeline（Speak 对话记账）
-├── life                  # LifeExperiencePipeline（landmark / wander / incident）
-└── bind_presence()       # ↔ PresenceService 双向直连
+├── units: ExperienceUnitLayer
+│   ├── create
+│   ├── manage: ExperienceOrchestrator + ExperienceLog
+│   └── promote: MemoryIngestPort
+├── dialogue: DialogueExperiencePipeline
+└── life: LifeExperiencePipeline
 ```
 
-### Life I/O（`io/`）
+`SoulService` 构造 stack 后：
 
-```
-LifeIOHub
-├── speak: LifeSpeakIO          # Speak 入站体验
-└── memory: LifeExperienceMemoryIO  # → memory.io.life 正式落图
-```
+- 绑定 LifeManager 的 life/dialogue pipeline。
+- 双向绑定 Presence。
+- 将 Memory 的 `LifeExperienceMemoryIO` 写入 unit manager 与 life pipeline。
+- 将 Speak lifecycle/recording 接到 dialogue pipeline。
 
-体验擢升路径：
+对话记账：
 
-```
-ExperienceOrchestrator（显著性达标）
-  → promote_unit_to_memory(memory_port, unit)
-  → LifeExperienceMemoryIO.promote_unit()
-  → memory.io.life.LifeMemoryIO.submit_experience()
-  → ExperienceGraphIngest → 记忆图
-```
-
-会话闭合时 `close_dialogue_session` 仅擢升终局 `ExperienceUnit`，不再整合 SessionMemoryBuffer。
-
-对话 turn 经 `SpeakService.record_turn` → `stack.record_dialogue_turn()` → dialogue pipeline 直写 Presence → orchestrator ingest → memory / chronicle → `after_ingest` sync presence。
-
-### 两条独立链路
-
-**用户交互（被动）**
-
-```
-user_text + agent_reply
-    → ExperienceBuilder.record_user_turn()
-    → ExperienceOrchestrator.ingest()
-    → VirtualChronicleStore / AnchorChronicleStore
+```text
+Speak record_dialogue
+  → LifeSpeakIO
+  → LifeExperienceStack.dialogue
+  → ExperienceUnitLayer.manage
+  → hot log / chronicle / Memory promotion
+  → Presence on_unit_ingested + pull_and_sync_from_life
 ```
 
-**叙事地标（主动）**
+压缩块需要 LLM 的体验编写 skill；未配置 LLM 时会抛错，不能称为无依赖可用。
 
+## 虚拟层、锚点层与 Storyview
+
+- anchor：现实/用户交互 chronicle 与 proactive outbound intent。
+- virtual：journal、landmark agenda、episode、narrative、surprise。
+- Storyview：客观世界、scene、事件、GM 问答、故事弧与位置快照。
+
+Life 本身不实现故事数据库。`VirtualLayer` 只持有 `storyview.port.StoryPort`；需要故事能力的方法会调用 `_require_story_port()`，未接线时抛 `RuntimeError`。
+
+`SoulService.start()` 当前会创建并启动 `StoryService`，包装为 `StoryPort`，然后：
+
+1. 设到 `LifeManager/VirtualLayer`。
+2. 用 Speak 主 LLM 回答 GM question。
+3. 从 `LifeProfile.world_id` 绑定世界。
+4. 确保默认 scenes。
+5. 通过 `StoryWorldContextBridge` 给 Life narrative 提供背景。
+6. 同一 port 也注入 Speak scene block。
+
+`StoryPort` 是 Soul 访问 Storyview 的唯一同步边界；底层 `StoryService` 是 story worker，按 `world_id` 串行执行。
+
+## landmark / agenda
+
+当前 journal 同时包含：
+
+- `journal/legacy/`：旧 landmark 实体与兼容实现。
+- `journal/agenda/`：新的日程 cue、planner、store、prompt 与工具。
+- `journal/planner.py`：在两种 planning strategy 间编排。
+
+典型故事链：
+
+```text
+compose/plan landmark or agenda
+  → journal 保存意图
+  → 到期 fill
+  → StoryPort.ask_gm / answer_gm / distill_arc
+  → NarrativeEngine 写主观结果
+  → ExperienceUnit ingest
 ```
-compose_landmark()
-    → NarrativeEngine.compose_landmark_intent()
-    → LifeJournal.add_landmark()
-    → plan_landmark 预体验入账（trigger=landmark_plan）
 
-到点后：
-LifeManager.fill_due_landmarks()
-    → VirtualLayer.fill_landmark()
-    → journal_landmark 公开 cue
-    → StoryPort.ask_gm()/answer_gm()/distill_arc()
-    → NarrativeEngine.subjective_from_outcome()
-    → ExperienceBuilder.record_virtual_beat(trigger=landmark)
-    → Landmark.mark_done(narrative, experience_id)
-    → ingest → hot log / virtual chronicle / journal.json
-```
+没有 StoryPort 或所需 LLM 时，这条链不是可用生产能力；部分只读 journal/chronicle API 仍可工作。
 
-`journal` 只保存手账状态：地标意图、背景、触发时间、状态、完成后的主观日记与 `experience_id`。客观场景推进由 storyview 负责；主观日记由 `subjective_from_outcome()` 根据客观故事弧回写。
+## worker 与生命周期
 
-### 交会折叠
+`LifeService` 是注册到 `SoulWorkers.life` 的 worker，处理 landmark/surprise/experience tick 等后台任务。Storyview 是另一个 `story-worker`，不属于 Life worker。
 
-`source="user"` 与 `source="narrative"` 时间戳相差不足 30 分钟时，`ExperienceCollapser` 合并为 `source="collision"` 单元。
+`LifeManager.stop()` 会停 LifeService；正常情况下由 `SoulService.stop()` 统一管理。
 
----
+## 本地文件
 
-## 三个 LLM 注入口
+Life/Presence 使用 `StorageConfig.life_dir`，典型文件包括：
 
-| 协议 | 作用 | 占位 |
-|---|---|---|
-| `NarrativeEngine` | 地标构思 / 主观日记 / 交会折叠 | 无 LLM 时 landmark 构思不可用 |
-| `ExperienceCollapser` | 交会折叠 | `NullCollapser` |
-| `MemoryIngestPort` | 体验擢升 → 记忆图 | 经 `life.io.memory.LifeExperienceMemoryIO` → `memory.io.life` |
+- `experience_hot.jsonl`
+- 虚拟与 anchor chronicle JSONL
+- journal/agenda 状态
+- `life_profile.json`
+- `presence_state.json`
 
----
-
-## 典型调用关系
-
-| 调用方 | 行为 |
-|---|---|
-| `SpeakService.record_turn` | → `LifeExperienceStack.record_dialogue_turn` |
-| `SoulService.record_dialogue_turn` | 门面 → experience stack |
-| `HeartbeatOrchestrator` | `PLAN_LANDMARK` / `TRIGGER_LANDMARKS` / `TICK_SURPRISE` |
-| `run_wander_evolution_step` | memory wander → life experience ingest |
-| `TaoLoop`（legacy） | `LifeManager` + `JournalBlock` / `LifeProfileBlock` |
-| `LifeManager.stop()` | → `LifeService.stop()` |
-
----
-
-## 存储文件（`StorageConfig.life_dir`）
-
-| 文件 | 说明 |
-|---|---|
-| `experience_hot.jsonl` | 体验热窗口 |
-| `chronicle.jsonl` | 虚拟 chronicle（`VirtualChronicleStore`） |
-| `anchor_chronicle.jsonl` | 锚点 chronicle |
-| `journal.json` | 手账快照 |
-| `life_profile.json` | 生活状态画像 |
-
-详见 [storage](../../../storage/README.md)。
-
----
-
-## 相关文档
-
-- [speak/README.md](../speak/README.md)（对话 turn 记账入口）
-- [presence/README.md](../presence/README.md)（bind_presence 同步）
-- [memory/README.md](../memory/README.md)（`life_port.promote_unit` / `io/life`）
-- [heartbeat/README.md](../heartbeat/README.md)（landmark / wander 调度）
+这些文件与 Memory/Accounts/Storyview 的 `.react/soul_db` JSON backend 是两套存储边界，不能混为同一个 backend。

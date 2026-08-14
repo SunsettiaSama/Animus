@@ -112,10 +112,23 @@ class SessionHolder:
         )
 
     def finalize_session_temporal(self, session_id: str) -> SessionEndResult:
-        return self.finalize_session(
+        notes = [f"temporal close: idle>{self._bootstrap.registry.idle_sec:.0f}s"]
+        close_payload = self._close_payload(session_id)
+        if close_payload.get("ingested"):
+            notes.append("life: dialogue closed and ingested")
+        else:
+            notes.append("life: dialogue closed (empty)")
+
+        record = self._bootstrap.registry.rotate_generation(session_id)
+        self._bootstrap.started_generations.pop(session_id, None)
+        self._notify_rotate(session_id)
+
+        return self._payload_to_end_result(
             session_id,
             reason="temporal_idle",
-            note=f"temporal rotate: idle>{self._bootstrap.registry.idle_sec:.0f}s",
+            generation=record.generation,
+            close_payload=close_payload,
+            notes=notes,
         )
 
     def terminate(

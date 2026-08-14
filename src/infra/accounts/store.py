@@ -78,6 +78,21 @@ class MySQLAccountStore:
             return None
         return ExternalAccount.from_row(row)
 
+    def get_by_interactor(self, interactor_id: str) -> ExternalAccount | None:
+        iid = interactor_id.strip()
+        if not iid:
+            return None
+        with self._db.conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM external_accounts WHERE interactor_id=%s",
+                    (iid,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        return ExternalAccount.from_row(row)
+
 
 class JsonAccountStore:
     def __init__(self, storage: JsonStorageService) -> None:
@@ -112,18 +127,3 @@ class JsonAccountStore:
         if not rows:
             return None
         return ExternalAccount.from_row(rows[0])
-
-    def get_by_interactor(self, interactor_id: str) -> ExternalAccount | None:
-        iid = interactor_id.strip()
-        if not iid:
-            return None
-        with self._db.conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT * FROM external_accounts WHERE interactor_id=%s",
-                    (iid,),
-                )
-                row = cur.fetchone()
-        if not row:
-            return None
-        return ExternalAccount.from_row(row)

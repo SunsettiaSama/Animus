@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
@@ -16,6 +17,8 @@ from ..lifecycle.hold.registry import SpeakSessionRegistry
 from .types import EnterGreetingDecision, EnterGreetingProbe, EnterGreetingTurnSpec
 
 EnterGreetingHandler = Callable[[EnterGreetingTurnSpec], None]
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -97,7 +100,7 @@ class _EnterGreetingState:
 class EnterGreetingManager:
     registry: SpeakSessionRegistry
     delay_sec: float = field(
-        default_factory=lambda: _env_float("REACT_SPEAK_ENTER_GREETING_SEC", 60.0),
+        default_factory=lambda: _env_float("REACT_SPEAK_ENTER_GREETING_SEC", 12.0),
     )
     dialogue_supplier: Callable[[str], str] | None = None
     is_pushing: Callable[[str], bool] | None = None
@@ -105,7 +108,9 @@ class EnterGreetingManager:
     _armed: dict[str, EnterGreetingTurnSpec] = field(default_factory=dict)
     _handler: EnterGreetingHandler | None = None
     _now_fn: Callable[[], datetime] = field(default_factory=lambda: _utcnow)
-    _worker: DomainWorker = field(default_factory=lambda: DomainWorker("speak-enter-greeting-worker"))
+    _worker: DomainWorker = field(
+        default_factory=lambda: DomainWorker("speak-enter-greeting-worker", owner="speak"),
+    )
     _llm: SpeakLLMEngine | None = None
 
     def clear_session(self, session_id: str) -> None:
@@ -128,6 +133,8 @@ class EnterGreetingManager:
         self._worker.start()
 
     def stop_worker(self) -> None:
+        for sid in list(self._states):
+            self.clear_session(sid)
         self._worker.stop()
 
     def pop_armed_turn(self, session_id: str) -> EnterGreetingTurnSpec | None:
@@ -163,6 +170,16 @@ class EnterGreetingManager:
         if state is None or state.fired:
             return
         if self.is_pushing is not None and self.is_pushing(sid):
+            # 推送中暂缓，短暂后再判一次；勿静默吞掉进入问候
+            delay = max(1.0, float(self.delay_sec) * 0.25)
+
+            def _retry() -> None:
+                self._worker.enqueue(lambda: self._evaluate_and_maybe_fire(sid))
+
+            retry = threading.Timer(delay, _retry)
+            retry.daemon = True
+            state.timer = retry
+            retry.start()
             return
         if self._llm is None or self._handler is None:
             return
@@ -183,7 +200,18 @@ class EnterGreetingManager:
         decision = parse_enter_greeting_decision(raw)
         state.fired = True
         if not decision.should_greet:
+            logger.info(
+                "[enter_greeting] hold session_id=%s elapsed=%.1fs",
+                sid,
+                elapsed,
+            )
             return
+        logger.info(
+            "[enter_greeting] greet session_id=%s elapsed=%.1fs angle=%s",
+            sid,
+            elapsed,
+            (decision.angle or "")[:80],
+        )
         spec = EnterGreetingTurnSpec(
             session_id=sid,
             elapsed_sec=elapsed,

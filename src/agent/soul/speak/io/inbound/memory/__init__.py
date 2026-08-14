@@ -5,6 +5,7 @@ from .recall import RecallHandoffResult, perform_recall_handoff, render_recall_f
 from .request import (
     InteractorPortraitPullResult,
     InteractorPortraitRequest,
+    KeywordQueryRequest,
     PointQueryRequest,
     RecallRequest,
     RecallResult,
@@ -23,6 +24,7 @@ __all__ = [
     "MemorySimilarPullPort",
     "InteractorPortraitRequest",
     "InteractorPortraitPullResult",
+    "KeywordQueryRequest",
     "PointQueryRequest",
     "RecallRequest",
     "RecallResult",

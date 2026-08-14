@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,23 +27,32 @@ class EmbeddingService:
         self._query_prefix = query_prefix
         self._passage_prefix = passage_prefix
         self._embedder: Embedder | None = None
+        self._ready = False
+        self._lock = threading.Lock()
+
+    def is_ready(self) -> bool:
+        return self._ready
 
     def _get(self) -> Embedder:
-        if self._embedder is None:
-            from embedding.embedder import Embedder
+        with self._lock:
+            if self._embedder is None:
+                from embedding.embedder import Embedder
 
-            self._embedder = Embedder(
-                model_name=self._model_name_or_path,
-                device=self._device,
-                use_fp16=self._use_fp16,
-                batch_size=self._batch_size,
-                query_prefix=self._query_prefix,
-                passage_prefix=self._passage_prefix,
-            )
-        return self._embedder
+                self._embedder = Embedder(
+                    model_name=self._model_name_or_path,
+                    device=self._device,
+                    use_fp16=self._use_fp16,
+                    batch_size=self._batch_size,
+                    query_prefix=self._query_prefix,
+                    passage_prefix=self._passage_prefix,
+                )
+            embedder = self._embedder
+        embedder.warm_up()
+        self._ready = True
+        return embedder
 
     def warm_up(self) -> None:
-        self._get().warm_up()
+        self._get()
 
     def embed_query(self, text: str) -> list[float]:
         return self._get().embed_query(text)

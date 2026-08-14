@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 VisitorRegisteredHook = Callable[[str, str, dict], None]
 
 
+DEFAULT_VISITOR_DISPLAY_NAME = "荧"
+
+
 class AccountService:
     """外部来访用户元数据：account_id ↔ 固定 interactor_id（Memory 图身份键）。"""
 
@@ -62,13 +65,11 @@ class AccountService:
 
     def create(
         self,
-        display_name: str,
+        display_name: str = "",
         *,
         meta: dict | None = None,
     ) -> ExternalAccount:
-        name = display_name.strip()
-        if not name:
-            raise ValueError("display_name 不能为空")
+        name = display_name.strip() or DEFAULT_VISITOR_DISPLAY_NAME
         account_id = str(uuid.uuid4())
         interactor_id = str(uuid.uuid4())
         meta_dict = dict(meta or {})

@@ -65,10 +65,17 @@ class LifeExperienceStack:
         return self._presence
 
     def _sync_presence_after_unit(self, unit: ExperienceUnit) -> None:
-        if unit.source == "collision":
-            return
-        session_id = unit.situation.session_id or "tao"
+        session_id = (unit.situation.session_id or "tao").strip() or "tao"
         self._presence.on_unit_ingested(unit, self.log)
+        if unit.source == "collision":
+            # 折叠产物：直接 life_sync 本条（hot 列表曾排除 collision，会漏掉主动分享）
+            from agent.soul.life.anchor.presence_bundle import presence_bundle_from_unit
+
+            bundle = presence_bundle_from_unit(unit)
+            if not str(bundle.session_id or "").strip():
+                bundle.session_id = session_id
+            self._presence.sync_life_bundle(bundle)
+            return
         self._presence.pull_and_sync_from_life(self.log, session_id)
 
     def sync_presence(

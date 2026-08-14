@@ -1,176 +1,103 @@
 # agent/soul
 
-Soul 子系统在 ReAct 推理环之外承载 **持久记忆**、**调度心跳**、**生活叙事与体验**、**当下态 FSM**、**对话编排（Speak）** 与 **人格演化**。`SoulService` 是统一门面；`TaoLoop` 可注入已有实例，或通过 `BaseTaoHandler` 走 Tao 通道访问各域。
-
----
+Soul 子系统承载跨会话主体状态：Memory、Life、Presence、Persona、Speak 与 Heartbeat。组合根是 `src/agent/soul/service.py` 中的 `SoulService`。
 
 ## 文档索引
 
-| 文档 | 说明 |
-|---|---|
-| [memory/README.md](./memory/README.md) | `MemoryService`，记忆图（event/social），I/O 边界，涌现 / 反刍 / 睡眠 |
-| [heartbeat/README.md](./heartbeat/README.md) | `HeartbeatModule`、`HeartbeatOrchestrator` 与调度对接 |
-| [life/README.md](./life/README.md) | `LifeManager`、体验栈、虚拟层 / 锚点层 |
-| [persona/README.md](./persona/README.md) | `PersonaManager` / `PersonaService`，画像 / buffer / self_concept |
-| [presence/README.md](./presence/README.md) | `PresenceService`，当下态 FSM + 期待 / 冲动 / 分享 |
-| [speak/README.md](./speak/README.md) | `SpeakService`，compose → LLM → stream → 记账 |
+- [memory](./memory/README.md)：事件/社交记忆图与 MySQL/JSON 后端
+- [heartbeat](./heartbeat/README.md)：Soul 自有时间线、checklist 与注入邮箱
+- [life](./life/README.md)：体验单元、虚拟/锚点叙事与 Storyview
+- [presence](./presence/README.md)：当下态、期待、分享队列与主动发话
+- [persona](./persona/README.md)：画像、buffer、self concept 与 distill
+- [speak](./speak/README.md)：`request_driven`、`rhythm` 与真实出站
 
----
+## `SoulService` 门面
 
-## 顶层入口：`SoulService`
-
-源码：`src/agent/soul/service.py`。
-
-```
+```text
 SoulService
-├── dispatch(SoulRequest)          # 统一命令总线（domain × action × channel）
-├── query_* / record_* / speak_turn  # HTTP / Tao / 内部编排薄封装
-├── start() / stop()               # idle → running → stopped
-│
-├── persona   → PersonaHandler
-├── memory    → MemoryHandler
-├── life      → LifeHandler
-├── speak     → SpeakHandler
-├── presence  → PresenceService     # 不经 handler，直接域服务
-├── tao       → BaseTaoHandler      # ReAct 侧工具与 Prompt 块
-├── workers   → SoulWorkers         # memory / life / presence 后台域任务
-└── orchestrator → HeartbeatOrchestrator  # bind_heartbeat 后可用
+├── dispatch(SoulRequest)                 life/memory/persona/speak 命令总线
+├── speak_run_turn / ingest_presence_event 等跨域编排入口
+├── accounts                              infra.accounts.AccountService
+├── presence                              PresenceService
+├── workers                               SoulWorkers
+├── heartbeat / orchestrator              HeartbeatModule / HeartbeatOrchestrator
+└── 内部组合
+    ├── PersonaHandler / MemoryHandler / LifeHandler / SpeakHandler
+    ├── SpeakService / LifeExperienceStack
+    └── StoryService + storyview.StoryPort
 ```
 
-请求模型：`SoulRequest(domain, action, payload, channel)`。
+`SoulRequest` 的 domain 仅有 `life`、`memory`、`persona`、`speak`。Presence 是编排 API，不在命令总线中；Accounts 与 Storyview 也不是 Soul domain。
 
-- `domain ∈ {life, memory, persona, speak}`
-- `channel ∈ {api, tao}`（Tao 通道仅 persona 相关 action + ReAct 工具链）
+只读 action 在 `idle` 和 `running` 可访问；写操作要求 `running`。`stopped` 后所有 dispatch 均拒绝。
 
-只读 API（见 `access.READ_API_ACTIONS`）在 `idle` / `running` 均可访问；写入与演化仅在 `running` 下允许。
+## 生命周期
 
-### 双轨入口（Command vs Orchestration）
+状态单向变化：
 
-| 轨道 | 代表 API | 用途 |
-|------|----------|------|
-| **Command** | `dispatch(SoulRequest)`、`speak_turn()` 等薄封装 | 可审计、可序列化的 domain×action；Heartbeat checklist 默认路径 |
-| **Orchestration** | `run_wander`、`ingest_presence_event`、`speak_run_turn()` | 跨域顺序编排或 L0 热路径；仍在 `SoulService` 上收束 |
-
-二者均为合法顶层 API；收束指 **调用方只依赖 `SoulService`**，而非「一切必须 dispatch」。
-
-### 调用层次（L0 / L1 / L2）
-
-| 层次 | 调用方 | 收束标准 |
-|------|--------|----------|
-| **L0** | WebUI、`TaoLoop`、`HeartbeatOrchestrator` | 只使用 `SoulService` 公开方法/属性；禁止 `_ensure_*`、`.handler.api` |
-| **L1** | `SoulService` | 创建域服务、`SoulWorkers`、`start()` 内跨域 IO 桥接线 |
-| **L2** | Handler → 本域 `*Service` → 子 Service | 不跨域 import 其他域 `service.py`；跨域经 L1 注入 Port |
-
-### Service 清单与收束（L2 域服务）
-
-| Service | 文件 | L1 入口 | L2 父级 |
-|---------|------|---------|---------|
-| `PersonaService` | `persona/service.py` | `PersonaHandler` | — |
-| `MemoryService` | `memory/facade/service.py` | `MemoryHandler` | — |
-| `LifeManager` / `LifeService` | `life/manager.py`, `life/service.py` | `LifeHandler` / worker | worker 由 LifeManager 持有 |
-| `SpeakService` | `speak/service.py` | `SpeakHandler` + `speak_run_turn` 门面 | — |
-| `PresenceService` | `presence/service.py` | `SoulService.presence`（无 Handler） | — |
-| `RuminationService` | `memory/rumination/service.py` | — | `MemoryService` |
-| `SleepService` | `memory/sleep/service.py` | — | `MemoryService` |
-| `SpreadActivationService` | `memory/emergence/spread/service.py` | — | `MemoryService.emergence` |
-| `SpeakSessionService` | `speak/session/service.py` | — | `SpeakService.session_manager` |
-| `HeartbeatCoreService` | `heartbeat/core_service.py` | `SoulService` 侧车 | — |
-
-### 旁路分类（A / B / C）
-
-| 类 | 含义 | 示例 |
-|----|------|------|
-| **A** | L1 合法：组合根编排或 `start()` 显式桥接 | `_wire_workers()`、`run_wander`、Memory↔Speak session 回调 |
-| **B** | L0 曾走私有通道；已收敛或待观察 | WebUI 原 `_ensure_speak_service().run_turn` → **`speak_run_turn`**；Tao 缓存 `.persona.service` / `.memory.api`（待门面化） |
-| **C** | 层次泄漏：子域横向依赖具体实现 | `SpeakService(presence=...)`、`SpeakPromptComposer`→presence 类型、`LifeExperienceStack`↔`PresenceService`、Heartbeat `domain=="presence"` 字符串分支 |
-
-### `ports.py` 与跨域缺口
-
-已定义：`LLMServicePort`、`EmbeddingPort`、`ExternalOpportunitySupplier`、`SpeakExperiencePort`、`SpeakDialogueExperiencePort`、`PresenceSnapshotPort`（后者供后续收敛 C 类）。
-
-| 跨域耦合 | 现状 | 建议 |
-|----------|------|------|
-| SpeakHandler → experience | 已收敛：`SpeakExperiencePort` + `SoulSpeakExperiencePort` | — |
-| Speak → Presence 构造注入 | C：`PresenceService` 具体类型 | 改为 `PresenceSnapshotPort` 注入 |
-| Life 体验栈 ↔ Presence | C：双向 bind | 仅 L1 `SoulService.start()` 接线 |
-| Memory ↔ Speak 回调 | A：经 `SoulService._ensure_speak_service` 注册 | 保持 |
-| Presence 无 `SoulDomain` | **架构决策**：Presence 仅 Orchestration API，不进 `SoulRequest` 总线；Heartbeat 走 `run_presence_*` | 文档定型，不新增 Handler |
-
-### L0 公开 Speak 门面（WebUI 热路径）
-
-- `speak_turn()` — 经 `dispatch`（Command）
-- `speak_run_turn()` — 直调 `SpeakService.run_turn`（Orchestration 热路径）
-- `speak_submit_user_input()`、`speak_is_pushing()`、`speak_session_trace_cache()`、`speak_initialized`
-
----
-
-## 源码顶层
-
-```
-src/agent/soul/
-├── service.py           # SoulService 门面
-├── request.py           # SoulRequest / SoulDomain / SoulChannel
-├── access.py            # 只读 action 白名单
-├── ports.py             # LLM / Embedding / Tao 跨模块 Protocol
-├── handlers/
-│   └── api/             # life / memory / persona action → handler
-├── workers/             # SoulWorkers + DomainWorker
-├── memory/              # 记忆图 + facade + io（session/life）+ emergence / rumination / sleep
-├── heartbeat/
-├── life/
-│   ├── io/              # LifeIOHub：speak 入站 + memory 出站
-│   ├── virtual/         # 虚拟叙事：journal / chronicle / surprise / narrative
-│   ├── anchor/          # 现实锚点：inbound digest / outbound / chronicle
-│   └── experience/      # LifeExperienceStack、dialogue/life pipeline
-├── persona/
-│   ├── profile/         # 静态画像
-│   ├── buffer/          # 体验聚类 + 月度漂移调度
-│   └── self_concept/    # 慢变自我叙事
-├── presence/
-│   ├── state/           # static（affect/somatic/cognition/perception）+ dynamic（expectation/interaction）
-│   ├── transition/      # wake/sleep、boundary、life_sync、interaction
-│   └── service.py       # PresenceService
-└── speak/
-    ├── pipelines/       # legacy_qa（默认）+ request_driven（导演轨）
-    ├── io/              # inbound / outbound / stream / SpeakHandler
-    ├── session/         # 生命周期、打断队列、语义边界
-    ├── llm/             # SpeakLLMEngine
-    ├── drive.py         # SpeakDriveBridge（presence → should_speak）
-    └── service.py       # SpeakService
+```text
+idle --start()--> running --stop()--> stopped
 ```
 
-Tao 侧工具与 Prompt 块在 `agent/adapters/soul_tao/`（不在 `soul/handlers/tao/`）。Speak 详情见 [speak/README.md](./speak/README.md)。
+- 重复 `start()`（已 running）和 `stop()`（仍 idle）是空操作。
+- `stopped` 不能重新 `start()`；需要新建 `SoulService`。
+- `start()` 依次初始化 Memory infra/热激活、Life、Persona、Storyview，接线 workers、Presence、Experience、Speak、Accounts 和 Heartbeat，最后进入 `running`。
+- `stop()` 先执行 Presence/Memory sleep，再停止 core heartbeat、evolution worker、Speak 和域 workers，最终进入 `stopped`。
 
----
+### workers
 
-## 跨域数据流（概要）
+`SoulWorkers` 管理五个域 worker：
 
-```
+| worker | 来源 |
+|---|---|
+| memory | `SoulWorkers` 自建 `DomainWorker` |
+| presence | `SoulWorkers` 自建 `DomainWorker` |
+| persona | `SoulWorkers` 自建 `DomainWorker` |
+| life | 注册 `LifeManager.worker`（`LifeService`） |
+| story | 注册 `StoryService` |
+
+启动顺序是 story → memory → presence → life → persona；停止顺序是 life → story → persona → presence → memory。Heartbeat 的 `SoulEvolutionWorker`、`HeartbeatCoreService` 线程，以及 Speak 的 compose/director/social workers 不属于这五个 worker。
+
+## Accounts、Storyview 与 storage backend
+
+`SoulService` 从 `DBConfig.resolved_storage_backend()` 得到同一个后端选择，并传给 Memory、Accounts 和 Storyview：
+
+- `storage.backend=mysql`：要求 `mysql_client`。
+- `storage.backend=json`：使用 `JsonStorageService(json_root)`，默认根目录 `.react/soul_db`。
+- `storage.backend=auto`：MySQL 被禁用或连通探测失败时选 JSON，否则选 MySQL。
+
+Accounts 位于 `src/infra/accounts/`，维护 `account_id ↔ interactor_id`，注册访客后回调 Memory 创建外部交互者；`bind_visitor()` 再绑定 Memory channel 与 Speak session。
+
+Storyview 位于 `src/storyview/`。`StoryService` 是按 `world_id` 串行的 worker，`StoryPort` 是 Soul/Life/Speak 的同步访问边界。启动时会初始化 schema、默认 worldview/scene，并把 world 绑定到 Life profile。
+
+JSON 后端是本地持久化实现，不是共享数据库：没有跨进程事务或并发一致性保证，不应描述为生产级 MySQL 等价物。
+
+## 当前主数据流
+
+```text
 用户输入
-    → SpeakService.run_turn
-        → 默认 legacy_qa：compose → 主 LLM → stream
-        → 可选 request_driven：导演交付计划 → DeliveryExecutor（回复者闭合见 speak README）
-        → record_turn → LifeExperienceStack.record_dialogue_turn
-            → DialogueExperiencePipeline → Presence 直写
-            → ExperienceOrchestrator.ingest → memory / chronicle
-            → after_ingest → presence.pull_and_sync_from_life
+  → SpeakService.run_turn
+  → 默认 request_driven
+  → 导演给 gate/节奏计划
+  → Compose + 主会话 LLM 生成正文
+  → DeliveryExecutor/返回值
+  → LifeExperienceStack → Presence / chronicle / Memory
 
-presence 冲动 / 期待 scan
-    → SoulService._emit_presence_speak
-    → SpeakOutboundRouter → SpeakService.handle_proactive
+heartbeat-core 线程
+  → HeartbeatModule.tick
+  → HeartbeatOrchestrator checklist
+  → SoulService API / evolution worker
 
-heartbeat tick
-    → HeartbeatOrchestrator.run_due（checklist）
-    → dispatch 各域 action（wander / landmark / drift / presence scan …）
-    → memory tick → EmotionalSignal → presence
+Life landmark / surprise
+  → storyview.StoryPort
+  → StoryService worker
+  → StoryEngine
 ```
 
-Soul 与 `agent/react/context`（会话 Step 轨迹 + 中期 JSONL）并行：**Soul 是跨会话主体状态，context 是当前对话工作记忆**。
+## 接入边界
 
----
+- 主动消息只有注册了 UI agent-initiated handler 或 Speak stream port 时才会到达外部客户端；否则仍可完成内部 session/experience 记账，但不能宣称已经发送给用户。
+- Scheduler 只为少量可选任务摘要和 preflight 提供数据；Soul heartbeat 的周期线程与 checklist 不依赖 Scheduler 驱动。
+- Qdrant/embedding 是 Memory 可选增强；JSON backend 会禁用默认向量 infra。
 
-## 相关文档
-
-- [agent/react/README.md](../react/README.md)（TaoLoop 与 Soul 接线）
-- [agent/service/README.md](../service/README.md)（AgentService 组装 heartbeat）
-- [storage/README.md](../../storage/README.md)（`.react/life/`、`.react/persona/` 布局）
+Tao 适配器位于 `src/agent/adapters/soul_tao/`，不是 `agent/soul/handlers/tao/`。

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from agent.soul.speak.session.manage.initiative import TurnInitiativeManager
+from agent.soul.speak.session.manage.proactive_window import ProactiveSessionWindowManager
 from agent.soul.speak.session.manage.silence_break import (
     parse_silence_decision,
     render_silence_decision_user,
@@ -17,6 +20,12 @@ def test_initiative_shows_after_cooldown():
     mgr = TurnInitiativeManager(hint_probability=1.0, cooldown_turns=1, min_turn_index=2)
     assert mgr.evaluate("s1", turn_index=2, user_text="继续") is not None
     assert mgr.evaluate("s1", turn_index=3, user_text="再说") is not None
+
+
+def test_initiative_probability_uses_decay():
+    mgr = TurnInitiativeManager(hint_probability=1.0, cooldown_turns=0, min_turn_index=0)
+    mgr._rng = lambda: 0.6
+    assert mgr.evaluate("s1", turn_index=2, user_text="continue", decay=0.5) is None
 
 
 def test_initiative_skips_long_user_text():
@@ -47,3 +56,18 @@ def test_render_silence_decision_user_includes_summary():
     text = render_silence_decision_user(probe)
     assert "120" in text
     assert "加班" in text
+
+
+def test_proactive_window_touch_resets_sqrt_decay():
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def _now():
+        return now
+
+    mgr = ProactiveSessionWindowManager(timeout_sec=600.0, now_fn=_now)
+    assert mgr.touch_user_message("s1") == 1.0
+    now = now + timedelta(seconds=150)
+    assert 0.88 < mgr.decay("s1") < 0.90
+    mgr.touch_user_message("s1")
+    assert mgr.decay("s1") == 1.0
+    mgr.clear_all()

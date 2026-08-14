@@ -35,11 +35,11 @@ class BarkNotifier:
     ) -> None:
         cfg = self._cfg
         if not cfg.enabled:
-            logger.debug("[BarkNotifier] disabled — message skipped")
+            logger.debug("[BarkNotifier] disabled - message skipped")
             return
         key = device_key or cfg.device_key
         if not key:
-            logger.warning("[BarkNotifier] device_key not set — message skipped")
+            logger.warning("[BarkNotifier] device_key not set - message skipped")
             return
 
         server = cfg.server_url.rstrip("/")

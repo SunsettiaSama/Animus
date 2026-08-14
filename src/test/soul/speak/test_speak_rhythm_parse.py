@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.soul.speak.pipelines.rhythm.directors.parse import (
+from agent.soul.speak.responders.rhythm.directors.parse import (
     normalize_gate,
     normalize_share_tag,
     plan_from_payload,

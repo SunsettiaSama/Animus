@@ -104,10 +104,6 @@ class TaskRunner:
                 _push_agent_message(item)
 
         def _push_agent_message(item: dict) -> None:
-            from state import get_state
-            st = get_state()
-            if st.notify_queue is not None and st.main_event_loop is not None:
-                st.main_event_loop.call_soon_threadsafe(st.notify_queue.put_nowait, item)
             if channel_router is not None and task.reply_target is not None:
                 from infra.channel_router import ReplyTarget as RT
                 rt = RT.from_task_dict(task.reply_target)

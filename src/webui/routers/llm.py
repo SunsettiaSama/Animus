@@ -212,12 +212,16 @@ def status():
     state = get_state()
     turn_count = state.conv_loop.turn_count if state.conv_loop is not None else 0
     initialized = state.llm is not None
+    soul = getattr(state, "soul_service", None)
+    soul_running = bool(soul is not None and getattr(soul, "is_running", False))
     return {
         "initialized":     initialized,
         "llm_initialized": initialized,   # alias kept for forward-compat
         "model":           state.llm_cfg.model if state.llm_cfg else None,
         "backend":         getattr(state.llm_cfg, "backend", None) if state.llm_cfg else None,
         "react_ready":     state.conv_loop is not None,
+        "soul_ready":      soul_running,
+        "speak_ready":     bool(soul_running and soul is not None and soul.speak_initialized),
         "turn_count":      turn_count,
         "is_streaming":    state.is_streaming,
     }

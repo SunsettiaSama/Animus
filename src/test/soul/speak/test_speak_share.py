@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from agent.soul.presence.share_desire import ShareDesire
-from agent.soul.speak.pipelines.request_driven.orchestrator import ShareDesireComposer, SpeakOrchestrator
+from agent.soul.speak.responders.request_driven.orchestrator import ShareDesireComposer, SpeakOrchestrator
 from agent.soul.presence.state.dynamic.expectation.queue import ShareIntent, ShareIntentQueue
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
 

@@ -238,3 +238,91 @@ class SandboxManager(BaseServiceManager):
             raise ValueError(
                 f"HTTP 沙箱拒绝：域名 {parsed.hostname!r} 不在允许范围内（SSRF 防护）"
             )
+
+    # ── Shell / process execution ─────────────────────────────────────────────
+
+    def exec_shell(
+        self,
+        shell: str,
+        command: str,
+        *,
+        timeout_secs: int = 30,
+    ) -> str:
+        """Run *command* via powershell / bash / cmd inside the workspace."""
+        import shutil
+        import subprocess
+
+        workspace = Path(self._cfg.workspace_root).resolve()
+        workspace.mkdir(parents=True, exist_ok=True)
+        kind = (shell or "").strip().lower()
+        if kind == "powershell":
+            exe = shutil.which("powershell") or shutil.which("pwsh")
+            if not exe:
+                raise RuntimeError("未找到 powershell / pwsh 可执行文件")
+            argv = [
+                exe,
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                command,
+            ]
+        elif kind == "bash":
+            exe = shutil.which("bash")
+            if not exe:
+                raise RuntimeError("未找到 bash 可执行文件")
+            argv = [exe, "-lc", command]
+        elif kind == "cmd":
+            exe = shutil.which("cmd") or shutil.which("cmd.exe")
+            if not exe:
+                raise RuntimeError("未找到 cmd.exe 可执行文件")
+            argv = [exe, "/d", "/s", "/c", command]
+        else:
+            raise ValueError(f"不支持的 shell 类型: {shell!r}")
+
+        completed = subprocess.run(
+            argv,
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=timeout_secs,
+            check=False,
+        )
+        chunks: list[str] = []
+        if completed.stdout:
+            chunks.append(completed.stdout.rstrip())
+        if completed.stderr:
+            chunks.append(f"[stderr]\n{completed.stderr.rstrip()}")
+        chunks.append(f"[exit_code]={completed.returncode}")
+        combined = "\n".join(chunks).strip()
+        limit = self._cfg.python_max_output_chars
+        if len(combined) > limit:
+            combined = combined[:limit] + "\n[输出已截断]"
+        return combined or "(无输出)"
+
+    def exec_process(self, argv: list[str], *, timeout_secs: int = 30) -> str:
+        """Low-level argv runner constrained to the sandbox workspace."""
+        import subprocess
+
+        if not argv:
+            raise ValueError("exec_process 需要非空 argv")
+        workspace = Path(self._cfg.workspace_root).resolve()
+        workspace.mkdir(parents=True, exist_ok=True)
+        completed = subprocess.run(
+            argv,
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=timeout_secs,
+            check=False,
+        )
+        chunks: list[str] = []
+        if completed.stdout:
+            chunks.append(completed.stdout.rstrip())
+        if completed.stderr:
+            chunks.append(f"[stderr]\n{completed.stderr.rstrip()}")
+        chunks.append(f"[exit_code]={completed.returncode}")
+        combined = "\n".join(chunks).strip()
+        limit = self._cfg.python_max_output_chars
+        if len(combined) > limit:
+            combined = combined[:limit] + "\n[输出已截断]"
+        return combined or "(无输出)"

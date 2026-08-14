@@ -94,6 +94,15 @@ class ShareIntentQueue:
     def is_empty(self) -> bool:
         return not self.items
 
+    def __bool__(self) -> bool:
+        return bool(self.items)
+
+    def __iter__(self):
+        return iter(self.items)
+
+    def __getitem__(self, key):
+        return self.items[key]
+
     def __len__(self) -> int:
         return len(self.items)
 

@@ -21,6 +21,7 @@ _ROUTE_SYSTEM = """\
 - event：客观发生的事件、场景、事实片段（与「某次发生了什么」相关）
 - social：与特定交互者相关的关系、印象、称呼、特质、互动感受（可含少量「你」的感受）
 
+交互者 id 为空时选择 event。
 只输出 JSON，不要解释。"""
 
 _ROUTE_SCHEMA = """\
@@ -62,6 +63,10 @@ def route_experience_block(
     block: ExperienceBlock,
 ) -> tuple[ExperienceBlock, str]:
     decision = _llm_route_block(llm, block)
+    if decision.network == ExperienceKind.anchor and not block.interactor_id.strip():
+        return replace(block, kind=ExperienceKind.event), (
+            decision.reason + "; routed to event because interactor_id is empty"
+        ).strip("; ")
     return replace(block, kind=decision.network), decision.reason
 
 

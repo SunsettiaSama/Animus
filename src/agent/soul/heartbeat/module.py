@@ -68,13 +68,13 @@ class HeartbeatModule:
         if not in_active:
             result = HeartbeatTickResult(outcome="skip", reason="outside active hours (sleeping)")
             self._tick_log.append(result)
-            hb_debug(logger, "[Heartbeat] skip — outside active hours (sleeping)")
+            hb_debug(logger, "[Heartbeat] skip - outside active hours (sleeping)")
             return result
 
         if self._soul is None or not self._soul.is_running:
             result = HeartbeatTickResult(outcome="skip", reason="soul not running")
             self._tick_log.append(result)
-            hb_debug(logger, "[Heartbeat] skip — soul not running")
+            hb_debug(logger, "[Heartbeat] skip - soul not running")
             return result
 
         results = self._orchestrator.run_due(
@@ -91,7 +91,7 @@ class HeartbeatModule:
         reason = " ".join(parts)
         result = HeartbeatTickResult(outcome="ok", reason=reason, duration_ms=duration_ms)
         self._tick_log.append(result)
-        hb_debug(logger, "[Heartbeat] ok — %s (%dms)", reason or "idle", duration_ms)
+        hb_debug(logger, "[Heartbeat] ok - %s (%dms)", reason or "idle", duration_ms)
         return result
 
     def apply_console_log_config(self) -> None:

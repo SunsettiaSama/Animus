@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from routers.soul import _soul_or_400
 
@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 class CreateAccountBody(BaseModel):
-    display_name: str
+    display_name: str = ""
     meta: dict | None = None
 
 

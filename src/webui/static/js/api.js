@@ -30,6 +30,7 @@ export const PATHS = {
   },
   speak: {
     status: '/api/speak/status',
+    notify: '/api/speak/notify',
     reset:  '/api/speak/reset',
     run:    '/ws/speak/run',
     trace:  sid => `/api/speak/session/${encodeURIComponent(sid)}/trace`,
@@ -189,7 +190,7 @@ export function wsFactory(path) {
 
 /**
  * Poll GET /api/react/status until status === 'ready' or 'error'.
- * Rejects on timeout or backend error.
+ * Legacy helper — prefer pollUntilSpeakReady for WebUI dialogue.
  */
 export async function pollUntilReady(intervalMs = 500, timeoutMs = 120_000) {
   const deadline = Date.now() + timeoutMs;
@@ -201,4 +202,25 @@ export async function pollUntilReady(intervalMs = 500, timeoutMs = 120_000) {
     await new Promise(r => setTimeout(r, intervalMs));
   }
   throw new Error('ReAct init timed out');
+}
+
+/**
+ * Poll Soul/Speak readiness until speak_ready (primary WebUI boot signal).
+ */
+export async function pollUntilSpeakReady(intervalMs = 500, timeoutMs = 120_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const readiness = await http.get(PATHS.soul.readiness).catch(() => null);
+    if (readiness?.speak_ready) return readiness;
+    if (readiness?.soul_init_error) {
+      throw new Error(readiness.soul_init_error);
+    }
+    const speak = await http.get(PATHS.speak.status).catch(() => ({ ready: false }));
+    if (speak.ready) return speak;
+    if (speak.reason && speak.status === 'unavailable' && !String(speak.reason).includes('未初始化')) {
+      throw new Error(speak.reason);
+    }
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  throw new Error('Soul Speak init timed out');
 }

@@ -96,7 +96,7 @@ class TemporalClock:
     async def _tick_loop(self) -> None:
         recovered = self._store.reset_stale_running()
         if recovered:
-            logger.info("[TemporalClock] recovered %d stale running task(s) → pending", recovered)
+            logger.info("[TemporalClock] recovered %d stale running task(s) to pending", recovered)
 
         _last_proactive = _EPOCH
         if self._heartbeat is not None:

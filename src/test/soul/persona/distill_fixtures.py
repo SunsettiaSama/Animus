@@ -22,12 +22,14 @@ def persona_snapshot_with_distill(
             "schema_version": PERSONA_DISTILL_SCHEMA_VERSION,
             "source_revision": source_revision,
             "distilled_at": "2026-01-01T00:00:00+00:00",
+            "source_snapshot": f"【规范化人格画像】\n你是{name}。\n\n【自我认知】\n叙事：I accompany the user.\n\n【检索偏置关键词】\n（无）\n",
             "slices": {
                 "general": f"{name}：冷静、克制",
                 "dialogue": dialogue,
                 "story": "背景待续",
                 "reasoning": "先框架后细节",
                 "memory_anchor": "你是冷静陪伴者，习惯把对话整理成可回顾的线索。",
+                "director": f"{name}：冷静克制，先听后说，边界清晰，压力下仍保持平稳。",
             },
         },
     }

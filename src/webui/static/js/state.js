@@ -14,8 +14,8 @@
  * ── Field ownership ───────────────────────────────────────────────────────
  *
  *   S.genId        – UUID string                (set by streaming.js per session)
- *   S.convId       – UUID string | null         (set by history.js / main.js)
- *   S.convTitle    – string                     (set by history.js / main.js)
+ *   S.convId       – UUID string | null         (set by history.js / workspace)
+ *   S.convTitle    – string                     (set by history.js / workspace)
  *   S.lifecycle    – LifecycleState (see below)  (set ONLY via setState())
  *   S.reactReady   – bool                        (set by react module)
  *   S.personaName  – string | null               (set by persona module)
@@ -60,8 +60,13 @@ export const S = {
   /** True when Soul backend is running. */
   soulReady:   false,
 
-  /** Active conversation mode: 'speak' | 'react' | 'plan' | 'chat'. */
-  convMode:    'speak',
+  /** Conversation surface is always the workstation; mode is not a user switch. */
+  convMode:    'conversation',
+
+  /** Active worker task ids (Speak→Worker bridge). */
+  activeWorkIds: [],
+  /** True while any work is pending/running. */
+  workBusy:    false,
 
   /** 当前线程是否为 Agent 主动发起的会话（右上角红点）。 */
   proactiveUrge: false,

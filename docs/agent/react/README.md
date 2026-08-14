@@ -1,284 +1,121 @@
-# agent/react 模块
+# agent/react
 
-ReAct（Reasoning + Acting）核心框架：**ConvLoop** + **TaoLoop**，会话上下文在 **`context/`**，向量长期与里程碑的逻辑实现在 **`agent/soul/memory`**（由 **`memory_recall`** 工具按需挂载）；Soul **`MemoryService`** 见 [agent/soul/README.md](../soul/README.md)。
+`src/agent/react/` 是通用 ReAct 会话实现，当前服务于 CLI、legacy WebUI ReAct 和部分
+AgentService/Scheduler 路径。Soul/Speak 主对话有独立的会话、Prompt、Memory 和 LLM
+编排，**不经过 `ConvLoop` 或 `TaoLoop`**。确认后的真实工作使用 `src/worker/react/`。
 
----
+## 模块边界
 
-## 目录结构
-
-```
-src/agent/react/
-├── loop.py              # ConvLoop
-├── tao.py               # TaoLoop — 推理循环与工具注入
-├── parser.py            # 转发 prompt/parser 符号
-├── factory.py           # build_conv_loop
-├── context/             # MemoryProcessor + RecentHistoryMemory（会话上下文）
-│   ├── processor.py
-│   ├── memory.py        # Step
-│   └── medium_term/memory.py
-├── prompt/              # PromptManager / parser / repair / template
-├── action/              # Tool / MCP / Skill — 见 action/README.md
-├── trace/store.py       # TraceStore
-└── （人格 / 生命：`agent/soul/persona`、`agent/soul/life`）
+```text
+agent/react/
+  loop.py                  ConvLoop：会话外壳
+  tao.py                   TaoLoop：Thought/Action/Observation 循环
+  factory.py               AppState -> ConvLoop；唯一常规 RiskGate 装配点
+  context/                 当前轮 Step + medium-term JSONL
+  prompt/                  ReAct 消息组装、解析和修复
+  action/                  Tool / Skill / MCP / RiskGate
+  trace/                   推理轨迹落盘
 ```
 
----
+`worker/react/` 保留相同的 ReAct 核心，但额外接收 `AgentStateService`。Worker 每轮开始读取
+`worker_portrait`、`reflection_portrait`、`memory_portrait`，创建 `TurnTaskGraph` 并注入
+system prompt；每次工具调用更新任务图，轮后异步提交工作反思。`agent/react` 没有这条
+Worker AgentState 链。
 
-## 整体流程
+## 入口与调用链
 
-```
-ConvLoop（多轮会话管理）
-   │  接收用户输入，管理对话历史
-   │
-   ▼
-TaoLoop.stream(question)
-   │
-   │  循环 max_steps 次
-   │     ├─ processor.recall()  → MemoryResult（short_term + medium_term）
-   │     ├─ build_messages(...)               → list[BaseMessage]
-   │     ├─ LLM.stream_generate_messages()    → raw_output（流式 chunk）
-   │     ├─ parse_llm_output()               → (thought, action, action_input)
-   │     │
-   │     ├─ [finish] → yield FinishEvent → 客户端立即收到答案
-   │     └─ [tool]   → executor.run() → processor.add(Step)
-   │
-   FinishEvent.answer 发送完毕，WebSocket 关闭
-   │
-   └─ post_process()（后台线程，用户无感知）
-         commit + trace + persona + add_turn + build_static
-```
+### CLI
 
----
+`src/run.py::_build_tao()` 直接构造 `agent.react.tao.TaoLoop`，`run_cli()` 调用
+`tao.run(question)`。这里没有 `ConvLoop`、`SessionManager`，也没有 factory 注入的
+RiskGate、默认 SubAgent 或默认 Flow。
 
-## TaoLoop 核心属性
+### legacy WebUI
 
-| 属性 | 类型 | 说明 |
-|---|---|---|
-| `_manager` | `PromptManager` | 负责 Prompt 构建与历史管理 |
-| `_long_term` | `LongTermMemory \| None` | soul 包向量层；**默认不写入 Prompt**，供 `memory_recall` / consolidation |
-| `_milestone` | `MilestoneMemory \| None` | soul 包里程碑；同上 |
-| `_medium_term` | `RecentHistoryMemory \| None` | 中期 JSONL（`context/medium_term`）|
-| `_soul_memory` | `MemoryService \| None` | `cfg.db` 全启用时构造；`recall` 工具后端 + Speak/Life I/O 落图 |
-| `_persona` | `PersonaManager \| None` | 人格块（无 `bias_query` 钩子）|
-| `_life` | `LifeManager \| None` | 生活状态管理（心跳日志 + 日度综合）|
-| `_scheduler_engine` | `SchedulerEngine \| None` | 时钟触发任务引擎（`TaoConfig.scheduler` 非空时启用）|
-| `_delegate_skill` | `DelegateTaskSkill \| None` | 子 Agent 同步委派（`TaoConfig.agent` 非空时注入）|
-| `_flow_orchestrator` | `FlowOrchestrator \| None` | Flow DAG 编排（`TaoConfig.flow` 非空时启用）|
-| `_static_cache` | `StaticPromptParts \| None` | `post_process` 预热的静态 Prompt 片段 |
-| （每轮构造） | `MemoryProcessor` | 仅存于 `stream()` 局部变量；负责 trace + medium_term |
+```text
+POST /api/react/init
+  -> agent.adapters.react_bridge.do_react_init
+  -> agent.react.factory.build_conv_loop
+  -> SessionManager.create_session("webui", ConvLoop)
 
----
-
-## 单步推理流程（stream 内循环）
-
-```
-1. processor.recall()
-      → short_term : list[Step]
-      → medium_term : str（RecentHistoryMemory；首轮缓存后在后续 step 复用）
-
-2. Prompt 组装
-     · 首轮或无缓存：PromptManager.build_messages(question, result, persona_blocks)
-         → system：base + persona + medium_term MemoryBlock
-         → human：question + StepsBlock(short_term) + suffix
-     · 后续轮：build_messages_from_static(static_cache, question, medium_term, short_term)
-         → docstring：长期记忆仅靠 memory_recall 工具触发
-
-3. LLM 流式生成 → parse → executor.run(tool) → processor.add(Step)
+/ws/react/run 或 /api/react/run
+  -> TaoRequest
+  -> AgentSession FIFO worker
+  -> ConvLoop.stream
+  -> TaoLoop.stream
 ```
 
-长期 / 里程碑 / Soul：**不**在上述 Prompt 路径中拼接；Agent 调用 **`memory_recall`** 将观测写入对话。
+该 API 明确标记 deprecated；WebUI 主入口是 `/ws/speak/run`。
 
----
+### Scheduler、SubAgent、Flow
 
-## finish 后台提交（post_process）
+- factory 默认给 TaoConfig 配置 Scheduler、SubAgent 和 Flow，并可复用全局
+  `SchedulerEngine`。
+- `delegate_task` 同步调用 `agent.runner.SubAgentRunner`，返回 answer 后主 TaoLoop 才继续。
+- `run_flow` 异步启动 cluster Flow；`flow_status`、`flow_wait`、`flow_skip` 操作当前 Flow。
+- Scheduler 定时任务通过 `runtime.scheduler.SchedulerEngine` 和
+  `agent.soul.heartbeat.task_runner.TaskRunner` 执行，不等同于 Soul heartbeat。
 
-```
-processor.commit(question, answer)        → RecentHistoryMemory.append（JSONL）
+## TaoLoop 单步数据流
 
-_maybe_consolidate()                     → 可选：窗口整合写入 legacy LongTermMemory
-
-timeline.append("conversation", {...})
-
-trace_store.write(...)
-
-persona.evolve(..., processor.trace, medium_term_chunk)
-
-manager.add_turn + build_static → _static_cache
-```
-
----
-
-## 记忆相关文档
-
-| 文档 | 说明 |
-|---|---|
-| [context/README.md](./context/README.md) | `MemoryProcessor`、`RecentHistoryMemory` |
-| [../soul/memory/README.md](../soul/memory/README.md) | `MemoryService`、`LongTermMemory`、`MilestoneMemory`、`memory_recall` 后端 |
-
-旧的 **`agent/react/memory/`** 源码树已拆除；向量与里程碑逻辑在 **`agent/soul/memory`**。
-
-## Prompt 块系统
-
-```
-PromptBlock (ABC)
-  render() -> str | None    # 返回 None 时该块跳过
-│
-├── SystemBlock(text)
-├── MemoryBlock(title, desc, separator, content)
-├── QuestionBlock(prefix, question)
-├── StepsBlock(format, steps)
-├── SuffixBlock(text)
-│
-└── Persona 子类：
-    ├── ProfileBlock(profile)
-    ├── SkillsBlock(skills, top_k=5)
-    ├── ReflectionBlock(reflection)
-    └── PreferenceBlock(preference)
+```text
+question
+  -> MemoryProcessor.recall()
+       short_term = 当前问题已执行的 Step
+       medium_term = RecentHistoryMemory.render()
+  -> PromptManager
+       system = ReAct role + 工具说明 + persona/Soul blocks + medium_term
+       history = 已完成的完整 Q/A
+       human = question + StepsBlock + suffix
+  -> LLMHandle.stream_generate_messages()
+  -> parse_llm_output()
+       strict XML -> lenient -> in-context retry -> repair LLM -> degraded finish
+  -> finish: add_turn + build_static + FinishEvent
+     tool: optional RiskGate -> ActionExecutor -> Step -> 下一轮
 ```
 
-### 消息构建路径（与 `prompt/manager.py` 一致）
+首步调用 `MemoryProcessor.recall()`，后续步骤固定复用同一份 medium-term，只追加当前轮
+Step。历史 Q/A 来自 `PromptManager._history`，与 medium-term 摘要是两条不同数据源。
 
-```
-有 _static_cache（非首轮拼装）:
-  build_messages_from_static(static, question, medium_term, short_term)
-    → system = static.system + medium_term 块
-    → human  = question + StepsBlock(short_term) + suffix
+## 完成与持久化
 
-无 _static_cache（首轮或重置后）:
-  build_messages(question, MemoryResult, extra_system_blocks=persona_blocks)
-    → system = base + persona 块 + medium_term 块
-    → human  = question + StepsBlock(short_term) + suffix
-```
+`stream()` 在发出 `FinishEvent` 前同步执行 `manager.add_turn()` 和 `build_static()`，并保存
+`_PendingFinish`。调用方随后执行 `post_process()`：
 
----
+1. `MemoryProcessor.commit()` 将本轮 Q/A 写入 `medium_term.jsonl`；
+2. `TimelineService` 写 conversation 事件；
+3. 启用 trace 时写推理轨迹。
 
-## Persona 系统
+Persona 自动演化已从轮末断开。长期 Soul 记忆也不由 `MemoryProcessor` 被动写入；Soul
+对话/Life I/O 有自己的记录链。Tao 侧可用的主动记忆工具来自
+`agent.adapters.soul_tao.tools.register_soul_tools()`，实际名称包括
+`soul_memory_search`、`soul_life_chronicle`，不是旧文档中的统一 `memory_recall` API。
 
-```
-profile/store.py  →  profile.json / skills.json / reflection.txt
-       │
-  PersonaProfile           SkillsLibrary
-  （人物画像属性）          （技能知识图谱）
-  reflection: str
-  （自省 IROTE 文本）
-       │
-  EvolutionEngine.run()（每 N 轮触发）
-    → LLM 生成 ProfileDelta  → profile 增量更新
-    → LLM 生成 SkillDelta    → skills 增删改
-    → LLM 生成 reflection
+## RiskGate 的真实覆盖
 
-preference/  →  preference.json（动态层）:
-  PreferenceUpdater.update(Q, A)
-    → LLM 生成快照 → PreferenceBlock 注入
+TaoLoop 只有收到非空 `risk_gate` 时才做工具级审批。仓库中 `RiskGate.from_config()` 的
+常规构造点只有两个 factory：
 
-emotional/  →  emotional_state.json（叙事情感层）:
-  EmotionalStateEvolver.update(Q, A)
-    → LLM 追加 EmotionalAnchor（锚点 ≥ _MAX_ANCHORS 时压缩为 texture）
-       结果注入 EmotionalStateBlock → 系统提示情绪质地
-```
+- `agent.react.factory.build_conv_loop()`；
+- `worker.react.factory.build_conv_loop()`。
 
----
+因此 legacy WebUI factory ConvLoop 有工具级 approval；直接构建 TaoLoop 的 CLI、
+`SubAgentRunner`、Scheduler TaskRunner、Flow Executor 默认没有。approval 发生在
+TaoLoop 已接管后、工具执行前，和 WorkerWorkService 的任务级 work confirmation 无关。
 
-## ConvLoop 接口
+## 配置与 API
 
-```python
-from agent.react.loop import ConvLoop
+`TaoConfig` 的主要字段是 `max_steps`、`storage`、`prompt`、`memory`、`persona`、
+`knowledge`、`trace`、`repair_llm`、`scheduler`、`agent`、`flow`、`db`。当前 factory
+仍可按 `enable_kb` 传入 knowledge 配置；不要把它描述成已删除字段。
 
-conv = ConvLoop(tao)
+`ConvLoop` 公开转发 `stream`、`abort`、`resolve_approval`、`restore`、`reset`、
+`post_process`、`close`，并通过 `tao_loop` 暴露底层 TaoLoop。
 
-conv.stream(question)       # 代理 tao.stream()，向上层 yield TaoEvent
-conv.post_process()         # 代理 tao.post_process()
-conv.reset()                # tao.reset() → manager.clear_history() + 清空记忆
-conv.restore(messages)      # 从历史 JSON 恢复：user/assistant → manager.add_turn()
-conv.turn_count             # tao._manager.turn_count
-```
+## 相关文档
 
----
-
-## TaoConfig 字段树
-
-```
-TaoConfig
-  ├── max_steps: int = 10
-  ├── storage: StorageConfig               # 本地文件根目录（自动传播到各子模块）
-  │     ├── root: str = ".react"
-  │     └── 派生属性: memory_dir / milestones_dir / persona_dir / traces_dir / scheduler_dir
-  ├── prompt: PromptConfig
-  │     ├── lang: str = "en"              # "en" | "cn"
-  │     ├── repair_enabled: bool = True
-  │     └── retry_on_bad_parse: int = 2
-  ├── memory: MemoryConfig
-  │     ├── short_term:  ShortTermMemoryConfig
-  │     ├── medium_term: MediumTermMemoryConfig
-  │     ├── long_term:   LongTermMemoryConfig
-  │     └── milestone:   MilestoneConfig
-  ├── persona: PersonaConfig
-  │     ├── enabled: bool = False
-  │     ├── evolution_enabled: bool = False
-  │     ├── evolve_interval: int = 1
-  │     ├── skills_enabled: bool = True
-  │     ├── max_skills_in_prompt: int = 5
-  │     ├── reflection_enabled: bool = False
-  │     ├── reflect_interval: int = 3
-  │     ├── preference_enabled: bool = True
-  │     └── preference_window_days: int = 30
-  ├── trace: TraceConfig
-  │     └── enabled: bool = True
-  ├── knowledge: KnowledgeConfig | None = None   # 遗留字段：运行时包 `knowledge` 已移除，勿启用
-  ├── repair_llm: LLMConfig | None = None
-  ├── scheduler: SchedulerConfig | None = None   # runtime.scheduler；时钟触发任务（见 docs/runtime）
-  ├── agent: SubAgentConfig | None = None         # 子 Agent 委派（注入 DelegateTaskSkill）
-  │     ├── llm_cfg_path: str
-  │     ├── max_concurrent: int = 4
-  │     └── profiles: dict[str, SubAgentProfile]
-  ├── flow: FlowConfig | None = None              # Flow DAG / cluster 编排
-  └── db: DBConfig | None = None                  # Soul：Redis/MySQL（可选）
-```
-
----
-
-## 本地文件目录布局
-
-```
-.react/
-├── history/              # WebUI 对话历史
-│   └── {uuid}.json
-├── memory/               # L2 中期 + L3 长期记忆
-│   ├── medium_term.jsonl # L2 中期 Q&A 历史（JSONL，跨 session）
-│   ├── memories.json     # L3 长期记忆条目
-│   └── qdrant/           # L3 Qdrant 本地集合
-├── milestones/           # 里程碑记忆
-│   └── milestones.json
-├── persona/              # 人格文件
-│   ├── profile.json
-│   ├── skills.json
-│   ├── reflection.txt
-│   ├── preference.json
-│   └── emotional_state.json
-├── traces/               # 推理链存档
-│   └── {timestamp}_{slug}.json
-├── scheduler/            # 调度持久化目录（TaskStore；心跳清单 HEARTBEAT.md；详见 docs/runtime）
-│   ├── tasks.json
-│   ├── heartbeat_log.jsonl
-│   └── results/
-├── timeline/             # 会话级时间线事件
-│   └── {YYYY-MM-DD}.jsonl
-├── life/                 # LifeManager（账本 / 叙事 / 体验 / 画像）
-│   ├── tao_dialogue.jsonl
-│   ├── narrative_events.jsonl
-│   ├── experience_hot.jsonl
-│   ├── life_profile.json
-│   ├── story_outline.json
-│   └── story_arc.json
-└── workspace/            # 沙箱工作区文件
-```
-
----
-
-## 子模块文档
-
-- [action/README.md](./action/README.md) — 工具动作空间（Tool / MCP / Skill）
-- [context/README.md](./context/README.md) — 会话上下文（MemoryProcessor）
-- [prompt/README.md](./prompt/README.md) — Prompt 块详解
-- [persona/README.md](./persona/README.md) — 人格文档入口（实现见 [../soul/persona/README.md](../soul/persona/README.md)）
-- [../soul/life/README.md](../soul/life/README.md) — LifeManager / 生活状态
+- [action/README.md](./action/README.md)
+- [context/README.md](./context/README.md)
+- [prompt/README.md](./prompt/README.md)
+- [../session/README.md](../session/README.md)
+- [../../worker/README.md](../../worker/README.md)

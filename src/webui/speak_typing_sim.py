@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from agent.soul.speak.io.outbound.stream.events import SpeakStreamEvent
 
 if TYPE_CHECKING:
-    from webui.routers.speak import WebUISpeakStreamPort
+    from agent.soul.speak.io.outbound.websocket import WebSocketSpeakStreamPort
 
 _THINK_KINDS = frozenset({"thought"})
 _SUPPRESS_TAGS = frozenset({"think"})
@@ -47,7 +47,7 @@ class _SpeakBlock:
 class SimulatedTypingStreamPort:
     """逐字呈现出站：action 即时；think 抑制；speak 缓冲后在短延迟后一次性下发（前端逐字动画）。"""
 
-    inner: WebUISpeakStreamPort
+    inner: WebSocketSpeakStreamPort
     loop: asyncio.AbstractEventLoop
     ms_per_char: float = 42.0
 

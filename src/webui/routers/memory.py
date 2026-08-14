@@ -130,7 +130,14 @@ def consolidate_medium_term():
     if state.conv_loop is None:
         return JSONResponse(
             status_code=400,
-            content={"status": "error", "detail": "No active session."},
+            content={
+                "status": "error",
+                "detail": (
+                    "Legacy medium-term consolidate unavailable: "
+                    "ConvLoop not initialized (deprecated ReAct path)."
+                ),
+                "deprecated": True,
+            },
         )
     medium = state.conv_loop.medium_term
     if medium is None:

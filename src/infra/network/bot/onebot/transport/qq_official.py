@@ -366,7 +366,7 @@ class QQOfficialTransport(BaseTransport):
             )
         seq = ctx.msg_seq
         ctx.msg_seq += 1
-        logger.info("[QQ→C2C ] uid=%d | seq=%d | %r", uid, seq, text[:100])
+        logger.info("[QQ->C2C ] uid=%d | seq=%d | %r", uid, seq, text[:100])
         result = await self._client.api.post_c2c_message(
             openid=ctx.target_id,
             msg_type=0,
@@ -374,7 +374,7 @@ class QQOfficialTransport(BaseTransport):
             msg_id=ctx.last_msg_id,
             msg_seq=seq,
         )
-        logger.info("[QQ→C2C ] result: %r", result)
+        logger.info("[QQ->C2C ] result: %r", result)
         return (result or {}).get("id", "")
 
     async def _do_send_group(self, gid: int, text: str) -> str:
@@ -387,7 +387,7 @@ class QQOfficialTransport(BaseTransport):
             )
         seq = ctx.msg_seq
         ctx.msg_seq += 1
-        logger.info("[QQ→GROUP] gid=%d | seq=%d | %r", gid, seq, text[:100])
+        logger.info("[QQ->GROUP] gid=%d | seq=%d | %r", gid, seq, text[:100])
         result = await self._client.api.post_group_message(
             group_openid=ctx.target_id,
             msg_type=0,

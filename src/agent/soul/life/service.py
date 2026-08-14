@@ -37,7 +37,7 @@ class LifeService(DomainWorker):
         self._experience_tick = tick
 
     def start(self, **kwargs) -> None:
-        if self._thread and self._thread.is_alive():
+        if self._lease is not None and self._lease.is_alive():
             return
         for lm in self._virtual.scan_overdue_landmarks():
             self._enqueue_landmark_fill(lm.id)

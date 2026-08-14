@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from collections import deque
 from collections.abc import Callable, Iterator
@@ -9,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent.soul.speak.io.inbound.memory.recall import perform_recall_handoff
 
-from .pipelines.request_driven.orchestrator import (
+from .responders.request_driven.orchestrator import (
     ShareDesireComposer,
     SpeakContextDistiller,
     SpeakOrchestrator,
@@ -17,9 +18,9 @@ from .pipelines.request_driven.orchestrator import (
     SpeakReplyStyle,
     SpeakTurnMode,
 )
-from .pipelines.request_driven.orchestrator.blocks.guidance import GuidanceControlService
-from .pipelines.request_driven.orchestrator.io import OrchestratorIOHub
-from .pipelines.request_driven.orchestrator.runner import SpeakComposeRunner
+from .responders.request_driven.orchestrator.blocks.guidance import GuidanceControlService
+from .responders.request_driven.orchestrator.io import OrchestratorIOHub
+from .responders.request_driven.orchestrator.runner import SpeakComposeRunner
 from config.soul.presence.config import PROACTIVE_OPEN_THRESHOLD
 from .io.hub import SpeakIOHub
 from .io.inbound import SpeakDialogueBridge, SpeakIngestResult, SpeakInboundPort, ingest_question
@@ -30,14 +31,14 @@ from .io.inbound.memory import InboundMemoryGateway, SimilarMemoryPullResult
 from .session import SpeakSessionManager, SpeakSessionService
 from .session.queue import UserInputItem
 from .session.turn import SessionTurnHost
-from .pipelines import SpeakPipelineRouter, normalize_speak_pipeline
-from .pipelines.legacy_qa import LegacyQAPipelineRunner
-from .pipelines.request_driven import RequestDrivenPipelineRunner
-from .pipelines.rhythm import RhythmPipelineRunner
-from .pipelines.rhythm.state import RhythmStateStore
-from .pipelines.request_driven.orchestrator.queue import QueueDecisionRunner
+from .responders import SpeakResponderRouter, normalize_speak_responder
+from .responders.legacy_qa import LegacyQAPipelineRunner
+from .responders.request_driven import RequestDrivenPipelineRunner
+from .responders.rhythm import RhythmPipelineRunner
+from .responders.rhythm.state import RhythmStateStore
+from .responders.request_driven.orchestrator.queue import QueueDecisionRunner
 from .session.manage import SilenceBreakTurnSpec
-from .pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
+from .responders.request_driven.orchestrator.prompt_trace import get_prompt_trace
 from .session import SpeakFeelingChunk, SpeakSubjectiveChunk, SpeakTurnChunk
 from .session.lifecycle import SPEAK_SESSION_IDLE_SEC, SpeakSessionRegistry
 from .session.lifecycle import (
@@ -63,10 +64,28 @@ from .io.outbound.life import SpeakLifeLifecycleBridge, SpeakLifeOutboundBridge
 from .io.outbound.stream_hub import SpeakOutboundStreamHub
 from .io.inbound.hub import SpeakInboundHub
 from .io.outbound.stream.flush import SpeakFlushMode, SpeakTypingHoldEmitter
-from .pipelines.request_driven.orchestrator.turn_coordinator import OrchestratorTurnCoordinator
-from .pipelines.request_driven.orchestrator.directors import DirectorCoordinator, DirectorLLMCaller
-from .pipelines.request_driven.orchestrator.runtime import DeliveryExecutor, OrchestratorThread
-from .pipelines.request_driven.orchestrator.state import SnapshotBuilder, StateStore, print_session_snapshot
+from .responders.request_driven.orchestrator.turn_coordinator import OrchestratorTurnCoordinator
+from .responders.request_driven.orchestrator.directors import DirectorCoordinator, DirectorLLMCaller
+from .responders.request_driven.orchestrator.runtime import DeliveryExecutor, OrchestratorThread
+from .responders.request_driven.orchestrator.state import SnapshotBuilder, StateStore, print_session_snapshot
+from .responders.request_driven.orchestrator.compose_manager import (
+    ComposeManager,
+    ComposeManagerConfig,
+    ComposeManagerGateway,
+)
+from .responders.request_driven.orchestrator.compose_manager.ports.adapters import (
+    CallableMemorySearchPort,
+    PresenceShareHintPort,
+    units_from_recall_candidates,
+)
+from .responders.request_driven.orchestrator.compose_manager.ports.memory import MemoryHint, MemoryUnit
+from .io.outbound.execute import execute_outbound, outbound_from_delivery_plan, outbound_from_speak_text
+from .io.outbound.protocol import OutboundRequest
+from .responders.request_driven.delivery_bridge import timeline_to_outbound_request
+from .responders.request_driven.orchestrator.directors.agent import DirectorAgentHost
+from .responders.request_driven.character import CharacterAgentHost
+from .responders.request_driven import SpeakRole
+from .io.outbound.character import CharacterWorkGateway, CharacterWorkPort
 from .session.snapshot_port import RegistrySessionSnapshotPort
 from .session.ingress import SessionOrchestratorIngress
 from .llm.director_engine import SpeakDirectorLLMEngine
@@ -136,6 +155,8 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         director_push_now_cooldown_sec: float = 8.0,
         director_brew_queue_max: int = 3,
         typing_idle_ms: int = 3000,
+        compose_manager_enabled: bool | None = None,
+        compose_manager_config: ComposeManagerConfig | None = None,
     ) -> None:
         self._presence = presence
         self._persona = persona
@@ -223,13 +244,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             inner=channel.emit,
             enabled=True,
         )
-        resolved_pipeline = stream_pipeline or SpeakStreamPipeline(
+        resolved_stream_pipeline = stream_pipeline or SpeakStreamPipeline(
             flush_mode=flush_mode,
             emit_fn=typing_hold,
         )
         stream_hub = SpeakOutboundStreamHub(
             flush_mode=flush_mode,
-            pipeline=resolved_pipeline,
+            pipeline=resolved_stream_pipeline,
             channel=channel,
         )
         self._typing_hold = typing_hold
@@ -270,13 +291,17 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             self._orchestrator,
             compose_runner=self._compose_runner,
         )
+        self._bind_compose_manager_sidechain(
+            enabled=compose_manager_enabled,
+            config=compose_manager_config,
+        )
         self._bind_director_system()
         self._compose_runner.set_frame_ready_handler(
             lambda frame, mode: self._orchestrator.compose_queue_hub.on_frame_ready(
                 frame, mode=mode,
             ),
         )
-        self._bind_pipeline_router()
+        self._bind_responder_router()
 
     @staticmethod
     def _build_semantic_boundary(embedder, threshold: float) -> SemanticSessionBoundary:
@@ -291,7 +316,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             ),
         )
 
-    def _bind_pipeline_router(self) -> None:
+    def _bind_responder_router(self) -> None:
         legacy_host = SessionTurnHost(
             compose_bundle=self._compose_bundle,
             begin_turn=self._session_manager.begin_turn,
@@ -306,7 +331,10 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             continue_recall_handoff=self._continue_recall_handoff,
             compose_from_queue=self._compose_from_queue,
             parse_agent_output=parse_agent_output,
-            session_trace_cache=self.session_trace_cache,
+            session_trace_cache=lambda sid, turn_index: self.session_trace_cache(
+                sid,
+                turn_index=turn_index,
+            ),
             before_compose_bundle=self._before_compose_bundle,
             on_turn_complete_hook=self._on_compose_turn_complete,
         )
@@ -329,7 +357,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             affect_every_k=2,
             on_scene_every_k=3,
         )
-        self._pipeline_router = SpeakPipelineRouter(
+        self._responder_router = SpeakResponderRouter(
             legacy_qa=LegacyQAPipelineRunner(
                 manager=self._session_manager,
                 host=legacy_host,
@@ -463,6 +491,273 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             draft=draft,
         )
 
+    def _bind_compose_manager_sidechain(
+        self,
+        *,
+        enabled: bool | None,
+        config: ComposeManagerConfig | None,
+    ) -> None:
+        env_raw = os.environ.get("SPEAK_COMPOSE_MANAGER", "").strip().lower()
+        if env_raw in {"0", "false", "no", "off"}:
+            resolved_enabled = False
+        elif env_raw in {"1", "true", "yes", "on"}:
+            resolved_enabled = True
+        elif enabled is None:
+            resolved_enabled = False
+        else:
+            resolved_enabled = bool(enabled)
+        base = config or ComposeManagerConfig()
+        cfg = ComposeManagerConfig(
+            enabled=resolved_enabled,
+            compress_chunk_size=base.compress_chunk_size,
+            staging_max_items=base.staging_max_items,
+            staging_max_turn_age=base.staging_max_turn_age,
+            staging_ttl_sec=base.staging_ttl_sec,
+            stage_in_related_ratio=base.stage_in_related_ratio,
+            retrieve_normal_ratio=base.retrieve_normal_ratio,
+            bm25_min_score=base.bm25_min_score,
+            bm25_top_k=base.bm25_top_k,
+            stage_in_limit=base.stage_in_limit,
+            history_query_turns=base.history_query_turns,
+            rng_seed=base.rng_seed,
+            director_memory_intervene_max=base.director_memory_intervene_max,
+            director_bm25_top_k=base.director_bm25_top_k,
+        )
+        self._compose_memory_port = CallableMemorySearchPort(self._compose_manager_memory_search)
+        self._compose_share_hint = PresenceShareHintPort(self._compose_manager_share_hint)
+        self._compose_live_search_fn: (
+            Callable[[str, str, int, MemoryHint], list[MemoryUnit]] | None
+        ) = None
+        manager = ComposeManager(
+            cfg,
+            memory_search=self._compose_memory_port,
+            share_hint=self._compose_share_hint,
+        )
+        self._compose_gateway = ComposeManagerGateway(
+            manager,
+            on_fallback=lambda label, exc: logger.warning(
+                "[compose_manager] fallback label=%s err=%s",
+                label,
+                exc,
+            ),
+        )
+        self._speak_role = SpeakRole(generate_fn=self._role_generate)
+        self._character_work = CharacterWorkGateway()
+        self._character_agent: CharacterAgentHost | None = None
+        self._compose_manager_sessions: set[str] = set()
+        self._compose_manager_meta: dict[str, dict[str, object]] = {}
+        self._compose_manager_materials: dict[str, object] = {}
+
+    def attach_character_work_port(self, port: CharacterWorkPort) -> None:
+        """挂载角色→worker 轻量工作口（io 分流；不向角色注入工具目录）。"""
+        self._character_work.bind(port)
+
+    def attach_compose_memory_search(
+        self,
+        search_fn: Callable[[str, str, int, MemoryHint], list[MemoryUnit]],
+    ) -> None:
+        """挂 Memory 实时检索到 ComposeManager staging 装入口。"""
+        self._compose_live_search_fn = search_fn
+
+    def _compose_meta_for_snapshot(self, session_id: str) -> dict[str, object]:
+        base = dict(self._orchestrator.compose_cache(session_id).meta_snapshot() or {})
+        extra = self._compose_manager_meta.get(session_id.strip()) or {}
+        if extra:
+            base.update(extra)
+        return base
+
+    def _compose_manager_memory_search(
+        self,
+        session_id: str,
+        query_text: str,
+        limit: int,
+        hint: MemoryHint,
+    ) -> list[MemoryUnit]:
+        """上游装入只用具体记忆条目；不把画像/人格/system 推进 staging。"""
+        cap = max(1, int(limit))
+        meta = self._orchestrator.compose_cache(session_id).meta_snapshot()
+        # 明确忽略画像字段，避免噪声进临时记忆库
+        _ = meta.get("interactor_portrait")
+        _ = meta.get("guidance_persona")
+        out: list[MemoryUnit] = []
+        seen: set[str] = set()
+        candidates = meta.get("guidance_recall_candidates") or []
+        if isinstance(candidates, (list, tuple)) and candidates:
+            for unit in units_from_recall_candidates(list(candidates), limit=cap):
+                if unit.unit_id in seen:
+                    continue
+                seen.add(unit.unit_id)
+                out.append(unit)
+                if len(out) >= cap:
+                    return out
+        if self._compose_live_search_fn is not None and len(out) < cap:
+            live = self._compose_live_search_fn(
+                session_id,
+                query_text,
+                cap - len(out),
+                hint,
+            )
+            for unit in live:
+                if unit.unit_id in seen:
+                    continue
+                seen.add(unit.unit_id)
+                out.append(unit)
+                if len(out) >= cap:
+                    break
+        return out
+
+    def _ingest_pull_into_compose_manager(
+        self,
+        session_id: str,
+        similar: SimilarMemoryPullResult,
+    ) -> None:
+        """keyword/emergence pull 结果压入 ComposeManager staging，统一淘汰与检索。"""
+        if not self._compose_gateway.enabled:
+            return
+        sid = session_id.strip()
+        lines = (
+            list(similar.social_prefetch_lines)
+            + list(similar.warm_spread_lines)
+            + list(similar.inject.lines)
+        )
+        unit_ids = (
+            list(similar.social_prefetch_unit_ids)
+            + list(similar.warm_spread_unit_ids)
+            + list(similar.inject.unit_ids)
+        )
+        units: list[MemoryUnit] = []
+        seen: set[str] = set()
+        for line, uid in zip(lines, unit_ids):
+            text = str(line or "").strip()
+            unit_id = str(uid or "").strip()
+            if not text or not unit_id or unit_id in seen:
+                continue
+            seen.add(unit_id)
+            units.append(
+                MemoryUnit(unit_id=unit_id, text=text, source="memory_pull"),
+            )
+        if not units:
+            return
+        self._ensure_compose_manager_session(sid, "")
+        self._compose_gateway.manager.ingest_units(sid, units, kind="memory_pull")
+
+    def _deferred_share_texts(self, session_id: str, *, limit: int | None = None) -> list[str]:
+        intents = self._session_manager.deferred_share_intents(session_id)
+        items = list(intents[:limit] if limit is not None else intents)
+        return [
+            topic
+            for item in items
+            if (topic := str(getattr(item, "topic", "") or "").strip())
+        ]
+
+    def _compose_manager_share_hint(self, session_id: str) -> str:
+        # init 80% share 相关：只用分享意图正文，不用 planner/persona 预览壳
+        texts = self._deferred_share_texts(session_id, limit=3)
+        return " ".join(texts)
+
+    def _role_generate(self, system: str, user_text: str) -> str:
+        return self._llm.generate(user_text, system=system).text
+
+    def _ensure_compose_manager_session(self, session_id: str, user_text: str) -> None:
+        if not self._compose_gateway.enabled:
+            return
+        sid = session_id.strip()
+        if sid in self._compose_manager_sessions:
+            return
+        self._compose_gateway.manager.init_session(sid, query_text=user_text)
+        self._compose_manager_sessions.add(sid)
+
+    def _refresh_compose_manager_director_meta(self, session_id: str, user_text: str) -> None:
+        if not self._compose_gateway.enabled:
+            return
+        sid = session_id.strip()
+        self._ensure_compose_manager_session(sid, user_text)
+        self._compose_gateway.manager.on_user_ingress(sid, user_text)
+        materials = self._compose_gateway.manager.export_dynamic_materials(
+            sid,
+            user_text=user_text,
+            share_texts=self._deferred_share_texts(sid),
+        )
+        view = self._compose_gateway.context_for_director_or_empty(sid, user_text=user_text)
+        self._compose_manager_meta[sid] = {
+            "compose_manager_director_brief": view.brief,
+            "compose_manager_memory_brief": view.memory_brief,
+            "compose_manager_history_brief": view.history_brief,
+            "compose_manager_director_memory_texts": list(view.director_memory_texts),
+            "compose_manager_director_memory_ids": list(view.director_memory_ids),
+            "compose_manager_role_memory_texts": list(view.role_memory_texts),
+            "compose_manager_role_memory_ids": list(view.role_memory_ids),
+            "intervene_max": int(view.meta.get("intervene_max", 1) or 1),
+            "role_hits_visible": True,
+            # 动态层库存：仅供导演调度，不自动进角色提示词
+            "dynamic_memory_ids": list(materials.memory_ids),
+            "dynamic_memory_texts": list(materials.memory_texts),
+            "dynamic_share_texts": list(materials.share_texts),
+            "dynamic_layer_scheduler": "director_only",
+        }
+        self._compose_manager_materials[sid] = materials
+
+    def _director_dynamic_schedule(self, session_id: str):
+        from agent.soul.speak.responders.request_driven.orchestrator.compose_manager.projectors.dynamic_layer import (
+            DynamicLayerSchedule,
+        )
+
+        sid = session_id.strip()
+        state = self._state_store.session(sid)
+        entry = state.director_cache.get("dynamic_layer") or {}
+        if not isinstance(entry, dict):
+            return DynamicLayerSchedule(reason="missing_director_schedule")
+        payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else entry
+        mem_ids = payload.get("memory_unit_ids") or []
+        share_idx = payload.get("share_indices") or []
+        if not isinstance(mem_ids, list):
+            mem_ids = []
+        if not isinstance(share_idx, list):
+            share_idx = []
+        return DynamicLayerSchedule(
+            inject_memory=bool(payload.get("inject_memory")),
+            memory_unit_ids=tuple(str(x) for x in mem_ids if str(x).strip()),
+            inject_share=bool(payload.get("inject_share")),
+            share_indices=tuple(
+                int(x) for x in share_idx if str(x).lstrip("-").isdigit()
+            ),
+            pass_info=bool(payload.get("pass_info")),
+            reason=str(payload.get("reason") or entry.get("reason") or "director"),
+            source="director",
+        )
+
+    def _apply_director_memory_intervention_from_cache(self, session_id: str) -> None:
+        if not self._compose_gateway.enabled:
+            return
+        sid = session_id.strip()
+        state = self._state_store.session(sid)
+        entry = state.director_cache.get("memory_inject") or {}
+        if not isinstance(entry, dict):
+            return
+        payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else entry
+        from agent.soul.speak.responders.request_driven.orchestrator.compose_manager.domain.intervention import (
+            DirectorMemoryIntervention,
+        )
+
+        action = str(payload.get("buffer_action") or "none").strip().lower()
+        if action not in ("inject", "remove"):
+            return
+        result = self._compose_gateway.manager.apply_director_memory_intervention(
+            sid,
+            DirectorMemoryIntervention(
+                action=action,  # type: ignore[arg-type]
+                unit_id=str(payload.get("unit_id") or ""),
+                text=str(payload.get("text") or ""),
+                reason=str(entry.get("reason") or payload.get("reason") or ""),
+            ),
+        )
+        self._compose_manager_meta.setdefault(sid, {})["director_intervene_result"] = result
+        logger.info(
+            "[compose_manager] director memory intervene session=%s result=%s",
+            sid,
+            result,
+        )
+
     def _bind_director_system(self) -> None:
         queues = self._session_manager.queues
         self._snapshot_port = RegistrySessionSnapshotPort(
@@ -479,10 +774,22 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._snapshot_builder = SnapshotBuilder(
             self._snapshot_port,
             state_store=self._state_store,
-            compose_meta_fn=lambda sid: self._orchestrator.compose_cache(sid).meta_snapshot(),
+            compose_meta_fn=self._compose_meta_for_snapshot,
+        )
+        self._director_agent_host: DirectorAgentHost | None = None
+        self._character_agent = CharacterAgentHost(
+            self._llm.llm,
+            generate_fn=self._role_generate,
+            name="speak-character",
+            auto_start=self._llm.llm is not None,
         )
         if self._director_llm.available:
             self._director_llm_caller = DirectorLLMCaller(llm=self._director_llm._engine.llm)
+            self._director_agent_host = DirectorAgentHost(
+                self._director_llm._engine.llm,
+                name="speak-director",
+                auto_start=True,
+            )
         self._director_coordinator = DirectorCoordinator(
             state_store=self._state_store,
             snapshot_builder=self._snapshot_builder,
@@ -491,6 +798,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             share_wants_fn=self._director_share_wants,
             silence_armed_fn=self._director_silence_armed,
             social_armed_fn=self._director_social_armed,
+            director_agent=self._director_agent_host,
         )
         self._orchestrator_thread = OrchestratorThread(
             state_store=self._state_store,
@@ -523,58 +831,37 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         return None
 
     def _on_typing_start_for_directors(self, session_id: str) -> None:
+        # 用户开始输入：暂停 idle 轮询，等 idle 后再按衰减重启
         if self._orchestrator_thread is None:
             return
-        self._orchestrator_thread._state_store.poll_cursor(session_id, "idle").armed = True
+        cursor = self._orchestrator_thread._state_store.poll_cursor(session_id, "idle")
+        cursor.armed = False
 
     def _on_typing_idle_for_directors(self, session_id: str) -> None:
         if self._orchestrator_thread is None:
             return
-        cursor = self._orchestrator_thread._state_store.poll_cursor(session_id, "idle")
-        cursor.armed = True
-        cursor.schedule_next()
-        runtime = self._session_manager.queues._runtime(session_id)
-        runtime.typing_idle_handoff.set()
-
-    def _on_async_delivery_ready(self, session_id: str) -> None:
         sid = session_id.strip()
-        if not sid:
-            return
-        with self._async_ready_guard:
-            self._async_ready_sessions.append(sid)
+        runtime = self._session_manager.queues._runtime(sid)
+        runtime.typing_idle_handoff.set()
+        # 输入停顿后恢复 idle 衰减轮询（5s → … → 120s），不短时狂刷
+        cursor = self._orchestrator_thread._state_store.poll_cursor(sid, "idle")
+        cursor.schedule_next()
+
+    def _on_async_delivery_ready(self, session_id: str, trigger: str) -> None:
+        # request_driven：可见正文只允许经主回复 LLM pace 后再 DeliveryExecutor。
+        # 导演 segments[].text 只是节奏占位；poll 可决策/衰减，但禁止直接推到前端。
+        return
 
     def _drain_async_delivery_queue(self, *, max_items: int = 4) -> None:
-        if self._delivery_executor is None:
-            return
-        processed = 0
-        while processed < max_items:
-            sid = ""
-            with self._async_ready_guard:
-                if self._async_ready_sessions:
-                    sid = self._async_ready_sessions.popleft()
-            if not sid:
-                break
-            self._execute_async_delivery_for_session(sid)
-            processed += 1
+        # 同步出站路径已接管；清空遗留队列，避免重启后误推占位文案
+        with self._async_ready_guard:
+            self._async_ready_sessions.clear()
 
     def _execute_async_delivery_for_session(self, session_id: str) -> None:
-        sid = session_id.strip()
-        if not sid:
-            return
-        state = self._state_store.session(sid)
-        if state.speak_gate not in ("speak", "brew"):
-            return
-        plan = self._state_store.take_pending_delivery_plan(sid)
-        if plan is None or plan.is_empty:
-            return
-        self._state_store.set_delivery_plan(sid, plan)
-        self._delivery_executor.execute(
-            plan,
-            session_service=self._session_manager,
-            session_id=sid,
-            user_text="",
-            stream_channel=self._outbound_stream,
-        )
+        return
+
+    def flush_async_delivery(self, session_id: str) -> None:
+        return
 
     def _should_continue_delivery(self, session_id: str) -> bool:
         if self._director_coordinator is None:
@@ -602,6 +889,12 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         turn_index: int,
         session_state: str,
     ) -> None:
+        if self._compose_gateway.enabled:
+            self._compose_gateway.manager.on_turn_complete(
+                session_id,
+                user_text,
+                agent_text,
+            )
         self._guidance_control.on_turn_complete(
             session_id,
             session_state=session_state,
@@ -644,7 +937,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             agent_text=agent_text,
         )
 
-    def _kick_for_upcoming_turn(self, session_id: str, user_text: str, turn_index: int) -> None:
+    def _kick_for_upcoming_turn(
+        self,
+        session_id: str,
+        user_text: str,
+        turn_index: int,
+        *,
+        mode: SpeakTurnMode = "inbound",
+    ) -> None:
         if self._turn_coordinator is None:
             return
         record = self.session_registry.get(session_id)
@@ -654,6 +954,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             turn_index=turn_index,
             memory_compose=self._memory_compose,
             generation=record.generation,
+            mode=mode,
         )
 
     def _before_compose_bundle(self, session_id: str, user_text: str) -> None:
@@ -679,7 +980,8 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         portrait,
     ) -> None:
         self._memory_compose.apply_similar_memories(bundle, similar)
-        from .pipelines.request_driven.orchestrator.blocks.persona import (
+        self._ingest_pull_into_compose_manager(bundle.session_id, similar)
+        from .responders.request_driven.orchestrator.blocks.persona import (
             interactor_pull_from_memory_result,
         )
 
@@ -764,17 +1066,16 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             finished.meta["director_refresh"] = finished.meta["turn_coordinator"].get(
                 "refresh",
             )
-        if self._director is not None:
-            finished.meta["session_director"] = self._director.state(session_id).snapshot()
-            brew_hint = self._director.recent_brew_summary(session_id)
-            if brew_hint:
-                finished.meta["recent_brew_lines"] = brew_hint
         finished.meta["session_typing"] = self._session_manager.queues._runtime(
             session_id,
         ).snapshot_typing()
-        finished.meta["session_brew_queue"] = self._session_manager.queues.brew_queue_snapshot(
-            session_id,
-        )
+        brew_queue = self._session_manager.queues.brew_queue_snapshot(session_id)
+        finished.meta["session_brew_queue"] = brew_queue
+        brew_lines = brew_queue.get("lines") if isinstance(brew_queue, dict) else None
+        if isinstance(brew_lines, list) and brew_lines:
+            finished.meta["recent_brew_lines"] = "\n".join(
+                str(line).strip() for line in brew_lines if str(line).strip()
+            )
         get_prompt_trace().emit_compose(
             session_id,
             turn_index=turn_index,
@@ -784,7 +1085,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         return finished
 
     def _execute_enter_greeting(self, spec) -> None:
-        from .pipelines.request_driven.orchestrator.blocks.guidance.session_bridge import (
+        from .responders.request_driven.orchestrator.blocks.guidance.session_bridge import (
             resolve_enter_greeting_user_text,
         )
         from .session.manage.types import EnterGreetingTurnSpec
@@ -793,24 +1094,34 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         session_id = spec.session_id.strip()
         if not session_id:
             return
+        if not self._has_live_stream_session(session_id):
+            # WS 已断：本次丢弃；前端重连时 routers.speak 会重新 arm_enter_greeting
+            logger.info(
+                "[Speak] enter_greeting skipped: no live stream session_id=%s",
+                session_id,
+            )
+            return
         if self._session_manager.is_pushing(session_id):
+            logger.info(
+                "[Speak] enter_greeting skipped: pushing session_id=%s",
+                session_id,
+            )
             return
         if self._session_manager.user_queue.has_pending(session_id):
-            return
-        self._session_manager.social.arm_enter_greeting(spec)
-        stream = self._outbound_stream.port is not None
-        prelude = spec.angle.strip() or spec.thought.strip()
-        if stream and prelude:
-            self.enqueue_proactive_brew(
+            logger.info(
+                "[Speak] enter_greeting skipped: pending user queue session_id=%s",
                 session_id,
-                prelude,
-                reason="enter_greeting",
-                flush_if_idle=not self._session_manager.queues.is_typing_without_idle(
-                    session_id,
-                ),
             )
-        if stream:
-            self._flush_brew_queue(session_id)
+            return
+        # angle/thought 只进 social guidance，由主回复 LLM 生成可见话头；
+        # 不再 brew 内部决策文案（否则会把「角度」直接当消息推到前端）。
+        self._session_manager.social.arm_enter_greeting(spec)
+        logger.info(
+            "[Speak] enter_greeting fire session_id=%s elapsed=%.1fs",
+            session_id,
+            float(spec.elapsed_sec),
+        )
+        stream = self._outbound_stream.port is not None
         self.run_turn(
             session_id,
             resolve_enter_greeting_user_text(spec),
@@ -820,7 +1131,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         )
 
     def arm_enter_greeting(self, session_id: str) -> None:
-        self._session_manager.social.enter_greeting.arm_session(session_id.strip())
+        sid = session_id.strip()
+        self._session_manager.social.enter_greeting.arm_session(sid)
+        self._schedule_compose_prepare(sid, mode="proactive")
 
     def cancel_enter_greeting(self, session_id: str) -> None:
         self._session_manager.social.enter_greeting.cancel_session(session_id.strip())
@@ -828,7 +1141,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def seed_warm_spread(self, session_id: str, *, lines: list[str], unit_ids: list[str]) -> None:
         if not unit_ids:
             return
-        from .pipelines.request_driven.orchestrator.queue.memory import MemoryBufferItem
+        from .responders.request_driven.orchestrator.queue.memory import MemoryBufferItem
 
         self._orchestrator.compose_queue_hub.set_warm_spread(
             session_id,
@@ -841,12 +1154,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         )
 
     def _execute_silence_break(self, spec: SilenceBreakTurnSpec) -> None:
-        from .pipelines.request_driven.orchestrator.blocks.guidance.session_bridge import (
+        from .responders.request_driven.orchestrator.blocks.guidance.session_bridge import (
             resolve_silence_break_user_text,
         )
 
         session_id = spec.session_id.strip()
         if not session_id:
+            return
+        if not self._has_live_stream_session(session_id):
             return
         if self._session_manager.is_pushing(session_id):
             return
@@ -854,20 +1169,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             return
         if not self._session_manager.has_active_dialogue(session_id):
             return
+        # 与 enter_greeting 一致：angle 仅作 guidance，不 brew 到用户可见通道。
         self._session_manager.social.arm_silence_break(spec)
         stream = self._outbound_stream.port is not None
-        prelude = spec.angle.strip() or spec.thought.strip()
-        if stream and prelude:
-            self.enqueue_proactive_brew(
-                session_id,
-                prelude,
-                reason="silence_break",
-                flush_if_idle=not self._session_manager.queues.is_typing_without_idle(
-                    session_id,
-                ),
-            )
-        if stream:
-            self._flush_brew_queue(session_id)
         self.run_turn(
             session_id,
             resolve_silence_break_user_text(spec),
@@ -875,6 +1179,15 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             mode="inbound",
             record=True,
         )
+
+    def _has_live_stream_session(self, session_id: str) -> bool:
+        port = self._outbound_stream.port
+        if port is None:
+            return False
+        has_connection = getattr(port, "has_connection", None)
+        if has_connection is None:
+            return True
+        return bool(has_connection(session_id))
 
     @property
     def llm_engine(self) -> SpeakLLMEngine:
@@ -902,12 +1215,17 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._schedule_compose_prepare("tao")
 
     def stop(self) -> None:
+        self._session_manager.queues.cancel_all_timers()
+        self._session_manager.social.proactive_window.clear_all()
         self._session_manager.social.silence.stop_worker()
         self._session_manager.social.enter_greeting.stop_worker()
         if self._orchestrator_thread is not None:
             self._orchestrator_thread.stop()
         self._queue_decision_runner.stop()
         self._compose_runner.stop()
+        from infra.threading import get_thread_registry
+
+        get_thread_registry().stop_owner("speak", timeout=5.0)
 
     @property
     def life_outbound(self) -> SpeakLifeOutboundBridge | None:
@@ -999,7 +1317,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         turn_index: int | None = None,
         share_queue_count: int | None = None,
     ) -> dict[str, object] | None:
-        from .pipelines.request_driven.orchestrator.io.inbound.guidance import GuidancePlanRequest
+        from .responders.request_driven.orchestrator.io.inbound.guidance import GuidancePlanRequest
 
         sid = session_id.strip()
         resolved_turn = (
@@ -1053,6 +1371,11 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._orchestrator.clear_persona_compose(session_id)
         self._orchestrator.clear_guidance_control_arc(session_id)
         self._rhythm_store.clear_session(session_id)
+        sid = session_id.strip()
+        self._compose_gateway.manager.reset_session(sid)
+        self._compose_manager_sessions.discard(sid)
+        self._compose_manager_meta.pop(sid, None)
+        self._compose_manager_materials.pop(sid, None)
         if self._presence is not None:
             self._presence.apply_dialogue_session_boundary(session_id)
 
@@ -1091,7 +1414,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
 
     def _on_compose_prepare_request(self, request: ComposePrepareRequest) -> None:
         sid = request.session_id.strip()
-        turn_index = self.session_registry.current_turn_index(sid)
+        current = self.session_registry.current_turn_index(sid)
+        # 新会话 current=0，真正第一轮是 1；预热 0 号位会让进场问候拿到无 frame 的 plan。
+        turn_index = current if current > 0 else 1
         generation = self.session_registry.get(sid).generation
         self._compose_runner.schedule_plan_warm(
             self._orchestrator,
@@ -1197,10 +1522,6 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         flushed: list[str] = []
         if flush_if_idle and not self._session_manager.queues.is_typing_without_idle(sid):
             flushed = self._flush_brew_queue(sid)
-        if self._orchestrator_thread is not None and not flushed:
-            cursor = self._state_store.poll_cursor(sid, "idle")
-            cursor.armed = True
-            cursor.schedule_next()
         return {
             "ok": queued,
             "reason": reason,
@@ -1210,9 +1531,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
 
     def _flush_brew_queue(self, session_id: str) -> list[str]:
         lines = self._session_manager.queues.flush_brew(session_id)
-        if not lines or self._delivery_executor is None:
+        if not lines:
             return lines
-        from .pipelines.request_driven.orchestrator.state.core.delivery import ReplySegment, build_delivery_plan
+        from .responders.request_driven.orchestrator.state.core.delivery import ReplySegment, build_delivery_plan
 
         segments = [
             ReplySegment(text=line[:120], wait_ms=200, wait_reason="proactive_brew")
@@ -1222,13 +1543,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         if not segments:
             return lines
         plan = build_delivery_plan(segments=segments, continuity="finish")
-        self._outbound_stream.begin_session(session_id)
-        self._delivery_executor.execute(
-            plan,
-            session_service=self._session_manager,
-            session_id=session_id,
-            stream_channel=self._outbound_stream,
-        )
+        self._execute_delivery_plan(plan, session_id=session_id)
         return lines
 
     def ingest_deferred_share_for_director(
@@ -1249,10 +1564,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         for line in lines:
             self._session_manager.queues.enqueue_brew(sid, line, reason="deferred_share")
             notes.append(f"brew: {line[:24]}")
-        if self._orchestrator_thread is not None:
-            cursor = self._state_store.poll_cursor(sid, "idle")
-            cursor.armed = True
-            cursor.schedule_next()
+        # 只入酝酿队列，供后续真实回合消费；禁止武装 poll / 直接 flush 占位话题
         return {
             "session_id": sid,
             "lines": lines,
@@ -1317,11 +1629,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         mode: SpeakTurnMode = "inbound",
         turn_index: int | None = None,
     ) -> SpeakPromptBundle:
-        resolved_turn = (
-            turn_index
-            if turn_index is not None
-            else self.session_registry.current_turn_index(session_id)
-        )
+        resolved_turn = turn_index
+        if resolved_turn is None and self._turn_coordinator is not None:
+            kicked = self._turn_coordinator.state(session_id).turn_index
+            if kicked > 0:
+                resolved_turn = kicked
+        if resolved_turn is None:
+            current = self.session_registry.current_turn_index(session_id)
+            resolved_turn = current if current > 0 else 1
         director_plan = None
         ledger = None
         if self._turn_coordinator is not None:
@@ -1344,6 +1659,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 self._memory_compose,
                 user_text=user_text,
                 ledger=ledger,
+                mode=mode,
             )
         pulled, portrait_pulled = self._memory_compose.pull_compose_context(
             session_id,
@@ -1368,16 +1684,23 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 },
             },
         )
-        if director_plan is None:
+        if director_plan is None or director_plan.prepared_frame is None:
             record = self.session_registry.get(session_id)
-            director_plan = self._orchestrator.compose_director.bootstrap_plan(
-                session_id,
-                target_turn_index=resolved_turn,
-                user_text=user_text,
-                generation=record.generation,
-                bundle_meta=self._orchestrator.compose_cache(session_id).meta_snapshot(),
-                mode=mode,
-            )
+            if director_plan is None:
+                director_plan = self._orchestrator.compose_director.bootstrap_plan(
+                    session_id,
+                    target_turn_index=resolved_turn,
+                    user_text=user_text,
+                    generation=record.generation,
+                    bundle_meta=self._orchestrator.compose_cache(session_id).meta_snapshot(),
+                    mode=mode,
+                )
+            else:
+                director_plan = self._orchestrator.compose_director.ensure_prepared_frame(
+                    director_plan,
+                    user_text=user_text,
+                    mode=mode,
+                )
             self._orchestrator.compose_director.save_plan(director_plan)
 
         queued = self._orchestrator.compose_queue_hub.pop_frame(session_id, mode=mode)
@@ -1402,27 +1725,20 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             mode=mode,
         )
         if bundle is None:
-            raise RuntimeError("speak compose requires prepared frame")
-        if bundle is not None:
-            return self._finish_turn_bundle(
-                bundle,
+            director_plan = self._orchestrator.compose_director.ensure_prepared_frame(
+                director_plan,
+                user_text=user_text,
+                mode=mode,
+            )
+            self._orchestrator.compose_director.save_plan(director_plan)
+            bundle = self._bundle_from_director_plan(
+                director_plan,
                 session_id,
                 user_text,
                 mode=mode,
-                turn_index=resolved_turn,
-                similar=pulled,
-                portrait=portrait_pulled,
-                director_plan=director_plan,
             )
-
-        bundle = self._orchestrator.compose(
-            session_id,
-            user_text,
-            mode=mode,
-            reply_style=self._reply_style,
-            generation=self.session_registry.get(session_id).generation,
-        )
-        bundle.meta["compose_source"] = "sync_fallback"
+        if bundle is None:
+            raise RuntimeError("speak compose requires prepared frame")
         return self._finish_turn_bundle(
             bundle,
             session_id,
@@ -1569,9 +1885,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         stream: bool = False,
         mode: SpeakTurnMode = "inbound",
         record: bool = True,
-        pipeline: str | None = None,
+        responder: str | None = None,
     ) -> SpeakTurnResult:
-        selected_pipeline = normalize_speak_pipeline(pipeline)
+        selected_responder = normalize_speak_responder(responder)
         self._drain_async_delivery_queue()
         self._session_manager.open(session_id, trigger="user_message")
         submit = self._session_manager.submit_user_input(
@@ -1580,7 +1896,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             stream=stream,
             mode=mode,
             record=record,
-            pipeline=selected_pipeline,
+            responder=selected_responder,
         )
         if submit.queued:
             return SpeakTurnResult(
@@ -1593,12 +1909,12 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                     "queued": True,
                     "interrupt": submit.interrupt,
                     "session_state": "queued",
-                    "pipeline": selected_pipeline,
+                    "responder": selected_responder,
                 },
             )
 
         upcoming = self.session_registry.current_turn_index(session_id) + 1
-        self._kick_for_upcoming_turn(session_id, user_text, upcoming)
+        self._kick_for_upcoming_turn(session_id, user_text, upcoming, mode=mode)
 
         waited_typing = self._session_manager.queues.is_typing_without_idle(session_id)
         if waited_typing:
@@ -1620,7 +1936,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             mode=mode,
             stream=stream,
             record=record,
-            pipeline=selected_pipeline,
+            responder=selected_responder,
         )
         result = self._process_user_inputs(session_id, initial=initial)
         self._drain_async_delivery_queue()
@@ -1648,7 +1964,368 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         return result
 
     def _run_one_user_turn(self, item: UserInputItem) -> SpeakTurnResult:
-        return self._pipeline_router.run(item)
+        return self._responder_router.run(item)
+
+    def _clear_async_delivery_ready(self, session_id: str) -> None:
+        sid = session_id.strip()
+        if not sid:
+            return
+        with self._async_ready_guard:
+            if not self._async_ready_sessions:
+                return
+            self._async_ready_sessions = deque(
+                item for item in self._async_ready_sessions if item != sid
+            )
+
+    def _generate_request_driven_with_role_sidechain(
+        self,
+        *,
+        session_id: str,
+        bundle: SpeakPromptBundle,
+        user_text: str,
+        notes: list[str],
+        director_plan,
+        turn_index: int,
+    ):
+        from .responders.request_driven.orchestrator.assemble import build_turn_system
+        from .responders.request_driven.orchestrator.compose_manager.projectors.dynamic_layer import (
+            DynamicLayerMaterials,
+        )
+        from .responders.request_driven.prompt import build_role_prompt
+        from .responders.request_driven.delivery_bridge import timeline_to_delivery_plan
+        from .responders.request_driven.interpreter import interpret_role_packet
+
+        sid = session_id.strip()
+        view = self._compose_gateway.manager.context_for_role(
+            sid,
+            user_text=user_text,
+        )
+        materials = self._compose_manager_materials.get(sid)
+        if materials is None:
+            materials = self._compose_gateway.manager.export_dynamic_materials(
+                sid,
+                user_text=user_text,
+                share_texts=self._deferred_share_texts(sid),
+            )
+        if not isinstance(materials, DynamicLayerMaterials):
+            materials = DynamicLayerMaterials(session_id=sid)
+        schedule = self._director_dynamic_schedule(sid)
+        state = self._state_store.session(sid)
+        active_guide = state.active_next_turn_guide or {}
+        behavior_guide = str(active_guide.get("behavior_guide") or "")
+        script_hint = str(active_guide.get("script_hint") or "")
+        # 角色 system：身份+材料，不含 compose [action]/[state] 协议
+        base_system = build_turn_system(bundle, for_character=True)
+        help_observations: tuple[str, ...] = ()
+
+        def _build_prompt(obs: tuple[str, ...] = ()) -> object:
+            return build_role_prompt(
+                view,
+                user_text=user_text,
+                materials=materials,
+                schedule=schedule,
+                behavior_guide=behavior_guide,
+                script_hint=script_hint,
+                help_observations=obs,
+            )
+
+        def _generate_once(obs: tuple[str, ...] = ()) -> tuple[str, object]:
+            role_prompt = _build_prompt(obs)
+            system = base_system
+            if role_prompt.system_extra.strip():
+                system = f"{system}\n\n{role_prompt.system_extra}".strip() if system else role_prompt.system_extra
+            cards: list[tuple[str, str]] = []
+            if role_prompt.layers is not None and role_prompt.layers.dialogue_frame.strip():
+                cards.append(("对话轨迹", role_prompt.layers.dialogue_frame))
+            if self._character_agent is not None:
+                raw_text = self._character_agent.generate(
+                    system=system,
+                    user_text=user_text,
+                    context_cards=cards,
+                    help_observations=obs,
+                )
+            else:
+                raw_text = self._speak_role.generate(role_prompt, base_system=base_system)
+            return raw_text, role_prompt
+
+        raw, _prompt = _generate_once()
+        packet = interpret_role_packet(raw)
+        if packet.help_goals:
+            notes.append(f"character_ask_help:{len(packet.help_goals)}")
+            help_observations = self._character_work.request_helps(
+                session_id=sid,
+                goals=packet.help_goals,
+                user_text=user_text,
+                limit=1,
+            )
+            if help_observations:
+                notes.append("character_help_routed")
+                raw, _prompt = _generate_once(help_observations)
+                packet = interpret_role_packet(raw)
+
+        timeline = packet.timeline
+        paced = timeline_to_delivery_plan(
+            timeline,
+            turn_index=turn_index,
+            plan_id=f"role-{sid}-{turn_index}",
+        )
+        answer_text = timeline.answer_text
+        if paced.is_empty and answer_text.strip():
+            paced = self._pace_delivery_plan_with_speak(director_plan, answer_text)
+        parsed = parse_agent_output(raw)
+        if not parsed.speak.strip() and answer_text.strip():
+            body_actions = tuple(
+                op.body.strip()
+                for op in timeline.ops
+                if op.kind == "body" and op.body.strip()
+            )
+            parsed = SpeakAgentOutput(
+                thought="\n".join(
+                    op.body.strip()
+                    for op in timeline.ops
+                    if op.kind == "think" and op.body.strip()
+                ),
+                speak=answer_text,
+                actions=body_actions,
+                raw=raw,
+            )
+        if timeline.ignored:
+            notes.append(f"role_ignored:{len(timeline.ignored)}")
+        notes.append(f"dynamic_schedule:{schedule.reason}")
+        if schedule.inject_memory:
+            notes.append("dynamic_inject_memory")
+        if schedule.inject_share:
+            notes.append("dynamic_inject_share")
+        if schedule.pass_info:
+            notes.append("dynamic_pass_info")
+        return answer_text, parsed, paced, True, timeline
+
+    def _execute_outbound_request(
+        self,
+        request: OutboundRequest,
+        *,
+        user_text: str = "",
+        check_continue: bool = False,
+    ) -> list[SpeakStreamEvent]:
+        result = execute_outbound(
+            request if not user_text else OutboundRequest(
+                session_id=request.session_id,
+                ops=request.ops,
+                user_text=user_text,
+                meta=dict(request.meta),
+            ),
+            emit_fn=self._stream._emit,
+            session_service=self._session_manager,
+            stream_channel=self._outbound_stream,
+            should_continue_fn=(
+                self._should_continue_delivery if check_continue else None
+            ),
+            on_done=(
+                (lambda sid: self._orchestrator_thread.notify_delivery_done(sid))
+                if self._orchestrator_thread is not None
+                else None
+            ),
+        )
+        return result.events
+
+    def _deliver_role_timeline(
+        self,
+        session_id: str,
+        timeline,
+        *,
+        user_text: str = "",
+    ) -> list[SpeakStreamEvent]:
+        request = timeline_to_outbound_request(
+            timeline,
+            session_id=session_id,
+            user_text=user_text,
+            finish=True,
+        )
+        return self._execute_outbound_request(request, user_text=user_text, check_continue=False)
+
+    def _execute_delivery_plan(
+        self,
+        plan,
+        *,
+        session_id: str,
+        user_text: str = "",
+        include_prefix: list | None = None,
+    ) -> list[SpeakStreamEvent]:
+        request = outbound_from_delivery_plan(
+            plan,
+            session_id=session_id,
+            user_text=user_text,
+            include_prefix=include_prefix,
+        )
+        return self._execute_outbound_request(
+            request,
+            user_text=user_text,
+            check_continue=True,
+        )
+    def _generate_request_driven_reply(
+        self,
+        *,
+        session_id: str,
+        bundle: SpeakPromptBundle,
+        user_text: str,
+        notes: list[str],
+    ) -> tuple[str, SpeakAgentOutput]:
+        from .responders.request_driven.orchestrator.assemble import (
+            build_turn_system,
+            resolve_llm_user_text,
+        )
+
+        partial_output = ""
+        parsed: SpeakAgentOutput | None = None
+        speak_parts: list[str] = []
+        for round_idx in range(8):
+            system = build_turn_system(
+                bundle,
+                round_idx=round_idx,
+                partial_output=partial_output,
+                parsed=parsed,
+            )
+            llm_user = resolve_llm_user_text(bundle, user_text, round_idx=round_idx, parsed=parsed)
+            raw = self._llm.generate(llm_user, system=system).text
+            parsed = parse_agent_output(raw)
+            speak = parsed.speak.strip()
+            if speak:
+                speak_parts.append(speak)
+                partial_output = "\n".join(speak_parts)
+
+            if parsed.session_state == "append":
+                notes.append("session_state:append")
+                continue
+
+            if parsed.session_state == "share":
+                notes.append("session_state:share")
+                handoff = self._request_driven_share_handoff_reply(
+                    session_id=session_id,
+                    llm_user=llm_user,
+                    system=system,
+                )
+                if handoff is not None:
+                    return handoff
+                break
+
+            if parsed.session_state == "recall":
+                notes.append("session_state:recall")
+                handoff = self._request_driven_recall_handoff_reply(
+                    session_id=session_id,
+                    llm_user=llm_user,
+                    system=system,
+                    parsed=parsed,
+                )
+                if handoff is not None:
+                    return handoff
+                break
+
+            break
+
+        if parsed is None:
+            parsed = SpeakAgentOutput()
+        return "\n".join(speak_parts).strip() or parsed.speak.strip(), parsed
+
+    def _request_driven_share_handoff_reply(
+        self,
+        *,
+        session_id: str,
+        llm_user: str,
+        system: str,
+    ) -> tuple[str, SpeakAgentOutput] | None:
+        if self._presence is None:
+            return None
+        shared = self._orchestrator.share.pop_handoff(
+            self._presence,
+            session_id,
+            pop_deferred=self._session_manager.pop_deferred_share_intent,
+        )
+        if not shared.ok:
+            return None
+        full_text = shared.full_text.strip()
+        if not full_text:
+            return None
+        handoff_system = (
+            system
+            + "\n\n[share_handoff]\n"
+            + "你刚才判断需要分享存在感队列中的内容。现在请自然融入以下内容，并只输出一次最终回复。\n"
+            + full_text
+            + "\n[/share_handoff]"
+        )
+        raw = self._llm.generate(llm_user, system=handoff_system).text
+        parsed = parse_agent_output(raw)
+        return parsed.speak.strip(), parsed
+
+    def _request_driven_recall_handoff_reply(
+        self,
+        *,
+        session_id: str,
+        llm_user: str,
+        system: str,
+        parsed: SpeakAgentOutput,
+    ) -> tuple[str, SpeakAgentOutput] | None:
+        handoff = perform_recall_handoff(
+            self._io.inbound.memory,
+            session_id=session_id,
+            query=parsed.recall_query,
+        )
+        if not handoff.ok:
+            return None
+        full_text = handoff.full_text.strip()
+        if not full_text:
+            return None
+        handoff_system = (
+            system
+            + "\n\n[recall_handoff]\n"
+            + "你刚才判断需要调用记忆。现在请基于以下召回内容回答用户，并只输出一次最终回复。\n"
+            + full_text
+            + "\n[/recall_handoff]"
+        )
+        raw = self._llm.generate(llm_user, system=handoff_system).text
+        next_parsed = parse_agent_output(raw)
+        return next_parsed.speak.strip(), next_parsed
+
+    def _pace_delivery_plan_with_speak(self, director_plan, speak_text: str):
+        from .io.outbound.stream import split_sentences
+        from .responders.request_driven.orchestrator.state.core.delivery import (
+            ReplySegment,
+            build_delivery_plan,
+        )
+
+        spoken = speak_text.strip()
+        texts = [piece.strip() for piece in split_sentences(spoken, min_chars=8) if piece.strip()]
+        if not texts and spoken:
+            texts = [spoken]
+        templates = list(director_plan.segments)
+        if not templates:
+            templates = [
+                ReplySegment(
+                    text="",
+                    wait_ms=120,
+                    wait_reason="responder",
+                    continuity="finish",
+                ),
+            ]
+        segments: list[ReplySegment] = []
+        last_index = len(texts) - 1
+        for index, text in enumerate(texts):
+            tmpl = templates[index] if index < len(templates) else templates[-1]
+            continuity = director_plan.continuity if index == last_index else "append"
+            segments.append(
+                ReplySegment(
+                    text=text,
+                    wait_ms=int(tmpl.wait_ms or 0),
+                    wait_reason=str(tmpl.wait_reason or "").strip(),
+                    continuity=continuity,
+                ),
+            )
+        return build_delivery_plan(
+            segments=segments,
+            continuity=director_plan.continuity,
+            sample_narration=director_plan.sample_narration,
+            plan_id=director_plan.plan_id,
+            turn_index=director_plan.turn_index,
+        )
 
     def _run_request_driven_turn(self, item: UserInputItem) -> SpeakTurnResult:
         sid = item.session_id.strip()
@@ -1662,7 +2339,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 self._orchestrator.compose_queue_hub.prepare_interrupt_turn(sid, ctx)
 
         upcoming = self.session_registry.current_turn_index(sid) + 1
-        self._kick_for_upcoming_turn(sid, user_text, upcoming)
+        self._kick_for_upcoming_turn(sid, user_text, upcoming, mode=item.mode)
+        if self._turn_coordinator is not None:
+            self._turn_coordinator.wait_before_compose(
+                sid,
+                mode=item.mode,
+                turn_index=upcoming,
+            )
+        self._refresh_compose_manager_director_meta(sid, user_text)
 
         plan = None
         if self._orchestrator_thread is not None:
@@ -1670,20 +2354,28 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 sid,
                 user_text,
                 turn_index=upcoming,
+                timeout_sec=90.0,
             )
+        self._apply_director_memory_intervention_from_cache(sid)
         state = self._state_store.session(sid)
         if plan is None:
             plan = state.pending_delivery_plan
-        if plan is not None:
-            state.pending_delivery_plan = None
+        if plan is None:
+            plan = state.delivery_plan
+        # Sync request_driven owns delivery; drop async ready so director text
+        # is not pushed ahead of the main-LLM responder.
+        self._clear_async_delivery_ready(sid)
+        state.pending_delivery_plan = None
 
-        bundle = self._compose_bundle(sid, user_text, mode=item.mode)
+        bundle = self._compose_bundle(sid, user_text, mode=item.mode, turn_index=upcoming)
         notes: list[str] = ["request_driven_pipeline"]
         meta: dict[str, object] = {
             "session_state": state.speak_gate,
             "speak_gate": state.speak_gate,
             "request_driven": True,
+            "responder": "main_llm",
             "director_cache": dict(state.director_cache),
+            "director_delivery_plan": plan.snapshot() if plan is not None else None,
             "pending_plan_snapshot": plan.snapshot() if plan is not None else None,
         }
 
@@ -1727,20 +2419,78 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             )
             return result
 
-        self._state_store.set_delivery_plan(sid, plan)
-        events: list[SpeakStreamEvent] = []
-        if item.stream and self._delivery_executor is not None:
-            events = self._delivery_executor.execute(
-                plan,
-                session_service=self._session_manager,
+        director_plan = plan
+        answer_text, parsed, paced, used_role, role_timeline = (
+            self._generate_request_driven_with_role_sidechain(
                 session_id=sid,
+                bundle=bundle,
                 user_text=user_text,
-                stream_channel=self._outbound_stream,
+                notes=notes,
+                director_plan=director_plan,
+                turn_index=upcoming,
             )
-        answer = "\n".join(segment.text for segment in plan.segments if segment.text.strip())
+        )
+        if used_role:
+            meta["responder"] = "speak_role"
+            meta["role_timeline"] = True
+            notes.append("speak_role_timeline")
+        if paced.is_empty:
+            notes.append("empty_main_llm_speak")
+            meta["session_state"] = parsed.session_state
+            meta["director_delivery_plan"] = director_plan.snapshot()
+            meta["delivery_plan"] = paced.snapshot()
+            get_prompt_trace().emit_event(
+                sid,
+                label="request_turn_empty_responder",
+                turn_index=upcoming,
+                payload={
+                    "user_text": user_text,
+                    "speak_gate": state.speak_gate,
+                    "parsed": parsed.to_dict(),
+                    "director_plan": director_plan.snapshot(),
+                    "notes": notes,
+                },
+            )
+            result = SpeakTurnResult(
+                session_id=sid,
+                answer="",
+                bundle=bundle,
+                output=parsed,
+                recorded=False,
+                notes=notes,
+                meta=meta,
+            )
+            get_prompt_trace().emit_turn_finish(
+                sid,
+                turn_index=upcoming,
+                parsed=parsed,
+                answer="",
+                notes=result.notes,
+                cache=self.session_trace_cache(sid, turn_index=upcoming),
+            )
+            return result
+
+        self._state_store.set_delivery_plan(sid, paced)
+        events: list[SpeakStreamEvent] = []
+        if item.stream:
+            if used_role and role_timeline is not None:
+                events = self._deliver_role_timeline(
+                    sid,
+                    role_timeline,
+                    user_text=user_text,
+                )
+            else:
+                events = self._execute_delivery_plan(
+                    paced,
+                    session_id=sid,
+                    user_text=user_text,
+                )
+        answer = "\n".join(segment.text for segment in paced.segments if segment.text.strip())
+        if not answer.strip() and answer_text.strip():
+            answer = answer_text.strip()
         recorded = False
         if item.record and answer.strip():
-            self._session_manager.begin_turn(sid, user_text)
+            self._session_manager.begin_turn(sid)
             self.record_dialogue(sid, user_text, answer)
             recorded = True
             self._on_compose_turn_complete(
@@ -1748,18 +2498,27 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 user_text,
                 answer,
                 upcoming,
-                plan.continuity,
+                parsed.session_state or paced.continuity,
+            )
+            self._session_manager.on_turn_complete(
+                sid,
+                mode=item.mode,
+                session_state=parsed.session_state or paced.continuity,
+                answer=answer,
             )
 
-        if self._orchestrator_thread is not None:
+        if self._orchestrator_thread is not None and not (
+            used_role and role_timeline is not None and item.stream
+        ):
             self._orchestrator_thread.notify_delivery_done(sid)
-
-        meta["delivery_plan"] = plan.snapshot()
-        meta["session_state"] = plan.continuity
+        meta["director_delivery_plan"] = director_plan.snapshot()
+        meta["delivery_plan"] = paced.snapshot()
+        meta["session_state"] = parsed.session_state
         meta["stream_event_count"] = len(events)
         meta["delivered_segment_count"] = len(
-            [segment for segment in plan.segments if segment.text.strip()],
+            [segment for segment in paced.segments if segment.text.strip()],
         )
+        notes.append("main_llm_responder")
         get_prompt_trace().emit_event(
             sid,
             label="request_turn_delivery",
@@ -1769,8 +2528,10 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 "answer": answer,
                 "recorded": recorded,
                 "stream_event_count": len(events),
-                "delivery_plan": plan.snapshot(),
+                "director_delivery_plan": director_plan.snapshot(),
+                "delivery_plan": paced.snapshot(),
                 "speak_gate": state.speak_gate,
+                "session_state": parsed.session_state,
                 "notes": notes,
             },
         )
@@ -1778,6 +2539,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             session_id=sid,
             answer=answer,
             bundle=bundle,
+            output=parsed,
             stream_events=events,
             recorded=recorded,
             notes=notes,
@@ -1786,7 +2548,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         get_prompt_trace().emit_turn_finish(
             sid,
             turn_index=upcoming,
-            parsed=None,
+            parsed=parsed,
             answer=result.answer,
             notes=result.notes,
             cache=self.session_trace_cache(sid, turn_index=upcoming),
@@ -1877,25 +2639,18 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         narration: str = "",
         proactive_intent_id: str = "",
         record: bool = True,
+        open_outbound: bool = True,
     ) -> dict[str, Any]:
         text = message.strip()
         if not text:
-            raise ValueError("speak message 不能为空")
+            raise ValueError("speak message cannot be empty")
         self._session_manager.open(
             session_id,
             trigger="proactive_outbound",
-            proactive_message=text,
+            proactive_message=text if open_outbound else "",
             proactive_intent_id=proactive_intent_id,
         )
-        stream_port = self._outbound_stream.port
         brew_meta: dict[str, object] = {}
-        if stream_port is not None and len(text) <= 120:
-            brew_meta = self.enqueue_proactive_brew(
-                session_id,
-                text,
-                reason="proactive_outbound",
-                flush_if_idle=True,
-            )
         turn = None
         if record:
             chunk = SpeakTurnChunk(

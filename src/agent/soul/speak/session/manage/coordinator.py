@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from ..lifecycle.hold.registry import SpeakSessionRegistry
 from .enter_greeting import EnterGreetingHandler, EnterGreetingManager
 from .initiative import TurnInitiativeManager
+from .proactive_window import ProactiveSessionWindowManager
 from .silence_break import SilenceBreakHandler, SilenceBreakManager
 from .types import EnterGreetingTurnSpec, InitiativeHint, SilenceBreakTurnSpec
 
@@ -15,6 +16,7 @@ class SessionSocialManager:
 
     registry: SpeakSessionRegistry
     initiative: TurnInitiativeManager = field(default_factory=TurnInitiativeManager)
+    proactive_window: ProactiveSessionWindowManager = field(default_factory=ProactiveSessionWindowManager)
     silence: SilenceBreakManager | None = None
     enter_greeting: EnterGreetingManager | None = None
     _dialogue_supplier: Callable[[str], str] | None = None
@@ -24,6 +26,9 @@ class SessionSocialManager:
             self.silence = SilenceBreakManager(registry=self.registry)
         if self.enter_greeting is None:
             self.enter_greeting = EnterGreetingManager(registry=self.registry)
+
+    def set_proactive_timeout_handler(self, handler: Callable[[str], None] | None) -> None:
+        self.proactive_window.set_timeout_handler(handler)
 
     def bind_dialogue_supplier(self, supplier: Callable[[str], str] | None) -> None:
         self._dialogue_supplier = supplier
@@ -54,12 +59,17 @@ class SessionSocialManager:
 
     def clear_session(self, session_id: str) -> None:
         self.initiative.clear_session(session_id)
+        self.proactive_window.clear_session(session_id)
         self.silence.clear_session(session_id)
         self.enter_greeting.clear_session(session_id)
 
     def on_user_message(self, session_id: str) -> None:
+        self.proactive_window.touch_user_message(session_id)
         self.silence.on_user_message(session_id)
         self.enter_greeting.on_user_message(session_id)
+
+    def proactive_decay(self, session_id: str) -> float:
+        return self.proactive_window.decay(session_id)
 
     def evaluate_initiative(
         self,
@@ -69,11 +79,13 @@ class SessionSocialManager:
         user_text: str,
         mode: str = "inbound",
     ) -> InitiativeHint | None:
+        decay = self.proactive_decay(session_id)
         return self.initiative.evaluate(
             session_id,
             turn_index=turn_index,
             user_text=user_text,
             mode=mode,
+            decay=decay if decay > 0 else 1.0,
         )
 
     def on_turn_complete(

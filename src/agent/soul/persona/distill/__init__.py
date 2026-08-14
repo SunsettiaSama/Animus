@@ -1,4 +1,4 @@
-"""Persona 蒸馏子画像：五切片均注入「扮演该角色的 LLM 服务」；Speak 仅用 dialogue。"""
+"""Persona 蒸馏子画像：角色 Speak 用 dialogue；导演 Speak 用 director。"""
 
 from .ensure import DistillEnsureResult, ensure_distill
 from .render import render_dialogue_block, render_dialogue_from_snapshot

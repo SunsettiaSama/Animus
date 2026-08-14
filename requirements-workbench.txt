@@ -1,0 +1,5 @@
+# Optional dependencies for src/test/workbench.
+absl-py
+langdetect
+nltk
+immutabledict

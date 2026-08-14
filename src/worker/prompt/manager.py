@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+from config.agent.prompt_config import PromptConfig
+from worker.context.processor import MemoryResult
+from worker.prompt.block import MemoryBlock, PromptBlock, QuestionBlock, StepsBlock, SuffixBlock, SystemBlock
+from worker.prompt.template import get_template
+
+if TYPE_CHECKING:
+    from worker.context.memory import Step
+
+
+@dataclass
+class StaticPromptParts:
+    """Pre-assembled prompt parts that do not depend on the next user question.
+
+    Built in the background after each turn's commit completes.
+
+    Fields:
+        system: Rendered system string containing the base system prompt,
+            persona blocks, and medium-term distillate.
+        history: Snapshot of the conversation history taken right after the
+            previous turn's ``add_turn()`` call.
+    """
+    system: str
+    history: list[BaseMessage] = field(default_factory=list)
+
+
+class PromptManager:
+    def __init__(
+        self,
+        tool_descriptions: dict[str, str],
+        cfg: PromptConfig | None = None,
+        tool_category_summary: str = "",
+    ) -> None:
+        self._tpl = get_template((cfg or PromptConfig()).lang)
+
+        tool_list = "\n".join(
+            f"- {name}: {desc}" for name, desc in tool_descriptions.items()
+        )
+        if tool_category_summary:
+            tool_list += f"\n\n{tool_category_summary}"
+        self._base_system: str = self._tpl.system.format(tool_list=tool_list)
+        if cfg and cfg.system_note:
+            self._base_system += f"\n\n{cfg.system_note}"
+        # Pre-render the role block once; prepended to every system message.
+        self._role_prefix: str = self._tpl.react_role.render(separator=self._tpl.separator) or ""
+
+        self._template = ChatPromptTemplate.from_messages([
+            ("system", "{system}"),
+            MessagesPlaceholder(variable_name="history"),
+            ("human", "{current_input}"),
+        ])
+
+        self._history: list[BaseMessage] = []
+
+    def build_messages(
+        self,
+        question: str,
+        result: MemoryResult,
+        extra_system_blocks: list[PromptBlock] | None = None,
+    ) -> list[BaseMessage]:
+        tpl = self._tpl
+
+        system_blocks: list[PromptBlock] = [SystemBlock(self._base_system)]
+        if extra_system_blocks:
+            system_blocks.extend(extra_system_blocks)
+        system_blocks += [
+            MemoryBlock(tpl.medium_term.title, tpl.medium_term.desc, tpl.separator, result.medium_term),
+        ]
+        human_blocks: list[PromptBlock] = [
+            QuestionBlock(tpl.question_prefix, question),
+            StepsBlock(tpl.step_format, result.short_term),
+            SuffixBlock(tpl.suffix),
+        ]
+
+        rendered_blocks = [b for block in system_blocks if (b := block.render()) is not None]
+        system = "\n\n".join([self._role_prefix] + rendered_blocks) if self._role_prefix else "\n\n".join(rendered_blocks)
+        human  = "\n".join(b for block in human_blocks if (b := block.render()) is not None)
+
+        return self._template.format_messages(
+            system=system,
+            history=self._history,
+            current_input=human,
+        )
+
+    def build_static(
+        self,
+        extra_system_blocks: list[PromptBlock] | None = None,
+    ) -> StaticPromptParts:
+        """Build the static parts of the next prompt (background pre-assembly).
+
+        Includes base system + persona blocks only.
+        medium_term is injected dynamically per turn in build_messages_from_static().
+        """
+        system_blocks: list[PromptBlock] = [SystemBlock(self._base_system)]
+        if extra_system_blocks:
+            system_blocks.extend(extra_system_blocks)
+        rendered = [b for block in system_blocks if (b := block.render()) is not None]
+        system = "\n\n".join([self._role_prefix] + rendered) if self._role_prefix else "\n\n".join(rendered)
+        return StaticPromptParts(
+            system=system,
+            history=list(self._history),
+        )
+
+    def build_messages_from_static(
+        self,
+        static: StaticPromptParts,
+        question: str,
+        medium_term: str = "",
+        short_term: list[Step] | None = None,
+    ) -> list[BaseMessage]:
+        """Complete prompt assembly using a pre-built :class:`StaticPromptParts`.
+
+        medium_term（近期对话摘要）为唯一动态注入块；
+        长期记忆通过 memory_recall 工具由 Agent 主动触发，不做被动注入。
+        """
+        tpl = self._tpl
+
+        system = static.system
+        rendered = MemoryBlock(tpl.medium_term.title, tpl.medium_term.desc, tpl.separator, medium_term).render()
+        if rendered:
+            system = system + "\n\n" + rendered
+
+        human_blocks: list[PromptBlock] = [
+            QuestionBlock(tpl.question_prefix, question),
+            StepsBlock(tpl.step_format, short_term or []),
+            SuffixBlock(tpl.suffix),
+        ]
+        human = "\n".join(
+            b for block in human_blocks if (b := block.render()) is not None
+        )
+        return self._template.format_messages(
+            system=system,
+            history=static.history,
+            current_input=human,
+        )
+
+    def add_turn(self, question: str, answer: str) -> None:
+        self._history.append(HumanMessage(content=f"{self._tpl.question_prefix} {question}"))
+        self._history.append(AIMessage(content=answer))
+
+    def recent_turns(self, k: int) -> list[tuple[str, str]]:
+        """Return last k (question, answer) pairs from history."""
+        items = self._history[-k * 2:] if k > 0 else []
+        prefix = f"{self._tpl.question_prefix} "
+        pairs = []
+        for i in range(0, len(items) - 1, 2):
+            q = items[i].content
+            if q.startswith(prefix):
+                q = q[len(prefix):]
+            pairs.append((q, items[i + 1].content))
+        return pairs
+
+    def clear_history(self) -> None:
+        self._history.clear()
+
+    @property
+    def turn_count(self) -> int:
+        return len(self._history) // 2

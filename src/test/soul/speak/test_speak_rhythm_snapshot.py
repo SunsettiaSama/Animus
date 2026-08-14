@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from agent.soul.speak.pipelines.rhythm.contracts import RhythmReview, ShareItem
-from agent.soul.speak.pipelines.rhythm.snapshot import build_rhythm_snapshot
-from agent.soul.speak.pipelines.rhythm.state import RhythmSessionState
+from agent.soul.speak.responders.rhythm.contracts import RhythmReview, ShareItem
+from agent.soul.speak.responders.rhythm.snapshot import build_rhythm_snapshot
+from agent.soul.speak.responders.rhythm.state import RhythmSessionState
 
 
 def test_rhythm_snapshot_prompt_contains_core_blocks_without_review_summary_as_plot():

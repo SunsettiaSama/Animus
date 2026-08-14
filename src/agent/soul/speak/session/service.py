@@ -74,6 +74,10 @@ class SpeakSessionService:
             presence=presence,
             on_rotate=self._queues.clear_session,
         )
+        self._social.set_proactive_timeout_handler(self._expire_active_session)
+
+    def _expire_active_session(self, session_id: str) -> None:
+        self._holder.finalize_session_temporal(session_id)
 
     def _wrap_queue_clear(self) -> None:
         original = self._queues.clear_session
@@ -181,6 +185,99 @@ class SpeakSessionService:
     def pop_deferred_share_intent(self, session_id: str):
         return self._queues.pop_deferred_share_intent(session_id)
 
+    def enqueue_memory_result(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        lines: list[str],
+        unit_ids: list[str],
+        source: str,
+        ready: bool = True,
+    ) -> None:
+        from agent.soul.speak.responders.request_driven.orchestrator.queue import MemoryBufferItem
+
+        self._queues.enqueue_memory(
+            session_id,
+            MemoryBufferItem(
+                turn_index=turn_index,
+                lines=tuple(lines),
+                unit_ids=tuple(unit_ids),
+                source=source,
+                ready=ready,
+            ),
+        )
+
+    def set_social_prefetch(
+        self,
+        session_id: str,
+        *,
+        lines: list[str],
+        unit_ids: list[str],
+    ) -> None:
+        from agent.soul.speak.responders.request_driven.orchestrator.queue import MemoryBufferItem
+
+        self._queues.set_social_prefetch(
+            session_id,
+            MemoryBufferItem(
+                turn_index=0,
+                lines=tuple(lines),
+                unit_ids=tuple(unit_ids),
+                source="social_prefetch",
+            ),
+        )
+
+    def pull_memory_for_compose(
+        self,
+        session_id: str,
+        turn_index: int,
+        *,
+        keyword_wait_ms: int = 200,
+        budget: int = 5,
+        merge_ratio: float | None = None,
+        user_text: str = "",
+    ):
+        return self._queues.pull_memory_for_compose(
+            session_id,
+            turn_index,
+            keyword_wait_ms=keyword_wait_ms,
+            budget=budget,
+            merge_ratio=merge_ratio,
+            user_text=user_text,
+        )
+
+    def enqueue_interactor_portrait(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        interactor_id: str,
+        portrait_text: str,
+    ) -> None:
+        from agent.soul.speak.responders.request_driven.orchestrator.queue import PortraitQueueItem
+
+        self._queues.enqueue_portrait(
+            session_id,
+            PortraitQueueItem(
+                turn_index=turn_index,
+                interactor_id=interactor_id,
+                portrait_text=portrait_text,
+            ),
+        )
+
+    def pull_portrait_for_compose(
+        self,
+        session_id: str,
+        turn_index: int,
+        *,
+        wait_ms: int = 0,
+    ):
+        return self._queues.pull_portrait_for_compose(
+            session_id,
+            turn_index,
+            wait_ms=wait_ms,
+        )
+
     def is_pushing(self, session_id: str) -> bool:
         return self._queues.is_pushing(session_id)
 
@@ -192,7 +289,7 @@ class SpeakSessionService:
         stream: bool = False,
         mode: str = "inbound",
         record: bool = True,
-        pipeline: str | None = None,
+        responder: str | None = None,
     ) -> SubmitUserInputResult:
         self._social.on_user_message(session_id)
         return self._queues.submit_user_input(
@@ -201,8 +298,11 @@ class SpeakSessionService:
             stream=stream,
             mode=mode,
             record=record,
-            pipeline=pipeline,
+            responder=responder,
         )
+
+    def proactive_decay(self, session_id: str) -> float:
+        return self._social.proactive_decay(session_id)
 
     def on_turn_complete(
         self,

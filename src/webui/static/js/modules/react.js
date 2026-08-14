@@ -1,12 +1,5 @@
 /**
- * modules/react.js — ReAct agent init, status, memory/persona clear.
- *
- * Issue 5 fix: settings saved mid-session apply to the NEXT turn only.
- *   - history is preserved as-is (server keeps conv_loop / PromptManager intact).
- *   - If user wants the new config to take effect NOW they must click "Reinit".
- *   - init() uses /api/react/reinit which is guarded by is_streaming on server.
- *
- * Notifies main.js via callbacks only — no direct DOM or showToast calls.
+ * modules/react.js — legacy API helpers plus the Soul Speak workstation card.
  */
 
 import { http, PATHS, pollUntilReady } from '../api.js';
@@ -92,23 +85,32 @@ export async function updateWorkstationCard() {
   const bodyEl  = document.getElementById('mc-react-body');
   if (!badgeEl || !bodyEl) return;
 
-  const data = await fetchStatus().catch(() => null);
-  if (!data) {
+  const [readiness, speak] = await Promise.all([
+    http.get(PATHS.soul.readiness).catch(() => null),
+    http.get(PATHS.speak.status).catch(() => null),
+  ]);
+
+  if (!readiness && !speak) {
     badgeEl.textContent = 'error';
     badgeEl.className   = 'mc-badge off';
     bodyEl.innerHTML    = '<span style="color:var(--text3)">Could not load</span>';
     return;
   }
 
-  const ready = data.status === 'ready';
-  badgeEl.textContent = ready ? 'ON' : 'OFF';
-  badgeEl.className   = `mc-badge ${ready ? 'on' : 'off'}`;
+  const soulRunning = Boolean(readiness?.soul_running);
+  const speakReady = Boolean(speak?.ready || readiness?.speak_ready);
+  set('soulReady', soulRunning);
+  set('speakReady', speakReady);
+  badgeEl.textContent = speakReady ? 'READY' : (soulRunning ? 'BOOT' : 'OFF');
+  badgeEl.className   = `mc-badge ${speakReady ? 'on' : (soulRunning ? 'warn' : 'off')}`;
 
   bodyEl.innerHTML = `
-    <div class="mc-row"><span class="mc-key">Status</span>
-      <span class="mc-val">${data.status}</span></div>
-    <div class="mc-row"><span class="mc-key">Profile</span>
-      <span class="mc-val">${data.profile ?? '—'}</span></div>
-    <div class="mc-row"><span class="mc-key">Persona</span>
-      <span class="mc-val">${data.persona ?? '—'}</span></div>`;
+    <div class="mc-row"><span class="mc-key">Soul</span>
+      <span class="mc-val">${readiness?.soul_state ?? speak?.soul_state ?? '—'}</span></div>
+    <div class="mc-row"><span class="mc-key">Speak</span>
+      <span class="mc-val">${speakReady ? 'ready' : (speak?.status ?? 'initializing')}</span></div>
+    <div class="mc-row"><span class="mc-key">Pipeline</span>
+      <span class="mc-val">request_driven</span></div>
+    <div class="mc-row"><span class="mc-key">Dialogue</span>
+      <span class="mc-val">Soul/Speak primary</span></div>`;
 }

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from ..types import SessionEndReason, SessionEndResult, SessionLifecyclePort
 
 
-SPEAK_SESSION_IDLE_SEC = 3600
+SPEAK_SESSION_IDLE_SEC = 600
 
 
 def _utcnow() -> datetime:

@@ -10,6 +10,7 @@ from agent.soul.memory.io.session.channel import SessionMemoryChannel
 from agent.soul.memory.rumination import RuminationService
 
 if TYPE_CHECKING:
+    from agent.soul.memory.io.life.sleep_filter import SleepFilterChannel
     from infra.llm import BaseLLM
 
 
@@ -24,3 +25,4 @@ class LifeIODeps:
     enqueue_write: Callable[[Callable[[], None]], None]
     agent_persona_narrative: Callable[[], str]
     llm: BaseLLM | None = None
+    sleep_filter: SleepFilterChannel | None = None

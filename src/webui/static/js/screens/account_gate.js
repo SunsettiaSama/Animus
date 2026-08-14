@@ -5,10 +5,19 @@
 import * as accounts from '../modules/accounts.js';
 import { bus } from '../eventBus.js';
 
+const DEFAULT_VISITOR_NAME = '荧';
+
 let _bound = false;
 
 function _el(id) {
   return document.getElementById(id);
+}
+
+function _ensureDefaultNameInput() {
+  const input = _el('account-gate-name');
+  if (input && !(input.value || '').trim()) {
+    input.value = DEFAULT_VISITOR_NAME;
+  }
 }
 
 export function showAccountGate() {
@@ -16,6 +25,7 @@ export function showAccountGate() {
   if (overlay) overlay.classList.remove('hidden');
   document.getElementById('s-landing')?.classList.add('hidden');
   document.getElementById('s-workspace')?.classList.add('hidden');
+  _ensureDefaultNameInput();
   void refreshAccountList();
 }
 
@@ -53,14 +63,10 @@ async function onSelectAccount(account) {
 
 async function onCreateAccount() {
   const input = _el('account-gate-name');
-  const name = (input?.value || '').trim();
-  if (!name) {
-    bus.emit('toast', '请输入显示名称');
-    return;
-  }
+  const name = (input?.value || '').trim() || DEFAULT_VISITOR_NAME;
   const account = await accounts.createAccount(name);
   await accounts.selectAccount(account);
-  if (input) input.value = '';
+  if (input) input.value = DEFAULT_VISITOR_NAME;
   hideAccountGate();
   bus.emit('account:selected', account);
 }
@@ -70,9 +76,6 @@ export function bindAccountGate() {
   _bound = true;
   _el('account-gate-create')?.addEventListener('click', () => {
     onCreateAccount().catch(e => bus.emit('toast', e.message));
-  });
-  _el('account-gate-refresh')?.addEventListener('click', () => {
-    refreshAccountList().catch(e => bus.emit('toast', e.message));
   });
 }
 
@@ -85,8 +88,13 @@ export async function ensureAccountReady() {
   if (accounts.hasStoredAccount()) {
     const stored = accounts.getStoredAccount();
     const channelId = accounts.getCurrentInteractorId();
-    await accounts.bindVisitor(stored.account_id, channelId);
-    return true;
+    return accounts.bindVisitor(stored.account_id, channelId)
+      .then(() => true)
+      .catch(() => {
+        accounts.clearStoredAccount();
+        showAccountGate();
+        return false;
+      });
   }
   showAccountGate();
   return false;

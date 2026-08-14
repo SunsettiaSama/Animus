@@ -1,5 +1,6 @@
 from .coordinator import SessionSocialManager
 from .initiative import TurnInitiativeManager
+from .proactive_window import ProactiveSessionWindowManager
 from .silence_break import (
     SilenceBreakManager,
     parse_silence_decision,
@@ -15,6 +16,7 @@ from .types import (
 
 __all__ = [
     "InitiativeHint",
+    "ProactiveSessionWindowManager",
     "SessionSocialManager",
     "SilenceBreakDecision",
     "SilenceBreakManager",

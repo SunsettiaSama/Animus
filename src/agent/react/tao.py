@@ -648,7 +648,7 @@ class TaoLoop:
                 _step_label = f"prev={_prev_action}"
             else:
                 _step_label = "continuation"
-            logger.info("[Step %d] %s → LLM call", i, _step_label)
+            logger.info("[Step %d] %s -> LLM call", i, _step_label)
 
             # ── LLM generation ───────────────────────────────────────────────
             raw_output = ""

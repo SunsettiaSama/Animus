@@ -24,6 +24,16 @@ class LifeMemoryChannel:
         )
 
     def ingest_experience(self, inbound: ExperienceIngestInbound) -> ExperienceIngestAck:
+        sleep_filter = self._deps.sleep_filter
+        if sleep_filter is not None:
+            screened = sleep_filter.screen(inbound)
+            if not screened.allowed:
+                return ExperienceIngestAck(
+                    node_ids=[],
+                    mode=MemoryIngestMode.formal,
+                    route_reason=screened.reason,
+                    network="",
+                )
         return self._ingest_formal(inbound)
 
     def _ingest_formal(self, inbound: ExperienceIngestInbound) -> ExperienceIngestAck:

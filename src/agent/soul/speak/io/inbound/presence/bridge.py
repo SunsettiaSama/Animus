@@ -9,7 +9,6 @@ from agent.soul.presence.state import PresenceEvent
 from agent.soul.presence.state.dynamic.kind import Expectation
 from agent.soul.request import SoulDomain, SoulRequest
 from agent.soul.speak.io.actions import SpeakAction
-from agent.soul.speak.io.outbound.stream.events import SpeakStreamEvent
 
 if TYPE_CHECKING:
     from agent.soul.service import SoulService
@@ -110,6 +109,7 @@ class SpeakPresenceInboundBridge:
             narration=narration,
             proactive_intent_id=proactive_intent_id,
             record=True,
+            open_outbound=inbound.append,
         )
 
         exp = inbound.expectation
@@ -123,7 +123,6 @@ class SpeakPresenceInboundBridge:
         display = inbound.agent_display_name.strip() or self._resolve_agent_display_name()
         banner = f"【{display}发来一条通信】°"
         ui_payload = {
-            "type": "agent_proactive_session",
             "session_id": session_id,
             "channel_id": channel_id,
             "message": text,
@@ -134,7 +133,6 @@ class SpeakPresenceInboundBridge:
             "wait_reply": inbound.wait_reply,
             "source": inbound.source,
         }
-        self._emit_stream_agent_initiated(session_id, ui_payload)
         if self._on_agent_initiated is not None:
             self._on_agent_initiated(ui_payload)
 
@@ -159,25 +157,3 @@ class SpeakPresenceInboundBridge:
                 return name
         name = str(snap.get("name", "")).strip() if isinstance(snap, dict) else ""
         return name or "Agent"
-
-    def _emit_stream_agent_initiated(
-        self,
-        session_id: str,
-        ui_payload: dict[str, Any],
-    ) -> None:
-        port = self._soul.speak_outbound.stream_port
-        if port is None:
-            return
-        port.emit(
-            session_id,
-            SpeakStreamEvent(
-                kind="state",
-                text=ui_payload.get("banner", ""),
-                final=True,
-                meta={
-                    "tag": "agent_initiated",
-                    "agent_initiated": True,
-                    **ui_payload,
-                },
-            ),
-        )

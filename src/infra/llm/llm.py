@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 import threading
 from abc import ABC, abstractmethod
@@ -8,6 +9,8 @@ from typing import Generator
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from config.llm_core.config import LLMConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _msg_role(msg: BaseMessage) -> str:
@@ -25,6 +28,94 @@ def _snapshot(messages: list[BaseMessage], char_limit: int = 500) -> list[dict]:
         {"role": _msg_role(m), "content": str(getattr(m, "content", ""))[:char_limit]}
         for m in messages
     ]
+
+
+def _one_line(text: object, limit: int = 220) -> str:
+    compact = " ".join(str(text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
+
+
+def _messages_summary(messages: list[BaseMessage], limit: int = 320) -> str:
+    parts = [
+        f"{_msg_role(m)}:{_one_line(getattr(m, 'content', ''), 120)}"
+        for m in messages
+    ]
+    return _one_line(" | ".join(parts), limit)
+
+
+def _service_from_module(module: str) -> str:
+    if ".soul.speak." in module:
+        return "speak"
+    if ".soul.heartbeat" in module:
+        return "heartbeat"
+    if ".soul.persona" in module:
+        return "persona"
+    if ".soul.memory" in module:
+        return "memory"
+    if module.startswith("worker."):
+        return "worker"
+    if ".react." in module:
+        return "react"
+    if module.startswith("webui.") or module.startswith("routers."):
+        return "webui"
+    if module.startswith("agent.soul."):
+        return "soul"
+    return "unknown"
+
+
+def _llm_caller() -> tuple[str, str]:
+    import inspect
+
+    frame = inspect.currentframe()
+    frame = frame.f_back if frame is not None else None
+    while frame is not None:
+        module = str(frame.f_globals.get("__name__", ""))
+        if (
+            module
+            and not module.startswith("infra.llm")
+            and module != "agent.soul.speak.llm.engine"
+        ):
+            service = _service_from_module(module)
+            return service, f"{module}.{frame.f_code.co_name}"
+        frame = frame.f_back
+    return "unknown", "unknown"
+
+
+def _log_llm_start(*, service: str, caller: str, model: str, call_type: str, input_summary: str) -> None:
+    logger.info(
+        "[LLM] start service=%s caller=%s type=%s model=%r input=%r",
+        service,
+        caller,
+        call_type,
+        model,
+        input_summary,
+    )
+
+
+def _log_llm_done(
+    *,
+    service: str,
+    caller: str,
+    model: str,
+    call_type: str,
+    output_summary: str,
+    latency_ms: float,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> None:
+    logger.info(
+        "[LLM] done service=%s caller=%s type=%s model=%r latency_ms=%.0f prompt_tokens=%s completion_tokens=%s output=%r",
+        service,
+        caller,
+        call_type,
+        model,
+        latency_ms,
+        prompt_tokens,
+        completion_tokens,
+        output_summary,
+    )
 
 
 def _emit_llm_event(
@@ -153,6 +244,19 @@ class CausalLLM(BaseLLM):
         messages: list[BaseMessage] | None = None,
     ) -> str:
         import torch
+        input_summary = (
+            _messages_summary(messages)
+            if messages is not None
+            else _one_line(prompt_str or "")
+        )
+        service, caller = _llm_caller()
+        _log_llm_start(
+            service=service,
+            caller=caller,
+            model=self._model_name,
+            call_type="generate",
+            input_summary=input_summary,
+        )
         t0 = time.perf_counter()
         inputs = self._tokenizer(text, return_tensors="pt").to(self._model.device)
         prompt_tokens = int(inputs["input_ids"].shape[-1])
@@ -180,6 +284,16 @@ class CausalLLM(BaseLLM):
             ttfb_ms=latency_ms,
             token_source="tokenizer",
             messages_snapshot=snap,
+        )
+        _log_llm_done(
+            service=service,
+            caller=caller,
+            model=self._model_name,
+            call_type="generate",
+            output_summary=_one_line(output),
+            latency_ms=latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
         return output
 
@@ -216,6 +330,14 @@ class CausalLLM(BaseLLM):
         import torch
         from transformers import TextIteratorStreamer
 
+        service, caller = _llm_caller()
+        _log_llm_start(
+            service=service,
+            caller=caller,
+            model=self._model_name,
+            call_type="stream",
+            input_summary=_one_line(" | ".join(f"{m.get('role')}:{m.get('content')}" for m in snap), 320),
+        )
         inputs = self._tokenizer(text, return_tensors="pt").to(self._model.device)
         prompt_tokens = int(inputs["input_ids"].shape[-1])
         streamer = TextIteratorStreamer(
@@ -256,6 +378,16 @@ class CausalLLM(BaseLLM):
             ttfb_ms=ttfb_ms,
             token_source="tokenizer",
             messages_snapshot=snap,
+        )
+        _log_llm_done(
+            service=service,
+            caller=caller,
+            model=self._model_name,
+            call_type="stream",
+            output_summary=_one_line("".join(chunks)),
+            latency_ms=latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
     def _run_stream(self, text: str) -> Generator[str, None, None]:
@@ -307,6 +439,14 @@ class OpenAILLM(BaseLLM):
         return self.generate_messages(self._build_messages(prompt))
 
     def generate_messages(self, messages: list[BaseMessage]) -> str:
+        service, caller = _llm_caller()
+        _log_llm_start(
+            service=service,
+            caller=caller,
+            model=self._model_name,
+            call_type="generate",
+            input_summary=_messages_summary(messages),
+        )
         t0 = time.perf_counter()
         response = self._lc_llm.invoke(messages)
         latency_ms = (time.perf_counter() - t0) * 1000
@@ -343,6 +483,16 @@ class OpenAILLM(BaseLLM):
             token_source=token_source,
             messages_snapshot=_snapshot(messages),
         )
+        _log_llm_done(
+            service=service,
+            caller=caller,
+            model=self._model_name,
+            call_type="generate",
+            output_summary=_one_line(response.content),
+            latency_ms=latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
         return response.content
 
     # ── Streaming ─────────────────────────────────────────────────────────────
@@ -351,6 +501,14 @@ class OpenAILLM(BaseLLM):
         yield from self.stream_generate_messages(self._build_messages(prompt))
 
     def stream_generate_messages(self, messages: list[BaseMessage]) -> Generator[str, None, None]:
+        service, caller = _llm_caller()
+        _log_llm_start(
+            service=service,
+            caller=caller,
+            model=self._model_name,
+            call_type="stream",
+            input_summary=_messages_summary(messages),
+        )
         t0 = time.perf_counter()
         ttfb_ms = 0.0
         first = True
@@ -390,6 +548,16 @@ class OpenAILLM(BaseLLM):
             ttfb_ms=ttfb_ms,
             token_source=token_source,
             messages_snapshot=_snapshot(messages),
+        )
+        _log_llm_done(
+            service=service,
+            caller=caller,
+            model=self._model_name,
+            call_type="stream",
+            output_summary=_one_line("".join(chunks)),
+            latency_ms=latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
 

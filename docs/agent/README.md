@@ -1,161 +1,77 @@
-# subagent / 子 Agent 委派
+# agent 运行时边界
 
-按需将任务委派给子智能体的编排机制，与 **`runtime.scheduler`**（时钟触发任务，`SchedulerEngine`）并列；后者具体的 **`HeartbeatModule` / `TaskRunner`** 实现在 **`agent/soul/heartbeat`**。
+`src/agent/` 承载 Soul/Speak 主对话、legacy ReAct 接口、会话适配和兼容的 Agent Flow 实现。真实任务执行域位于 `src/worker/`，见 [worker/README.md](../worker/README.md)。
 
----
+## 主路径
 
-## 架构定位
-
-```
-主 Agent（TaoLoop）
-  │  推理过程中调用工具
-  ▼
-DelegateTaskSkill          （agent/react/action/skill/delegate_task.py）
-  │  同步阻塞执行
-  ▼
-SubAgentRunner             （agent/runner.py）
-  │  构建独立 TaoLoop，运行完毕后返回 answer
-  ▼
-SubAgentProfile            （agent/profile.py）
-     └─ 约束子 Agent 的工具集、步数上限、系统提示
+```text
+WebUI /ws/speak/run
+  -> SoulService.speak_*
+  -> SpeakService / SpeakPipelineRouter
+  -> request_driven（默认）| rhythm
+  -> Speak LLM + Speak 自己的 Prompt、Memory、Session
 ```
 
-主 Agent 通过 `delegate_task` 工具（Skill）同步委派任务，子 Agent 在同一线程内运行一个独立的 `TaoLoop`，完成后将 `answer` 返回给主 Agent 继续推理。**子 Agent 的 `TaoConfig` 中 `scheduler=None`，禁止递归嵌套。**
+**Soul/Speak 主对话不调用 `TaoLoop`，也不经过 `ConvLoop`。** `SpeakService` 在
+`src/agent/soul/speak/service.py` 中自行组装上下文并调用 `SpeakLLMEngine`。WebUI 在
+`src/webui/routers/speak.py` 先用 `WorkerWorkService` 检测任务意图；普通对话继续走 Speak，
+用户确认的工作才转入 Worker。`legacy_qa` 仍存在于 `SpeakPipelineRouter` 的内部 runner
+表和类型声明中，但 `normalize_speak_pipeline()` 不接受该值，因此不是可公开选择的主路径。
 
----
+## ReAct 的实际入口
 
-## Soul 子系统（索引）
+- CLI：`python src/run.py --mode cli` 直接构建 `agent.react.TaoLoop`，随后调用 `tao.run()`；不使用 `ConvLoop`、`SessionManager` 或 WebSocket approval 回传。
+- legacy WebUI：`POST /api/react/init` 调用 `agent.react.factory.build_conv_loop()`，注册到 `SessionManager`；`/ws/react/run` 与 `/api/react/run` 再提交 `TaoRequest`。该通道已标记 deprecated。
+- Scheduler：`AgentService` 持有 `SchedulerEngine` 和 `agent.soul.heartbeat.task_runner.TaskRunner`。定时任务是时钟触发；Soul 心跳由 `SoulService` 独立驱动，不经 `SchedulerEngine`。
+- SubAgent：`delegate_task` 同步调用 `SubAgentRunner.run_sync()`，创建独立 TaoLoop；`TaoConfig.scheduler=None`，但调用方可显式注入共享 scheduler engine。
+- Flow：TaoLoop 配置 `flow` 后注入 `run_flow`、`flow_status`、`flow_wait`、`flow_skip`。`run_flow` 在后台线程创建事件循环并调用 cluster `FlowOrchestrator.run()`。
 
-持久记忆单元、心跳驱动的重构与归档、生命叙事等位于 `agent/soul/`，与推理环内的 React 记忆并行。详见 [agent/soul/README.md](./soul/README.md)，记忆模块详见 [agent/soul/memory/README.md](./soul/memory/README.md)。
+## `agent/react` 与 `worker/react`
 
----
+- `agent/react`：CLI、legacy WebUI、AgentService/Scheduler 兼容链使用的 ReAct 实现；其状态面向对话历史和 Soul。
+- `worker/react`：确认后的工作、Worker SubAgent、Worker Flow 节点执行使用的实现；额外接入 `AgentStateService`，在 Prompt 中注入 Worker 画像、反思画像、记忆画像和本轮任务图，并在轮后提交反思。
+- 两棵源码目前高度相似，但不是同一运行入口，不应把 `agent/react` 文档当成 Worker 的实际导入路径。
 
-## 目录结构
+## SubAgent profile
 
-```
-src/agent/
-├── profile.py      # SubAgentConfig + SubAgentProfile + 内置 profile 预设
-├── runner.py       # SubAgentRunner.run_sync() — 同步执行子 TaoLoop
-├── soul/           # Soul 子系统（记忆 / 心跳 / 生命 / 人格，见 docs/agent/soul）
-└── react/
-    └── action/
-        └── skill/
-            └── delegate_task.py   # DelegateTaskSkill — 主 Agent 调用的委派工具
-```
+`agent/profile.py` 与 `worker/profile.py` 当前均定义：
 
----
+- `minimal`：`executor` 工具包，10 步。
+- `executor`：`executor` 工具包，15 步。
+- `researcher`：`researcher` 工具包，15 步。
+- `researcher_with_memory`：`researcher` 工具包，追加 `soul_memory_search`、`soul_life_chronicle`，15 步。
+- `analyst`：`analyst` 工具包，12 步。
+- `coder`：`code` 工具包，15 步。
 
-## 核心数据结构
+`SubAgentProfile` 的真实字段是 `max_steps`、`memory`、`tool_package`、`tools`、
+`system_note`。这里存在关键权限差异：
 
-### `SubAgentProfile`（`agent/profile.py`）
+- `worker.runner.SubAgentRunner` 展开 `tool_package` / `tools` 后，将
+  `allowed_actions` 传给 `build_executor()`，限制 ToolManager 初始构建的工具；
+- `agent.runner.SubAgentRunner` 只用解析结果过滤 Prompt 中展示的工具描述，却先通过
+  无参数 `build_executor()` 注册全量 registry，未限制实际 executor。
 
-```python
-@dataclass
-class SubAgentProfile:
-    max_steps: int = 10
-    memory: MemoryConfig = ...        # 子 Agent 记忆配置（默认关闭中期/长期）
-    tools: list[str] | None = None    # None = 继承全工具集；或指定允许的工具名列表
-    system_note: str = ""             # 附加到子 Agent 系统提示的角色描述
-```
+因此 agent profile 的工具包目前只是模型可见性/引导边界，不是强制权限边界；
+worker profile 虽限制初始集合，也不是完整沙箱或最终权限边界：TaoLoop 后续调用
+`register_instance()` 注入 Soul、scratchpad、sandbox、scheduler、通知、SubAgent、Flow
+等实例工具时，`ActionExecutor` 会自动把新工具加入已有 allow-list。`tools=None` 的语义
+不能脱离具体 runner 和后续注入链统一解释。
 
-### `SubAgentConfig`（`agent/profile.py`）
+## 确认边界
 
-```python
-@dataclass
-class SubAgentConfig:
-    llm_cfg_path: str = "config/llm_core/config.yaml"
-    profiles: dict[str, SubAgentProfile] = ...   # 懒加载，默认含内置预设
-    max_concurrent: int = 4
-```
+- 任务级 work confirmation：`WorkerWorkService` 在启动 Worker 之前发出
+  `work_confirmation_required`；同意后才从 `pending_confirmation` 转为
+  `starting/running`，拒绝或超时回落 Speak。
+- 工具级 approval：`RiskGate` 在 TaoLoop 已开始推理后，对单个工具调用发出
+  `ApprovalRequestEvent`。它不是任务接管确认。
+- 当前 `RiskGate` 只在 `agent.react.factory.build_conv_loop()` 与
+  `worker.react.factory.build_conv_loop()` 中构造；直接创建 TaoLoop 的 CLI、
+  `SubAgentRunner`、Scheduler TaskRunner 和 Flow executor 默认没有该门控。
 
-### 启用方式
+## 子文档
 
-在 `TaoConfig` 中设置 `agent` 字段：
-
-```python
-from config.agent.tao_config import TaoConfig
-from agent.profile import SubAgentConfig
-
-cfg = TaoConfig(
-    agent=SubAgentConfig(
-        llm_cfg_path="config/llm_core/config.yaml",
-    )
-)
-```
-
-`TaoLoop` 检测到 `cfg.agent is not None` 时，自动注入 `DelegateTaskSkill`，主 Agent 即可使用 `delegate_task` 工具。
-
----
-
-## 内置 Profile 预设
-
-| profile | tools 限定 | 说明 |
-|---|---|---|
-| `minimal` | 全工具集（None）| 通用，无角色限定 |
-| `executor` | 全工具集（None）| 执行型，直接完成任务，不再委派 |
-| `researcher` | web_search + web_fetch | 信息研究（知识库工具已移除）|
-| `researcher_with_memory` | researcher 工具集 + memory_recall | 研究专家 + 长期记忆支持 |
-| `analyst` | calculator + unit_converter + web_search + get_datetime + word_count | 数据分析与计算推理专家 |
-
-可在 `SubAgentConfig.profiles` 中自定义任意数量的 profile。
-
----
-
-## `DelegateTaskSkill` 工具接口
-
-工具名：`delegate_task`
-
-| 参数 | 类型 | 说明 |
-|---|---|---|
-| `instruction` | str | 交给子 Agent 执行的完整指令（必填）|
-| `profile` | str | 子 Agent 能力配置，默认 `"minimal"` |
-
-执行语义：**同步阻塞**，主 Agent 当前步骤等待子 TaoLoop 运行完毕，返回子 Agent 的 `answer` 字符串。
-
----
-
-## `SubAgentRunner`
-
-```python
-class SubAgentRunner:
-    def run_sync(
-        self,
-        instruction: str,
-        profile: SubAgentProfile,
-        llm_cfg_path: str,
-        event_callback=None,    # 可选，转发子 Agent 事件（ChunkEvent/StepEvent/FinishEvent）
-    ) -> dict:
-        # 返回 {"answer": str, "step_count": int, "steps_log": list[str]}
-```
-
-`SubAgentRunner.run_sync` 构建独立的 `TaoLoop`（`scheduler=None`），运行完毕后返回结果字典。
-
----
-
-## 编排示例
-
-### 顺序委派
-
-```
-主 Agent 步骤 1: delegate_task(
-                  instruction="搜索量子计算领域最新进展，整理成摘要",
-                  profile="researcher"
-                )
-              → 子 Agent 运行完毕，返回研究结果
-主 Agent 步骤 2: 基于结果撰写最终答案
-```
-
-### 配合调度器
-
-`delegate_task` 本身为同步调用。若需要异步或定时执行子任务，请使用 **`SchedulerEngine`**（`scheduler_add` 工具，`TaoConfig.scheduler`）；若需要 DAG 编排，请直接阅读 **`src/agent/flow/`** 源码及下方 **`run_flow` / `flow_*`** 工具说明。
-
----
-
-## 与调度器（`runtime.scheduler`）和 Flow 的区别
-
-| | runtime.scheduler | subagent（delegate_task）| Flow（agent.flow）|
-|---|---|---|---|
-| 触发方式 | 时钟（到达指定时间）| 主 Agent 主动调用工具 | 编排器自动按 DAG 依赖 |
-| 执行方式 | 异步后台线程 | 同步阻塞当前步骤 | 异步 DAG 调度 |
-| 结果消费 | 写入 `results/*.json` | 主 Agent 在当前步骤立即读回 | FlowOrchestrator / 快照与日志汇总 |
-| 适用场景 | 定时报告、周期监控 | 简单任务分解、角色委派 | 复杂多步骤目标、需要 Replanner |
+- [react/README.md](./react/README.md)
+- [session/README.md](./session/README.md)
+- [adapters/README.md](./adapters/README.md)
+- [flow/README.md](./flow/README.md)
+- [worker/README.md](../worker/README.md)

@@ -41,6 +41,7 @@ from .ports import EmbeddingPort, ListEmbeddingAdapter, LLMServicePort
 from .request import SoulDomain, SoulRequest
 from .speak.io import SpeakOutboundRouter
 from .speak.io.handler import SpeakHandler
+from .speak.responders.request_driven.orchestrator.compose_manager import ComposeManagerConfig
 
 if TYPE_CHECKING:
     from infra.db.mysql import MySQLClient
@@ -317,7 +318,7 @@ class SoulService:
         accounts = self._ensure_account_service()
         account = accounts.get(account_id)
         if account is None:
-            raise ValueError(f"?????? account_id={account_id!r}")
+            raise ValueError(f"Unknown account_id {account_id!r}")
         iid = account.interactor_id
         cid = channel_id.strip() or iid
         if self.memory is not None and self.memory.api is not None:
@@ -467,18 +468,18 @@ class SoulService:
         stream: bool = True,
         mode: str = "inbound",
         record: bool = True,
-        pipeline: str | None = None,
+        responder: str | None = None,
     ):
-        """Speak ?????????????? SpeakService.run_turn??L0 ?????????? dispatch????"""
+        """Speak 回合：转发 SpeakService.run_turn（L0 入口，勿直接 dispatch）。"""
         if self._state != "running":
-            raise RuntimeError(f"SoulService ????????state={self._state!r}??")
+            raise RuntimeError(f"SoulService 未运行：state={self._state!r}")
         return self._ensure_speak_service().run_turn(
             session_id,
             user_text,
             stream=stream,
             mode="proactive" if mode == "proactive" else "inbound",
             record=record,
-            pipeline=pipeline,
+            responder=responder,
         )
 
     def speak_submit_user_input(
@@ -489,23 +490,23 @@ class SoulService:
         stream: bool = True,
         mode: str = "inbound",
         record: bool = True,
-        pipeline: str | None = None,
+        responder: str | None = None,
     ) -> dict[str, Any]:
-        """Speak ???????????????????????"""
+        """Speak 用户输入入队。"""
         if self._state != "running":
-            raise RuntimeError(f"SoulService ????????state={self._state!r}??")
+            raise RuntimeError(f"SoulService 未运行：state={self._state!r}")
         submit = self._ensure_speak_service().session_manager.submit_user_input(
             session_id,
             user_text,
             stream=stream,
             mode=mode,
             record=record,
-            pipeline=pipeline,
+            responder=responder,
         )
         return {
             "queued": bool(submit.queued),
             "interrupt": bool(submit.interrupt),
-            "pipeline": pipeline,
+            "responder": responder,
             "notes": list(submit.notes),
         }
 
@@ -513,6 +514,10 @@ class SoulService:
         if self._speak_service is None:
             return False
         return self._speak_service.session_manager.is_pushing(session_id)
+
+    def attach_character_work_port(self, port) -> None:
+        """把角色求助口接到 worker 轻量执行（严格分流，不写进角色提示词）。"""
+        self._ensure_speak_service().attach_character_work_port(port)
 
     def speak_on_typing_pulse(
         self,
@@ -532,6 +537,10 @@ class SoulService:
     def speak_set_delivery_mode(self, mode: str) -> None:
         if self._speak_service is not None:
             self._speak_service.set_delivery_mode(mode)
+
+    def flush_speak_async_delivery(self, session_id: str) -> None:
+        if self._speak_service is not None:
+            self._speak_service.flush_async_delivery(session_id)
 
     def speak_director_snapshot(self, session_id: str) -> dict[str, object]:
         if self._state != "running":
@@ -846,6 +855,12 @@ class SoulService:
         if self._speak_service is not None:
             self._speak_service.cancel_enter_greeting(session_id)
 
+    def _on_memory_infra_ready(self) -> None:
+        """embedding 后台预热完成后的回调；stop 之后不再预热 spread。"""
+        if self._state == "stopped":
+            return
+        self._prime_warm_spread()
+
     def _prime_warm_spread(self) -> None:
         from agent.soul.memory.domain import ActivationCue
 
@@ -865,8 +880,7 @@ class SoulService:
             raise RuntimeError("SoulService ?? stop?????????????? start")
 
         self._ensure_memory_handler()
-        self.memory.api.init_infra()
-        self._prime_warm_spread()
+        self.memory.api.init_infra(on_ready=self._on_memory_infra_ready)
         self._ensure_life_handler()
         self._ensure_persona_handler()
         self._ensure_story_service()
@@ -882,7 +896,7 @@ class SoulService:
         hb.start_evolution_worker()
         self._start_core_heartbeat()
         self._state = "running"
-        logger.info("[SoulService] started ?? life_dir=%s", self._life_dir)
+        logger.info("[SoulService] started - life_dir=%s", self._life_dir)
 
     def stop(self) -> None:
         if self._state == "idle":
@@ -1025,7 +1039,9 @@ class SoulService:
         tid = new_heartbeat_tick_id()
         presence_snap = self.presence.snapshot("tao")
         persona_snap = self.persona.service.snapshot()
-        from agent.soul.speak.pipelines.request_driven.orchestrator.persona import collect_persona_layer
+        from agent.soul.speak.responders.request_driven.orchestrator.blocks.persona import (
+            collect_persona_layer,
+        )
 
         injected = collect_persona_layer(persona_snap=persona_snap)
         persona_profile = injected.dialogue.strip()
@@ -1506,6 +1522,17 @@ class SoulService:
                 keyword_wait_ms=self._memory_cfg.speak_compose_keyword_wait_ms,
                 memory_budget=self._memory_cfg.speak_compose_memory_budget,
                 portrait_wait_ms=self._memory_cfg.speak_compose_memory_wait_ms,
+                compose_manager_enabled=bool(
+                    getattr(self._cfg, "speak_compose_manager_enabled", True)
+                ),
+                compose_manager_config=ComposeManagerConfig(
+                    enabled=bool(
+                        getattr(self._cfg, "speak_compose_manager_enabled", True)
+                    ),
+                    director_memory_intervene_max=int(
+                        getattr(self._cfg, "speak_director_memory_intervene_max", 1)
+                    ),
+                ),
             )
             from agent.soul.memory.io.session import CompressionBlockInbound, DialogueCompressionBlock
 
@@ -1693,6 +1720,27 @@ class SoulService:
             self._speak_service.attach_memory_keyword_query(_keyword_query_for_speak)
             self._speak_service.attach_memory_pull_similar(_pull_similar_for_speak)
 
+            def _compose_memory_search_for_speak(
+                session_id: str,
+                query_text: str,
+                limit: int,
+                hint: str,
+            ):
+                from agent.soul.speak.responders.request_driven.orchestrator.compose_manager.ports.adapters import (
+                    units_from_search_hits,
+                )
+
+                _ = session_id
+                cap = max(1, int(limit))
+                q = query_text.strip()
+                if hint == "random" or not q:
+                    hits = self.memory.api.search("recent", limit=cap)
+                else:
+                    hits = self.memory.api.search("hybrid", query=q, top_k=cap)
+                return units_from_search_hits(hits, limit=cap)
+
+            self._speak_service.attach_compose_memory_search(_compose_memory_search_for_speak)
+
             def _portrait_query_for_speak(request: InteractorPortraitRequest) -> None:
                 self.memory.api.session_io.submit_dialogue_turn(
                     DialogueTurnInbound(
@@ -1714,7 +1762,7 @@ class SoulService:
                     self.memory.api.bind_session_channel(sid, iid)
                 portrait_text = result.portrait_text.strip()
                 if not portrait_text and result.interactor_id.strip():
-                    from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.memory import (
+                    from agent.soul.speak.responders.request_driven.orchestrator.guidance.memory import (
                         render_interactor_portrait_for_prompt,
                     )
 
@@ -1876,13 +1924,11 @@ class SoulService:
         return ids
 
     def _find_active_speak_session_id(self, session_id: str) -> str | None:
+        """只认 Speak 当前仍活跃的对话；历史 Life 记账不算活跃会话。"""
         self._ensure_speak_service()
         speak = self._speak_service
         for sid in self._candidate_speak_session_ids(session_id):
             if speak.session_manager.has_active_dialogue(sid):
-                return sid
-            dlg = self.dialogue_experience.state(sid)
-            if dlg is not None and dlg.session.turns:
                 return sid
         return None
 
@@ -1944,11 +1990,26 @@ class SoulService:
             "director": director_notes,
         }
 
+    def _request_has_share_content(self, request: SpeakRequest) -> bool:
+        package = request.package
+        if package is not None and package.entries:
+            return True
+        sid = request.session_id.strip() or "tao"
+        return self.presence.share_queue_size(sid) > 0
+
     def _handle_presence_speak_trigger(
         self,
         session_id: str,
         request: SpeakRequest,
     ) -> dict[str, Any]:
+        if not self._request_has_share_content(request):
+            return {
+                "ok": False,
+                "session_id": session_id.strip() or request.session_id,
+                "reason": "share queue empty",
+                "skipped_proactive": True,
+                "source": request.source,
+            }
         if self._speak_has_active_dialogue(session_id):
             intents = self._intents_from_speak_request(request, limit=2)
             defer = self._defer_share_to_active_session(

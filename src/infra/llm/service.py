@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from infra.base_service import BaseServiceManager
@@ -12,6 +14,26 @@ from infra.llm.handle import LLMHandle
 if TYPE_CHECKING:
     from config.llm_core.config import LLMConfig
     from config.llm_core.vllm_config import VLLMConfig
+
+
+def _resolve_local_model(model: str) -> str:
+    """Resolve repo-relative local model dirs to an absolute path.
+
+    HuggingFace repo ids (``org/name``) are left unchanged.  Relative
+    filesystem paths are anchored at the repository root so vLLM / WSL
+    and transformers backends see a concrete directory.
+    """
+    text = (model or "").strip()
+    if not text or os.path.isabs(text):
+        return text
+    # HF hub ids look like "org/name" and are not local paths.
+    candidate = Path(text)
+    if not candidate.exists():
+        from config import paths
+        candidate = paths.root / text
+    if candidate.exists():
+        return str(candidate.resolve())
+    return text
 
 
 class LLMService(BaseServiceManager):
@@ -64,6 +86,7 @@ class LLMService(BaseServiceManager):
 
     def start(self, cfg: LLMConfig, vllm_cfg: VLLMConfig | None = None, **kwargs) -> None:
         self._degraded_reason = None
+        cfg = dataclasses.replace(cfg, model=_resolve_local_model(cfg.model))
 
         if cfg.backend in ("vllm", "vllm-clone") and sys.platform == "win32":
             if _wsl2_available():

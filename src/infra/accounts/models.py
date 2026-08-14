@@ -5,6 +5,24 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 
+def _parse_dt(value: object) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace(" ", "T"))
+    raise TypeError(f"unsupported datetime value: {type(value)!r}")
+
+
+def _fmt_dt(value: datetime | str | None) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        return value
+    return value.isoformat()
+
+
 @dataclass
 class ExternalAccount:
     account_id: str
@@ -20,8 +38,8 @@ class ExternalAccount:
             "interactor_id": self.interactor_id,
             "display_name": self.display_name,
             "meta": dict(self.meta),
-            "created_at": self.created_at.isoformat() if self.created_at else "",
-            "updated_at": self.updated_at.isoformat() if self.updated_at else "",
+            "created_at": _fmt_dt(self.created_at),
+            "updated_at": _fmt_dt(self.updated_at),
         }
 
     @classmethod
@@ -38,6 +56,6 @@ class ExternalAccount:
             interactor_id=str(row["interactor_id"]),
             display_name=str(row.get("display_name") or ""),
             meta=meta,
-            created_at=row.get("created_at"),
-            updated_at=row.get("updated_at"),
+            created_at=_parse_dt(row.get("created_at")),
+            updated_at=_parse_dt(row.get("updated_at")),
         )

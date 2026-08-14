@@ -47,14 +47,64 @@ def normalize_session_state_text(value: str) -> str:
     return "finish"
 
 
+from agent.soul.speak.io.outbound.render_protocol import (
+    META_FIELD,
+    META_SESSION_STATE,
+    SpeakRenderField,
+    field_for_stream_kind,
+    render_meta,
+)
+
+
+def _as_render_field(value: str) -> SpeakRenderField:
+    table: dict[str, SpeakRenderField] = {
+        "thought": "thought",
+        "speak": "speak",
+        "body": "body",
+        "wait": "wait",
+        "silence": "silence",
+        "typing": "typing",
+        "finish": "finish",
+    }
+    if value not in table:
+        raise ValueError(f"invalid speak render field: {value!r}")
+    return table[value]
+
+
 def sanitize_stream_event(event: SpeakStreamEvent) -> SpeakStreamEvent:
+    meta_in = dict(event.meta or {})
+    field = field_for_stream_kind(event.kind, meta_in)
+
     if event.kind == "state":
-        raw = event.text or str((event.meta or {}).get("session_state") or "")
-        state = normalize_session_state_text(raw)
-        if state == event.text and (event.meta or {}).get("session_state") == state:
+        # wait/silence 是渲染字段，不是 session_state
+        if field in {"wait", "silence"} or str(meta_in.get("role_op") or "") in {
+            "wait",
+            "silence",
+        }:
+            resolved = _as_render_field(
+                "silence"
+                if field == "silence" or str(meta_in.get("role_op") or "") == "silence"
+                else "wait"
+            )
+            if meta_in.get(META_FIELD) != resolved:
+                return SpeakStreamEvent(
+                    kind="state",
+                    text=event.text or resolved,
+                    final=event.final,
+                    meta=render_meta(
+                        resolved,
+                        wait_ms=_as_optional_int(meta_in.get("wait_ms")),
+                        seconds=_as_optional_float(meta_in.get("seconds")),
+                        extra=meta_in,
+                    ),
+                )
             return event
-        meta = dict(event.meta or {})
-        meta["session_state"] = state
+        raw = event.text or str(meta_in.get(META_SESSION_STATE) or "")
+        state = normalize_session_state_text(raw)
+        if state == event.text and meta_in.get(META_SESSION_STATE) == state:
+            return event
+        meta = dict(meta_in)
+        meta[META_SESSION_STATE] = state
         meta.setdefault("tag", "state")
         return SpeakStreamEvent(
             kind="state",
@@ -62,17 +112,47 @@ def sanitize_stream_event(event: SpeakStreamEvent) -> SpeakStreamEvent:
             final=event.final,
             meta=meta,
         )
+
+    ensured_meta = meta_in
+    if field is not None and meta_in.get(META_FIELD) != field:
+        ensured_meta = render_meta(
+            _as_render_field(field),
+            phase=str(meta_in.get("phase") or ""),
+            wait_ms=_as_optional_int(meta_in.get("wait_ms")),
+            seconds=_as_optional_float(meta_in.get("seconds")),
+            extra=meta_in,
+        )
+
     if event.kind not in _TEXT_KINDS or not event.text:
-        return event
+        if ensured_meta is meta_in:
+            return event
+        return SpeakStreamEvent(
+            kind=event.kind,
+            text=event.text,
+            final=event.final,
+            meta=ensured_meta,
+        )
     cleaned = sanitize_push_text(event.text)
-    if cleaned == event.text:
+    if cleaned == event.text and ensured_meta is meta_in:
         return event
     return SpeakStreamEvent(
         kind=event.kind,
         text=cleaned,
         final=event.final,
-        meta=dict(event.meta),
+        meta=ensured_meta,
     )
+
+
+def _as_optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _as_optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def split_hold_tag_suffix(text: str) -> tuple[str, str]:

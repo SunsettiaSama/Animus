@@ -5,7 +5,7 @@ import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from agent.soul.speak.pipelines.request_driven.orchestrator.blocks.guidance.session_bridge import (
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.session_bridge import (
     INITIATIVE_PROMPT as _INITIATIVE_PROMPT,
 )
 
@@ -64,6 +64,7 @@ class TurnInitiativeManager:
         turn_index: int,
         user_text: str,
         mode: str = "inbound",
+        decay: float = 1.0,
     ) -> InitiativeHint | None:
         if mode != "inbound":
             return None
@@ -76,7 +77,8 @@ class TurnInitiativeManager:
         state = self._state(session_id)
         if turn_index - state.last_hint_turn < self.cooldown_turns:
             return None
-        if self._rng() > self.hint_probability:
+        probability = self.hint_probability * max(0.0, min(1.0, decay))
+        if self._rng() > probability:
             return None
 
         state.last_hint_turn = turn_index

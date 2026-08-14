@@ -4,7 +4,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from agent.soul.speak.pipelines.types import DEFAULT_SPEAK_PIPELINE, SpeakPipelineName
+from agent.soul.speak.responders.types import DEFAULT_SPEAK_RESPONDER, SpeakResponderName
 
 from ..pacing import SessionUtterancePacing
 
@@ -57,7 +57,7 @@ class SessionRuntime:
     pending_stream: bool = False
     pending_record: bool = True
     pending_mode: SpeakTurnMode = "inbound"
-    pending_pipeline: SpeakPipelineName = DEFAULT_SPEAK_PIPELINE
+    pending_responder: SpeakResponderName = DEFAULT_SPEAK_RESPONDER
     brew_queue: list[BrewLine] = field(default_factory=list)
     director_generation: int = 0
     typing_idle_ms: int = 3000

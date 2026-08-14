@@ -15,8 +15,9 @@ router = APIRouter()
 class SaveConvRequest(BaseModel):
     id: str
     title: str
-    mode: str = "react"
+    mode: str = "conversation"
     messages: list = []
+    work_items: list = []
     session_id: str = ""
     channel_id: str = ""
     agent_initiated: bool = False
@@ -44,6 +45,7 @@ def list_history():
             "channel_id": c.get("channel_id", ""),
             "agent_initiated": bool(c.get("agent_initiated", False)),
             "proactive_unread": bool(c.get("proactive_unread", c.get("agent_initiated", False))),
+            "created_at": c.get("created_at", ""),
             "updated_at": c.get("updated_at", ""),
         })
     return {"conversations": convs}

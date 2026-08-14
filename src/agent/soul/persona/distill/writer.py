@@ -91,6 +91,21 @@ _SLICE_TASKS: tuple[tuple[str, str, int], ...] = (
 只输出正文。"""),
         260,
     ),
+    (
+        "director",
+        _slice_system("""\
+你是人格蒸馏系统。本次请求只服务下游「对话导演」模块（导演不说话，只指引角色行为）。
+
+""" + PERSONA_DIRECTOR_RULES + """
+
+职责边界：写精简行为画像——稳定身份感、与人相处姿态、压力下的反应倾向、明确边界；\
+用于导演查设定并预测下一轮角色行为。不要写对话口吻示范、不要台词草稿、不要记忆关键词清单。
+
+输出要求：
+- 自然中文，100–160 字，一段话
+- 不得与源画像矛盾。只输出正文。"""),
+        160,
+    ),
 )
 
 
@@ -146,7 +161,7 @@ class PersonaDistillWriter:
     ) -> str:
         human = (
             f"{source_block}\n"
-            f"【本次任务】仅蒸馏「{slice_id}」切片；其它四切片由别的请求负责，请勿涉及。\n"
+            f"【本次任务】仅蒸馏「{slice_id}」切片；其它切片由别的请求负责，请勿涉及。\n"
             "请根据上方完整上下文输出本切片正文。"
         )
         raw = self._llm.generate_messages(
@@ -182,5 +197,6 @@ class PersonaDistillWriter:
             schema_version=PERSONA_DISTILL_SCHEMA_VERSION,
             source_revision=source_revision,
             distilled_at=datetime.now(timezone.utc).isoformat(),
+            source_snapshot=source_block,
             slices=slices,
         )

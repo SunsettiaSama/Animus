@@ -43,7 +43,7 @@ def test_session_registry_rotates_after_idle_timeout():
     assert rotated_first is False
     assert rotated_second is True
     lifecycle.close_dialogue_interaction.assert_called_once_with("tao")
-    lifecycle.start_dialogue_session.assert_called_once()
+    lifecycle.start_dialogue_session.assert_not_called()
 
 
 def test_cosine_distance_identical_vectors():

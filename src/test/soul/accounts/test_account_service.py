@@ -45,6 +45,15 @@ def test_create_account_invokes_visitor_hook():
     assert registered[0][2]["aliases"] == ["Ying"]
 
 
+def test_create_account_defaults_to_ying():
+    store = _FakeStore()
+    svc = AccountService(store)
+    acc = svc.create("")
+    assert acc.display_name == "荧"
+    blank = svc.create("   ")
+    assert blank.display_name == "荧"
+
+
 def test_interactor_ids_are_unique_per_account():
     store = _FakeStore()
     svc = AccountService(store)

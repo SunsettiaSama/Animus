@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.soul.speak.pipelines.request_driven.orchestrator.persona.memory.portrait import (
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.runtime.memory.portrait import (
     render_interactor_portrait_for_prompt,
 )
 

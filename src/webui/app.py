@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import uuid
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # src/webui/ — for routers, state, schemas
@@ -75,9 +76,30 @@ def _startup():
     state.channel_router = channel_router
 
     def _webui_deliver(target: ReplyTarget, title: str, message: str) -> None:
-        if state.notify_queue is not None and state.main_event_loop is not None:
-            item = {"type": "scheduled_reply", "task_name": title, "answer": message}
-            state.main_event_loop.call_soon_threadsafe(state.notify_queue.put_nowait, item)
+        from agent.adapters.react_bridge import queue_agent_proactive_session
+
+        channel_id = (
+            str(target.params.get("channel_id", "")).strip()
+            or state.default_notify_channel()
+        )
+        if not channel_id:
+            raise RuntimeError("WebUI scheduled delivery requires channel_id")
+        session_id = str(target.params.get("session_id", "")).strip()
+        if not session_id:
+            session_id = f"scheduled-{uuid.uuid4()}"
+        queue_agent_proactive_session(
+            state,
+            {
+                "session_id": session_id,
+                "channel_id": channel_id,
+                "message": message,
+                "source": "scheduler",
+                "proactive_intent_id": str(uuid.uuid4()),
+                "agent_initiated": True,
+                "wait_reply": False,
+                "task_name": title,
+            },
+        )
 
     def _bot_deliver(target: ReplyTarget, title: str, message: str) -> None:
         if state.bot_service is not None:
@@ -134,7 +156,56 @@ def _startup():
         state.llm_service.start(cfg)
         print(f"[webui] LLM auto-loaded  model={cfg.model!r}")
 
-        # Create and start the global scheduler engine via AgentService.
+        from agent.adapters.soul_bootstrap import do_soul_init
+
+        state.react_init_event.clear()
+        state.react_init_error = ""
+        state.soul_init_error = ""
+        state.conv_loop = None
+        do_soul_init(state)
+
+        from worker.state import build_agent_state_service
+
+        state.worker_state_service = build_agent_state_service(
+            state_dir=state.worker_state_dir,
+            llm=state.llm,
+            soul=state.soul_service,
+            medium_dir=state.cache.memory_dir,
+            task_runner=state.task_runner,
+        )
+        # Portraits are readable immediately; reflection evolves after Worker turns.
+        _ = state.worker_state_service.snapshot()
+        if state.work_service is not None:
+            state.work_service.bind_agent_state_service(state.worker_state_service)
+            from config.agent.risk_config import RiskConfig
+            from worker.tools.risk.gate import RiskGate
+
+            state.work_service.bind_runtime(
+                sandbox=state.sandbox_manager,
+                risk_gate=RiskGate.from_config(RiskConfig()),
+            )
+            if state.soul_service is not None:
+                from agent.soul.speak.io.outbound.character import CallableCharacterWorkPort
+
+                work_svc = state.work_service
+                soul = state.soul_service
+
+                def _character_work_runner(goal, *, session_id="", user_text=""):
+                    return work_svc.run_lightweight_goal(
+                        goal,
+                        session_id=session_id,
+                        user_text=user_text,
+                        soul=soul,
+                    )
+
+                soul.attach_character_work_port(
+                    CallableCharacterWorkPort(_character_work_runner)
+                )
+        state.worker_state_service.submit_refresh_fallback(force=False)
+        print("[webui] Worker AgentStateService loaded")
+
+        # Scheduler is a host service around the already-running Soul/Speak,
+        # not the primary WebUI dialogue runtime.
         from agent.service import AgentService
         from runtime.scheduler import SchedulerConfig, TimelineService, WorkJournal
         from config import paths as _paths
@@ -168,19 +239,12 @@ def _startup():
             timeline=TimelineService(state.cache.timeline_dir),
             journal=_journal,
             channel_router=state.channel_router,
+            soul_service=state.soul_service,
         )
         _agent_service.start()
         state.scheduler_engine = _agent_service.engine
         state.agent_service = _agent_service
-        print("[webui] Global scheduler engine started via AgentService (TemporalClock thread)")
-
-        from agent.adapters.react_bridge import do_react_init
-        from agent.adapters.react_schemas import ReactInitRequest
-
-        state.react_init_event.clear()
-        state.react_init_error = ""
-        state.conv_loop = None
-        do_react_init(ReactInitRequest(), state)
+        print("[webui] Scheduler host started after Soul/Speak bootstrap")
 
         # Start bot service only when explicitly enabled by the user.
         # Runs independently of the browser — closing the WebUI frontend
@@ -195,6 +259,7 @@ def _startup():
                 print(f"[webui] BotService started  transport={bot_cfg.transport!r}")
 
     def _on_error(exc: BaseException) -> None:
+        state.soul_init_error = str(exc)
         state.react_init_error = str(exc)
         state.react_init_event.set()
         print(f"[webui] Startup init error: {exc}")
@@ -208,7 +273,12 @@ def _startup():
 def _shutdown():
     state = get_state()
     state.prepare_graceful_shutdown()
-    if state.scheduler_engine is not None:
+    if state.agent_service is not None and state.agent_service.is_running:
+        state.agent_service.stop()
+    elif state.soul_service is not None and getattr(state.soul_service, "is_running", False):
+        state.soul_service.stop()
+    state.soul_service = None
+    if state.scheduler_engine is not None and getattr(state.scheduler_engine, "is_clock_running", False):
         state.scheduler_engine.stop()
     if state.session_manager is not None:
         state.session_manager.stop_all()
@@ -218,6 +288,9 @@ def _shutdown():
     if state.active_tao is not None:
         state.active_tao.close()
         state.active_tao = None
+    from infra.threading import get_thread_registry
+
+    get_thread_registry().stop_all(timeout=5.0)
 
 
 @app.get("/", response_class=HTMLResponse)

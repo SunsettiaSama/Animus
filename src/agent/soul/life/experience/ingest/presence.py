@@ -21,7 +21,6 @@ def hot_units_for_session(
     matched = [
         u for u in recent
         if (u.situation.session_id or "tao") == session_id
-        and u.source != "collision"
     ]
     if not matched:
         return []

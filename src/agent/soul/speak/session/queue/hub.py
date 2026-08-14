@@ -5,10 +5,10 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from agent.soul.speak.pipelines.types import (
-    DEFAULT_SPEAK_PIPELINE,
-    SpeakPipelineName,
-    normalize_speak_pipeline,
+from agent.soul.speak.responders.types import (
+    DEFAULT_SPEAK_RESPONDER,
+    SpeakResponderName,
+    normalize_speak_responder,
 )
 
 from .share import SessionShareQueue
@@ -17,7 +17,7 @@ from .types import BrewLine, InterruptContext, SessionRuntime, SubmitUserInputRe
 from .user import SessionUserQueue, UserInputItem
 
 if TYPE_CHECKING:
-    from agent.soul.speak.pipelines.request_driven.orchestrator.queue.hub import ComposeQueueHub
+    from agent.soul.speak.responders.request_driven.orchestrator.queue.hub import ComposeQueueHub
 
 
 class SessionQueueHub:
@@ -40,6 +40,52 @@ class SessionQueueHub:
 
     def bind_compose_hub(self, compose_hub: ComposeQueueHub) -> None:
         self._compose_hub = compose_hub
+
+    def _require_compose_hub(self) -> ComposeQueueHub:
+        if self._compose_hub is None:
+            raise RuntimeError("session queue compose hub is not bound")
+        return self._compose_hub
+
+    def enqueue_portrait(self, session_id: str, item) -> None:
+        self._require_compose_hub().enqueue_portrait(session_id, item)
+
+    def enqueue_memory(self, session_id: str, item) -> None:
+        self._require_compose_hub().enqueue_memory(session_id, item)
+
+    def set_social_prefetch(self, session_id: str, item) -> None:
+        self._require_compose_hub().set_social_prefetch(session_id, item)
+
+    def pull_memory_for_compose(
+        self,
+        session_id: str,
+        current_turn_index: int,
+        *,
+        keyword_wait_ms: int = 200,
+        budget: int = 5,
+        merge_ratio: float | None = None,
+        user_text: str = "",
+    ):
+        return self._require_compose_hub().pull_memory_for_compose(
+            session_id,
+            current_turn_index,
+            keyword_wait_ms=keyword_wait_ms,
+            budget=budget,
+            merge_ratio=merge_ratio,
+            user_text=user_text,
+        )
+
+    def pull_portrait_for_compose(
+        self,
+        session_id: str,
+        current_turn_index: int,
+        *,
+        wait_ms: int = 0,
+    ):
+        return self._require_compose_hub().pull_portrait_for_compose(
+            session_id,
+            current_turn_index,
+            wait_ms=wait_ms,
+        )
 
     def _runtime(self, session_id: str) -> SessionRuntime:
         if session_id not in self._runtimes:
@@ -105,19 +151,19 @@ class SessionQueueHub:
         stream: bool,
         record: bool,
         mode: SpeakTurnMode,
-        pipeline: SpeakPipelineName = DEFAULT_SPEAK_PIPELINE,
+        responder: SpeakResponderName = DEFAULT_SPEAK_RESPONDER,
     ) -> None:
         runtime = self._runtime(session_id)
         with runtime.lock:
             runtime.pending_stream = stream
             runtime.pending_record = record
             runtime.pending_mode = mode
-            runtime.pending_pipeline = pipeline
+            runtime.pending_responder = responder
 
     def pop_pending_turn(
         self,
         session_id: str,
-    ) -> tuple[str, bool, bool, SpeakTurnMode, SpeakPipelineName] | None:
+    ) -> tuple[str, bool, bool, SpeakTurnMode, SpeakResponderName] | None:
         runtime = self._runtime(session_id)
         with runtime.lock:
             text = runtime.pending_user_text.strip()
@@ -128,11 +174,11 @@ class SessionQueueHub:
                 runtime.pending_stream,
                 runtime.pending_record,
                 runtime.pending_mode,
-                runtime.pending_pipeline,
+                runtime.pending_responder,
             )
             runtime.pending_user_text = ""
             runtime.pending_stream = False
-            runtime.pending_pipeline = DEFAULT_SPEAK_PIPELINE
+            runtime.pending_responder = DEFAULT_SPEAK_RESPONDER
             return payload
 
     def on_typing_pulse(
@@ -260,10 +306,10 @@ class SessionQueueHub:
         stream: bool = False,
         mode: str = "inbound",
         record: bool = True,
-        pipeline: str | None = None,
+        responder: str | None = None,
     ) -> SubmitUserInputResult:
         typed_mode: SpeakTurnMode = "inbound" if mode == "inbound" else "proactive"
-        selected_pipeline = normalize_speak_pipeline(pipeline)
+        selected_responder = normalize_speak_responder(responder)
         normalized = user_text.strip()
         if not normalized:
             return SubmitUserInputResult(notes=["session: empty user input"])
@@ -296,7 +342,7 @@ class SessionQueueHub:
                         mode=typed_mode,
                         stream=stream,
                         record=record,
-                        pipeline=selected_pipeline,
+                        responder=selected_responder,
                         interrupted=True,
                     ),
                 )
@@ -309,7 +355,7 @@ class SessionQueueHub:
                         mode=typed_mode,
                         stream=stream,
                         record=record,
-                        pipeline=selected_pipeline,
+                        responder=selected_responder,
                     ),
                 )
                 return SubmitUserInputResult(
@@ -394,6 +440,13 @@ class SessionQueueHub:
         if self._compose_hub is not None:
             out.update(self._compose_hub.debug_snapshot(session_id))
         return out
+
+    def cancel_all_timers(self) -> None:
+        for runtime in list(self._runtimes.values()):
+            with runtime.lock:
+                if runtime.idle_timer is not None:
+                    runtime.idle_timer.cancel()
+                    runtime.idle_timer = None
 
     def clear_session(self, session_id: str) -> None:
         self._share_queue.clear_session(session_id)

@@ -32,11 +32,20 @@ class AppState:
             return None
         return self.service_registry.get("vllm")
 
-    # ── ReAct ─────────────────────────────────────────────────────────────────
+    # ── Soul (primary WebUI runtime) ──────────────────────────────────────────
+    soul_service: Any = None          # SoulService | None — unique primary ref
+    soul_init_error: str = ""
+
+    # ── ReAct (legacy / deprecated) ───────────────────────────────────────────
     conv_loop: Any = None             # ConvLoop | None  (backward-compat ref)
     active_tao: Any = None            # TaoLoop | None   (backward-compat ref)
     session_manager: Any = None       # SessionManager | None
     react_init_error: str = ""
+
+    # ── Worker work bridge (Speak → WorkerWorkService) ───────────────────────
+    work_service: Any = None          # WorkerWorkService | None
+    worker_state_service: Any = None  # AgentStateService | None
+    worker_state_dir: str = ""
 
     # ── Streaming lifecycle (thread-safe) ────────────────────────────────────
     current_gen_id: str | None = None
@@ -72,6 +81,46 @@ class AppState:
 
     # ── Background task notifications ─────────────────────────────────────────
     notify_queue: Any = None          # asyncio.Queue[dict | None] | None
+    notify_subscribers: list[tuple[str, Any]] = field(default_factory=list)
+    speak_delivery_hub: Any = None    # WebUISpeakDeliveryHub | None
+    speak_notify_soul: Any = None     # SoulService | None
+
+    def attach_notify_subscriber(
+        self,
+        channel_id: str,
+        queue: asyncio.Queue,
+    ) -> Callable[[], None]:
+        subscriber = (channel_id.strip(), queue)
+        self.notify_subscribers.append(subscriber)
+        if self.speak_delivery_hub is not None:
+            for item in self.speak_delivery_hub.pending_notifications(subscriber[0]):
+                queue.put_nowait(item)
+
+        def _detach() -> None:
+            if subscriber in self.notify_subscribers:
+                self.notify_subscribers.remove(subscriber)
+
+        return _detach
+
+    def publish_notify(self, item: dict[str, Any]) -> None:
+        loop = self.main_event_loop
+        if loop is None:
+            return
+
+        def _publish() -> None:
+            target_channel = str(item.get("channel_id", "")).strip()
+            for channel_id, queue in list(self.notify_subscribers):
+                if target_channel and channel_id != target_channel:
+                    continue
+                queue.put_nowait(dict(item))
+
+        loop.call_soon_threadsafe(_publish)
+
+    def default_notify_channel(self) -> str:
+        for channel_id, _ in reversed(self.notify_subscribers):
+            if channel_id:
+                return channel_id
+        return ""
 
     # ── Channel routing ───────────────────────────────────────────────────────
     channel_router: Any = None        # ChannelRouter | None
@@ -146,6 +195,8 @@ class AppState:
                 q.put_nowait({"type": "done", "status": "shutdown", "answer": ""})
             if self.notify_queue is not None:
                 self.notify_queue.put_nowait(None)
+            for _, q in list(self.notify_subscribers):
+                q.put_nowait(None)
 
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(_unblock_sse)
@@ -157,13 +208,22 @@ class AppState:
             _unblock_sse()
 
     def install_shutdown_signals(self) -> None:
-        """SIGINT/SIGTERM 时提前解阻长连接（Windows 下 SIGINT 有效）。"""
+        """SIGINT/SIGTERM 时先解阻长连接，再交还给 uvicorn 的退出处理。"""
 
-        def _handler(_signum: int, _frame: object) -> None:
-            self.prepare_graceful_shutdown()
+        def _install(sig: signal.Signals) -> None:
+            previous = signal.getsignal(sig)
+
+            def _handler(signum: int, frame: object) -> None:
+                self.prepare_graceful_shutdown()
+                if callable(previous):
+                    previous(signum, frame)
+                elif signum == signal.SIGINT:
+                    raise KeyboardInterrupt
+
+            signal.signal(sig, _handler)
 
         for sig in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(sig, _handler)
+            _install(sig)
 
     # ── Thread-safe streaming state ───────────────────────────────────────────
 
@@ -219,6 +279,7 @@ class AppState:
         self.history_dir         = self.cache.history_dir
         self.persona_dir         = self.cache.persona_dir
         self.persona_cfg_file    = os.path.join(self.persona_dir, "persona_config.json")
+        self.worker_state_dir    = self.cache.worker_dir
 
     def _init_infra(self) -> None:
         from infra.task_runner import BackgroundTaskRunner
@@ -226,7 +287,7 @@ class AppState:
         from infra.searxng_manager import SearXNGManager
         from infra.sandbox import SandboxManager
         from infra.service_registry import ServiceRegistry
-        from agent.react.action.manager import ToolManager
+        from worker.tools.manager import ToolManager
         from config.knowledge.config import KnowledgeConfig
         from config.agent.run_config import RunConfig
         from config.infra.sandbox_config import SandboxConfig
@@ -269,6 +330,17 @@ class AppState:
 
         self.tool_manager = ToolManager()
         self.kb_cfg       = KnowledgeConfig()
+
+        from worker.work import WorkerWorkService
+        from config.agent.risk_config import RiskConfig
+        from worker.tools.risk.gate import RiskGate
+
+        self.work_service = WorkerWorkService(llm_cfg_path=self.llm_config_yaml)
+        self.work_service.bind_runtime(
+            sandbox=self.sandbox_manager,
+            risk_gate=RiskGate.from_config(RiskConfig()),
+        )
+        # AgentStateService is bound after Soul bootstrap (needs llm + soul).
 
         from config.infra.bot_config import BotConfig
         from infra.network.bot.service import BotService

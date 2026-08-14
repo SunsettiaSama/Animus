@@ -17,7 +17,7 @@ from agent.soul.presence.state.dynamic.expectation.scanner import ExpectationSca
 from agent.soul.presence.transition.expectation import Expectation
 from agent.soul.presence.transition.interaction import PresenceInteraction
 from agent.soul.presence.service import PresenceService
-from agent.soul.speak.pipelines.request_driven.orchestrator.share import ShareDesireComposer
+from agent.soul.speak.responders.request_driven.orchestrator.share import ShareDesireComposer
 from config.soul.presence.config import OUTBOUND_THRESHOLD_MODERATE
 
 

@@ -64,9 +64,9 @@ export async function bindVisitor(accountId, channelId) {
 }
 
 export async function selectAccount(account) {
-  _persistSelection(account);
   const channelId = account.interactor_id;
   await bindVisitor(account.account_id, channelId);
+  _persistSelection(account);
   return account;
 }
 

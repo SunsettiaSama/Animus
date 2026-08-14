@@ -78,7 +78,7 @@ class AgentService:
         self._engine: "SchedulerEngine | None" = None
 
         logger.info(
-            "[AgentService] initialized — scheduler_dir=%s",
+            "[AgentService] initialized - scheduler_dir=%s",
             scheduler_cfg.scheduler_dir,
         )
 
@@ -103,7 +103,7 @@ class AgentService:
             self._soul_service.bind_scheduler_engine(self._engine)
 
         self._state = "running"
-        logger.info("[AgentService] started — TemporalClock running (no scheduler→soul heartbeat wire)")
+        logger.info("[AgentService] started - TemporalClock running (no scheduler to soul heartbeat wire)")
 
     def stop(self, timeout: float = 10.0) -> None:
         if self._state != "running":

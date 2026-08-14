@@ -13,6 +13,12 @@ from .request import (
     ExperienceIngestInbound,
     ExperienceRetractInbound,
 )
+from .sleep_filter import (
+    SleepFilterChannel,
+    SleepFilterConfig,
+    SleepFilterDecision,
+    SleepFilterResult,
+)
 
 __all__ = [
     "DialogueCloseAck",
@@ -28,5 +34,9 @@ __all__ = [
     "LifeMemoryPort",
     "LifeMemoryPortAdapter",
     "MemoryIngestMode",
+    "SleepFilterChannel",
+    "SleepFilterConfig",
+    "SleepFilterDecision",
+    "SleepFilterResult",
     "as_life_memory_port",
 ]

@@ -5,8 +5,8 @@ from agent.soul.life.experience.unit_layer.promote.policy import should_promote_
 from agent.soul.memory.io.session.buffer import _parse_valence
 from agent.soul.memory.io.session import DialogueCompressionBlock
 from agent.soul.memory.domain import Valence
-from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.context.structured_distill import distill_compression_block
-from agent.soul.speak.pipelines.request_driven.orchestrator.guidance.context.chunk_types import DialogueContextChunk
+from agent.soul.speak.responders.request_driven.orchestrator.guidance.context.structured_distill import distill_compression_block
+from agent.soul.speak.responders.request_driven.orchestrator.guidance.context.chunk_types import DialogueContextChunk
 
 
 def test_compression_unit_carries_session_and_block_index():

@@ -31,12 +31,14 @@ def ensure_distill(
 ) -> DistillEnsureResult:
     store = PersonaDistillStore(persona_dir)
     cached = store.load()
-    if (
-        not force
-        and cached is not None
+    cache_ready = (
+        cached is not None
         and cached.is_current(source_revision)
         and cached.dialogue_text()
-    ):
+    )
+    # 缺 director 切片时，有 LLM 则重蒸（旧包迁移）；无 LLM 仍可沿用 dialogue。
+    missing_director = cache_ready and not cached.director_text()
+    if not force and cache_ready and not (missing_director and llm is not None):
         return DistillEnsureResult(pack=cached, refreshed=False, reason="cache_hit")
 
     if llm is None:

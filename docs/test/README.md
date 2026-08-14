@@ -1,97 +1,52 @@
 # test
 
-仓库根目录下 **`src/test/`**：按领域拆分的自动化测试（unittest / pytest）。覆盖 React 记忆与工具、`runtime.scheduler`、`agent.flow`、子 Agent 委派、基准脚本等。
-
----
+`src/test/` 是与生产模块并列的验证区，主体为 pytest 测试，同时容纳 benchmark 场景、workbench 评测程序、smoke/demo 和少量诊断脚本。目录用于验证当前实现，不是稳定的公共 API 或示例代码集合；运行范围和外部依赖应按具体子目录选择。
 
 ## 目录概览
 
-| 路径 | 内容 |
+| 路径 | 当前覆盖 |
 |---|---|
-| `src/test/memory/` | `MemoryProcessor`、短期/中期、`LongTermMemory` / Qdrant 相关 |
-| `src/test/tools/` | 内置 Action（计算器、文件、HTTP、`scratchpad` 等）|
-| `src/test/react/` | 解析器、执行器、风险评估、`SchedulerEngine` |
-| `src/test/agent/flow/` | DAG、`FlowOrchestrator`、文档与节点组件 |
-| `src/test/delegate/` | `delegate_task` / SubAgent |
-| `src/test/infra/` | LLM、搜索等基础设施 |
-| `src/test/benchmark/` | Tao / Plan 等基准与回归 |
-| `src/test/voice/` | TTS 相关 |
+| `src/test/agent/flow/` | Flow 图、节点、channel/link、预算、快照、patch、规划/评审与 orchestrator |
+| `src/test/react/` | React parser、executor、risk 与 scheduler 行为 |
+| `src/test/tools/` | 基础/数据/编码 Action，以及文件、HTTP、Python、scratchpad 等执行边界 |
+| `src/test/delegate/` | 子 Agent 委派与事件传递 |
+| `src/test/memory/` | Soul Memory 的图节点、网络、检索、扩散、聚类、叙事/社交上下文与向量基础设施相关回归 |
+| `src/test/soul/` | Soul 生命周期、Persona、Presence、Speak pipeline/compose/session、accounts、workers 与 Soul 内部 Life/Memory 适配 |
+| `src/test/life/` | Life session、体验管线、landmark、chronicle/story outcome、会话压缩及记忆擢升 |
+| `src/test/worker/` | work intent/transition、flow dataflow 与 worker state/reflection |
+| `src/test/interaction/` | posture 状态机、连续性栈/规则、对话边与 Agent 输出 |
+| `src/test/storyview/` | scene grounding/network、Story/Storyview engine 与 director |
+| `src/test/webui/` | Speak delivery hub、typing simulation 及相关性能探针 |
+| `src/test/infra/` | LLM、搜索与吞吐诊断；部分用例需要真实基础设施或单独配置 |
+| `src/test/voice/` | TTS 集成 |
+| `src/test/benchmark/` | Tao、Plan、parser、DAG、工具和委派场景的 benchmark runner、fixtures、metrics 与回归测试 |
+| `src/test/workbench/` | IFEval 与 Speak Turing 的数据集、runner、evaluator/judge、report 和入口，以及 workbench 自测 |
 
----
+`benchmark/`、`tools/` 与 `react/` 应按上述职责理解；其文件和测试函数会随实现调整，本页不维护逐函数清单。
+
+## 两套记忆边界
+
+React 的 context 只处理当前运行/会话上下文：
+
+- `agent.react.context.MemoryProcessor` 以步骤 trace 表示 short context。
+- `RecentHistoryMemory` 保存并渲染近期对话摘要，构成 medium context。
+- `MemoryResult` 仅包含 `short_term` 与 `medium_term`；`MemoryProcessor` 不接收长期存储，也不控制长期检索。
+
+Soul 的长期记忆是另一条链路。当前生产源码由 `agent.soul.memory.MemoryService` 管理事件/社交记忆网络，通过 `MemoryInfraService` 使用 embedding 与 `QdrantVectorStore`；长期读取由 Soul Memory 查询或 React 的 memory action 主动触发，写入则经 Life/Memory 管线完成。旧测试中出现的 `LongTermStore` 名称不等同于 React context，也不是当前生产目录中的权威 API。
 
 ## 运行方式
 
-在**仓库根目录**执行（需已安装依赖）：
+在仓库根目录按需运行：
 
 ```bash
-pytest src/test/memory/test_memory.py -q
-pytest src/test/tools/test_tools_basic.py -q
-pytest src/test/react/test_scheduler.py -q
-```
-
-或运行某一目录：
-
-```bash
+pytest src/test/react -q
+pytest src/test/tools -q
 pytest src/test/agent/flow -q
+pytest src/test/soul -q
 ```
 
----
+全量运行可使用 `pytest src/test -q`，但 infra、voice、smoke、benchmark/workbench 等范围可能要求额外依赖、服务、模型或数据集。
 
-## `src/test/memory/test_memory.py`
+## 已知漂移
 
-测试 **`MemoryProcessor`** 与 **`RecentHistoryMemory`** 的交互（含中期持久化与 Mock L3）。
-
-**依赖隔离**：部分用例通过 `sys.modules` Stub 规避 `langchain_community`、嵌入模型等重型依赖；向量侧历史上曾有 FAISS 占位 stub，当前实现以 **Qdrant** 为主。
-
-### ShortTermMemory
-
-| 测试函数 | 验证内容 |
-|---|---|
-| `test_empty` | 初始状态无步骤 |
-| `test_add_single` | 单步骤正确写入 |
-| `test_eviction_by_turns` | 超过 max_turns 触发驱逐 |
-| `test_eviction_by_tokens` | Token 超限触发驱逐 |
-| `test_clear` | clear() 后状态归零 |
-
-### MemoryProcessor（短期 only）
-
-| 测试函数 | 验证内容 |
-|---|---|
-| `test_recall_empty` | 空状态 recall |
-| `test_add_and_recall` | add + recall 一致 |
-| `test_commit_no_long_term` | 无长期记忆时 commit |
-| `test_trace_contents` | trace 含已添加步骤 |
-
-### MemoryProcessor（短期 + 中期）
-
-| 测试函数 | 验证内容 |
-|---|---|
-| `test_medium_term_absorbs_evicted` | 驱逐步骤流入中期 |
-| `test_medium_term_distillate_after_trigger` | 蒸馏触发 |
-
-### MemoryProcessor（含 LongTermMemory Mock）
-
-| 测试函数 | 验证内容 |
-|---|---|
-| `test_recall_with_long_term` | L3 出现在 MemoryResult |
-| `test_commit_calls_long_term` | commit 调用 long.add/save |
-| `test_include_long_term_false` | 跳过向量检索 |
-| `test_medium_distillate_property` | medium_distillate |
-
-### 完整交互场景
-
-| 测试函数 | 验证内容 |
-|---|---|
-| `test_full_interaction` | 短/中/长协同 |
-
----
-
-## `src/test/tools/`
-
-| 文件 | 侧重点 |
-|---|---|
-| `test_tools_basic.py` | `ActionExecutor`、计算器、时间、随机数、字符串、单位换算等 |
-| `test_tools_data.py` | JSONPath / diff 等数据类工具 |
-| `test_file_system.py` / `test_http.py` / `test_python_run.py` / `test_scratchpad.py` | 沙箱与网络工具 |
-
-工具测试覆盖 Pydantic 参数校验的正例与反例（非法 JSON、缺参、`ValueError` 等）。
+`src/test/memory/test_memory.py` 当前同时存在语法损坏和已移除 API 的引用，不能作为可运行测试或记忆接口的权威示例。应以当前 `agent.react.context`、`agent.soul.memory` 源码及其余对应测试为准；本次文档同步不修改该测试。

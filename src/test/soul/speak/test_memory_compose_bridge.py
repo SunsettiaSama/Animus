@@ -4,14 +4,14 @@ from __future__ import annotations
 import threading
 import time
 
-from agent.soul.speak.pipelines.request_driven.orchestrator import SpeakPromptBundle
+from agent.soul.speak.responders.request_driven.orchestrator import SpeakPromptBundle
 from agent.soul.speak.io.inbound.memory.compose_bridge import InboundMemoryComposeBridge
 from agent.soul.speak.io.inbound.memory.gateway import InboundMemoryGateway
 from agent.soul.speak.io.inbound.memory.request import (
     SimilarMemoryBlock,
     SimilarMemoryPullResult,
 )
-from agent.soul.speak.pipelines.request_driven.orchestrator.prompt_trace import get_prompt_trace
+from agent.soul.speak.responders.request_driven.orchestrator.prompt_trace import get_prompt_trace
 from agent.soul.speak.session.queue.memory import MemoryBufferItem, SessionMemoryBuffer
 from agent.soul.speak.session.service import SpeakSessionService
 
