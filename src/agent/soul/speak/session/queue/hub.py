@@ -298,6 +298,39 @@ class SessionQueueHub:
         with runtime.lock:
             return runtime.phase == "pushing"
 
+    def is_turn_busy(self, session_id: str) -> bool:
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            return bool(runtime.turn_busy)
+
+    def is_busy(self, session_id: str) -> bool:
+        """仅「用户角色 turn」或出站推送算忙碌。
+
+        备注：导演主动 handoff 不得占用 turn_busy，也不得借本标志阻塞角色用户接口。
+        """
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            return runtime.phase == "pushing" or bool(runtime.turn_busy)
+
+    def has_user_interrupt(self, session_id: str) -> bool:
+        """用户已入队打断：出站应尽快停，把话筒交给角色。"""
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            if runtime.interrupt is not None:
+                return True
+            return self._user_queue.has_pending(session_id)
+
+    def begin_turn_busy(self, session_id: str) -> None:
+        """标记用户→角色热路径占用。导演 handoff 禁止调用。"""
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            runtime.turn_busy = True
+
+    def end_turn_busy(self, session_id: str) -> None:
+        runtime = self._runtime(session_id)
+        with runtime.lock:
+            runtime.turn_busy = False
+
     def submit_user_input(
         self,
         session_id: str,
@@ -308,6 +341,11 @@ class SessionQueueHub:
         record: bool = True,
         responder: str | None = None,
     ) -> SubmitUserInputResult:
+        """用户入站。
+
+        仅当「用户角色 turn」正在跑或出站正在推时才入队打断；
+        导演主动生成不得制造 turn_busy，因此不得把用户挡在角色接口外。
+        """
         typed_mode: SpeakTurnMode = "inbound" if mode == "inbound" else "proactive"
         selected_responder = normalize_speak_responder(responder)
         normalized = user_text.strip()
@@ -318,7 +356,7 @@ class SessionQueueHub:
         interrupt_ctx: InterruptContext | None = None
         decision_token = 0
         with runtime.lock:
-            if runtime.phase == "pushing":
+            if runtime.phase == "pushing" or runtime.turn_busy:
                 suspended_count = 0
                 suspended_summary = ""
                 if self._compose_hub is not None:
@@ -365,13 +403,17 @@ class SessionQueueHub:
             else:
                 return SubmitUserInputResult(queued=False)
 
-        if interrupt_ctx is not None and self._compose_hub is not None:
-            self._compose_hub.request_queue_decision(session_id, interrupt_ctx, decision_token)
-            self._compose_hub.schedule_compose(session_id, typed_mode)
+        if interrupt_ctx is not None:
+            if self._compose_hub is not None:
+                self._compose_hub.request_queue_decision(session_id, interrupt_ctx, decision_token)
+                self._compose_hub.schedule_compose(session_id, typed_mode)
             return SubmitUserInputResult(
                 queued=True,
                 interrupt=True,
-                notes=["session: user interrupt queued"],
+                notes=[
+                    "session: user interrupt queued "
+                    "(stop outbound; character interface is never blocked by director)"
+                ],
             )
 
         return SubmitUserInputResult(queued=False)

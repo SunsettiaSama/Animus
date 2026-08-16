@@ -34,8 +34,11 @@ class ExperienceSituation:
     - `narration`     — Agent 对这个事件的叙述（如何框架化这件事）
     - `prior_thought` — 体验发生前已有的思维背景（预设、期待、担忧）
     - `activated_memory_ids` — 体验瞬间已被激活的记忆 id 快照
+
+    `channel_id` 为访客通道（分享/推送目标）；生活流可空，世界态仍用 session_id（如 tao）。
     """
     session_id:           str       = ""
+    channel_id:           str       = ""
     turn_index:           int       = 0
     perception:           str       = ""   # 对环境的感知和描述
     narration:            str       = ""   # 对这个事件的叙述与框架化
@@ -45,6 +48,7 @@ class ExperienceSituation:
     def to_dict(self) -> dict:
         return {
             "session_id":           self.session_id,
+            "channel_id":           self.channel_id,
             "turn_index":           self.turn_index,
             "perception":           self.perception,
             "narration":            self.narration,
@@ -56,6 +60,7 @@ class ExperienceSituation:
     def from_dict(cls, d: dict) -> ExperienceSituation:
         return cls(
             session_id=d.get("session_id", ""),
+            channel_id=str(d.get("channel_id", "") or ""),
             turn_index=int(d.get("turn_index", 0)),
             perception=d.get("perception", ""),
             narration=d.get("narration", ""),
@@ -99,15 +104,28 @@ class ExperienceFeeling:
     `valence_delta` / `arousal_delta` 即时连续产生，供心跳漂移和记忆激活使用。
     `emotion_label` 即时填充：体验发生时由调用方直接给出命名情绪，不依赖事后回填。
     `mood_span` / `linger_days` 供 Presence 时段情绪与 Speak 近期经历燃料。
+
+    产出标注（agent 显式意图，无数值硬门槛）：
+    - enqueue_share / push_to_user / share_content / share_why
+    - promote_to_memory / impression_intensity / impression_why
     """
     valence_delta: float = 0.0   # 负值 = 向负向漂移，正值 = 向正向漂移
     arousal_delta: float = 0.0   # 负值 = 平静化，正值 = 唤醒增强
     salience:      float = 0.0   # 显著性标量（由自叙投影，供记账与展示）
     emotion_label: str   = ""    # 命名情绪，惰性回填
-    salience_note: str   = ""    # agent 显著性/感受自叙原文（擢升判定主依据）
+    salience_note: str   = ""    # agent 显著性/感受自叙原文
     mood_span: str = ""          # 「你」+时段情绪自然语言
     linger_days: float = 0.0     # 建议持续天数（Presence 可裁剪）
     subjective_narrative: str = ""  # 你+时间；客观为主，可略多感受（可选专块）
+    enqueue_share: bool = False
+    push_to_user: bool = False
+    share_content: str = ""
+    share_why: str = ""
+    share_desire: str = "mild"
+    promote_to_memory: bool = False
+    impression_intensity: float = 0.0
+    impression_why: str = ""
+    annotation_decided: bool = False  # False=未判定（undecided）
 
     def effective_mood_span(self) -> str:
         if self.mood_span.strip():
@@ -132,6 +150,15 @@ class ExperienceFeeling:
             "mood_span": self.mood_span,
             "linger_days": self.linger_days,
             "subjective_narrative": self.subjective_narrative,
+            "enqueue_share": self.enqueue_share,
+            "push_to_user": self.push_to_user,
+            "share_content": self.share_content,
+            "share_why": self.share_why,
+            "share_desire": self.share_desire,
+            "promote_to_memory": self.promote_to_memory,
+            "impression_intensity": self.impression_intensity,
+            "impression_why": self.impression_why,
+            "annotation_decided": self.annotation_decided,
         }
 
     @classmethod
@@ -145,6 +172,15 @@ class ExperienceFeeling:
             mood_span=str(d.get("mood_span", "")),
             linger_days=float(d.get("linger_days", 0.0) or 0.0),
             subjective_narrative=str(d.get("subjective_narrative", "")),
+            enqueue_share=bool(d.get("enqueue_share", False)),
+            push_to_user=bool(d.get("push_to_user", False)),
+            share_content=str(d.get("share_content", "") or ""),
+            share_why=str(d.get("share_why", "") or ""),
+            share_desire=str(d.get("share_desire", "mild") or "mild"),
+            promote_to_memory=bool(d.get("promote_to_memory", False)),
+            impression_intensity=float(d.get("impression_intensity", 0.0) or 0.0),
+            impression_why=str(d.get("impression_why", "") or ""),
+            annotation_decided=bool(d.get("annotation_decided", False)),
         )
 
 

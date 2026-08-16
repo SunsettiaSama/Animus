@@ -23,12 +23,17 @@ class SessionHolder:
         *,
         semantic: SemanticSessionBoundary | None = None,
         on_rotate: Callable[[str], None] | None = None,
+        on_reopen: Callable[[str], None] | None = None,
     ) -> None:
         self._bootstrap = bootstrap
         self._semantic = semantic
         self._on_rotate = on_rotate or (lambda _sid: None)
+        self._on_reopen = on_reopen or (lambda _sid: None)
         self._record_fn: Callable[[SpeakTurnChunk], SpeakIngestResult] | None = None
         bootstrap.registry._on_temporal_expire = self.finalize_session_temporal
+
+    def bind_on_reopen(self, on_reopen: Callable[[str], None] | None) -> None:
+        self._on_reopen = on_reopen or (lambda _sid: None)
 
     @property
     def registry(self):
@@ -102,6 +107,8 @@ class SessionHolder:
         record = self._bootstrap.registry.rotate_generation(session_id)
         self._bootstrap.started_generations[session_id] = record.generation
         self._notify_rotate(session_id)
+        # rotate/clear 会踢出 poll；软重置后立刻挂回生命线（不等 WS 重连）
+        self._on_reopen(session_id)
 
         return self._payload_to_end_result(
             session_id,

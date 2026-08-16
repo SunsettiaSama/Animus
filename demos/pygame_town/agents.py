@@ -1,4 +1,4 @@
-"""Villager entities and movement toward schedule targets."""
+"""Villager entities and movement toward schedule / activity targets."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ class Agent:
     bubble: str = ""
     bubble_ttl: float = 0.0
     talking: bool = False
+    busy: bool = False
     target_xy: tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))
 
     def set_bubble(self, text: str, ttl: float = 6.0) -> None:

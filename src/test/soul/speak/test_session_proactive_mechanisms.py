@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 from agent.soul.speak.responders.request_driven.orchestrator import SpeakPromptBundle
-from agent.soul.speak.responders.request_driven.orchestrator.guidance.social import (
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.runtime.social import (
     INITIATIVE_PROMPT,
     apply_session_social,
     render_silence_break_block,
@@ -157,7 +157,7 @@ def test_silence_break_skips_when_llm_holds():
     assert handled == []
 
 
-def test_speak_service_wires_silence_break_handler():
+def test_speak_service_disables_legacy_silence_break_handler():
     from test.soul.speak._life_outbound_mock import RecordingSpeakLifeOutbound
     from agent.soul.speak.service import SpeakService
 
@@ -166,14 +166,45 @@ def test_speak_service_wires_silence_break_handler():
         presence=MagicMock(),
         life_outbound=RecordingSpeakLifeOutbound(),
     )
-    handler = service._session_manager.social.silence._handler
-    assert handler is not None
-    assert handler.__name__ == "_execute_silence_break"
+    social = service._session_manager.social
+    assert social.silence_break_enabled is False
+    assert social.silence._handler is None
+    assert service._director_silence_armed("tao") is False
+    social.silence.arm_turn(
+        SilenceBreakTurnSpec(
+            session_id="tao",
+            elapsed_sec=90,
+            angle="legacy",
+            thought="legacy",
+        )
+    )
+    assert service._director_social_armed("tao") is None
+
+
+def test_disabled_legacy_silence_does_not_schedule_timer_after_turn():
+    registry = _registry_mock()
+    social = SessionSocialManager(registry=registry)
+    fired: list[str] = []
+
+    class _Spy(SilenceBreakManager):
+        def _schedule_timer(self, session_id: str, state) -> None:
+            fired.append(session_id)
+
+    social.silence = _Spy(registry=registry)
+    social.on_turn_complete(
+        "tao",
+        mode="inbound",
+        session_state="finish",
+        answer="visible answer",
+    )
+
+    assert social.silence_break_enabled is False
+    assert fired == []
 
 
 def test_on_turn_complete_schedules_silence_only_after_inbound_finish():
     registry = _registry_mock()
-    social = SessionSocialManager(registry=registry)
+    social = SessionSocialManager(registry=registry, silence_break_enabled=True)
     fired: list[str] = []
 
     class _Spy(SilenceBreakManager):

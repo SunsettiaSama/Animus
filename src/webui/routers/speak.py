@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from agent.soul.speak.io.outbound.websocket import WebSocketSpeakStreamPort
 from state import get_state
@@ -25,10 +26,47 @@ class SpeakResetRequest(BaseModel):
     session_id: str = Field(default="")
 
 
+class SpeakPageEnterRequest(BaseModel):
+    session_id: str = Field(default="")
+    page_key: str = Field(default="")
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    lines: list[str] = Field(default_factory=list)
+
+
+class SpeakCreateUiRequest(BaseModel):
+    delivery_id: str = Field(default="")
+    accepted: bool = True
+    channel_id: str = Field(default="")
+    session_id: str = Field(default="")
+
+
+class SpeakProactiveAckRequest(BaseModel):
+    delivery_id: str = Field(default="")
+    channel_id: str = Field(default="")
+    session_id: str = Field(default="")
+
+
 def _serialize_turn_result(result) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
     output = result.output.to_dict() if result.output is not None else {}
     silence_policy = result.meta.get("silence_policy")
     pipeline = result.meta.get("pipeline")
+    stream_events = []
+    for event in getattr(result, "stream_events", None) or []:
+        stream_events.append(
+            {
+                "kind": getattr(event, "kind", ""),
+                "text": getattr(event, "text", "") or "",
+                "final": bool(getattr(event, "final", False)),
+                "meta": dict(getattr(event, "meta", None) or {}),
+            }
+        )
+    meta = dict(result.meta)
+    created_at = str(meta.get("created_at") or "").strip()
+    if not created_at:
+        created_at = datetime.now(timezone.utc).isoformat()
+        meta["created_at"] = created_at
     return {
         "session_id": result.session_id,
         "answer": result.answer,
@@ -39,27 +77,12 @@ def _serialize_turn_result(result) -> dict[str, Any]:
         "recorded": result.recorded,
         "notes": list(result.notes),
         "output": output,
-        "meta": dict(result.meta),
+        "meta": meta,
         "silence_policy": silence_policy if isinstance(silence_policy, str) else None,
         "hide_agent": silence_policy == "hidden",
+        "speak_events": stream_events,
+        "created_at": created_at,
     }
-
-
-def _submit_user_message(
-    soul,
-    session_id: str,
-    text: str,
-    *,
-    responder: str | None = None,
-) -> dict[str, Any]:
-    return soul.speak_submit_user_input(
-        session_id,
-        text,
-        stream=True,
-        mode="inbound",
-        record=True,
-        responder=responder,
-    )
 
 
 @router.get("/api/speak/status")
@@ -173,6 +196,7 @@ def reset_speak_session(
     body: SpeakResetRequest | None = None,
     session_id: str = "",
 ):
+    """兼容旧端点：不再人为轮转生命线，只恢复同一 session。"""
     sid = session_id.strip()
     if body is not None and body.session_id.strip():
         sid = body.session_id.strip()
@@ -186,12 +210,66 @@ def reset_speak_session(
             "reason": "soul_unavailable",
             "ended": None,
         }
-    ended = soul.finalize_speak_session(sid)
+    opened = soul.start_dialogue_session(sid)
     return {
         "ok": True,
         "session_id": sid,
-        "ended": ended,
+        "ended": None,
+        "opened": opened,
+        "reason": "session_reused",
     }
+
+
+@router.post("/api/speak/page_enter")
+def speak_page_enter(body: SpeakPageEnterRequest):
+    """切到历史页：临时记忆注入 speak 生命线 buffer（最多两代）。"""
+    sid = body.session_id.strip()
+    page_key = body.page_key.strip() or "page"
+    if not sid:
+        return {"ok": False, "error": "missing session_id"}
+    soul = _resolve_soul()
+    if soul is None:
+        return {"ok": False, "session_id": sid, "reason": "soul_unavailable"}
+    return soul.speak_enter_page_context(
+        sid,
+        page_key=page_key,
+        messages=list(body.messages or []),
+        lines=list(body.lines or []),
+    )
+
+
+@router.post("/api/speak/create_ui")
+def speak_create_ui(body: SpeakCreateUiRequest):
+    """前端对 create_ui_request 的自动回执。"""
+    did = body.delivery_id.strip()
+    if not did:
+        return {"ok": False, "error": "missing delivery_id"}
+    soul = _resolve_soul()
+    if soul is None:
+        return {"ok": False, "reason": "soul_unavailable"}
+    return soul.speak_resolve_create_ui(
+        did,
+        accepted=bool(body.accepted),
+        channel_id=body.channel_id.strip(),
+        session_id=body.session_id.strip(),
+    )
+
+
+@router.post("/api/speak/proactive_ack")
+def speak_proactive_ack(body: SpeakProactiveAckRequest):
+    """HTTP 备用 ACK；主路径走 WS proactive_ack。"""
+    did = body.delivery_id.strip()
+    if not did:
+        return {"ok": False, "error": "missing delivery_id"}
+    soul = _resolve_soul()
+    if soul is None:
+        return {"ok": False, "reason": "soul_unavailable"}
+    ok = soul.speak_acknowledge_proactive(
+        did,
+        session_id=body.session_id.strip(),
+        channel_id=body.channel_id.strip(),
+    )
+    return {"ok": ok, "delivery_id": did}
 
 
 @router.websocket("/ws/speak/run")
@@ -243,6 +321,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
     loop = asyncio.get_running_loop()
     event_q: asyncio.Queue = asyncio.Queue()
     inbound_q: asyncio.Queue = asyncio.Queue()
+    detach_inbound = state.attach_speak_inbound_queue(inbound_q)
     send_lock = asyncio.Lock()
     base_port = WebSocketSpeakStreamPort(loop, event_q, gen_id=gen_id)
     if delivery_mode == "simulated":
@@ -252,7 +331,26 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
         )
     else:
         port = base_port
-    soul.bind_speak_stream_port(port)
+
+    # ?? speak?enter_greeting / character handoff???? hub ???
+    # turn_start/turn_finish??????? stream ctrl?speak_event ???????
+    if state.speak_delivery_hub is None:
+        from webui.speak_delivery_hub import WebUISpeakDeliveryHub
+
+        state.speak_delivery_hub = WebUISpeakDeliveryHub()
+    hub = state.speak_delivery_hub
+
+    def _put_hub_payload(payload: dict[str, Any]) -> None:
+        loop.call_soon_threadsafe(event_q.put_nowait, payload)
+
+    unregister_hub = hub.register(
+        session_id=session_id,
+        channel_id=channel_id,
+        gen_id=gen_id,
+        port=port,
+        put_payload=_put_hub_payload,
+    )
+    soul.bind_speak_stream_port(hub)
     soul.start_dialogue_session(session_id)
     soul.align_speak_visitor(session_id, channel_id)
 
@@ -261,16 +359,59 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
         if question:
             await inbound_q.put(first)
 
+    _CLOSE_SENTINEL = {"type": "close", "reason": "disconnect"}
+    client_gone = False
+
+    async def _signal_client_gone() -> None:
+        nonlocal client_gone
+        if client_gone:
+            return
+        client_gone = True
+        await inbound_q.put(dict(_CLOSE_SENTINEL))
+
     async def _receive_client() -> None:
         while True:
-            msg = await websocket.receive_json()
+            if state.shutting_down:
+                await _signal_client_gone()
+                return
+            try:
+                msg = await websocket.receive_json()
+            except WebSocketDisconnect:
+                await _signal_client_gone()
+                return
             await inbound_q.put(msg)
 
     receive_task = asyncio.create_task(_receive_client())
 
-    async def _send_json(payload: dict[str, Any]) -> None:
+    async def _send_json(payload: dict[str, Any]) -> bool:
+        """发送 JSON；客户端已断开时静默返回 False，并触发会话收尾。"""
+        if client_gone:
+            return False
+        if (
+            websocket.application_state != WebSocketState.CONNECTED
+            or websocket.client_state != WebSocketState.CONNECTED
+        ):
+            await _signal_client_gone()
+            return False
         async with send_lock:
-            await websocket.send_json(payload)
+            if client_gone:
+                return False
+            if (
+                websocket.application_state != WebSocketState.CONNECTED
+                or websocket.client_state != WebSocketState.CONNECTED
+            ):
+                await _signal_client_gone()
+                return False
+            try:
+                await websocket.send_json(payload)
+            except WebSocketDisconnect:
+                await _signal_client_gone()
+                return False
+            except RuntimeError:
+                # send after close / ASGI already torn down
+                await _signal_client_gone()
+                return False
+        return True
 
     async def _pump_events() -> None:
         while True:
@@ -278,8 +419,10 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
             if isinstance(item, dict) and item.get("type") == "__port_closed__":
                 event_q.task_done()
                 return
-            await _send_json(item)
+            ok = await _send_json(item)
             event_q.task_done()
+            if not ok:
+                return
 
     pump_task = asyncio.create_task(_pump_events())
 
@@ -291,8 +434,16 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
             "delivery_mode": delivery_mode,
             "pipeline": pipeline,
         })
-        soul.seed_session_warm_spread(session_id)
-        soul.arm_enter_greeting(session_id)
+        warm = soul.speak_is_live_warm(session_id)
+        if not warm:
+            soul.seed_session_warm_spread(session_id)
+            # 进房初始化勿堵 asyncio 事件循环（编剧 Agent 多步 LLM 可达数秒）
+            await asyncio.to_thread(soul.arm_enter_greeting, session_id)
+        else:
+            # 热生命线重连：仍要挂回 poll 扫描，否则主动性静默丢失
+            await asyncio.to_thread(soul.speak_bootstrap_proactive_loop, session_id)
+            # 大纲开头若上次因无 live 未投，重连后补推（后台，不堵收消息）
+            await asyncio.to_thread(soul.ensure_screenwriter_init, session_id)
 
         while True:
             msg = await inbound_q.get()
@@ -309,7 +460,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                     port = SimulatedTypingStreamPort(inner=base_port, loop=loop)
                 elif delivery_mode == "stream" and isinstance(port, SimulatedTypingStreamPort):
                     port = port.inner
-                soul.bind_speak_stream_port(port)
+                hub.update_port(session_id, channel_id, port)
                 soul.speak_set_delivery_mode(delivery_mode)
 
             msg_pipeline = str(msg.get("pipeline", "")).strip()
@@ -357,6 +508,22 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                 await _send_json({"type": "pong", "gen_id": gen_id})
                 continue
 
+            if msg_type == "proactive_ack":
+                did = str(msg.get("delivery_id", "")).strip()
+                if did:
+                    await asyncio.to_thread(
+                        soul.speak_acknowledge_proactive,
+                        did,
+                        session_id=session_id,
+                        channel_id=channel_id,
+                    )
+                await _send_json({
+                    "type": "proactive_ack_ok",
+                    "gen_id": gen_id,
+                    "delivery_id": did,
+                })
+                continue
+
             if msg_type not in ("start", "user_message"):
                 continue
 
@@ -367,26 +534,14 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                 await _send_json({"type": "error", "message": "empty question"})
                 continue
 
-            if soul.speak_is_pushing(session_id):
-                ack = await asyncio.to_thread(
-                    _submit_user_message,
-                    soul,
-                    session_id,
-                    question,
-                    responder=pipeline,
-                )
-                await _send_json({
-                    "type": "user_ack",
-                    "gen_id": gen_id,
-                    "question": question,
-                    "pipeline": pipeline,
-                    **ack,
-                })
-                continue
+            # 真实用户输入优先于连接后延迟触发的主动问候。
+            # 忙碌时也直接跑 turn：run_turn 会打断出站并把原文交给角色（已有剧情卡）。
+            soul.cancel_enter_greeting(session_id)
 
             turn_payload: dict[str, Any] = {}
             turn_error: list[str] = []
             turn_done = asyncio.Event()
+            hub.begin_client_turn(session_id)
 
             def _run_turn() -> None:
                 try:
@@ -415,22 +570,25 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                     else:
                         loop.call_soon_threadsafe(turn_done.set)
 
-            await _send_json({
-                "type": "turn_start",
-                "gen_id": gen_id,
-                "question": question,
-                "pipeline": pipeline,
-            })
+            try:
+                await _send_json({
+                    "type": "turn_start",
+                    "gen_id": gen_id,
+                    "question": question,
+                    "pipeline": pipeline,
+                })
 
-            worker = threading.Thread(target=_run_turn, name="webui-speak-turn", daemon=True)
-            worker.start()
+                worker = threading.Thread(target=_run_turn, name="webui-speak-turn", daemon=True)
+                worker.start()
 
-            await turn_done.wait()
-            if state.shutting_down:
-                await asyncio.to_thread(worker.join, 2.0)
-            else:
-                await asyncio.to_thread(worker.join)
-            await event_q.join()
+                await turn_done.wait()
+                if state.shutting_down:
+                    await asyncio.to_thread(worker.join, 2.0)
+                else:
+                    await asyncio.to_thread(worker.join)
+                await event_q.join()
+            finally:
+                hub.end_client_turn(session_id)
 
             if turn_error:
                 await _send_json({"type": "error", "message": turn_error[0]})
@@ -451,20 +609,31 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                 })
 
     finally:
-        receive_task.cancel()
+        detach_inbound()
+        if not receive_task.done():
+            await inbound_q.put({"type": "close", "reason": "cleanup"})
+            receive_task.cancel()
         try:
             await receive_task
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
             pass
-        soul.bind_speak_stream_port(None)
+        unregister_hub()
+        # ?? hub ????? proactive ????????? None
+        soul.bind_speak_stream_port(hub)
         soul.cancel_enter_greeting(session_id)
         port.close()
-        pump_task.cancel()
+        if not pump_task.done():
+            await event_q.put({"type": "__port_closed__"})
+            pump_task.cancel()
         try:
             await pump_task
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
             pass
         state.set_streaming(False)
-        if not state.shutting_down:
+        if (
+            not state.shutting_down
+            and websocket.application_state == WebSocketState.CONNECTED
+            and websocket.client_state == WebSocketState.CONNECTED
+        ):
             await _send_json({"type": "session_end", "gen_id": gen_id})
             await websocket.close()

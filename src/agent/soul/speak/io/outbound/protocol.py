@@ -3,7 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-OutboundOpKind = Literal["think", "wait", "silence", "speak", "action", "finish"]
+OutboundOpKind = Literal[
+    "think",
+    "wait",
+    "silence",
+    "speak",
+    "action",
+    "observe",
+    "outline",
+    "finish",
+]
 
 
 @dataclass(frozen=True)

@@ -19,6 +19,7 @@ const _cb = {
   onScheduledReply: (_taskName, _answer) => {},
   onAgentMessage: (_title, _message, _taskName) => {},
   onProactiveAvailable: (_payload) => {},
+  onCreateUiRequest: (_payload) => {},
 };
 
 export function setCallbacks(cbs) { Object.assign(_cb, cbs); }
@@ -82,6 +83,11 @@ function _handleMessage(evt) {
 
   if (msg.type === 'proactive_available') {
     _cb.onProactiveAvailable({ ...msg, ...(msg.metadata ?? {}) });
+    return;
+  }
+
+  if (msg.type === 'create_ui_request') {
+    _cb.onCreateUiRequest({ ...msg, ...(msg.metadata ?? {}) });
     return;
   }
 

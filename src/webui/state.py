@@ -69,6 +69,8 @@ class AppState:
     # While /ws/react/run is active: fan-out Flow/plan dicts to these asyncio queues
     reactive_ws_flow_queues: list[Any] = field(default_factory=list)
     plan_subscribers: list[Any] = field(default_factory=list)
+    # Speak WS inbound_q：shutdown / 断连时投递 close sentinel 解阻
+    speak_inbound_queues: list[Any] = field(default_factory=list)
 
     def attach_reactive_ws_flow_queue(self, q: asyncio.Queue) -> Callable[[], None]:
         self.reactive_ws_flow_queues.append(q)
@@ -78,6 +80,20 @@ class AppState:
                 self.reactive_ws_flow_queues.remove(q)
 
         return detach
+
+    def attach_speak_inbound_queue(self, q: asyncio.Queue) -> Callable[[], None]:
+        self.speak_inbound_queues.append(q)
+
+        def detach() -> None:
+            if q in self.speak_inbound_queues:
+                self.speak_inbound_queues.remove(q)
+
+        return detach
+
+    def wake_speak_inbound_queues(self) -> None:
+        sentinel = {"type": "close", "reason": "shutdown"}
+        for q in list(self.speak_inbound_queues):
+            q.put_nowait(dict(sentinel))
 
     # ── Background task notifications ─────────────────────────────────────────
     notify_queue: Any = None          # asyncio.Queue[dict | None] | None
@@ -95,6 +111,15 @@ class AppState:
         if self.speak_delivery_hub is not None:
             for item in self.speak_delivery_hub.pending_notifications(subscriber[0]):
                 queue.put_nowait(item)
+        soul = getattr(self, "soul_service", None)
+        speak = getattr(soul, "_ensure_speak_service", None) if soul is not None else None
+        speak_svc = speak() if callable(speak) else None
+        bus = getattr(getattr(speak_svc, "_io", None), "outbound", None)
+        bus_obj = getattr(bus, "bus", bus)
+        pending_fn = getattr(bus_obj, "pending_proactive_notifications", None)
+        if callable(pending_fn):
+            for item in pending_fn(subscriber[0]):
+                queue.put_nowait(item)
 
         def _detach() -> None:
             if subscriber in self.notify_subscribers:
@@ -102,10 +127,12 @@ class AppState:
 
         return _detach
 
-    def publish_notify(self, item: dict[str, Any]) -> None:
+    def publish_notify(self, item: dict[str, Any]) -> bool:
         loop = self.main_event_loop
         if loop is None:
-            return
+            return False
+
+        matched = {"count": 0}
 
         def _publish() -> None:
             target_channel = str(item.get("channel_id", "")).strip()
@@ -113,8 +140,16 @@ class AppState:
                 if target_channel and channel_id != target_channel:
                     continue
                 queue.put_nowait(dict(item))
+                matched["count"] += 1
 
         loop.call_soon_threadsafe(_publish)
+        # call_soon_threadsafe 排队后无法同步读到 matched；按现有订阅者粗判
+        target_channel = str(item.get("channel_id", "")).strip()
+        for channel_id, _queue in list(self.notify_subscribers):
+            if target_channel and channel_id != target_channel:
+                continue
+            return True
+        return False
 
     def default_notify_channel(self) -> str:
         for channel_id, _ in reversed(self.notify_subscribers):
@@ -197,6 +232,7 @@ class AppState:
                 self.notify_queue.put_nowait(None)
             for _, q in list(self.notify_subscribers):
                 q.put_nowait(None)
+            self.wake_speak_inbound_queues()
 
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(_unblock_sse)

@@ -4,13 +4,11 @@ import json
 import logging
 import os
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from agent.soul.speak.io.outbound.notify import (
-    make_notify_event,
-    make_proactive_available_event,
-)
+from agent.soul.speak.io.outbound.notify import make_notify_event
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +52,24 @@ def push_notify(state: Any, task: str, message: str, done: bool = False) -> None
     state.publish_notify(make_notify_event(task=task, message=message, done=done))
 
 
+def _find_history_path(history_dir: str, *, session_id: str, channel_id: str) -> str:
+    if not history_dir or not os.path.isdir(history_dir):
+        return ""
+    for filename in os.listdir(history_dir):
+        if not filename.endswith(".json"):
+            continue
+        path = os.path.join(history_dir, filename)
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        if session_id and str(data.get("session_id") or "") == session_id:
+            return path
+        if channel_id and str(data.get("channel_id") or "") == channel_id:
+            return path
+        if session_id and str(data.get("id") or "") == session_id:
+            return path
+    return ""
+
+
 def _persist_proactive_history(state: Any, payload: dict) -> None:
     history_dir = str(getattr(state, "history_dir", "") or "").strip()
     if not history_dir:
@@ -61,15 +77,53 @@ def _persist_proactive_history(state: Any, payload: dict) -> None:
     session_id = str(payload.get("session_id", "")).strip()
     if not session_id:
         return
+    channel_id = str(payload.get("channel_id", "")).strip()
     message = str(payload.get("message", "")).strip()
+    intent_id = str(payload.get("proactive_intent_id", "") or "").strip()
+    delivery_id = str(payload.get("delivery_id", "") or intent_id).strip()
     spoken = first_spoken_line(message)
     now = datetime.now(timezone.utc).isoformat()
     title = spoken or str(payload.get("banner", "")).strip() or "Agent 主动通信"
     if len(title) > 48:
         title = title[:48] + "…"
     os.makedirs(history_dir, exist_ok=True)
+    path = _find_history_path(history_dir, session_id=session_id, channel_id=channel_id)
+    if path:
+        with open(path, encoding="utf-8") as handle:
+            existing = json.load(handle)
+        messages = list(existing.get("messages") or [])
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            if delivery_id and str(item.get("proactive_intent_id", "")).strip() == delivery_id:
+                return
+            if intent_id and str(item.get("proactive_intent_id", "")).strip() == intent_id:
+                return
+        if message:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": message,
+                    "agent_initiated": True,
+                    "proactive_intent_id": intent_id or delivery_id,
+                    "created_at": now,
+                }
+            )
+        existing["messages"] = messages
+        existing["proactive_unread"] = True
+        existing["agent_initiated"] = True
+        existing["updated_at"] = now
+        existing["channel_id"] = channel_id or str(existing.get("channel_id", "")).strip()
+        existing_id = str(existing.get("id") or "").strip()
+        if existing_id.startswith("live:"):
+            existing["id"] = str(uuid.uuid4())
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(existing, handle, ensure_ascii=False, indent=2)
+        return
+    conv_id = str(uuid.uuid4())
+    path = os.path.join(history_dir, f"{conv_id}.json")
     conv = {
-        "id": session_id,
+        "id": conv_id,
         "title": title,
         "mode": "conversation",
         "messages": [
@@ -77,7 +131,7 @@ def _persist_proactive_history(state: Any, payload: dict) -> None:
                 "role": "assistant",
                 "content": message,
                 "agent_initiated": True,
-                "proactive_intent_id": str(payload.get("proactive_intent_id", "")).strip(),
+                "proactive_intent_id": intent_id or delivery_id,
                 "created_at": now,
             }
         ] if message else [],
@@ -89,7 +143,6 @@ def _persist_proactive_history(state: Any, payload: dict) -> None:
         "created_at": now,
         "updated_at": now,
     }
-    path = os.path.join(history_dir, f"{session_id}.json")
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(conv, handle, ensure_ascii=False, indent=2)
 
@@ -112,34 +165,28 @@ def _notify_proactive_bark(state: Any, payload: dict) -> None:
 
 
 def queue_agent_proactive_session(state: Any, payload: dict) -> None:
-    """Queue visible content for Speak WS, persist unread history, and notify Bark/SSE."""
-    hub = state.speak_delivery_hub
-    if hub is None:
-        raise RuntimeError("WebUI Speak delivery hub is not ready")
+    """离线快照 sink：写未读历史 + Bark。仅在投递失败路径调用。"""
     _persist_proactive_history(state, payload)
     _notify_proactive_bark(state, payload)
-    delivered = hub.enqueue_proactive(payload)
-    if delivered:
-        return
-    if state.main_event_loop is None:
-        logger.warning("[speak_notify] proactive queued without notify stream")
-        return
-    item = make_proactive_available_event(
-        session_id=str(payload.get("session_id", "") or ""),
-        channel_id=str(payload.get("channel_id", "") or ""),
-        proactive_intent_id=str(payload.get("proactive_intent_id", "") or ""),
-        delivery_id=str(payload.get("delivery_id", "") or ""),
-        source=str(payload.get("source", "") or ""),
-        wait_reply=bool(payload.get("wait_reply", False)),
-        online=bool(delivered),
-    )
-    logger.info(
-        "[speak_notify] proactive available session_id=%s channel_id=%s source=%s",
-        item.get("session_id"),
-        item.get("channel_id"),
-        item.get("source"),
-    )
-    state.publish_notify(item)
+
+
+class _AppStateSpeakNotifyPort:
+    """把 Speak notify 接到 WebUI SSE / publish_notify。"""
+
+    def __init__(self, state: Any) -> None:
+        self._state = state
+
+    def publish(self, item: dict) -> bool:
+        if self._state.main_event_loop is None:
+            logger.warning("[speak_notify] notify without event loop item=%s", item.get("type"))
+            return False
+        logger.info(
+            "[speak_notify] publish type=%s session_id=%s channel_id=%s",
+            item.get("type"),
+            item.get("session_id"),
+            item.get("channel_id"),
+        )
+        return bool(self._state.publish_notify(item))
 
 
 def wire_soul_agent_initiated_notify(soul: Any, state: Any) -> None:
@@ -150,11 +197,21 @@ def wire_soul_agent_initiated_notify(soul: Any, state: Any) -> None:
 
         state.speak_delivery_hub = WebUISpeakDeliveryHub()
     soul.bind_speak_stream_port(state.speak_delivery_hub)
+    speak = getattr(soul, "_ensure_speak_service", None)
+    speak_svc = speak() if callable(speak) else None
+    if speak_svc is not None and hasattr(speak_svc, "attach_notify_port"):
+        notify_port = getattr(state, "speak_notify_port", None)
+        if notify_port is None:
+            notify_port = _AppStateSpeakNotifyPort(state)
+            state.speak_notify_port = notify_port
+        speak_svc.attach_notify_port(notify_port)
+        if hasattr(speak_svc, "bind_outbound_snapshot_sink"):
+            speak_svc.bind_outbound_snapshot_sink(
+                lambda payload: queue_agent_proactive_session(state, payload),
+            )
+    # Presence 旧 handler 会无条件落历史；改由 Bus snapshot sink 统一处理
     if state.speak_notify_soul is soul:
         return
-    soul.register_agent_initiated_handler(
-        lambda payload: queue_agent_proactive_session(state, payload),
-    )
     state.speak_notify_soul = soul
 
 

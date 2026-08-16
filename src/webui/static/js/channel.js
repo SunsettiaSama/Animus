@@ -1,6 +1,6 @@
 /**
  * channel.js — 记忆渠道 ID（MVP：等于当前账号的 interactor_id）。
- * 与 history 里的 session_id（后端 Speak 上下文）分离。
+ * Speak 短期生命线与 history 的 convId 分离：同一 channel 共用一条 live session。
  */
 
 import { getCurrentInteractorId, getStoredAccountId } from './modules/accounts.js';
@@ -21,4 +21,21 @@ export function requireChannelId() {
     throw new Error('请先选择来访账号');
   }
   return id;
+}
+
+/** Speak 内在短期态唯一 key：不受前端对话页（convId）切换影响。 */
+export function speakLiveSessionId(channelId = '') {
+  const ch = String(channelId || getChannelId() || '').trim();
+  if (ch) return `live:${ch}`;
+  return 'live:anon';
+}
+
+export function isLiveSessionId(value) {
+  return String(value || '').trim().startsWith('live:');
+}
+
+export function channelIdFromLiveSession(sessionId = '') {
+  const sid = String(sessionId || '').trim();
+  if (!isLiveSessionId(sid)) return '';
+  return sid.slice('live:'.length).trim();
 }

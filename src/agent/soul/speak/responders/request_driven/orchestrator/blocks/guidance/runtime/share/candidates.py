@@ -60,7 +60,7 @@ def format_share_candidates(
     head = summary.strip()
     if head:
         lines.append(f"摘要：{head}")
-    lines.append("分享候选（按情绪强度优先列出，仅下列下标可 emit_share_index）：")
+    lines.append("分享候选（按情绪强度优先列出）：")
     for item in candidates:
         lines.append(
             f"- [{item.planner_index}] queue={item.queue_index} "

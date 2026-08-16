@@ -5,12 +5,13 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from agent.soul.speak.io.outbound.render_protocol import render_meta
+from agent.soul.speak.io.outbound.render_time import estimate_render_time_ms
 from agent.soul.speak.io.outbound.stream.events import SpeakStreamEvent
 
 if TYPE_CHECKING:
     from agent.soul.speak.io.outbound.websocket import WebSocketSpeakStreamPort
 
-_THINK_KINDS = frozenset({"thought"})
 _SUPPRESS_TAGS = frozenset({"think"})
 
 
@@ -41,11 +42,12 @@ def calc_typing_delay_ms(
 class _SpeakBlock:
     text: str
     delay_ms: int
+    meta: dict
 
 
 @dataclass
 class SimulatedTypingStreamPort:
-    """逐字呈现出站：action 即时；think 抑制；speak 缓冲后在短延迟后一次性下发（前端逐字动画）。"""
+    """逐字呈现出站：thought/body/wait/silence 按序透传；speak 缓冲后下发。"""
 
     inner: WebSocketSpeakStreamPort
     loop: asyncio.AbstractEventLoop
@@ -55,7 +57,7 @@ class SimulatedTypingStreamPort:
     _in_speak: bool = False
     _pending: list[_SpeakBlock] = field(default_factory=list)
     _held_finish: SpeakStreamEvent | None = None
-    _held_state: SpeakStreamEvent | None = None
+    _held_states: list[SpeakStreamEvent] = field(default_factory=list)
     _typing_active: bool = False
 
     def emit(self, session_id: str, event: SpeakStreamEvent) -> None:
@@ -64,9 +66,6 @@ class SimulatedTypingStreamPort:
         tag = str(meta.get("tag", ""))
 
         if kind == "tag" and tag in _SUPPRESS_TAGS:
-            return
-
-        if kind in _THINK_KINDS:
             return
 
         if kind == "chunk":
@@ -81,6 +80,10 @@ class SimulatedTypingStreamPort:
         if kind == "tag" and tag == "action":
             self._in_speak = False
             self._speak_buf.clear()
+            self.inner.emit(session_id, event)
+            return
+
+        if kind == "thought":
             self.inner.emit(session_id, event)
             return
 
@@ -105,6 +108,7 @@ class SimulatedTypingStreamPort:
                                 full,
                                 ms_per_char=self.ms_per_char,
                             ),
+                            meta=meta,
                         )
                     )
                 return
@@ -113,6 +117,7 @@ class SimulatedTypingStreamPort:
                     _SpeakBlock(
                         text=piece.strip(),
                         delay_ms=calc_typing_delay_ms(piece, ms_per_char=self.ms_per_char),
+                        meta=meta,
                     )
                 )
                 self._in_speak = False
@@ -123,7 +128,7 @@ class SimulatedTypingStreamPort:
             return
 
         if kind == "state":
-            self._held_state = event
+            self._held_states.append(event)
             return
 
         if kind == "action":
@@ -134,11 +139,16 @@ class SimulatedTypingStreamPort:
             full = str(event.text or "").strip()
             if not full:
                 return
+            # 角色时间线已带 typing + render_target，成对透传，避免二次缓冲抢走 body 转圈
+            if str(meta.get("render_target") or "").strip().lower() == "speak":
+                self.inner.emit(session_id, event)
+                return
             self._set_typing(session_id, True)
             self._pending.append(
                 _SpeakBlock(
                     text=full,
                     delay_ms=calc_typing_delay_ms(full, ms_per_char=self.ms_per_char),
+                    meta=meta,
                 )
             )
             return
@@ -149,24 +159,36 @@ class SimulatedTypingStreamPort:
         for block in self._pending:
             if block.delay_ms > 0:
                 await asyncio.sleep(block.delay_ms / 1000.0)
+            prior = dict(block.meta or {})
+            wait_ms = int(prior.get("wait_ms") or prior.get("render_time_ms") or 0)
+            if wait_ms <= 0:
+                wait_ms = estimate_render_time_ms(block.text)
+            speak_meta = render_meta(
+                "speak",
+                phase="simulated",
+                wait_ms=wait_ms,
+                extra={
+                    **prior,
+                    "tag": "speak",
+                    "delivery": "simulated",
+                    "render_time_ms": wait_ms,
+                    "render_target": "speak",
+                },
+            )
             self.inner.emit(
                 session_id,
                 SpeakStreamEvent(
                     kind="speak",
                     text=block.text,
-                    meta={
-                        "phase": "simulated",
-                        "tag": "speak",
-                        "delivery": "simulated",
-                    },
+                    meta=speak_meta,
                 ),
             )
         self._pending.clear()
         self._set_typing(session_id, False)
 
-        if self._held_state is not None:
-            state = self._held_state
-            self._held_state = None
+        held_states = list(self._held_states)
+        self._held_states.clear()
+        for state in held_states:
             self.inner.emit(session_id, state)
 
         if self._held_finish is not None:
@@ -183,7 +205,10 @@ class SimulatedTypingStreamPort:
             SpeakStreamEvent(
                 kind="agent_typing",
                 text="",
-                meta={"active": active, "delivery": "simulated"},
+                meta=render_meta(
+                    "typing",
+                    extra={"active": active, "delivery": "simulated"},
+                ),
             ),
         )
 

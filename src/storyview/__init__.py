@@ -1,4 +1,4 @@
-from storyview.bridge import StoryWorldContextBridge
+from storyview.bridge import PlaceholderWorldContext, StoryWorldContextBridge
 from storyview.bootstrap import ensure_default_world_scenes
 from storyview.engine import StoryEngine, StoryviewNarrativeEngine
 from storyview.port import StoryLifePort, StoryPort
@@ -15,7 +15,7 @@ from storyview.types import (
     StoryBeat,
     StoryEventKind,
 )
-from storyview.worldview import StoryWorldview
+from storyview.worldview import STORYVIEW_CHANNEL_NOTE, StoryWorldview
 
 __all__ = [
     "NarrativeBrief",
@@ -33,6 +33,8 @@ __all__ = [
     "StoryLifePort",
     "StoryPort",
     "StoryService",
+    "PlaceholderWorldContext",
+    "STORYVIEW_CHANNEL_NOTE",
     "StoryWorldContextBridge",
     "StoryWorldview",
     "StoryviewNarrativeEngine",

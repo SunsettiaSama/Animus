@@ -47,6 +47,15 @@ class DialogueState:
         activated_memory_ids: list[str] | None = None,
         proactive_intent_id: str = "",
         now: datetime | None = None,
+        enqueue_share: bool = False,
+        push_to_user: bool = False,
+        share_content: str = "",
+        share_why: str = "",
+        share_desire: str = "mild",
+        promote_to_memory: bool = False,
+        impression_intensity: float = 0.0,
+        impression_why: str = "",
+        annotation_decided: bool = False,
     ) -> DialogueTurn:
         ts = _utc_now(now)
         self.touch(now=ts)
@@ -67,6 +76,15 @@ class DialogueState:
             arousal_delta=arousal_delta,
             activated_memory_ids=list(activated_memory_ids or []),
             proactive_intent_id=proactive_intent_id,
+            enqueue_share=enqueue_share,
+            push_to_user=push_to_user,
+            share_content=share_content,
+            share_why=share_why,
+            share_desire=share_desire,
+            promote_to_memory=promote_to_memory,
+            impression_intensity=impression_intensity,
+            impression_why=impression_why,
+            annotation_decided=annotation_decided,
         )
         self.session.turns.append(turn)
         return turn

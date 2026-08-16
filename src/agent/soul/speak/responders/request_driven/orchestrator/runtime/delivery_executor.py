@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent.soul.speak.io.outbound.stream.events import SpeakStreamEvent
 from agent.soul.speak.io.outbound.render_protocol import render_meta
+from agent.soul.speak.io.outbound.render_time import estimate_render_time_ms
 from agent.soul.speak.responders.request_driven.orchestrator.prompt_trace import get_prompt_trace
 
 if TYPE_CHECKING:
@@ -83,6 +84,8 @@ class DeliveryExecutor:
             if self._on_segment_progress is not None:
                 self._on_segment_progress(sid, index, total)
             wait_ms = max(0, int(segment.wait_ms))
+            if wait_ms <= 0 and str(segment.text or "").strip():
+                wait_ms = estimate_render_time_ms(segment.text)
             trace.emit_event(
                 sid,
                 label="delivery_segment",
@@ -127,7 +130,9 @@ class DeliveryExecutor:
                         "delivery_segment": True,
                         "segment_index": index,
                         "segment_total": total,
-                        "planned_immediate": wait_ms == 0,
+                        "render_time_ms": wait_ms,
+                        "render_target": "speak",
+                        "planned_immediate": False,
                     },
                 ),
             )
@@ -138,7 +143,7 @@ class DeliveryExecutor:
             session_service.queues.update_partial_output(sid, partial)
             finish_event = SpeakStreamEvent(
                 kind="finish",
-                text=segment.text,
+                text="",
                 final=index == total - 1 and segment.continuity == "finish",
                 meta=render_meta(
                     "finish",

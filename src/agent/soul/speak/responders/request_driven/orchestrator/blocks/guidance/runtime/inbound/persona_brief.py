@@ -59,6 +59,9 @@ def build_guidance_plan_request(
     share_queue_full: bool = False,
     trigger: str = "turn",
     use_session_share_queue: bool = False,
+    user_text: str = "",
+    scene_brief: str = "",
+    recent_turns: str = "",
 ) -> GuidancePlanRequest:
     from agent.soul.speak.responders.request_driven.orchestrator.io.inbound.guidance import GuidancePlanRequest
 
@@ -77,4 +80,7 @@ def build_guidance_plan_request(
         share_queue_full=share_queue_full,
         trigger=trigger,
         use_session_share_queue=use_session_share_queue,
+        user_text=user_text,
+        scene_brief=scene_brief,
+        recent_turns=recent_turns,
     )

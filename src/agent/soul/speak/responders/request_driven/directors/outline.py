@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from ..orchestrator.state.core.outline import OutlineStep
+from ..orchestrator.state.core.types import SessionSnapshot
+from .agent import append_frame_prompt
+from .base import DIRECTOR_VOICE, DirectorLLMCaller, DirectorOutput, extract_json_object
+from .fallback import fallback_director_output, fallback_outline_phase
+
+
+class OutlineDirector:
+    name = "outline"
+
+    _SYSTEM = (
+        f"{DIRECTOR_VOICE}\n"
+        "你的职责：确定节奏相位和当前步骤的目标——告诉角色这一拍处于什么阶段、要做什么、用什么力度推进。\n"
+        "角色只发短消息，不演动作。目标要把手头动作说清楚，不要凭空编造。\n"
+        "场景事实以 frame 中的编剧临场卡和 story brief 为准；"
+        "卡上没有的物件名就留空。\n"
+        "输出文风保持客观、冷静、朴实。不用修辞，不抒情，不说教。\n"
+        '输出 JSON：{"rhythm_phase":"opening|exchange|deepening|closing|idle",'
+        '"step_label":"…","step_goal":"…","notes":["…"]}'
+    )
+
+    def __init__(self, llm: DirectorLLMCaller) -> None:
+        self._llm = llm
+
+    def run(self, snapshot: SessionSnapshot, *, user_text: str = "") -> DirectorOutput:
+        prompt = self._build_prompt(snapshot, user_text=user_text)
+        raw = self._llm.generate_json(
+            system=self._SYSTEM,
+            user=prompt,
+            session_id=snapshot.session_id,
+            director=self.name,
+            turn_index=snapshot.signals.turn_index,
+        )
+        payload = extract_json_object(raw)
+        if not payload:
+            return fallback_director_output(
+                self.name,
+                snapshot,
+                user_text=user_text,
+                raw=raw,
+            )
+        phase = str(payload.get("rhythm_phase", "")).strip() or fallback_outline_phase(snapshot)
+        return DirectorOutput(
+            director=self.name,
+            payload={
+                "rhythm_phase": phase,
+                "step_label": str(payload.get("step_label", "respond")).strip(),
+                "step_goal": str(payload.get("step_goal", "")).strip(),
+                "notes": payload.get("notes") or [],
+            },
+            reason="outline_ok",
+        )
+
+    def _build_prompt(self, snapshot: SessionSnapshot, *, user_text: str) -> str:
+        lines = [
+            f"turn_index={snapshot.signals.turn_index}",
+            f"push_phase={snapshot.runtime.push_phase}",
+            f"segment={snapshot.runtime.current_segment_index}/{snapshot.runtime.segment_total}",
+            f"partial={snapshot.runtime.partial_output_preview[:200]}",
+        ]
+        if user_text.strip():
+            lines.append(f"user_text={user_text.strip()[:400]}")
+        manager_brief = str(
+            snapshot.orchestrator.compose_meta.get("compose_manager_director_brief") or ""
+        ).strip()
+        if manager_brief:
+            lines.append(f"compose_manager={manager_brief[:500]}")
+        elif snapshot.dialogue.context_distill.strip():
+            lines.append(f"context={snapshot.dialogue.context_distill.strip()[:500]}")
+        memory_brief = str(
+            snapshot.orchestrator.compose_meta.get("compose_manager_memory_brief") or ""
+        ).strip()
+        if memory_brief:
+            lines.append(f"memory_brief={memory_brief[:300]}")
+        return append_frame_prompt("\n".join(lines), snapshot)
+
+
+def apply_outline_output(state, output: DirectorOutput) -> None:
+    phase = str(output.payload.get("rhythm_phase", "exchange"))
+    state.rhythm.set_phase(phase)
+    label = str(output.payload.get("step_label", "respond")).strip() or "respond"
+    goal = str(output.payload.get("step_goal", "")).strip()
+    if not state.outline.steps:
+        state.outline.steps.append(OutlineStep(label=label, goal=goal))
+    else:
+        idx = state.outline.current_step_index
+        if 0 <= idx < len(state.outline.steps):
+            prior = state.outline.steps[idx]
+            state.outline.steps[idx] = OutlineStep(
+                label=label,
+                goal=goal,
+                done=prior.done,
+            )
+        else:
+            state.outline.steps.append(OutlineStep(label=label, goal=goal))
+    notes = output.payload.get("notes") or []
+    if isinstance(notes, list):
+        state.outline.notes.extend(str(item) for item in notes if str(item).strip())

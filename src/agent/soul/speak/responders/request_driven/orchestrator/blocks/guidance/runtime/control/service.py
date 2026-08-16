@@ -55,6 +55,13 @@ class GuidanceControlService:
 
     def plan_and_set(self, data: GuidancePlanInput) -> GuidanceControlState:
         entry = self._store.record(data.session_id)
+        # init 预热去重：已有可用 narrative 时不再重复打 LLM（首轮延迟主因）
+        if (
+            data.trigger == "init"
+            and entry.current is not None
+            and entry.current.narrative.strip()
+        ):
+            return entry.current
         if entry.current is not None and entry.current.narrative.strip():
             entry.history.append(entry.current.narrative.strip())
             if len(entry.history) > 8:

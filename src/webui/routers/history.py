@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from state import get_state
+from webui.history_files import resolve_history_path, write_history_path
 
 router = APIRouter()
 
@@ -54,8 +55,8 @@ def list_history():
 @router.get("/api/history/{conv_id}")
 def get_history_item(conv_id: str):
     state = get_state()
-    path = os.path.join(state.history_dir, f"{conv_id}.json")
-    if not os.path.exists(path):
+    path = resolve_history_path(state.history_dir, conv_id)
+    if not path:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     with open(path, encoding="utf-8") as f:
         return json.load(f)
@@ -65,7 +66,7 @@ def get_history_item(conv_id: str):
 def save_history_item(req: SaveConvRequest):
     state = get_state()
     os.makedirs(state.history_dir, exist_ok=True)
-    path = os.path.join(state.history_dir, f"{req.id}.json")
+    path = write_history_path(state.history_dir, req.id)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(req.dict(), f, ensure_ascii=False, indent=2)
     return {"status": "ok"}
@@ -75,7 +76,7 @@ def save_history_item(req: SaveConvRequest):
 def save_history_item_by_id(req: SaveConvRequest, conv_id: str):
     state = get_state()
     os.makedirs(state.history_dir, exist_ok=True)
-    path = os.path.join(state.history_dir, f"{conv_id}.json")
+    path = write_history_path(state.history_dir, conv_id)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(req.dict(), f, ensure_ascii=False, indent=2)
     return {"status": "ok"}
@@ -84,8 +85,8 @@ def save_history_item_by_id(req: SaveConvRequest, conv_id: str):
 @router.delete("/api/history/{conv_id}")
 def delete_history_item(conv_id: str):
     state = get_state()
-    path = os.path.join(state.history_dir, f"{conv_id}.json")
-    if os.path.exists(path):
+    path = resolve_history_path(state.history_dir, conv_id)
+    if path:
         os.remove(path)
     return {"status": "ok"}
 

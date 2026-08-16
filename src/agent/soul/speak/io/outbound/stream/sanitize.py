@@ -20,6 +20,8 @@ _TEXT_KINDS = frozenset({
     "thought",
     "finish",
     "chunk",
+    "observe",
+    "outline",
 })
 
 
@@ -49,11 +51,17 @@ def normalize_session_state_text(value: str) -> str:
 
 from agent.soul.speak.io.outbound.render_protocol import (
     META_FIELD,
+    META_RENDER_TIME_MS,
     META_SESSION_STATE,
+    META_WAIT_MS,
     SpeakRenderField,
     field_for_stream_kind,
     render_meta,
 )
+from agent.soul.speak.io.outbound.render_time import estimate_render_time_ms
+
+_PACE_FIELDS = frozenset({"speak", "body", "observe", "outline"})
+_INCOMPLETE_PHASES = frozenset({"delta", "start"})
 
 
 def _as_render_field(value: str) -> SpeakRenderField:
@@ -65,6 +73,8 @@ def _as_render_field(value: str) -> SpeakRenderField:
         "silence": "silence",
         "typing": "typing",
         "finish": "finish",
+        "observe": "observe",
+        "outline": "outline",
     }
     if value not in table:
         raise ValueError(f"invalid speak render field: {value!r}")
@@ -133,14 +143,40 @@ def sanitize_stream_event(event: SpeakStreamEvent) -> SpeakStreamEvent:
             meta=ensured_meta,
         )
     cleaned = sanitize_push_text(event.text)
-    if cleaned == event.text and ensured_meta is meta_in:
+    paced_meta = _stamp_visible_wait(ensured_meta, cleaned, field)
+    if cleaned == event.text and paced_meta is meta_in:
         return event
     return SpeakStreamEvent(
         kind=event.kind,
         text=cleaned,
         final=event.final,
-        meta=ensured_meta,
+        meta=paced_meta,
     )
+
+
+def _stamp_visible_wait(
+    meta: dict,
+    text: str,
+    field: str | None,
+) -> dict:
+    if field not in _PACE_FIELDS or not str(text or "").strip():
+        return meta
+    phase = str(meta.get("phase") or "").strip().lower()
+    if phase in _INCOMPLETE_PHASES:
+        return meta
+    wait_ms = int(meta.get(META_WAIT_MS) or meta.get(META_RENDER_TIME_MS) or 0)
+    if wait_ms > 0:
+        if meta.get(META_WAIT_MS) == wait_ms and meta.get(META_RENDER_TIME_MS) == wait_ms:
+            return meta
+        stamped = dict(meta)
+        stamped[META_WAIT_MS] = wait_ms
+        stamped[META_RENDER_TIME_MS] = wait_ms
+        return stamped
+    wait_ms = estimate_render_time_ms(text)
+    stamped = dict(meta)
+    stamped[META_WAIT_MS] = wait_ms
+    stamped[META_RENDER_TIME_MS] = wait_ms
+    return stamped
 
 
 def _as_optional_int(value: object) -> int | None:

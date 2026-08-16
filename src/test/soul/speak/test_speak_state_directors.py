@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.soul.speak.responders.request_driven.orchestrator.directors.fallback import fallback_delivery_plan
+from agent.soul.speak.responders.request_driven.directors.fallback import fallback_delivery_plan
 from agent.soul.speak.responders.request_driven.orchestrator.state.core.delivery import ReplySegment, build_delivery_plan
 from agent.soul.speak.responders.request_driven.orchestrator.state.core.enums import normalize_continuity
 from agent.soul.speak.responders.request_driven.orchestrator.state.core.types import (
@@ -24,6 +24,29 @@ def _snapshot(user_text: str = "今天天气不错") -> SessionSnapshot:
         runtime=SessionRuntimeSnapshot(),
         dialogue=DialogueSnapshot(user_text=user_text),
     )
+
+
+def test_director_voice_guides_character_without_lines():
+    from agent.soul.speak.responders.request_driven.directors.base import DIRECTOR_VOICE
+    from agent.soul.speak.responders.request_driven.directors.rhythm_schedule import (
+        _ENRICH_RULE,
+    )
+    from agent.soul.speak.responders.request_driven.directors.turn_delivery import (
+        TurnDeliveryDirector,
+    )
+
+    assert "你在指导角色" in DIRECTOR_VOICE
+    assert "连续过程" in DIRECTOR_VOICE
+    assert "绝不写角色台词" in DIRECTOR_VOICE
+    assert "角色 agent 管控" in DIRECTOR_VOICE
+    assert "不用第一人称「我」去演角色" in DIRECTOR_VOICE
+    assert "只写 <speak>" in DIRECTOR_VOICE
+    assert "虚空产粮" in DIRECTOR_VOICE
+    assert "不要写角色台词" in _ENRICH_RULE
+    assert "动作必须写全在这张卡里" in _ENRICH_RULE
+    assert "sample_narration 只写这一拍的连续过程" in TurnDeliveryDirector._SYSTEM
+    assert "不要用「我」扮演角色" in TurnDeliveryDirector._SYSTEM
+    assert "角色只会发一条短消息" in TurnDeliveryDirector._SYSTEM
 
 
 def test_normalize_continuity_unknown_maps_finish():

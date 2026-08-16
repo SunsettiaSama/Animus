@@ -52,6 +52,18 @@ export async function resetSession(sessionId) {
   return data;
 }
 
+/** 进入历史页：将该页消息作为临时记忆注入 speak 生命线。 */
+export async function enterPageContext({ sessionId, pageKey, messages = [], lines = [] } = {}) {
+  const sid = String(sessionId ?? '').trim();
+  if (!sid) throw new Error('missing session_id');
+  return http.post(PATHS.speak.pageEnter, {
+    session_id: sid,
+    page_key: String(pageKey ?? '').trim() || 'page',
+    messages: Array.isArray(messages) ? messages : [],
+    lines: Array.isArray(lines) ? lines : [],
+  });
+}
+
 export async function pollUntilReady(timeoutMs = 120_000, intervalMs = 800) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

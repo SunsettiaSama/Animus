@@ -1,4 +1,8 @@
-"""Procedural placeholder tiles (Kenney-style free look; CC0-ish simple shapes).
+"""Kenney.nl RPG Base (CC0) + staged town sprites.
 
-Replace PNGs here with Kenney CC0 packs if desired. Color blocks keep the demo runnable.
+Terrain tiles: Kenney RPG pack (www.kenney.nl), Creative Commons CC0.
+Character/crop sprites: generated for this demo (also free to reuse).
+
+Source zip kept under assets/raw/ for regeneration:
+  python demos/pygame_town/assets/_stage_assets.py
 """

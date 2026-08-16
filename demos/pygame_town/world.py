@@ -131,8 +131,19 @@ class World:
     def pixel_size(self) -> tuple[int, int]:
         return MAP_W * self.tile, MAP_H * self.tile
 
-    def sync_agent_targets(self) -> None:
+    def home_points(self, home_id: str) -> dict[str, tuple[float, float]]:
+        return HOME_POINTS[home_id]
+
+    def crop_xy(self, crop: Crop) -> tuple[float, float]:
+        return (crop.tile_x + 0.5) * self.tile, (crop.tile_y + 0.5) * self.tile
+
+    def crops_for(self, owner: str) -> list[Crop]:
+        return [c for c in self.crops if c.owner == owner and not c.harvested]
+
+    def sync_agent_targets(self, *, skip_busy: bool = True) -> None:
         for agent in self.agents:
+            if skip_busy and agent.busy:
+                continue
             points = HOME_POINTS[agent.home_id]
             agent.target_xy = points[agent.destination]
 

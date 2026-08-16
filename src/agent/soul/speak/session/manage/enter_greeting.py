@@ -182,6 +182,12 @@ class EnterGreetingManager:
             retry.start()
             return
         if self._llm is None or self._handler is None:
+            logger.warning(
+                "[enter_greeting] skip evaluate session_id=%s llm=%s handler=%s",
+                sid,
+                self._llm is not None,
+                self._handler is not None,
+            )
             return
         elapsed = (self._now_fn() - state.armed_at).total_seconds()
         dialogue = ""

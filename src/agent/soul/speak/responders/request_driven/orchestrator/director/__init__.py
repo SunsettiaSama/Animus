@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .decide import decide_plan
+from .decide import decide_hot_path_plan, decide_plan
 from .memory import apply_memory_requests, build_memory_inject_plan
 from .service import ComposeDirector
 from .share import attach_share_to_frame, build_share_compose_plan
@@ -36,5 +36,6 @@ __all__ = [
     "build_memory_inject_plan",
     "build_share_compose_plan",
     "collect_snapshots",
+    "decide_hot_path_plan",
     "decide_plan",
 ]

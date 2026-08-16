@@ -3,11 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from agent.soul.speak.responders.request_driven.orchestrator.compose_manager.projectors.dynamic_layer import (
+from agent.soul.speak.responders.request_driven.composer.projectors.dynamic_layer import (
     DynamicLayerMaterials,
     DynamicLayerSchedule,
 )
-from agent.soul.speak.responders.request_driven.orchestrator.compose_manager.projectors.role_view import (
+from agent.soul.speak.responders.request_driven.composer.projectors.role_view import (
     RoleContextView,
 )
 
@@ -36,6 +36,10 @@ class SpeakRole:
         help_observations: tuple[str, ...] = (),
         behavior_guide: str = "",
         script_hint: str = "",
+        presence_mood: str = "",
+        presence_brief: str = "",
+        presence_speak_desire: int | None = None,
+        presence_fate_tendency: str = "",
     ) -> RolePrompt:
         return build_role_prompt(
             view,
@@ -45,6 +49,10 @@ class SpeakRole:
             behavior_guide=behavior_guide,
             script_hint=script_hint,
             help_observations=help_observations,
+            presence_mood=presence_mood,
+            presence_brief=presence_brief,
+            presence_speak_desire=presence_speak_desire,
+            presence_fate_tendency=presence_fate_tendency,
         )
 
     def generate(self, prompt: RolePrompt, *, base_system: str = "") -> str:

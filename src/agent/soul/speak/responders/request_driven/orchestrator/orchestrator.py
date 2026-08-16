@@ -174,6 +174,7 @@ class SpeakOrchestrator:
         self._interactor_portrait = PersonaInteractorPortraitService()
 
         self._session_port = None
+        self._plot_brief_fn = None
 
         self._compose_caches = ComposeCacheRegistry()
         self._memory_buffers: dict[str, MemoryWarmBuffer] = {}
@@ -271,6 +272,14 @@ class SpeakOrchestrator:
     def bind_story_port(self, story_port, world_id_fn=None) -> None:
 
         self._scene_compose.bind_story(story_port, world_id_fn)
+
+    def bind_plot_brief(self, provider) -> None:
+        self._plot_brief_fn = provider
+
+    def plot_brief(self, session_id: str) -> str:
+        if self._plot_brief_fn is None:
+            return ""
+        return str(self._plot_brief_fn(session_id) or "").strip()
 
     def bind_session_port(self, port) -> None:
         self._session_port = port

@@ -35,7 +35,7 @@ def test_orchestrator_poll_thread_registered_under_speak_owner():
     assert registry.leases_for("speak") == []
 
 
-def test_orchestrator_delivery_ready_reports_trigger():
+def test_orchestrator_delivery_ready_does_not_promote_director_plan():
     store = MagicMock()
     plan = MagicMock()
     plan.is_empty = False
@@ -50,11 +50,11 @@ def test_orchestrator_delivery_ready_reports_trigger():
 
     thread._maybe_notify_delivery("s1", trigger="idle")
 
-    store.set_delivery_plan.assert_called_once_with("s1", plan)
-    assert ready == [("s1", "idle")]
+    store.set_delivery_plan.assert_not_called()
+    assert ready == []
 
 
-def test_async_delivery_executes_plan_promoted_to_delivery_slot():
+def test_async_delivery_does_not_push_director_plan():
     service = object.__new__(SpeakService)
     plan = MagicMock()
     plan.is_empty = False
@@ -71,13 +71,7 @@ def test_async_delivery_executes_plan_promoted_to_delivery_slot():
 
     service._execute_async_delivery_for_session("s1")
 
-    service._delivery_executor.execute.assert_called_once_with(
-        plan,
-        session_service=service._session_manager,
-        session_id="s1",
-        user_text="",
-        stream_channel=service._outbound_stream,
-    )
+    service._delivery_executor.execute.assert_not_called()
 
 
 def test_async_delivery_waits_for_live_idle_route():

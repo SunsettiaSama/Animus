@@ -95,6 +95,7 @@ class OrchestratorTurnCoordinator:
         generation: int = 0,
         mode: str = "inbound",
     ) -> DirectorPlan:
+        """后台 warm / 主动开口可用；用户热路径请用 hot_path_plan，勿走本方法。"""
         director = self.compose_director
         plan = director.load_plan(session_id, turn_index)
         if plan is not None and plan.prepared_frame is not None:
@@ -125,7 +126,11 @@ class OrchestratorTurnCoordinator:
         generation: int = 0,
         mode: str = "inbound",
     ) -> OrchestratorTurnState:
-        """路径 2.1：加载/兜底 plan[i]；路径 2.2：异步生产 plan[i+1]。"""
+        """用户入站 kick：禁止同步 bootstrap LLM（plan_control_arc 等）。
+
+        备注：角色接口热路径只拿已有缓存 frame；导演完整 refresh 异步 warm，
+        请求不到新结果也不阻塞角色开口。
+        """
         sid = session_id.strip()
         state = self.state(sid)
         state.turn_index = turn_index
@@ -134,14 +139,16 @@ class OrchestratorTurnCoordinator:
         state.compose_ready = False
         state.compose_waited_ms = 0
         state.notes.append("turn_coordinator: kick on user input")
+        state.notes.append("turn_coordinator: hot_path_no_sync_director_llm")
 
-        plan = self.load_or_bootstrap_plan(
+        plan = self.compose_director.hot_path_plan(
             sid,
-            turn_index=turn_index,
+            target_turn_index=turn_index,
             user_text=user_text,
             generation=generation,
             mode=mode,
         )
+        self.compose_director.save_plan(plan)
         state.director_plan = plan.snapshot()
 
         ledger = self._inject_ledgers.ledger(sid, turn_index)
@@ -154,12 +161,22 @@ class OrchestratorTurnCoordinator:
         )
         state.notes.extend(mem_notes)
 
+        # 本拍与下一拍完整 compose 仅后台 warm；角色不 wait
+        self._compose_runner.schedule_plan_warm(
+            self._orchestrator,
+            sid,
+            target_turn_index=turn_index,
+            user_text=user_text,
+            generation=generation,
+            mode=mode,
+        )
         self._compose_runner.schedule_plan_warm(
             self._orchestrator,
             sid,
             target_turn_index=turn_index + 1,
             user_text=user_text,
             generation=generation,
+            mode=mode,
         )
 
         state.refresh = plan.refresh_flags()
@@ -178,6 +195,7 @@ class OrchestratorTurnCoordinator:
         mode: str = "inbound",
         turn_index: int | None = None,
     ) -> OrchestratorTurnState:
+        """可选短等预热；用户热路径不应再调用（见 SpeakService._run_request_driven_turn）。"""
         state = self.state(session_id)
         resolved_turn = turn_index if turn_index is not None else state.turn_index
         if self._compose_wait_ms > 0 and resolved_turn > 0:

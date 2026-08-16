@@ -77,6 +77,7 @@ class RegistrySessionSnapshotPort:
         resolved = session_id.strip()
         distill = ""
         wm = ""
+        recent: tuple[str, ...] = ()
         if self._context is not None:
             distill = self._context.context_distill_block(resolved)
             record = self._registry.get(resolved)
@@ -84,8 +85,10 @@ class RegistrySessionSnapshotPort:
                 resolved,
                 generation=record.generation,
             )
+            recent = self._context.recent_turn_lines(resolved, limit=8)
         return DialogueSnapshot(
             user_text=user_text.strip(),
             context_distill=distill,
             working_memory=wm,
+            recent_turns=recent,
         )

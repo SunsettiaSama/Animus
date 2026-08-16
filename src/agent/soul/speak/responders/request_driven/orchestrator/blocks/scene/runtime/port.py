@@ -18,9 +18,17 @@ class StorySceneReadPort(Protocol):
 
     def snapshot_scene(self, world_id: str, cue: str = "") -> str: ...
 
+    def render_background(
+        self,
+        world_id: str,
+        *,
+        query: str = "",
+        purpose: str = "",
+    ) -> str: ...
+
 
 class StoryScenePort(StorySceneReadPort, Protocol):
-    """Storyview 场景读写口：候选检索 + 场景应用。"""
+    """Storyview 场景读写口：候选检索 + 场景应用 + 编剧上放。"""
 
     def locate_scene_candidates(
         self,
@@ -36,4 +44,33 @@ class StoryScenePort(StorySceneReadPort, Protocol):
         scene_id: str,
         *,
         transition_text: str = "",
+    ) -> Any: ...
+
+    def upsert_scene(
+        self,
+        world_id: str,
+        *,
+        name: str,
+        narrative: str,
+        location_id: str | None = None,
+        tags: list[str] | None = None,
+        scene_id: str | None = None,
+        meta: dict | None = None,
+    ) -> str: ...
+
+    def ask_gm_at_scene(
+        self,
+        world_id: str,
+        scene_id: str,
+        cue: str,
+        *,
+        kind: Any = None,
+    ) -> Any: ...
+
+    def answer_gm(
+        self,
+        question: Any,
+        answer: Any,
+        *,
+        with_dice: bool = True,
     ) -> Any: ...

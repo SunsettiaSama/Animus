@@ -11,7 +11,7 @@ from infra.llm import BaseLLM
 from .actions import SpeakAction
 from ..session import SpeakFeelingChunk, SpeakSubjectiveChunk
 from ..llm.director_engine import SpeakDirectorLLMEngine
-from ..responders.request_driven.orchestrator.directors import DirectorLLMCaller
+from ..responders.request_driven.directors import DirectorLLMCaller
 from ..service import SpeakService
 
 if TYPE_CHECKING:

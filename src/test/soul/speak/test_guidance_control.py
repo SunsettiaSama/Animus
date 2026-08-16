@@ -4,12 +4,14 @@ from unittest.mock import MagicMock
 
 from test.soul.speak.compose_helpers import finish_turn_for_test as finish_turn_bundle
 from agent.soul.speak.responders.request_driven.orchestrator.bundle import SpeakPromptBundle
-from agent.soul.speak.responders.request_driven.orchestrator.guidance.control import (
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.control import (
     GuidanceControlService,
     GuidancePlanInput,
+)
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.runtime.control import (
     NARRATIVE_MAX_CHARS,
 )
-from agent.soul.speak.responders.request_driven.orchestrator.guidance.layer import SpeakGuidanceLayer
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.layer import SpeakGuidanceLayer
 from agent.soul.speak.responders.request_driven.orchestrator.io import OrchestratorIOHub
 from agent.soul.speak.responders.request_driven.orchestrator.io.inbound.guidance import GuidancePlanRequest
 from agent.soul.speak.responders.request_driven.orchestrator.blocks.persona import SpeakPersonaLayer
@@ -114,9 +116,8 @@ def test_finish_turn_bundle_injects_guidance_narrative():
 def test_version_increments_on_replan():
     control = GuidanceControlService()
     io = OrchestratorIOHub.from_control_service(control)
-    base = GuidancePlanRequest(session_id="tao", turn_index=1, trigger="init")
-    io.inbound.guidance.plan(base)
-    io.inbound.guidance.plan(base)
+    io.inbound.guidance.plan(GuidancePlanRequest(session_id="tao", turn_index=1, trigger="init"))
+    io.inbound.guidance.plan(GuidancePlanRequest(session_id="tao", turn_index=2, trigger="turn"))
     assert io.outbound.guidance.version("tao") == 2
 
 
@@ -131,10 +132,10 @@ def test_clear_control_arc():
 def test_recall_candidates_penalize_repeat_pick():
     from types import SimpleNamespace
 
-    from agent.soul.speak.responders.request_driven.orchestrator.guidance.memory.candidates import (
+    from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.runtime.memory.candidates import (
         build_recall_candidates_from_pull,
     )
-    from agent.soul.speak.responders.request_driven.orchestrator.guidance.memory.pick_weights import (
+    from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.runtime.memory.pick_weights import (
         PICK_PENALTY_FACTOR,
         PICK_WEIGHT_FLOOR,
     )
@@ -161,13 +162,12 @@ def test_recall_candidates_penalize_repeat_pick():
     assert weight_after < 1.0
 
 
-def test_planner_json_emit_resolves_queue_index():
-    from agent.soul.speak.responders.request_driven.orchestrator.guidance.control.planner import (
+def test_planner_does_not_emit_share_or_recall():
+    from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.runtime.control.planner import (
         GuidancePlanInput,
         _state_from_parsed,
         _ParsedPlan,
     )
-    from agent.soul.speak.responders.request_driven.orchestrator.guidance.share.candidates import SharePlannerCandidate
 
     data = GuidancePlanInput(
         session_id="tao",
@@ -177,31 +177,18 @@ def test_planner_json_emit_resolves_queue_index():
         interactor_portrait="",
         share_preview="- [0] topic",
         recall_preview="",
-        share_candidates=(
-            SharePlannerCandidate(
-                planner_index=0,
-                queue_index=2,
-                brief="topic",
-                share_desire="eager",
-                salience=0.9,
-            ),
-        ),
-        recall_candidates=(),
         share_queue_count=1,
         share_queue_full=False,
         trigger="turn",
     )
     state = _state_from_parsed(
         data,
-        _ParsedPlan(
-            narrative="用户还在。你心里有话想说（分享：topic）。接下来轻轻抛出引子。",
-            emit_share_index=0,
-            emit_recall_index=None,
-        ),
+        _ParsedPlan(narrative="用户还在。你先用一条短消息接住对方，说到哪停就停。"),
         version=1,
     )
-    assert state.emit_share_queue_index == 2
-    assert state.share_linked is True
+    assert state.emit_share_queue_index is None
+    assert state.emit_recall_unit_id is None
+    assert state.share_linked is False
 
 
 def test_fallback_does_not_force_share_or_recall_tags():
@@ -224,6 +211,187 @@ def test_fallback_does_not_force_share_or_recall_tags():
     assert "（分享：" not in state.narrative
     assert "（回忆：" not in state.narrative
     assert state.share_linked is True
+
+
+def test_guidance_fallback_keeps_the_character_moving():
+    control = GuidanceControlService()
+    state = control.plan_and_set(
+        GuidancePlanInput(
+            session_id="tao",
+            turn_index=2,
+            distilled_context="",
+            persona_portrait="",
+            interactor_portrait="",
+            share_preview="",
+            recall_preview="",
+            last_rhythm_brief="",
+            share_queue_count=0,
+            share_queue_full=False,
+            trigger="init",
+        )
+    )
+    assert "短消息" in state.narrative
+
+
+def test_planner_prompt_grounds_user_and_scene():
+    from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.runtime.control.planner import (
+        GuidancePlanInput,
+        _build_planner_user_prompt,
+    )
+
+    prompt = _build_planner_user_prompt(
+        GuidancePlanInput(
+            session_id="tao",
+            turn_index=2,
+            distilled_context="",
+            persona_portrait="你是博物学家，常聊生灵趣事。",
+            interactor_portrait="",
+            share_preview="",
+            recall_preview="",
+            user_text="灯罩上哪有蚊子啦，在干嘛；",
+            scene_brief="灯下翻看手稿扉页，放大镜贴着纸面看水印。",
+            trigger="turn",
+        )
+    )
+    assert "【本拍用户原文】" in prompt
+    assert "灯罩上哪有蚊子啦" in prompt
+    assert "手稿扉页" in prompt
+    assert "只可引用此块已写明的物件" in prompt
+    assert "补成完整一拍" in prompt
+    assert "薄剧情 unit" in prompt
+
+
+def test_planner_prompt_forbids_invented_props_when_scene_empty():
+    from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.runtime.control.planner import (
+        GuidancePlanInput,
+        _build_planner_user_prompt,
+    )
+
+    prompt = _build_planner_user_prompt(
+        GuidancePlanInput(
+            session_id="tao",
+            turn_index=1,
+            distilled_context="",
+            persona_portrait="你是博物学家。",
+            interactor_portrait="",
+            share_preview="",
+            recall_preview="",
+            trigger="init",
+        )
+    )
+    assert "【当前临场/剧情】空" in prompt
+    assert "禁止点名具体物件" in prompt
+    assert "动作与节奏写具体" in prompt
+    assert "分享候选" not in prompt
+    assert "回忆候选" not in prompt
+    assert "emit_share" not in prompt
+    assert "emit_recall" not in prompt
+    assert "格式示例" not in prompt
+    assert "当前没有新增输入" not in prompt
+
+
+def test_ungrounded_init_skips_llm():
+    llm = MagicMock()
+    control = GuidanceControlService(llm=llm)
+    state = control.plan_and_set(
+        GuidancePlanInput(
+            session_id="tao",
+            turn_index=1,
+            distilled_context="",
+            persona_portrait="你是博物学家，爱谈鹿与叶脉。",
+            interactor_portrait="",
+            share_preview="",
+            recall_preview="",
+            trigger="init",
+        )
+    )
+    llm.generate.assert_not_called()
+    assert "短消息" in state.narrative
+    assert "鹿" not in state.narrative
+    assert "叶脉" not in state.narrative
+    assert "小牌" not in state.narrative
+
+
+def test_grounded_turn_calls_llm():
+    llm = MagicMock()
+    llm.generate.return_value = MagicMock(
+        text=(
+            '{"narrative": "用户问灯罩上有没有蚊子。你先短句接住这句调侃，'
+            '再把手稿上的观察往前推一步，语气轻松。"}'
+        )
+    )
+    control = GuidanceControlService(llm=llm)
+    state = control.plan_and_set(
+        GuidancePlanInput(
+            session_id="tao",
+            turn_index=2,
+            distilled_context="",
+            persona_portrait="你是博物学家。",
+            interactor_portrait="",
+            share_preview="",
+            recall_preview="",
+            user_text="灯罩上哪有蚊子啦，在干嘛；",
+            scene_brief="灯下翻看手稿扉页。",
+            trigger="turn",
+        )
+    )
+    llm.generate.assert_called_once()
+    prompt = llm.generate.call_args.args[0]
+    assert "灯罩上哪有蚊子啦" in prompt
+    assert "手稿扉页" in prompt
+    assert "手稿" in state.narrative
+
+
+def test_planner_system_requires_action_enrichment():
+    from agent.soul.speak.responders.request_driven.orchestrator.blocks.guidance.runtime.control.planner import (
+        _PLANNER_SYSTEM,
+    )
+
+    assert "手头动作与节奏" in _PLANNER_SYSTEM
+    assert "剧情 unit 偏薄" in _PLANNER_SYSTEM
+    assert "不要让她写 body" in _PLANNER_SYSTEM
+    assert "不要代替角色开口" in _PLANNER_SYSTEM
+    assert "不要写她会说的原句" in _PLANNER_SYSTEM
+    assert "100–280" in _PLANNER_SYSTEM
+
+
+def test_fallback_with_scene_completes_the_beat():
+    control = GuidanceControlService()
+    state = control.plan_and_set(
+        GuidancePlanInput(
+            session_id="tao",
+            turn_index=2,
+            distilled_context="",
+            persona_portrait="",
+            interactor_portrait="",
+            share_preview="",
+            recall_preview="",
+            user_text="上面写的什么",
+            scene_brief="灯下翻看手稿扉页。",
+            trigger="turn",
+        )
+    )
+    assert "上面写的什么" in state.narrative
+    assert "动作" in state.narrative
+    assert "短消息" in state.narrative
+
+
+def test_fallback_mentions_user_text():
+    control = GuidanceControlService()
+    state = control.plan_and_set(
+        GuidancePlanInput(
+            session_id="tao",
+            turn_index=2,
+            distilled_context="",
+            persona_portrait="",
+            interactor_portrait="",
+            share_preview="",
+            recall_preview="",
+            user_text="上面写的什么，你有看出些什么名堂么",
+            trigger="turn",
+        )
+    )
+    assert "上面写的什么" in state.narrative
 
 
 def test_on_turn_complete_consumes_remaining_turns():

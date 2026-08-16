@@ -1,10 +1,6 @@
 ﻿from __future__ import annotations
 
-from agent.soul.life.experience.unit_layer.promote.policy import (
-    matches_demote_narration,
-    matches_promote_narration,
-    should_promote_to_memory,
-)
+from agent.soul.life.experience.unit_layer.promote.policy import should_promote_to_memory
 from agent.soul.life.experience.domain.unit import (
     ExperienceAction,
     ExperienceActionKind,
@@ -14,32 +10,54 @@ from agent.soul.life.experience.domain.unit import (
 )
 
 
-def _unit(*, salience_note: str = "", narration: str = "") -> ExperienceUnit:
+def _unit(
+    *,
+    salience_note: str = "",
+    narration: str = "",
+    promote_to_memory: bool = False,
+    annotation_decided: bool = True,
+    impression_intensity: float = 0.0,
+    impression_why: str = "",
+) -> ExperienceUnit:
     return ExperienceUnit.make(
         situation=ExperienceSituation(narration=narration),
         action=ExperienceAction(kind=ExperienceActionKind.speaking, content=""),
-        feeling=ExperienceFeeling(salience_note=salience_note),
+        feeling=ExperienceFeeling(
+            salience_note=salience_note,
+            promote_to_memory=promote_to_memory,
+            annotation_decided=annotation_decided,
+            impression_intensity=impression_intensity,
+            impression_why=impression_why or salience_note,
+        ),
         source="interaction",
     )
 
 
-def test_promote_from_salience_note():
-    assert should_promote_to_memory(_unit(salience_note="这轮对我很重要，印象深刻"))
-    assert matches_promote_narration("路边突然下雨，出乎意料")
+def test_promote_requires_explicit_intent():
+    assert should_promote_to_memory(
+        _unit(
+            salience_note="这轮对我很重要，印象深刻",
+            promote_to_memory=True,
+            impression_intensity=0.8,
+            impression_why="印象深刻",
+        )
+    )
 
 
-def test_demote_blocks_promote():
-    unit = _unit(salience_note="只是日常寒暄，不太重要")
-    assert matches_demote_narration("只是日常寒暄")
-    assert not should_promote_to_memory(unit)
+def test_no_promote_without_intent():
+    assert not should_promote_to_memory(
+        _unit(salience_note="这轮对我很重要，印象深刻", promote_to_memory=False)
+    )
 
 
-def test_neutral_without_match_does_not_promote():
-    assert not should_promote_to_memory(_unit(salience_note="聊了聊天气和出行"))
-    assert not should_promote_to_memory(_unit())
+def test_undecided_does_not_promote():
+    assert not should_promote_to_memory(
+        _unit(annotation_decided=False, promote_to_memory=True)
+    )
 
 
-def test_is_salient_delegates_to_regex():
-    unit = _unit(salience_note="难忘的一次对话")
+def test_is_salient_delegates_to_promote_intent():
+    unit = _unit(promote_to_memory=True, impression_why="难忘的一次对话")
     assert unit.is_salient(0.5) is True
     assert unit.is_salient() is True
+    assert _unit(promote_to_memory=False).is_salient() is False

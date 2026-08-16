@@ -38,6 +38,15 @@ class LifeSpeakIO:
             arousal_delta=inbound.arousal_delta,
             activated_memory_ids=list(inbound.activated_memory_ids),
             proactive_intent_id=inbound.proactive_intent_id,
+            enqueue_share=inbound.enqueue_share,
+            push_to_user=inbound.push_to_user,
+            share_content=inbound.share_content,
+            share_why=inbound.share_why,
+            share_desire=inbound.share_desire,
+            promote_to_memory=inbound.promote_to_memory,
+            impression_intensity=inbound.impression_intensity,
+            impression_why=inbound.impression_why,
+            annotation_decided=inbound.annotation_decided,
         )
 
     def touch_dialogue(self, inbound: TouchDialogueInbound) -> None:

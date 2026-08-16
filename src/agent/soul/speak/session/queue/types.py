@@ -32,6 +32,7 @@ class SubmitUserInputResult:
     queued: bool = False
     interrupt: bool = False
     notes: list[str] = field(default_factory=list)
+    director_notified: bool = False
 
 
 @dataclass
@@ -45,6 +46,8 @@ class SessionRuntime:
     session_id: str
     pacing: SessionUtterancePacing = field(default_factory=SessionUtterancePacing)
     phase: SpeakPushPhase = "idle"
+    # 同步 turn / 角色生成中：不启并行 turn；用户输入入队，旁路通知导演写表
+    turn_busy: bool = False
     active_user_text: str = ""
     partial_agent_output: str = ""
     interrupt: InterruptContext | None = None

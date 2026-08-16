@@ -33,3 +33,7 @@ __pycache__/
 cache/
 idea/
 corpus/
+
+# pygame_town: keep staged sprites + source zip; ignore unpacked Kenney dump
+demos/pygame_town/assets/raw/rpg/
+demos/pygame_town/assets/raw/*.png

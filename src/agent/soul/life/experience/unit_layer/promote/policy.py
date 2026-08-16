@@ -1,24 +1,14 @@
 from __future__ import annotations
 
-import re
-
 from agent.soul.life.experience.domain.unit import ExperienceUnit
-
-_PROMOTE_RES = re.compile(
-    r"(深刻|重大|关键|难忘|强烈|很重要|印象深刻|值得记住|忘不掉|转折点|关键转折"
-    r"|心绪难平|难以释怀|一直惦记着|久久不能平静|对我很重要|这轮很重要"
-    r"|突然|意外|震惊|冲击|变故|出乎意料)",
-)
-
-_DEMOTE_RES = re.compile(
-    r"(日常|寒暄|平淡|寻常|轻微|不太重要|随便聊聊|无足轻重|一带而过"
-    r"|普通闲聊|没什么特别|不必记住|不重要|随口)",
-)
 
 
 def collect_self_narration(unit: ExperienceUnit) -> str:
-    """汇总体验单元内可用于擢升判定的 agent 自叙与叙述文本。"""
+    """汇总体验单元内可用于展示的 agent 自叙与叙述文本。"""
     parts: list[str] = []
+    why = unit.feeling.impression_why.strip()
+    if why:
+        parts.append(why)
     note = unit.feeling.salience_note.strip()
     if note:
         parts.append(note)
@@ -36,28 +26,12 @@ def collect_self_narration(unit: ExperienceUnit) -> str:
     return "\n".join(parts)
 
 
-def matches_promote_narration(text: str) -> bool:
-    hay = text.strip()
-    if not hay:
-        return False
-    return _PROMOTE_RES.search(hay) is not None
-
-
-def matches_demote_narration(text: str) -> bool:
-    hay = text.strip()
-    if not hay:
-        return False
-    return _DEMOTE_RES.search(hay) is not None
-
-
 def should_promote_to_memory(unit: ExperienceUnit) -> bool:
-    """辅助信号：主路径已在 manage 入库时即时擢升。"""
-    text = collect_self_narration(unit)
-    if not text.strip():
+    """仅当 agent 显式标注 promote_to_memory 时擢升（无数值/正则硬门槛）。"""
+    feeling = unit.feeling
+    if not feeling.annotation_decided:
         return False
-    if matches_demote_narration(text):
-        return False
-    return matches_promote_narration(text)
+    return bool(feeling.promote_to_memory)
 
 
 def salience_score_from_narration(text: str) -> float:
@@ -65,8 +39,8 @@ def salience_score_from_narration(text: str) -> float:
     hay = text.strip()
     if not hay:
         return 0.3
-    if matches_demote_narration(hay):
+    if any(token in hay for token in ("日常", "寒暄", "平淡", "不太重要", "无足轻重")):
         return 0.2
-    if matches_promote_narration(hay):
+    if any(token in hay for token in ("深刻", "重要", "难忘", "强烈", "转折")):
         return 0.7
     return 0.4

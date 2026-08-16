@@ -14,7 +14,7 @@ from .stream.flush import SpeakFlushMode
 
 
 class SpeakOutboundStreamHub:
-    """Speak 出站：``SpeakService._generate_turn`` → LLM → ``SpeakStreamPipeline`` → WebUI 流。"""
+    """Speak 出站：LLM → SpeakStreamPipeline → SpeakOutboundBus → 可选适配器。"""
 
     def __init__(
         self,
@@ -56,10 +56,18 @@ class SpeakOutboundStreamHub:
                     context="",
                 )
             )
-            answer = next(
-                (event.text for event in reversed(events) if event.kind == "finish"),
-                "",
-            )
+            answer = "\n".join(
+                str(event.text or "")
+                for event in events
+                if event.kind == "speak" and str(event.text or "").strip()
+            ).strip()
+            if not answer:
+                finish = next(
+                    (event for event in reversed(events) if event.kind == "finish"),
+                    None,
+                )
+                if finish is not None:
+                    answer = str((finish.meta or {}).get("speak") or "").strip()
             return answer, events
 
         llm_result = llm.generate(user_text, system=system)

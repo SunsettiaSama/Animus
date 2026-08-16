@@ -398,7 +398,13 @@ class RhythmPipelineRunner:
                 (event for event in reversed(events) if event.kind == "finish"),
                 None,
             )
-            answer = finish.text if finish is not None else ""
+            answer = ""
+            for event in events:
+                if event.kind == "speak":
+                    answer += event.text
+            answer = answer.strip()
+            if not answer and finish is not None:
+                answer = str((finish.meta or {}).get("speak") or "").strip()
             parsed = parse_agent_output(answer) if answer.strip() else None
             spoken = (
                 parsed.speak.strip()

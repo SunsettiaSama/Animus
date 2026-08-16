@@ -16,6 +16,7 @@ class ExpectationState:
     reason: str = ""
     source: str = ""
     share_queue: ShareIntentQueue = field(default_factory=ShareIntentQueue)
+    pending_push: bool = False
 
     def accumulate_toward_user(
         self,
@@ -60,6 +61,7 @@ class ExpectationState:
     def reset_after_proactive_open(self) -> None:
         """主动发起会话后回落期待值并清空分享队列。"""
         self.toward_user = 0.0
+        self.pending_push = False
         self.share_queue.drain()
         self._clear_meta()
 
@@ -67,6 +69,10 @@ class ExpectationState:
         self,
         threshold: float | None = None,
     ) -> bool:
+        if self.pending_push and not self.share_queue.is_empty():
+            return True
+        if self.share_queue.has_push_intent():
+            return True
         active = (
             presence_cfg.PROACTIVE_OPEN_THRESHOLD
             if threshold is None
@@ -91,6 +97,8 @@ class ExpectationState:
             parts.append(f"想和用户说话（{self.toward_user:.2f}）")
         if self.reply_urge > 0.0:
             parts.append(f"还想多说几句（{self.reply_urge:.2f}）")
+        if self.pending_push:
+            parts.append("待推送分享")
         if self.reason.strip():
             parts.append(self.reason.strip())
         return "；".join(parts)
@@ -99,6 +107,7 @@ class ExpectationState:
         return (
             self.toward_user == 0.0
             and self.reply_urge == 0.0
+            and not self.pending_push
             and self.share_queue.is_empty()
         )
 
@@ -109,6 +118,7 @@ class ExpectationState:
             reason=self.reason,
             source=self.source,
             share_queue=self.share_queue.copy(),
+            pending_push=self.pending_push,
         )
 
     def to_dict(self) -> dict:
@@ -118,6 +128,7 @@ class ExpectationState:
             "reason": self.reason,
             "source": self.source,
             "share_queue": self.share_queue.to_dict(),
+            "pending_push": self.pending_push,
         }
 
     @classmethod
@@ -128,6 +139,7 @@ class ExpectationState:
             reason=str(d.get("reason", "")),
             source=str(d.get("source", "")),
             share_queue=ShareIntentQueue.from_dict(d.get("share_queue")),
+            pending_push=bool(d.get("pending_push", False)),
         )
 
     def _clear_meta(self) -> None:

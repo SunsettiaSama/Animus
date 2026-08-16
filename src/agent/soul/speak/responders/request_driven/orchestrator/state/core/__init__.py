@@ -7,9 +7,28 @@ from .enums import (
     normalize_continuity,
     normalize_rhythm,
 )
+from .character_rhythm_schedule import (
+    CharacterRhythmSchedule,
+    DirectorPrivateNote,
+    ExecutableUnit,
+    plot_progress_fingerprint,
+)
+from .speak_agenda import (
+    BOOKING_GAP_MIN_SEC,
+    AgendaEntry,
+    CharacterSpeakAgenda,
+    sample_booking_gap_sec,
+)
 from .delivery import DeliveryPlan, ReplySegment, build_delivery_plan
 from .outline import DialogueOutline, OutlineStep, RhythmState
-from .poll import PollCursor, PollTrigger
+from .plot_flow import PlotBeat, PlotFlow
+from .poll import PollFrameDecision, PollFrameManager, PollTrigger
+from .narrative_card import (
+    NarrativeStageCard,
+    SILENCE_OBSERVATION_PHRASES,
+    SilenceLog,
+    format_silence_log_line,
+)
 from .presence_card import CharacterPresenceCard
 from .types import (
     CURRENT_SCHEMA_VERSION,
@@ -32,12 +51,27 @@ __all__ = [
     "DeliveryPlan",
     "ReplySegment",
     "build_delivery_plan",
+    "CharacterRhythmSchedule",
+    "DirectorPrivateNote",
+    "ExecutableUnit",
+    "plot_progress_fingerprint",
+    "CharacterSpeakAgenda",
+    "AgendaEntry",
+    "sample_booking_gap_sec",
+    "BOOKING_GAP_MIN_SEC",
     "DialogueOutline",
     "OutlineStep",
     "RhythmState",
-    "PollCursor",
+    "PlotBeat",
+    "PlotFlow",
+    "PollFrameManager",
+    "PollFrameDecision",
     "PollTrigger",
     "CharacterPresenceCard",
+    "NarrativeStageCard",
+    "SILENCE_OBSERVATION_PHRASES",
+    "SilenceLog",
+    "format_silence_log_line",
     "SessionSignals",
     "SessionRuntimeSnapshot",
     "DialogueSnapshot",

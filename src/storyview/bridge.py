@@ -2,6 +2,22 @@ from __future__ import annotations
 
 from storyview.port import StoryPort
 from storyview.service import StoryService
+from storyview.worldview import STORYVIEW_CHANNEL_NOTE, StoryWorldview
+
+
+class PlaceholderWorldContext:
+    """不接线 StoryPort。只提供原神占位世界观。
+
+    等 storyview 进一步完善后再改回 StoryWorldContextBridge。
+    """
+
+    def background(self, purpose, *, query: str = "") -> str:
+        del purpose
+        text = StoryWorldview.placeholder_teyvat().render()
+        lines = [text, "", STORYVIEW_CHANNEL_NOTE]
+        if query.strip():
+            lines.append(f"当前叙事关注：{query.strip()[:200]}")
+        return "\n".join(lines)
 
 
 class StoryWorldContextBridge:

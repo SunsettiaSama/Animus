@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from ..types import SessionEndReason, SessionEndResult, SessionLifecyclePort
 
 
-SPEAK_SESSION_IDLE_SEC = 600
+# Speak 的人格、剧情与工作记忆只在真实物理空闲 30 分钟后才轮转。
+# WebSocket 重连、切历史页或创建新 UI 不构成 session boundary。
+SPEAK_SESSION_IDLE_SEC = 1800
 
 
 def _utcnow() -> datetime:

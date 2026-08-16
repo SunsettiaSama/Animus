@@ -39,14 +39,13 @@ def test_character_system_excludes_compose_action_protocol():
     assert fmt in full
 
 
-def test_role_static_has_help_hint_without_tool_catalog():
+def test_role_static_only_prompts_short_speak():
     static = RoleStaticLayer()
-    text = static.protocol + "\n" + static.help_hint
-    assert "<ask help>" in text
-    assert "web_search" not in text.lower()
-    assert "<T>" not in text
-    assert "tool_list" not in text.lower()
-    assert "emit" in static.protocol
+    assert "<speak>一条短消息</speak>" in static.protocol
+    assert "短消息" in static.protocol
+    assert 'i="' not in static.protocol
+    assert "emit" not in static.protocol
+    assert "ask help" not in static.protocol
 
 
 def test_interpret_ask_help_separate_from_timeline():

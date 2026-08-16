@@ -43,12 +43,28 @@ class ExperienceBuilder:
         virtual_ctx: VirtualUnitContext | None = None,
         evidence: dict | None = None,
         evidence_builder: Callable[[ExperienceUnit], dict] | None = None,
+        session_id: str = "",
+        channel_id: str = "",
+        enqueue_share: bool = False,
+        push_to_user: bool = False,
+        share_content: str = "",
+        share_why: str = "",
+        share_desire: str = "mild",
+        promote_to_memory: bool = False,
+        impression_intensity: float = 0.0,
+        impression_why: str = "",
+        annotation_decided: bool = False,
     ) -> ExperienceUnit:
         narration = narrative.strip()
         perception_text = perception.strip() or narration[:80]
         action_text = action_summary.strip() or narration[:60]
+        content = share_content.strip()
+        if annotation_decided and (enqueue_share or push_to_user) and not content:
+            content = narration[:240]
         unit = ExperienceUnit.make(
             situation=ExperienceSituation(
+                session_id=session_id,
+                channel_id=channel_id,
                 perception=perception_text,
                 narration=narration,
             ),
@@ -62,6 +78,15 @@ class ExperienceBuilder:
                 salience=salience,
                 emotion_label=emotion_label or emotion_text[:24],
                 salience_note=emotion_text.strip() or narration[:80],
+                enqueue_share=bool(enqueue_share) and bool(content),
+                push_to_user=bool(push_to_user) and bool(content),
+                share_content=content,
+                share_why=share_why,
+                share_desire=share_desire or "mild",
+                promote_to_memory=bool(promote_to_memory),
+                impression_intensity=float(impression_intensity or 0.0),
+                impression_why=impression_why or emotion_text.strip(),
+                annotation_decided=bool(annotation_decided),
             ),
             source=source,
         )

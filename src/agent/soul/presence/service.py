@@ -12,6 +12,7 @@ from .gateway_result import GatewayResult
 from .gateway import PresenceGateway
 from .narrative import compose_self_narrative
 from .state_block import PresenceStateBlock
+from .channel_store import ChannelShareSnapshotStore, ShareProductionAnnotation
 from .share_desire import (
     OUTBOUND_THRESHOLD_MODERATE,
     ShareDesire,
@@ -41,9 +42,9 @@ from .transition import (
 from .transition.ports import TransitionHandler
 from .transition.trigger import PresenceTriggerKind
 from infra.llm import BaseLLM
+from agent.soul.life.anchor.presence_bundle import PresenceExperienceBundle
 
 if TYPE_CHECKING:
-    from agent.soul.life.anchor.presence_bundle import PresenceExperienceBundle
     from agent.soul.life.experience.domain.unit import ExperienceUnit
     from agent.soul.life.experience.unit_layer.manage.log import ExperienceLog
     from agent.soul.life.experience.hub import LifeExperienceStack
@@ -133,6 +134,7 @@ class PresenceService:
         self._timezone = timezone
         self._transition_router = transition_router or PresenceTransitionRouter()
         self._store = PresenceStateStore(life_dir) if life_dir else None
+        self._channel_store = ChannelShareSnapshotStore(life_dir) if life_dir else None
         self._sessions: dict[str, PresenceSession] = {}
         self._status_update_listeners: list[PresenceStatusUpdateListener] = []
         self._life_experience: LifeExperienceStack | None = None
@@ -209,17 +211,86 @@ class PresenceService:
         return compose_self_narrative(session.state, session.interaction)
 
     def sync_life_bundle(self, bundle: PresenceExperienceBundle) -> dict[str, list[str]]:
-        """life 字段包 → static + dynamic 双链路转移（经顶层 router）。"""
-        result = self.trigger(PresenceTrigger.life_sync(bundle))
-        self._persist(bundle.session_id)
+        """life 字段包 → static（life session）+ 分享标注（channel 权威）。"""
+        life_sid = (bundle.session_id or "tao").strip() or "tao"
+        channel_id = (bundle.channel_id or bundle.target_channel_id or "").strip()
+
+        # life session 只吃 static；有 channel 时分享不写入 tao 队列
+        life_bundle = bundle
+        if channel_id and (bundle.enqueue_share or bundle.push_to_user):
+            life_bundle = PresenceExperienceBundle.from_dict(bundle.to_dict())
+            life_bundle.enqueue_share = False
+            life_bundle.push_to_user = False
+            life_bundle.share_content = ""
+
+        result = self.trigger(PresenceTrigger.life_sync(life_bundle))
+        self._persist(life_sid)
         sync = result.outcome.life_sync
-        # 仅通知状态；不在此 scan（scan 会 drain 队列，需由 Soul speak_if_ready 路径开口）
-        self._notify_status_update(self.snapshot(bundle.session_id or "tao"))
+        notes = list(result.notes)
+
+        annotation = ShareProductionAnnotation(
+            session_id=life_sid,
+            channel_id=channel_id,
+            unit_id=bundle.experience_id,
+            source=bundle.source,
+            decided=bool(bundle.annotation_decided),
+            enqueue_share=bool(bundle.enqueue_share),
+            push_to_user=bool(bundle.push_to_user),
+            share_content=bundle.share_content,
+            share_why=bundle.share_why,
+            share_desire=bundle.share_desire,
+            promote_to_memory=bool(bundle.promote_to_memory),
+            impression_intensity=float(bundle.impression_intensity or 0.0),
+            impression_why=bundle.impression_why,
+            note="" if bundle.annotation_decided else "undecided",
+        )
+        if self._channel_store is not None:
+            self._channel_store.append_annotation(annotation)
+
+        if channel_id and (bundle.enqueue_share or bundle.push_to_user) and bundle.share_content.strip():
+            share_session = self._session(channel_id)
+            from .transition.dynamic.life_meta import apply_dynamic_bundle
+
+            share_notes = apply_dynamic_bundle(
+                share_session.state,
+                share_session.interaction,
+                bundle,
+            )
+            notes.extend(share_notes)
+            self._persist(channel_id)
+            self._mirror_channel_share_state(channel_id, share_session)
+        elif not channel_id and (bundle.enqueue_share or bundle.push_to_user):
+            notes.append("share: no target_channel_id — recorded in life pool only")
+
+        self._notify_status_update(self.snapshot(life_sid))
+        if channel_id:
+            self._notify_status_update(self.snapshot(channel_id))
         return {
             "static_notes": list(sync.static_notes) if sync else [],
             "dynamic_notes": list(sync.dynamic_notes) if sync else [],
-            "notes": list(result.notes),
+            "notes": notes,
         }
+
+    def _mirror_channel_share_state(self, channel_id: str, session: PresenceSession) -> None:
+        if self._channel_store is None:
+            return
+        from .channel_store import ChannelShareState
+
+        state = ChannelShareState(
+            channel_id=channel_id,
+            share_queue=session.state.expectation.share_queue.copy(),
+            pending_push=bool(session.state.expectation.pending_push),
+            last_share_why=session.state.expectation.reason,
+        )
+        self._channel_store.save_share_state(state)
+
+    def archive_and_drain_share_queue(self, session_id: str, *, reason: str) -> list:
+        session = self._session(session_id)
+        drained = session.state.expectation.share_queue.drain()
+        session.state.expectation.pending_push = False
+        if drained and self._channel_store is not None:
+            self._channel_store.archive_intents(session_id, drained, reason=reason)
+        return drained
 
     def on_unit_ingested(
         self,
@@ -447,7 +518,7 @@ class PresenceService:
         session.interaction.impulse_reason = ""
         session.interaction.impulse_source = ""
         session.interaction.share_desire = ShareDesire.none
-        session.state.expectation.share_queue.drain()
+        self.archive_and_drain_share_queue(session_id, reason="bind")
         self._sessions[session_id] = session
         self._persist(session_id)
         return self.snapshot(session_id)
@@ -520,13 +591,19 @@ class PresenceService:
         if scan.mode == ExpectationScanMode.append_message:
             session.state.expectation.discharge_reply_urge(REPLY_URGE_THRESHOLD)
         elif scan.mode == ExpectationScanMode.proactive_open:
-            session.state.expectation.reset_after_proactive_open()
+            self.archive_and_drain_share_queue(session_id, reason="proactive_open")
+            session.state.expectation.toward_user = 0.0
+            session.state.expectation.pending_push = False
+            session.state.expectation.reason = ""
+            session.state.expectation.source = ""
 
         session.interaction.impulse_level = 0.0
         session.interaction.impulse_reason = ""
         session.interaction.impulse_source = ""
         session.interaction.share_desire = ShareDesire.none
         self._persist(session_id)
+        if self._channel_store is not None:
+            self._mirror_channel_share_state(session_id, session)
         return scan
 
     def _maybe_scan_expectation(self, session_id: str) -> ExpectationScanResult | None:
@@ -565,8 +642,13 @@ class PresenceService:
         require_saturated: bool,
     ) -> ImpulseDischarge | None:
         interaction = session.interaction
-        if require_saturated and interaction.impulse_level < self.moderate_threshold:
-            return None
+        if require_saturated:
+            push_ready = (
+                session.state.expectation.pending_push
+                or session.state.expectation.share_queue.has_push_intent()
+            )
+            if not push_ready and interaction.impulse_level < self.moderate_threshold:
+                return None
         package = self._fold_or_none(session)
         if package is None:
             return None
@@ -585,7 +667,7 @@ class PresenceService:
         interaction.impulse_reason = ""
         interaction.impulse_source = ""
         interaction.share_desire = ShareDesire.none
-        session.state.expectation.share_queue.drain()
+        self.archive_and_drain_share_queue(session_id, reason=f"discharge:{source}")
         self._persist(session_id)
         return discharge
 

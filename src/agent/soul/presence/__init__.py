@@ -1,3 +1,4 @@
+from .channel_store import ChannelShareSnapshotStore, ShareProductionAnnotation
 from .discharge import ImpulseDischarge
 from .narrative import compose_self_narrative
 from .state_block import PresenceStateBlock, PresenceStateBlockKind
@@ -32,12 +33,14 @@ from .transition import (
 
 __all__ = [
     "AffectState",
+    "ChannelShareSnapshotStore",
     "Expectation",
     "ExpectationState",
     "GatewayResult",
     "ImpulseDischarge",
     "PresenceStateBlock",
     "PresenceStateBlockKind",
+    "ShareProductionAnnotation",
     "compose_self_narrative",
     "PresenceContext",
     "PresenceEvent",

@@ -6,13 +6,11 @@
 - 前端禁止解析 character 原始标签字符串。
 
 Character LLM 线格式（仅后端解析，不对前端暴露）：
-  <speak context>台词</speak context>
-  <speak action>emit|wait N|silence N</speak action>
-  <body action>姿态</body action>
-  <ask help>自然语言目标</ask help>
+  <speak>一条短消息</speak>
+  可见表达只走 speak；解析侧按序编号为 meta.order，前端按 order 渲染。
 
 可见渲染字段（前端只认这些）：
-  thought | speak | body | wait | silence | typing | finish
+  thought | speak | body | wait | silence | typing | finish | observe | outline
 """
 from __future__ import annotations
 
@@ -27,10 +25,22 @@ SpeakRenderField = Literal[
     "silence",
     "typing",
     "finish",
+    "observe",
+    "outline",
 ]
 
 SPEAK_RENDER_FIELDS: frozenset[str] = frozenset(
-    {"thought", "speak", "body", "wait", "silence", "typing", "finish"}
+    {
+        "thought",
+        "speak",
+        "body",
+        "wait",
+        "silence",
+        "typing",
+        "finish",
+        "observe",
+        "outline",
+    }
 )
 
 # stream event.kind → 默认 field（若 meta.field 缺失时的回填）
@@ -39,6 +49,8 @@ _KIND_TO_FIELD: dict[str, str] = {
     "speak": "speak",
     "segment": "speak",
     "action": "body",
+    "observe": "observe",
+    "outline": "outline",
     "agent_typing": "typing",
     "finish": "finish",
 }
@@ -52,6 +64,8 @@ FIELD_LABELS: dict[str, str] = {
     "silence": "silence",
     "typing": "typing",
     "finish": "finish",
+    "observe": "narrative",
+    "outline": "outline",
 }
 
 # 约定 meta 键（前端只读这些）
@@ -61,6 +75,9 @@ META_PHASE = "phase"
 META_WAIT_MS = "wait_ms"
 META_SECONDS = "seconds"
 META_SESSION_STATE = "session_state"
+META_RENDER_TIME_MS = "render_time_ms"
+META_ORDER = "order"
+META_CREATED_AT = "created_at"
 
 
 def normalize_render_field(value: str | None) -> str | None:
@@ -94,6 +111,7 @@ def render_meta(
     phase: str = "",
     wait_ms: int | None = None,
     seconds: float | None = None,
+    order: int | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """构造前端可消费的 meta；只放入协议字段。"""
@@ -107,9 +125,18 @@ def render_meta(
         meta[META_WAIT_MS] = int(wait_ms)
     if seconds is not None:
         meta[META_SECONDS] = float(seconds)
+    if order is not None:
+        meta[META_ORDER] = int(order)
     if extra:
         for key, value in extra.items():
-            if key in (META_FIELD, META_LABEL, META_PHASE, META_WAIT_MS, META_SECONDS):
+            if key in (
+                META_FIELD,
+                META_LABEL,
+                META_PHASE,
+                META_WAIT_MS,
+                META_SECONDS,
+                META_ORDER,
+            ):
                 continue
             # session_state 仅允许 finish/append/share/recall
             if key == META_SESSION_STATE:

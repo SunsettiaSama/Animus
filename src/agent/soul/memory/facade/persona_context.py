@@ -15,6 +15,7 @@ def build_agent_persona_narrative(snap: dict[str, Any]) -> str:
         snap,
         max_chars=1200,
         caller="build_agent_persona_narrative",
+        warn_main_portrait=False,
     )
     if traits:
         parts.append(traits)
@@ -22,7 +23,15 @@ def build_agent_persona_narrative(snap: dict[str, Any]) -> str:
         snap,
         max_chars=800,
         caller="build_agent_persona_narrative",
+        warn_main_portrait=False,
     )
     if concept:
         parts.append(concept)
     return "\n\n".join(parts)
+
+
+def build_speak_dialogue_persona_anchor(snap: dict[str, Any]) -> str:
+    """Speak distiller / 对话注入：仅用 persona_distill.slices.dialogue。"""
+    from agent.soul.persona.distill.render import render_dialogue_from_snapshot
+
+    return render_dialogue_from_snapshot(snap.get("persona_distill"))

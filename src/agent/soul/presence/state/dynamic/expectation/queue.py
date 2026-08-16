@@ -8,12 +8,15 @@ from agent.soul.presence.share_desire import ShareDesire, max_share_desire
 
 @dataclass(frozen=True)
 class ShareIntent:
-    """Agent 想分享给用户的一条话题。"""
+    """Agent 想分享给用户的一条话题（可含备好正文与推送意图）。"""
 
     topic: str
     share_desire: ShareDesire = ShareDesire.mild
     source: str = ""
     salience: float = 0.0
+    content: str = ""
+    share_why: str = ""
+    push_to_user: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -21,6 +24,9 @@ class ShareIntent:
             "share_desire": self.share_desire.value,
             "source": self.source,
             "salience": round(self.salience, 4),
+            "content": self.content,
+            "share_why": self.share_why,
+            "push_to_user": self.push_to_user,
         }
 
     @classmethod
@@ -30,12 +36,15 @@ class ShareIntent:
             share_desire=ShareDesire(str(d.get("share_desire", ShareDesire.mild.value))),
             source=str(d.get("source", "")),
             salience=float(d.get("salience", 0.0)),
+            content=str(d.get("content", "") or ""),
+            share_why=str(d.get("share_why", "") or ""),
+            push_to_user=bool(d.get("push_to_user", False)),
         )
 
 
 @dataclass
 class ShareIntentQueue:
-    """待分享话题队列（持久化于 ExpectationState）。"""
+    """待分享话题队列（持久化于 ExpectationState / channel share_state）。"""
 
     items: list[ShareIntent] = field(default_factory=list)
     _max_items: int = SHARE_INTENT_QUEUE_MAX_ITEMS
@@ -49,6 +58,9 @@ class ShareIntentQueue:
             share_desire=intent.share_desire,
             source=intent.source,
             salience=intent.salience,
+            content=(intent.content or topic).strip(),
+            share_why=intent.share_why.strip(),
+            push_to_user=bool(intent.push_to_user),
         )
         self.items.append(normalized)
         if len(self.items) > self._max_items:
@@ -69,15 +81,19 @@ class ShareIntentQueue:
             return ""
         ordered = sorted(self.items, key=lambda item: item.salience, reverse=True)
         primary = ordered[0]
+        text = primary.content.strip() or primary.topic
         if len(self.items) == 1:
-            return primary.topic
-        return f"{primary.topic}（另有 {len(self.items) - 1} 条想分享的事）"
+            return text
+        return f"{text}（另有 {len(self.items) - 1} 条想分享的事）"
 
     def peak_share_desire(self) -> ShareDesire:
         peak = ShareDesire.none
         for item in self.items:
             peak = max_share_desire(peak, item.share_desire)
         return peak
+
+    def has_push_intent(self) -> bool:
+        return any(item.push_to_user for item in self.items)
 
     def pop_most_wanted(self) -> ShareIntent | None:
         """弹出当前最想分享的一条（按 salience 最高）。"""

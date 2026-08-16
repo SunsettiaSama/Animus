@@ -15,12 +15,6 @@ if TYPE_CHECKING:
 
 AgentInitiatedNotify = Callable[[dict[str, Any]], None]
 
-_BLOCKED_PROACTIVE = frozenset({
-    Expectation.required.value,
-    Expectation.deferred.value,
-    Expectation.clarify.value,
-})
-
 
 class SpeakPresenceInboundBridge:
     """Speak 入站：接收 Presence 主动回话请求并向用户投递。"""
@@ -58,15 +52,7 @@ class SpeakPresenceInboundBridge:
         if not session_id:
             session_id = base_sid if inbound.append else f"proactive-{uuid.uuid4()}"
 
-        snap = self._soul.presence.snapshot(session_id)
-        if not inbound.append and snap.expectation.value in _BLOCKED_PROACTIVE:
-            return ProactiveInitiateAck(
-                ok=False,
-                blocked=True,
-                reason="interaction expectation blocks proactive speak",
-                session_id=session_id,
-                channel_id=channel_id,
-            )
+        # Agent 要开口就不拦：期望态只影响 wait_reply 绑定，不阻断主动窗口
 
         if channel_id:
             self._soul.align_speak_visitor(session_id, channel_id)
@@ -130,9 +116,13 @@ class SpeakPresenceInboundBridge:
             "agent_display_name": display,
             "proactive_intent_id": proactive_intent_id,
             "agent_initiated": True,
+            "create_window": agent_initiated,
             "wait_reply": inbound.wait_reply,
             "source": inbound.source,
         }
+        # Speak 自有出站：登记 + 抛通知；前端只是可随时挂接的适配器
+        if agent_initiated:
+            self._speak.enqueue_agent_outbound(ui_payload)
         if self._on_agent_initiated is not None:
             self._on_agent_initiated(ui_payload)
 

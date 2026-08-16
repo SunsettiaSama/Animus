@@ -102,6 +102,7 @@ class ExperienceUnitManager:
     def ingest_dialogue_close(self, unit: ExperienceUnit) -> None:
         """会话闭合：热日志 + chronicle + 终局 unit 立即擢升（无 SessionMemoryBuffer 合并）。"""
         self._log.append(unit)
+        self._stamp_presence_bundle_on_unit(unit)
         self._route_chronicle(unit)
         self._promote_to_memory(unit)
         self._notify_after_ingest(unit)
@@ -133,7 +134,7 @@ class ExperienceUnitManager:
         return promoted
 
     def _stamp_presence_bundle_on_unit(self, unit: ExperienceUnit) -> None:
-        if unit.source in ("narrative", "surprise", "collision"):
+        if unit.source in ("narrative", "surprise", "collision", "interaction"):
             from agent.soul.life.anchor.presence_bundle import (
                 presence_bundle_from_unit,
                 stamp_presence_bundle,
@@ -285,6 +286,8 @@ class ExperienceUnitManager:
         if self._memory_port is None:
             return
         if unit.id in self._memory_ingested_ids:
+            return
+        if not unit.should_promote_to_memory():
             return
         promote_unit_to_memory(self._memory_port, unit)
         self._memory_ingested_ids.add(unit.id)

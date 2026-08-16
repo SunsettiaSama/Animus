@@ -75,4 +75,20 @@ def assemble_turn_system(
 
 def assemble_character_system(bundle: SpeakPromptBundle) -> str:
     """角色 agent 专用 system：身份与材料，不含 compose action 协议。"""
-    return assemble_turn_system(bundle, include_output_format=False)
+    from dataclasses import replace
+
+    from agent.soul.speak.responders.request_driven.protocol.scrub import (
+        scrub_compose_markup,
+    )
+
+    guidance = replace(
+        bundle.guidance,
+        context_distill=scrub_compose_markup(bundle.guidance.context_distill),
+        working_memory=scrub_compose_markup(bundle.guidance.working_memory),
+    )
+    persona = replace(
+        bundle.persona,
+        dialogue_compressed=scrub_compose_markup(bundle.persona.dialogue_compressed),
+    )
+    clean_bundle = replace(bundle, guidance=guidance, persona=persona)
+    return assemble_turn_system(clean_bundle, include_output_format=False)

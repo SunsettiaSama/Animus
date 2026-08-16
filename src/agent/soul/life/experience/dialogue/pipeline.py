@@ -89,6 +89,15 @@ class DialogueExperiencePipeline:
         activated_memory_ids: list[str] | None = None,
         proactive_intent_id: str = "",
         now: datetime | None = None,
+        enqueue_share: bool = False,
+        push_to_user: bool = False,
+        share_content: str = "",
+        share_why: str = "",
+        share_desire: str = "mild",
+        promote_to_memory: bool = False,
+        impression_intensity: float = 0.0,
+        impression_why: str = "",
+        annotation_decided: bool = False,
     ) -> None:
         from agent.soul.presence.state import PresenceEvent
 
@@ -109,6 +118,15 @@ class DialogueExperiencePipeline:
             activated_memory_ids=activated_memory_ids,
             proactive_intent_id=proactive_intent_id,
             now=now,
+            enqueue_share=enqueue_share,
+            push_to_user=push_to_user,
+            share_content=share_content,
+            share_why=share_why,
+            share_desire=share_desire,
+            promote_to_memory=promote_to_memory,
+            impression_intensity=impression_intensity,
+            impression_why=impression_why,
+            annotation_decided=annotation_decided,
         )
         self._sync_working_memory(pres, session_id, item, now=now)
 

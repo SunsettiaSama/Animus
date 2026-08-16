@@ -84,8 +84,17 @@ class SpeakWsClient:
         self._connected = False
         self._enqueue({"type": "disconnected"})
 
-    def connect(self, *, timeout_s: float = 15.0) -> None:
+    def connect(self, *, timeout_s: float | None = 15.0) -> None:
+        """Start WS thread. timeout_s=None: return immediately (poll is_ready())."""
         if self._connected and self._session_ready.is_set():
+            return
+        if self._thread is not None and self._thread.is_alive() and not self._closed:
+            if timeout_s is None:
+                return
+            if not self._session_ready.wait(timeout_s):
+                raise TimeoutError(
+                    f"Speak session_ready timeout after {timeout_s}s ({self.url})"
+                )
             return
         self._closed = False
         self._session_ready.clear()
@@ -102,8 +111,13 @@ class SpeakWsClient:
             daemon=True,
         )
         self._thread.start()
+        if timeout_s is None:
+            return
         if not self._session_ready.wait(timeout_s):
             raise TimeoutError(f"Speak session_ready timeout after {timeout_s}s ({self.url})")
+
+    def is_ready(self) -> bool:
+        return self._connected and self._session_ready.is_set() and self._ws is not None
 
     def is_connected(self) -> bool:
         return self._connected and self._ws is not None
@@ -116,14 +130,14 @@ class SpeakWsClient:
 
     def send_user_message(self, question: str) -> bool:
         text = str(question).strip()
-        if not text or not self.is_connected() or self._ws is None:
+        if not text or not self.is_ready() or self._ws is None:
             return False
         self._ws.send(json.dumps(self._payload({"type": "user_message", "question": text})))
         return True
 
     def acknowledge_proactive(self, delivery_id: str) -> bool:
         did = str(delivery_id).strip()
-        if not did or not self.is_connected() or self._ws is None:
+        if not did or not self.is_ready() or self._ws is None:
             return False
         self._ws.send(json.dumps(self._payload({"type": "proactive_ack", "delivery_id": did})))
         return True

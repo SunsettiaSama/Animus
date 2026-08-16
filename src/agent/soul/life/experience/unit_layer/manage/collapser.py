@@ -22,7 +22,7 @@ class ExperienceCollapser(Protocol):
     注意
     ----
     新 collision unit 的情感字段继承参与单元中 salience 最高者；
-    主路径在 ingest 时经 ``life.io.memory`` 立即正式落图；``should_promote_to_memory`` 仅作辅助信号。
+    主路径在 ingest 时经 ``life.io.memory`` 按 ``promote_to_memory`` 标注门控落图。
     """
 
     def collapse(self, units: list[ExperienceUnit]) -> str:

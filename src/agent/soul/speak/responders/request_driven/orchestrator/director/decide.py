@@ -13,7 +13,9 @@ from ..blocks.share import build_share_compose_plan, share_queue_full
 from .types import (
     BlockId,
     DirectorPlan,
+    MemoryInjectPlan,
     ModuleDecision,
+    ShareComposePlan,
     SocialArmedKind,
 )
 
@@ -211,4 +213,44 @@ def decide_plan(
         social_armed=social_armed,
         source_user_text=user_text.strip(),
         notes=notes,
+    )
+
+
+def decide_hot_path_plan(
+    *,
+    session_id: str,
+    target_turn_index: int,
+    user_text: str,
+    generation: int = 0,
+) -> DirectorPlan:
+    """用户→角色热路径：全部 apply 缓存层，禁止同步 refresh LLM。
+
+    备注：角色接口不得等导演/编剧；plan_control_arc / persona / scene 刷新只走异步 warm。
+    """
+    sid = session_id.strip()
+    modules = (
+        _module_decision("persona", refresh=False, include=True, reason="hot_path_cached"),
+        _module_decision("scene", refresh=False, include=True, reason="hot_path_cached"),
+        _module_decision("guidance", refresh=False, include=True, reason="hot_path_cached"),
+        _module_decision("context", refresh=False, include=True, reason="hot_path_cached"),
+        _module_decision("memory", refresh=False, include=True, reason="hot_path_cached"),
+        _module_decision("social", refresh=False, include=True, reason="hot_path_cached"),
+        _module_decision("share", refresh=False, include=False, reason="hot_path_skip_share"),
+    )
+    return DirectorPlan(
+        session_id=sid,
+        target_turn_index=target_turn_index,
+        generation=generation,
+        modules=modules,
+        memory=MemoryInjectPlan(
+            request_emergence=False,
+            request_keyword=False,
+            request_portrait=False,
+            include_recall=True,
+            include_portrait=True,
+            pull_at_consume=True,
+        ),
+        share=ShareComposePlan(),
+        source_user_text=user_text.strip(),
+        notes=["director: hot_path_no_llm_refresh"],
     )

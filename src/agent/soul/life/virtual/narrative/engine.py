@@ -131,10 +131,55 @@ def _format_unit(u: ExperienceUnit) -> str:
 
 
 def _extract_tag(raw: str, tag: str) -> str:
-    m = re.search(rf"\[{tag}\](.*?)\[/{tag}\]", raw, re.DOTALL)
-    if m is None:
-        return ""
-    return m.group(1).strip()
+    """抽取 [TAG]...[/TAG]；容忍大小写、未闭合，以及下一标记截断。"""
+    text = str(raw or "")
+    closed = re.search(
+        rf"\[{tag}\]\s*(.*?)\s*\[/{tag}\]",
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if closed is not None:
+        return closed.group(1).strip()
+    opened = re.search(
+        rf"\[{tag}\]\s*(.*?)(?=\n\s*\[(?:/?NARRATIVE|/?PERCEPTION|/?EMOTION|/?INTENSITY|/?STATE_PATCH)\b|$)",
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if opened is not None:
+        return opened.group(1).strip()
+    return ""
+
+
+def _strip_tagged_sections(raw: str, *, keep: str = "") -> str:
+    text = str(raw or "")
+    tags = ("NARRATIVE", "PERCEPTION", "EMOTION", "INTENSITY", "STATE_PATCH")
+    for tag in tags:
+        if keep and tag.upper() == keep.upper():
+            continue
+        text = re.sub(
+            rf"\[{tag}\].*?\[/{tag}\]",
+            "",
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        text = re.sub(
+            rf"\[{tag}\].*?(?=\n\s*\[(?:/?NARRATIVE|/?PERCEPTION|/?EMOTION|/?INTENSITY|/?STATE_PATCH)\b|$)",
+            "",
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+    text = re.sub(
+        r"\[/?(?:NARRATIVE|PERCEPTION|EMOTION|INTENSITY|STATE_PATCH)\]",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text.strip()
+
+
+def _fallback_narrative_body(raw: str) -> str:
+    """模型未按标记输出时：去掉其他字段块，剩余正文当作叙事。"""
+    return _strip_tagged_sections(raw)
 
 
 def _validate_no_meta(text: str) -> None:
@@ -167,6 +212,8 @@ def _compact(text: str, *, limit: int) -> str:
 def _natural_narrative(raw: str) -> tuple[str, str]:
     narrative = _compact(_clean_story_text(_extract_tag(raw, "NARRATIVE")), limit=240)
     perception = _compact(_clean_story_text(_extract_tag(raw, "PERCEPTION")), limit=80)
+    if not narrative:
+        narrative = _compact(_clean_story_text(_fallback_narrative_body(raw)), limit=240)
     if not narrative:
         raise ValueError("虚拟叙事缺少字段：NARRATIVE")
     _validate_no_meta(narrative)
@@ -223,6 +270,11 @@ class NarrativeEngine:
         ).strip()
         narrative, perception = _natural_narrative(raw)
         emotion_text = _compact(_extract_tag(raw, "EMOTION"), limit=60)
+        if not emotion_text:
+            # 无 EMOTION 标记时，从叙事末句摘一句作情感自述
+            parts = re.split(r"[。！？]", narrative)
+            candidates = [p.strip() for p in parts if p.strip()]
+            emotion_text = _compact(candidates[-1] if candidates else narrative, limit=60)
         if not emotion_text:
             raise ValueError("虚拟叙事缺少字段：EMOTION")
         _validate_no_meta(emotion_text)

@@ -161,6 +161,26 @@ class SpeakContextDistiller:
             recent_turns=recent_turns,
         )
 
+    def recent_turn_lines(self, session_id: str, *, limit: int = 8) -> tuple[str, ...]:
+        """导演轮询可读的最近对白行（压缩摘要 + 未蒸馏原文）。"""
+        state = self._sessions.get(session_id)
+        if state is None:
+            return ()
+        lines: list[str] = []
+        with state.lock:
+            for summary in list(state.distilled)[-max(1, limit // 2) :]:
+                text = str(summary or "").strip()
+                if text:
+                    lines.append(f"[压缩] {text}")
+            for chunk in list(state.buffer)[-limit:]:
+                user = str(chunk.user_text or "").strip()
+                agent = str(chunk.agent_text or "").strip()
+                if user:
+                    lines.append(f"用户：{user}")
+                if agent:
+                    lines.append(f"你：{agent}")
+        return tuple(lines[-limit:])
+
     def session_context_blocks(self, session_id: str, *, generation: int) -> tuple[str, str]:
         """(上下文蒸馏块, 工作记忆块)。"""
         return (

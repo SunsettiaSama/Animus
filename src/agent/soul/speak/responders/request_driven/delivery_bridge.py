@@ -31,51 +31,20 @@ def timeline_to_delivery_plan(
     turn_index: int,
     plan_id: str,
 ) -> DeliveryPlan:
-    """将 Role 时间线折叠为 DeliveryPlan（以 Role 为准，覆盖导演 pacing）。"""
-    segments: list[ReplySegment] = []
-    pending_wait_ms = 0
-    pending_reason = ""
-    for op in timeline.ops:
-        if op.kind == "think":
-            continue
-        if op.kind == "wait":
-            pending_wait_ms += op.wait_ms
-            pending_reason = "role_wait"
-            continue
-        if op.kind == "silence":
-            pending_wait_ms += op.wait_ms
-            pending_reason = "role_silence"
-            continue
-        if op.kind == "body":
-            continue
-        if op.kind == "emit":
-            texts = [t for t in op.texts if t.strip()]
-            if not texts:
-                pending_wait_ms = 0
-                pending_reason = ""
-                continue
-            for index, text in enumerate(texts):
-                wait_ms = pending_wait_ms if index == 0 else 0
-                reason = pending_reason if index == 0 else "role_emit"
-                segments.append(
-                    ReplySegment(
-                        text=text,
-                        wait_ms=wait_ms,
-                        wait_reason=reason or "role_emit",
-                        continuity="append" if index < len(texts) - 1 else "finish",
-                    )
-                )
-                pending_wait_ms = 0
-                pending_reason = ""
-    if not segments and pending_wait_ms > 0:
-        segments.append(
+    """将角色台词收束成一次完整交付，节奏由后端 render_time 控制。"""
+    answer = timeline.answer_text.strip()
+    segments = (
+        [
             ReplySegment(
-                text="",
-                wait_ms=pending_wait_ms,
-                wait_reason=pending_reason or "role_wait",
+                text=answer,
+                wait_ms=0,
+                wait_reason="character_speak",
                 continuity="finish",
             )
-        )
+        ]
+        if answer
+        else []
+    )
     return build_delivery_plan(
         turn_index=turn_index,
         plan_id=plan_id,
@@ -91,66 +60,94 @@ def timeline_to_outbound_request(
     user_text: str = "",
     finish: bool = True,
 ) -> OutboundRequest:
-    """Role 时间线 → 统一 OutboundRequest（可见出站唯一输入形态）。"""
+    """Role 时间线 → 按 ops 索引顺序出站；speak / body 交替保留 order。"""
     ops: list[OutboundOp] = []
-    for op in timeline.ops:
-        if op.kind == "think":
-            text = op.body.strip()
-            if text:
+    fallback_order = 0
+
+    def _order_of(top) -> int:
+        nonlocal fallback_order
+        raw = top.meta.get("order") if isinstance(top.meta, dict) else None
+        if raw is not None:
+            order = int(raw)
+            fallback_order = max(fallback_order, order + 1)
+            return order
+        order = fallback_order
+        fallback_order += 1
+        return order
+
+    for top in timeline.ops:
+        if top.kind == "think":
+            thought = top.body.strip()
+            if thought:
+                order = _order_of(top)
                 ops.append(
                     OutboundOp(
                         kind="think",
-                        text=text,
-                        meta={"role_op": "think", "field": "thought"},
+                        text=thought,
+                        meta={"role_op": "think", "field": "thought", "order": order},
                     )
                 )
             continue
-        if op.kind in ("wait", "silence"):
-            ops.append(
-                OutboundOp(
-                    kind=op.kind,
-                    seconds=max(0.0, float(op.seconds)),
-                    meta={
-                        "role_op": op.kind,
-                        "silence": op.kind == "silence",
-                        "field": op.kind,
-                    },
-                )
-            )
-            continue
-        if op.kind == "body":
-            text = op.body.strip()
-            if text:
+        if top.kind == "body":
+            body = top.body.strip()
+            if body:
+                order = _order_of(top)
                 ops.append(
                     OutboundOp(
                         kind="action",
-                        text=text,
-                        meta={"role_op": "body", "field": "body"},
+                        text=body,
+                        meta={"role_op": "body", "field": "body", "order": order},
                     )
                 )
             continue
-        if op.kind == "emit":
-            for text in op.texts:
-                if text.strip():
-                    ops.append(
-                        OutboundOp(
-                            kind="speak",
-                            text=text.strip(),
-                            meta={"role_op": "emit", "field": "speak"},
-                        )
+        if top.kind == "emit":
+            pieces = [str(t or "").strip() for t in top.texts if str(t or "").strip()]
+            base = None
+            if isinstance(top.meta, dict) and top.meta.get("order") is not None:
+                base = int(top.meta["order"])
+            for offset, piece in enumerate(pieces):
+                if base is not None:
+                    order = base + offset
+                    fallback_order = max(fallback_order, order + 1)
+                else:
+                    order = fallback_order
+                    fallback_order += 1
+                ops.append(
+                    OutboundOp(
+                        kind="speak",
+                        text=piece,
+                        meta={"role_op": "speak", "field": "speak", "order": order},
                     )
+                )
+            continue
+        if top.kind == "wait":
+            order = _order_of(top)
+            ops.append(
+                OutboundOp(
+                    kind="wait",
+                    seconds=float(top.seconds or 0.0),
+                    meta={"role_op": "wait", "field": "wait", "order": order},
+                )
+            )
+            continue
+        if top.kind == "silence":
+            continue
     if finish:
         ops.append(
             OutboundOp(
                 kind="finish",
                 text="",
                 final=True,
-                meta={"role_timeline": True, "field": "finish"},
+                meta={"role_timeline": True, "field": "finish", "order": fallback_order},
             )
         )
+    # 稳定按索引排序，避免 LLM 乱序输出时前端错乱
+    visible = [op for op in ops if op.kind != "finish"]
+    visible.sort(key=lambda op: int(op.meta.get("order", 0) or 0))
+    finish_ops = [op for op in ops if op.kind == "finish"]
     return OutboundRequest(
         session_id=session_id.strip(),
-        ops=tuple(ops),
+        ops=tuple(visible + finish_ops),
         user_text=user_text,
         meta={"source": "role_timeline"},
     )

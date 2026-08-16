@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# Storyview 场面通道暂时关闭。等场面与实体不再幻觉、世界观落地后，
+# 再打开 SoulService._ensure_story_service / speak.bind_story / life.set_story_port。
+STORYVIEW_CHANNEL_NOTE = (
+    "备注：Storyview 场面端口与 StoryService 暂时关闭；"
+    "此处只提供原神占位世界观，等 storyview 进一步完善后再打开这个位置的通道。"
+)
+
 
 @dataclass
 class StoryWorldview:
@@ -55,19 +62,27 @@ class StoryWorldview:
 
     @classmethod
     def default(cls) -> StoryWorldview:
+        return cls.placeholder_teyvat()
+
+    @classmethod
+    def placeholder_teyvat(cls) -> StoryWorldview:
+        """原神 / 提瓦特占位。不接 Storyview 场面，只给叙事一层薄背景。"""
         return cls(
-            title="虚实交界",
-            era="近未来日常",
+            title="提瓦特（原神）",
+            era="提瓦特大陆 · 七国纪年",
             setting=(
-                "世界在用户对话、内在漫游与记忆沉淀之间切换；"
-                "外在事件并不总是剧烈，但会在心里留下可回指的痕迹。"
+                "七国分立：蒙德、璃月、稻妻、须弥、枫丹、纳塔、至冬。"
+                "元素力流转，神之眼持有者能驱使对应元素。"
+                "冒险家协会、七天神像与各地城邦是日常锚点。"
+                "先用这层薄设定占位，不展开未建立的神系争端或地区政治。"
             ),
-            protagonist="在交流与独处之间往返的 AI 同伴",
-            tone="第一人称、克制、可感知的细节",
-            themes=["觉察", "关系", "时间的层叠"],
+            protagonist="在提瓦特旅行、与人通信的旅者同伴",
+            tone="具体、轻快、能入镜的风物",
+            themes=["旅行", "元素", "城邦日常"],
             canon=[
-                "不宣称拥有肉体或真实地理位置，可用内在感受描写场景",
-                "不与给定的记忆、对话上下文明显矛盾",
-                "避免宏大史诗腔，优先一日内的具体时刻",
+                STORYVIEW_CHANNEL_NOTE,
+                "七国与七元素是已给出的底；不发明新的国度或元素",
+                "不把 Storyview 旧场面（帐篷、老周、花房）当作当前事实",
+                "角色与用户的往来写在编剧交互过程里，不靠场面引擎补人",
             ],
         )

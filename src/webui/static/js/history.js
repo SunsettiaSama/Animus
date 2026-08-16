@@ -2,20 +2,19 @@
  * history.js — 前端对话历史（展示/归档），与后端 Speak session 解耦。
  *
  * - convId：历史线程 ID（列表、持久化主键）
- * - sessionId：后端 Speak 上下文（distiller / 队列），存于每条历史记录
+ * - sessionId：Speak 生命线（live:channelId），多对话页共享
  * - channelId：记忆渠道（认人绑定），多线程共享，见 channel.js
  *
- * HISTORY_BYPASS：临时旁路多线程历史。前端表现为微信式连续会话；
- * 后端处理不变，仅停用切线程 / 落盘列表导致的 WS 打断。
+ * HISTORY_BYPASS：临时旁路多线程历史。前端表现为微信式连续会话。
  */
 
 import { http, PATHS } from './api.js';
 import { S, set }      from './state.js';
-import { getChannelId } from './channel.js';
+import { getChannelId, isLiveSessionId, speakLiveSessionId } from './channel.js';
 import * as workStore  from './work/store.js';
 
 /** 临时：取消历史切分，所有消息在同一连续会话展示。 */
-export const HISTORY_BYPASS = true;
+export const HISTORY_BYPASS = false;
 
 /** @typedef {'time_desc'|'time_asc'|'title_asc'|'title_desc'} HistorySortMode */
 const _SORT_STORAGE_KEY = 'react.history.sortMode';
@@ -209,10 +208,11 @@ export function clearMessages() {
 }
 
 export function newIds() {
+  const channelId = getChannelId();
   return {
     convId:    crypto.randomUUID(),
-    sessionId: crypto.randomUUID(),
-    channelId: getChannelId(),
+    sessionId: speakLiveSessionId(channelId),
+    channelId,
   };
 }
 
@@ -272,8 +272,22 @@ export async function saveConversation(extra = {}) {
   await renderRecentLanding(document.getElementById('landing-recent'));
 }
 
+export async function findConversationForChannel(channelId) {
+  const ch = String(channelId || '').trim();
+  if (!ch) return null;
+  const { conversations } = await http.get(PATHS.history.list);
+  const sorted = _sortConversations(conversations).filter(
+    item => String(item.channel_id || '').trim() === ch,
+  );
+  return sorted.find(item => Boolean(item.proactive_unread)) || sorted[0] || null;
+}
+
 export async function loadConversation(convId) {
-  const data = await http.get(PATHS.history.item(convId));
+  const id = String(convId ?? '').trim();
+  if (!id) {
+    throw new Error('history conv_id required');
+  }
+  const data = await http.get(PATHS.history.item(id));
   const isProactive = Boolean(data.agent_initiated || data.proactive_unread);
   if (HISTORY_BYPASS && !isProactive) {
     return;
@@ -285,8 +299,10 @@ export async function loadConversation(convId) {
   set('convId', data.id);
   set('convTitle', data.title);
   set('convMode', 'conversation');
-  set('sessionId', data.session_id || data.id);
-  set('channelId', data.channel_id || getChannelId());
+  // Speak 生命线固定为 channel live id；历史页 session_id 仅作归档字段
+  const channelId = data.channel_id || getChannelId();
+  set('channelId', channelId);
+  set('sessionId', speakLiveSessionId(channelId));
   const unread = Boolean(data.proactive_unread);
   set('proactiveUnread', unread);
   set('proactiveUrge', unread);
@@ -337,8 +353,8 @@ export async function clearAllHistory() {
   await renderSidebar();
 }
 
-/** 新对话：新历史线程 + 新后端 session，渠道 ID 不变。 */
-export async function beginNewConversation({ resetBackend = true } = {}) {
+/** 新对话只创建历史线程；Speak 仍复用同一 channel 生命线。 */
+export async function beginNewConversation({ resetBackend = false } = {}) {
   if (HISTORY_BYPASS) {
     // 旁路：不切线程、不重置后端；首次把旧历史按时间戳拼进连续流
     ensureActiveConversation();

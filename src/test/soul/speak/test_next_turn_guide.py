@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from agent.soul.speak.responders.request_driven.orchestrator.directors.next_turn_guide import (
+from agent.soul.speak.responders.request_driven.directors.next_turn_guide import (
     NextTurnGuide,
     NextTurnGuideDirector,
     apply_next_turn_guide_output,
     promote_pending_next_turn_guide,
 )
-from agent.soul.speak.responders.request_driven.orchestrator.directors.think_trace import (
+from agent.soul.speak.responders.request_driven.directors.think_trace import (
     DirectorThinkCompressor,
     DirectorThinkStep,
 )
@@ -23,7 +23,7 @@ from agent.soul.speak.responders.request_driven.orchestrator.state.runtime.store
     SessionSchedulingState,
 )
 from agent.soul.speak.responders.request_driven.prompt import build_role_prompt
-from agent.soul.speak.responders.request_driven.orchestrator.compose_manager.projectors.role_view import (
+from agent.soul.speak.responders.request_driven.composer.projectors.role_view import (
     RoleContextView,
 )
 from test.soul.persona.distill_fixtures import persona_snapshot_with_distill
@@ -90,17 +90,25 @@ def test_next_turn_guide_writes_pending_for_following_turn():
     assert state.pending_next_turn_guide == {}
 
 
-def test_role_prompt_consumes_active_behavior_guide():
+def test_role_prompt_includes_director_unit_instruction():
     view = RoleContextView(session_id="s")
     prompt = build_role_prompt(
         view,
         user_text="嗨",
         behavior_guide="保持克制，先确认再回应",
         script_hint="仍在海边营地",
+        director_focus="用户刚打招呼",
+        director_intent="把往来接住，并留下下一句空间",
+        director_direction="先应一声，再带出眼前正在做的事",
+        director_exit="应完这一声就停",
     )
-    assert "上轮导演对当前轮的预测" in prompt.system_extra
-    assert "保持克制" in prompt.system_extra
-    assert "海边营地" in prompt.system_extra
+    assert "上轮导演对当前轮的预测" not in prompt.system_extra
+    assert "保持克制" not in prompt.system_extra
+    assert "海边营地" not in prompt.system_extra
+    assert "你手头：用户刚打招呼" in prompt.system_extra
+    assert "你的姿态：应完这一声就停" in prompt.system_extra
+    assert "对方刚发来" in prompt.system_extra
+    assert "短消息" in prompt.system_extra
 
 
 def test_next_turn_guide_from_dict_roundtrip():

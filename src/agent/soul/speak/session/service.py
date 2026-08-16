@@ -281,6 +281,15 @@ class SpeakSessionService:
     def is_pushing(self, session_id: str) -> bool:
         return self._queues.is_pushing(session_id)
 
+    def is_busy(self, session_id: str) -> bool:
+        return self._queues.is_busy(session_id)
+
+    def has_user_interrupt(self, session_id: str) -> bool:
+        return self._queues.has_user_interrupt(session_id)
+
+    def is_turn_busy(self, session_id: str) -> bool:
+        return self._queues.is_turn_busy(session_id)
+
     def submit_user_input(
         self,
         session_id: str,

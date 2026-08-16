@@ -1,6 +1,6 @@
 """Minimal Stardew-like town demo over Speak WS (channel pygame-town).
 
-Deps (demo only): pygame, websocket-client
+Deps (demo only): pygame, websocket-client, Pillow (asset staging only)
 Run (Soul Ready first):
   set PYTHONPATH=src
   python demos/pygame_town/main.py
@@ -26,13 +26,21 @@ if str(DEMO_DIR) not in sys.path:
     sys.path.insert(0, str(DEMO_DIR))
 
 from client.speak_ws import SpeakWsClient
+from activity import HourlyActivityPoll
 from day import DayClock
 from presenter import SpeakPresenter
+from sprites import SpriteBank
 from town_director import TownDirector
-from world import CABIN, COLORS, FENCE, PLAZA, World
+from world import World
 
 LOG_PATH = ROOT / ".react" / "demos" / "pygame_town" / "plaza_chat.jsonl"
-HELP = "WASD move | E crop | Enter talk | N next phase | Esc quit"
+HELP = "WASD move | E crop | Enter talk | N +1h | Esc quit"
+
+_HOME_TO_CHAR = {
+    "he": "he",
+    "mai": "mai",
+    "moss": "moss",
+}
 
 
 def _ack_proactive(client: SpeakWsClient, msg: dict) -> None:
@@ -67,64 +75,46 @@ def _draw_bubble(screen, font, text: str, x: float, y: float) -> None:
         yy += p.get_height()
 
 
-def _draw_world(screen, world: World, font, hud_font, day: DayClock, status: str, draft: str) -> None:
+def _draw_world(
+    screen,
+    world: World,
+    sprites: SpriteBank,
+    font,
+    hud_font,
+    day: DayClock,
+    status: str,
+    draft: str,
+) -> None:
     tile = world.tile
     for y, row in enumerate(world.grid):
         for x, kind in enumerate(row):
-            color = COLORS.get(kind, (0, 0, 0))
-            pygame.draw.rect(screen, color, (x * tile, y * tile, tile, tile))
-            if kind == CABIN:
-                pygame.draw.rect(screen, (70, 40, 30), (x * tile + 4, y * tile + 4, tile - 8, tile - 8))
-            if kind == FENCE:
-                pygame.draw.line(
-                    screen,
-                    (50, 40, 30),
-                    (x * tile, y * tile + tile // 2),
-                    (x * tile + tile, y * tile + tile // 2),
-                    3,
-                )
-            if kind == PLAZA:
-                pygame.draw.circle(
-                    screen,
-                    (150, 130, 100),
-                    (x * tile + tile // 2, y * tile + tile // 2),
-                    3,
-                )
+            sprites.blit_tile(screen, kind, x * tile, y * tile)
 
     for crop in world.crops:
-        cx = crop.tile_x * tile + tile // 2
-        cy = crop.tile_y * tile + tile // 2
         if crop.harvested:
             continue
+        cx = crop.tile_x * tile + tile // 2
+        cy = crop.tile_y * tile + tile // 2
         if crop.ready:
-            pygame.draw.circle(screen, (60, 180, 70), (cx, cy), 8)
+            stage = "ready"
         elif crop.watered:
-            pygame.draw.circle(screen, (90, 140, 200), (cx, cy), 6)
+            stage = "wet"
         else:
-            pygame.draw.circle(screen, (150, 120, 60), (cx, cy), 5)
+            stage = "dry"
+        sprites.blit_crop(screen, stage, cx, cy)
 
     for agent in world.agents:
-        pygame.draw.circle(screen, agent.color, (int(agent.x), int(agent.y)), 12)
-        if agent.talking:
-            pygame.draw.circle(screen, (255, 255, 255), (int(agent.x), int(agent.y)), 14, 2)
+        key = _HOME_TO_CHAR.get(agent.home_id, "he")
+        sprites.blit_char(screen, key, agent.x, agent.y, highlight=agent.talking)
         label = hud_font.render(agent.name, True, (255, 255, 255))
-        screen.blit(label, (int(agent.x) - label.get_width() // 2, int(agent.y) + 14))
+        screen.blit(label, (int(agent.x) - label.get_width() // 2, int(agent.y) + 16))
         _draw_bubble(screen, font, agent.bubble, agent.x, agent.y)
 
-    pygame.draw.rect(
-        screen,
-        (240, 220, 120),
-        (int(world.player_x) - 10, int(world.player_y) - 10, 20, 20),
-    )
-    pygame.draw.rect(
-        screen,
-        (40, 40, 20),
-        (int(world.player_x) - 10, int(world.player_y) - 10, 20, 20),
-        2,
-    )
+    sprites.blit_char(screen, "player", world.player_x, world.player_y)
 
     hud = (
-        f"Day {day.day} {day.phase} | harvest {world.harvest_count} | {status} | {HELP}"
+        f"{day.label} | next {day.seconds_to_next_hour():.0f}s | "
+        f"harvest {world.harvest_count} | {status} | {HELP}"
     )
     screen.blit(hud_font.render(hud, True, (255, 255, 255)), (8, 6))
     if draft is not None:
@@ -151,7 +141,7 @@ def run_smoke() -> None:
         raise RuntimeError("smoke: harvest failed")
 
     day = DayClock()
-    day.phase_index = 1  # noon -> he+mai on plaza
+    day.hour = 12  # noon -> he+mai on plaza
     day.apply_schedule(world.agents)
     world.sync_agent_targets()
     for agent in world.agents:
@@ -165,7 +155,6 @@ def run_smoke() -> None:
         channel_id="pygame-town",
     )
     client.connect(timeout_s=20.0)
-    # drain enter-greeting / proactive noise before plaza turns
     settle_until = time.monotonic() + 3.0
     while time.monotonic() < settle_until:
         for msg in client.poll():
@@ -220,6 +209,7 @@ def main() -> None:
     world = World()
     w, h = world.pixel_size()
     screen = pygame.display.set_mode((w, h + 36))
+    sprites = SpriteBank(tile_size=world.tile)
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("microsoftyahei,simhei,consolas", 16)
     hud_font = pygame.font.SysFont("microsoftyahei,simhei,consolas", 14)
@@ -227,6 +217,7 @@ def main() -> None:
     day = DayClock()
     day.apply_schedule(world.agents)
     world.sync_agent_targets()
+    activity = HourlyActivityPoll(world)
 
     presenter = SpeakPresenter()
     director = TownDirector(presenter, LOG_PATH, max_rounds=4, cooldown_s=10.0)
@@ -235,15 +226,25 @@ def main() -> None:
         session_id=f"pygame-town-{uuid.uuid4().hex[:10]}",
         channel_id="pygame-town",
     )
+    # 不阻塞主循环：后台连 Speak，窗口可立即交互
     status = "connecting"
-    client.connect(timeout_s=20.0)
-    status = "ready"
+    client.connect(timeout_s=None)
+    connect_deadline = time.monotonic() + 30.0
 
     typing = False
     draft = ""
     player_focus = None
     player_await_finish = False
     running = True
+
+    def _on_game_hour() -> None:
+        nonlocal status
+        day.apply_schedule(world.agents, skip_busy=True)
+        world.sync_agent_targets(skip_busy=True)
+        status = activity.poll_hour()
+
+    # 开局立刻轮询一次，否则要干等一分钟才有动静
+    _on_game_hour()
 
     while running:
         dt = clock.tick(60) / 1000.0
@@ -263,9 +264,12 @@ def main() -> None:
                         draft = ""
                         typing = False
                         if text and player_focus is not None and not director.active:
-                            presenter.bind(player_focus)
-                            player_await_finish = client.send_user_message(text)
-                            status = f"talk->{player_focus.name}"
+                            if not client.is_ready():
+                                status = "speak_not_ready"
+                            else:
+                                presenter.bind(player_focus)
+                                player_await_finish = client.send_user_message(text)
+                                status = f"talk->{player_focus.name}"
                     elif event.key == pygame.K_BACKSPACE:
                         draft = draft[:-1]
                     else:
@@ -274,10 +278,8 @@ def main() -> None:
                             draft += ch
                 else:
                     if event.key == pygame.K_n:
-                        phase = day.advance()
-                        day.apply_schedule(world.agents)
-                        world.sync_agent_targets()
-                        status = f"phase->{phase}"
+                        day.advance()
+                        _on_game_hour()
                     elif event.key == pygame.K_e:
                         result = world.interact_crop()
                         if result:
@@ -296,6 +298,18 @@ def main() -> None:
 
         for agent in world.agents:
             agent.update(dt)
+
+        if day.tick(dt):
+            _on_game_hour()
+        act_msg = activity.update()
+        if act_msg:
+            status = act_msg
+
+        if status == "connecting":
+            if client.is_ready():
+                status = "ready"
+            elif time.monotonic() > connect_deadline:
+                status = "speak_timeout"
 
         for msg in client.poll():
             mtype = str(msg.get("type", ""))
@@ -317,7 +331,8 @@ def main() -> None:
                 presenter.on_message(msg)
 
         if (
-            not director.active
+            client.is_ready()
+            and not director.active
             and not player_await_finish
             and not typing
             and not presenter.busy
@@ -330,6 +345,7 @@ def main() -> None:
         _draw_world(
             screen,
             world,
+            sprites,
             font,
             hud_font,
             day,

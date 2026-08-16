@@ -17,13 +17,15 @@ def render_main_profile_from_snap(
     *,
     max_chars: int = 1200,
     caller: str = "render_main_profile_from_snap",
+    warn_main_portrait: bool = False,
 ) -> str:
+    """Memory/Life 合法读主画像；默认不打 Speak 专用告警。"""
     profile_raw = snap.get("profile") or {}
     if not profile_raw:
         return ""
     profile = PersonaProfile.from_dict(profile_raw)
     return _trunc(
-        profile.render(warn_main_portrait=True, caller=caller),
+        profile.render(warn_main_portrait=warn_main_portrait, caller=caller),
         max_chars,
     )
 
@@ -33,12 +35,14 @@ def render_self_concept_from_snap(
     *,
     max_chars: int = 800,
     caller: str = "render_self_concept_from_snap",
+    warn_main_portrait: bool = False,
 ) -> str:
+    """Memory/Life 合法读 self_concept；默认不打 Speak 专用告警。"""
     concept_raw = snap.get("self_concept") or {}
     concept = SelfConcept.from_dict(concept_raw)
     if concept.is_empty():
         return ""
     return _trunc(
-        concept.render_for_role_llm(warn_main_portrait=True, caller=caller),
+        concept.render_for_role_llm(warn_main_portrait=warn_main_portrait, caller=caller),
         max_chars,
     )

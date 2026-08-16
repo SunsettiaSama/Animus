@@ -32,6 +32,9 @@ export const PATHS = {
     status: '/api/speak/status',
     notify: '/api/speak/notify',
     reset:  '/api/speak/reset',
+    pageEnter: '/api/speak/page_enter',
+    createUi: '/api/speak/create_ui',
+    proactiveAck: '/api/speak/proactive_ack',
     run:    '/ws/speak/run',
     trace:  sid => `/api/speak/session/${encodeURIComponent(sid)}/trace`,
     traceSet: '/api/speak/session/trace',
@@ -128,7 +131,7 @@ export const PATHS = {
   },
   history: {
     list: '/api/history',
-    item: id => `/api/history/${id}`,
+    item: id => `/api/history/${encodeURIComponent(id)}`,
   },
   timeline: '/api/timeline',
   probe: {

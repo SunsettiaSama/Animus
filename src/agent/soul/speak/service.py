@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from agent.soul.speak.io.inbound.memory.recall import perform_recall_handoff
+from agent.soul.workers import DomainWorker
 
 from .responders.request_driven.orchestrator import (
     ShareDesireComposer,
@@ -37,7 +39,6 @@ from .responders.request_driven import RequestDrivenPipelineRunner
 from .responders.rhythm import RhythmPipelineRunner
 from .responders.rhythm.state import RhythmStateStore
 from .responders.request_driven.orchestrator.queue import QueueDecisionRunner
-from .session.manage import SilenceBreakTurnSpec
 from .responders.request_driven.orchestrator.prompt_trace import get_prompt_trace
 from .session import SpeakFeelingChunk, SpeakSubjectiveChunk, SpeakTurnChunk
 from .session.lifecycle import SPEAK_SESSION_IDLE_SEC, SpeakSessionRegistry
@@ -65,25 +66,29 @@ from .io.outbound.stream_hub import SpeakOutboundStreamHub
 from .io.inbound.hub import SpeakInboundHub
 from .io.outbound.stream.flush import SpeakFlushMode, SpeakTypingHoldEmitter
 from .responders.request_driven.orchestrator.turn_coordinator import OrchestratorTurnCoordinator
-from .responders.request_driven.orchestrator.directors import DirectorCoordinator, DirectorLLMCaller
+from .responders.request_driven.directors import (
+    DirectorCoordinator,
+    DirectorLLMCaller,
+)
+from .responders.request_driven.screenwriter import Screenwriter
 from .responders.request_driven.orchestrator.runtime import DeliveryExecutor, OrchestratorThread
 from .responders.request_driven.orchestrator.state import SnapshotBuilder, StateStore, print_session_snapshot
-from .responders.request_driven.orchestrator.compose_manager import (
+from .responders.request_driven.composer import (
     ComposeManager,
     ComposeManagerConfig,
     ComposeManagerGateway,
 )
-from .responders.request_driven.orchestrator.compose_manager.ports.adapters import (
+from .responders.request_driven.composer.ports.adapters import (
     CallableMemorySearchPort,
     PresenceShareHintPort,
     units_from_recall_candidates,
 )
-from .responders.request_driven.orchestrator.compose_manager.ports.memory import MemoryHint, MemoryUnit
-from .io.outbound.execute import execute_outbound, outbound_from_delivery_plan, outbound_from_speak_text
+from .responders.request_driven.composer.ports.memory import MemoryHint, MemoryUnit
+from .io.outbound.manager import message_from_request
 from .io.outbound.protocol import OutboundRequest
 from .responders.request_driven.delivery_bridge import timeline_to_outbound_request
-from .responders.request_driven.orchestrator.directors.agent import DirectorAgentHost
-from .responders.request_driven.character import CharacterAgentHost
+from .responders.request_driven.directors.agent import DirectorAgentHost
+from .responders.request_driven.character import CharacterAgentHost, CharacterRuntime
 from .responders.request_driven import SpeakRole
 from .io.outbound.character import CharacterWorkGateway, CharacterWorkPort
 from .session.snapshot_port import RegistrySessionSnapshotPort
@@ -96,6 +101,9 @@ if TYPE_CHECKING:
     from .io.outbound import SpeakRequest
 
 logger = logging.getLogger(__name__)
+
+_OPENING_PLACEHOLDER = "（场面铺开中）"
+_OPENING_SLOT = "narrative_opening"
 
 
 @dataclass
@@ -222,11 +230,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._orchestrator_thread: OrchestratorThread | None = None
         self._session_ingress: SessionOrchestratorIngress | None = None
         self._delivery_executor: DeliveryExecutor | None = None
+        self._delivery_worker = DomainWorker("speak-delivery-worker", owner="speak")
         self._director_llm_caller = DirectorLLMCaller()
         self._director_push_now_cooldown_sec = director_push_now_cooldown_sec
         self._director_brew_queue_max = director_brew_queue_max
         self._async_ready_sessions: deque[str] = deque()
         self._async_ready_guard = threading.Lock()
+        self._character_handoff_inflight: set[str] = set()
+        self._character_handoff_guard = threading.Lock()
         self._session_manager.bind_record_fn(self.record_turn)
         self._bind_session_social()
         self._inbound_hub = SpeakInboundHub(
@@ -258,6 +269,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             stream_hub,
             life=life_outbound,
         )
+        self._outbound_manager = self._outbound_hub.manager
         self._io = SpeakIOHub(self._inbound_hub, self._outbound_hub)
         self._inbound_compose = self._io.inbound.compose
         self._inbound_memory = self._io.inbound.memory
@@ -398,6 +410,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
 
     def _bind_session_social(self) -> None:
         social = self._session_manager.social
+        # 静默开口只由 character rhythm schedule 调度，避免旧 90s silence-break
+        # 以一次伪入站重写 0/5/15/30 阶梯，造成连续重复开口。
+        social.silence_break_enabled = False
         social.bind_dialogue_supplier(
             lambda sid: self.session_working_memory_block(sid),
         )
@@ -405,8 +420,6 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             is_active=self._session_manager.has_active_dialogue,
             is_pushing=self._session_manager.is_pushing,
         )
-        social.silence.set_llm(self._llm)
-        social.set_silence_break_handler(self._execute_silence_break)
         social.enter_greeting.set_llm(self._llm)
         social.set_enter_greeting_handler(self._execute_enter_greeting)
 
@@ -414,6 +427,236 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._story_port = port
         self._world_id_fn = world_id_fn
         self._orchestrator.bind_story_port(port, world_id_fn)
+        if getattr(self, "_screenwriter", None) is not None:
+            self._screenwriter.bind_story(
+                port,
+                world_id_fn,
+                scene_brief_fn=lambda sid: self._orchestrator.scene_compose.director_scene_brief(sid),
+                resolve_scene_id_fn=self._resolve_active_scene_id,
+            )
+
+    def _resolve_active_scene_id(self, session_id: str) -> str:
+        active = self._orchestrator.scene_compose.active(session_id)
+        if active is None:
+            return ""
+        return str(active.result.scene_id or "").strip()
+
+    def ensure_screenwriter_init(self, session_id: str) -> None:
+        """会话打开：编剧写弧 + 场记 + opening。
+
+        可同步调用；arm_enter_greeting 走后台线程，避免卡住 WS/热路径。
+        """
+        from .responders.request_driven.orchestrator.state.core.speak_dormant import (
+            clear_narrative_for_reinit,
+            needs_narrative_reinit,
+        )
+
+        sid = session_id.strip()
+        if not sid or self._state_store is None or getattr(self, "_screenwriter", None) is None:
+            return
+        state = self._state_store.session(sid)
+        if needs_narrative_reinit(state):
+            clear_narrative_for_reinit(state)
+        if state.presence_card.ready and state.plot_arc.ready:
+            self._maybe_deliver_narrative_opening(sid)
+            return
+        self._screenwriter.init_presence(
+            state,
+            session_id=sid,
+            turn_index=0,
+            background_agent=True,
+        )
+        self._maybe_deliver_narrative_opening(sid)
+
+    def _schedule_screenwriter_init(self, session_id: str) -> None:
+        """后台跑编剧开场：前端先收占位 outline，完成后再升级推送。"""
+        sid = session_id.strip()
+        if not sid or self._state_store is None:
+            return
+        state = self._state_store.session(sid)
+        if bool(state.director_cache.get("screenwriter_init_scheduled")):
+            return
+        state.director_cache["screenwriter_init_scheduled"] = True
+        # 前端先渲染占位，不等编剧
+        self._deliver_narrative_outline(
+            sid,
+            text=_OPENING_PLACEHOLDER,
+            placeholder=True,
+        )
+
+        def _run() -> None:
+            self.ensure_screenwriter_init(sid)
+            # 真正 opening 只由 on_ready 推，这里不再二次投递
+            state.director_cache.pop("screenwriter_init_scheduled", None)
+
+        threading.Thread(
+            target=_run,
+            daemon=True,
+            name=f"screenwriter-init-{sid[:16]}",
+        ).start()
+
+    def _deliver_narrative_outline(
+        self,
+        session_id: str,
+        *,
+        text: str,
+        placeholder: bool = False,
+        upgrade: bool = False,
+    ) -> None:
+        """推送编剧 opening（outline）。placeholder 先占位；upgrade 覆盖占位。"""
+        from agent.soul.speak.io.outbound.protocol import OutboundOp, OutboundRequest
+
+        sid = session_id.strip()
+        body = str(text or "").strip()
+        if not sid or not body or self._state_store is None:
+            return
+        if not self._has_live_stream_session(sid):
+            return
+        state = self._state_store.session(sid)
+        if placeholder and bool(state.director_cache.get("narrative_opening_placeholder_sent")):
+            return
+        already = bool(state.director_cache.get("narrative_opening_delivered"))
+        prev = str(state.director_cache.get("narrative_opening") or "").strip()
+        if not placeholder and already and prev == body:
+            return
+        if upgrade and prev == body and not placeholder:
+            return
+        if already and not placeholder and not upgrade:
+            return
+
+        state.director_cache["narrative_opening"] = body
+        if placeholder:
+            state.director_cache["narrative_opening_placeholder_sent"] = True
+            state.director_cache["narrative_opening_is_placeholder"] = True
+        else:
+            first_ready = not bool(state.director_cache.get("narrative_opening_ready"))
+            state.director_cache["narrative_opening_is_placeholder"] = False
+            state.director_cache["narrative_opening_delivered"] = True
+            state.director_cache["narrative_opening_ready"] = True
+            if first_ready:
+                self._nudge_after_opening_ready(sid)
+
+        meta = {
+            "field": "outline",
+            "tag": "outline",
+            "order": 0,
+            "slot": _OPENING_SLOT,
+            "placeholder": bool(placeholder),
+            "upgrade": bool(upgrade),
+            "replace": bool(upgrade),
+        }
+        # 占位要 finish 解锁前端；upgrade 只推 outline，避免再开一轮气泡
+        ops = [OutboundOp(kind="outline", text=body, meta=meta)]
+        if not upgrade:
+            ops.append(
+                OutboundOp(
+                    kind="finish",
+                    text="",
+                    final=True,
+                    meta={
+                        "field": "finish",
+                        "order": 1,
+                        "source": "narrative_outline",
+                        "slot": _OPENING_SLOT,
+                        "placeholder": bool(placeholder),
+                        "upgrade": False,
+                    },
+                )
+            )
+        request = OutboundRequest(
+            session_id=sid,
+            ops=tuple(ops),
+            meta={
+                "source": "narrative_outline",
+                "slot": _OPENING_SLOT,
+                "placeholder": bool(placeholder),
+                "upgrade": bool(upgrade),
+            },
+        )
+        self._execute_outbound_request(
+            request,
+            user_text="",
+            background=True,
+        )
+
+    def _maybe_deliver_narrative_opening(self, session_id: str) -> None:
+        """兼容旧入口：有正文则推送（占位已发出时走 upgrade）。"""
+        sid = session_id.strip()
+        if not sid or self._state_store is None:
+            return
+        state = self._state_store.session(sid)
+        opening = self._resolve_narrative_outline_text(state)
+        if not opening or opening == _OPENING_PLACEHOLDER:
+            return
+        upgrade = bool(state.director_cache.get("narrative_opening_placeholder_sent"))
+        self._deliver_narrative_outline(
+            sid,
+            text=opening,
+            upgrade=upgrade,
+        )
+
+    def _resolve_narrative_outline_text(self, state) -> str:
+        """只认编剧写好的 opening。禁止用剧情 intent 现场拼「灯还亮着」。"""
+        cached = str(state.director_cache.get("narrative_opening") or "").strip()
+        if not cached or cached == _OPENING_PLACEHOLDER:
+            return ""
+        if bool(state.director_cache.get("narrative_opening_is_placeholder")):
+            return ""
+        return cached
+
+    def note_agent_visible_speak(
+        self,
+        session_id: str,
+        *,
+        turn_index: int,
+        user_text: str = "",
+        agent_text: str = "",
+    ) -> None:
+        """角色可见开口落库：更新角色侧交互账本。
+
+        用户与角色都开口才计一轮往来；满 3 轮或剧情 unit 总数超过 5 时
+        导演与编剧一起醒，醒后清空往来计数。
+        """
+        from .responders.request_driven.character.interaction import (
+            note_character_exchange,
+            sync_dialogue_history_into_ledger,
+        )
+
+        sid = session_id.strip()
+        if not sid or self._state_store is None:
+            return
+        state = self._state_store.session(sid)
+        recent: tuple[str, ...] = ()
+        dialogue_history = ""
+        if self._snapshot_builder is not None:
+            snap = self._snapshot_builder.build(sid, user_text=user_text)
+            recent = tuple(snap.dialogue.recent_turns[-6:])
+            dialogue_history = str(snap.dialogue.working_memory or "").strip()
+        inbound = str(user_text or "").strip()
+        note_character_exchange(
+            state,
+            user_text=inbound or str(state.last_real_user_text or ""),
+            agent_text=agent_text,
+        )
+        sync_dialogue_history_into_ledger(
+            state,
+            dialogue_history=dialogue_history,
+            recent_turns=recent,
+        )
+        state.last_agent_speak_at = time.time()
+        if turn_index > 0:
+            state.last_counted_speak_turn = int(turn_index)
+        if inbound and str(agent_text or "").strip():
+            state.interaction_exchange_count = int(
+                getattr(state, "interaction_exchange_count", 0) or 0
+            ) + 1
+            coord = getattr(self, "_director_coordinator", None)
+            if coord is not None:
+                coord.maybe_wake_narrative(
+                    sid,
+                    inbound,
+                    turn_index=turn_index,
+                )
 
     def _pop_session_share_at(self, session_id: str, queue_index: int) -> bool:
         intent = self._session_manager.queues.share_queue.pop_at(session_id, queue_index)
@@ -425,9 +668,51 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             unit_id,
         )
 
+    def _guidance_plot_brief(self, session_id: str) -> str:
+        if self._state_store is None:
+            return ""
+        state = self._state_store.session(session_id)
+        parts: list[str] = []
+        plot_unit_id = ""
+        flow = getattr(state, "plot_flow", None)
+        if flow is not None and getattr(flow, "ready", False):
+            text = " / ".join(
+                p
+                for p in (
+                    str(getattr(flow, "focus_now", "") or "").strip(),
+                    str(getattr(flow, "next_push", "") or "").strip(),
+                )
+                if p
+            )
+            if text:
+                parts.append(text)
+        arc = getattr(state, "plot_arc", None)
+        if arc is not None and getattr(arc, "ready", False) and hasattr(arc, "active_unit"):
+            active = arc.active_unit()
+            if active is not None:
+                plot_unit_id = str(getattr(active, "unit_id", "") or "").strip()
+                intent = str(getattr(active, "intent", "") or "").strip()
+                if intent and intent not in "\n".join(parts):
+                    parts.append(intent)
+        rhythm = getattr(state, "character_rhythm_schedule", None)
+        entry = None
+        if rhythm is not None and plot_unit_id and hasattr(rhythm, "unit_for_plot"):
+            entry = rhythm.unit_for_plot(plot_unit_id)
+        if entry is None and rhythm is not None:
+            for item in list(getattr(rhythm, "executable_units", None) or []):
+                if str(getattr(item, "status", "") or "") in ("pending", "reserved"):
+                    entry = item
+                    break
+        if entry is not None and hasattr(entry, "render_enrichment"):
+            enrich = str(entry.render_enrichment() or "").strip()
+            if enrich:
+                parts.append(enrich)
+        return "\n".join(parts).strip()[:480]
+
     def _bind_orchestrator_runtime(self) -> None:
         hub = self._orchestrator.compose_queue_hub
         self._orchestrator.bind_memory_turn_gap(self._memory_turn_gap)
+        self._orchestrator.bind_plot_brief(self._guidance_plot_brief)
         self._session_manager._compose_pending = hub.has_any_pending
         self._session_manager.queues.bind_compose_hub(hub)
         hub.bind_compose_scheduler(
@@ -446,18 +731,25 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             return result
 
         def _clear(session_id: str) -> None:
-            self._orchestrator.clear_session_compose_state(session_id)
+            sid = session_id.strip()
+            self._orchestrator.clear_session_compose_state(sid)
             if self._turn_coordinator is not None:
-                self._turn_coordinator.clear_session(session_id)
+                self._turn_coordinator.clear_session(sid)
             if self._orchestrator_thread is not None:
-                self._orchestrator_thread.notify_session_close(session_id)
+                self._orchestrator_thread.notify_session_close(sid)
             if self._state_store is not None:
-                self._state_store.clear_session(session_id)
-            original_clear(session_id)
+                self._state_store.clear_session(sid)
+            # rotate/reset 必须丢掉 compose 热态，否则 is_live_warm 会误判跳过进房 arm
+            self._compose_manager_sessions.discard(sid)
+            self._compose_manager_meta.pop(sid, None)
+            self._compose_manager_materials.pop(sid, None)
+            original_clear(sid)
 
         def _on_rotate(session_id: str) -> None:
             original_rotate(session_id)
             self._orchestrator.start_session_compose_sync(session_id)
+
+        self._session_manager.holder.bind_on_reopen(self.bootstrap_proactive_loop)
 
         original_invalidate = self._compose_runner.invalidate
 
@@ -544,9 +836,33 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._speak_role = SpeakRole(generate_fn=self._role_generate)
         self._character_work = CharacterWorkGateway()
         self._character_agent: CharacterAgentHost | None = None
+        self._character_runtime = CharacterRuntime(
+            speak_role=self._speak_role,
+            character_agent=None,
+            request_helps=self._character_request_helps,
+            pace_delivery=self._pace_delivery_plan_with_speak,
+        )
         self._compose_manager_sessions: set[str] = set()
         self._compose_manager_meta: dict[str, dict[str, object]] = {}
         self._compose_manager_materials: dict[str, object] = {}
+        from .responders.request_driven.orchestrator.blocks.memory.page_temp import (
+            PageTempMemoryRing,
+        )
+
+        self._page_temp = PageTempMemoryRing(max_generations=2)
+
+    def _character_request_helps(
+        self,
+        session_id: str,
+        goals: tuple[str, ...],
+        user_text: str,
+    ) -> tuple[str, ...]:
+        return self._character_work.request_helps(
+            session_id=session_id,
+            goals=goals,
+            user_text=user_text,
+            limit=1,
+        )
 
     def attach_character_work_port(self, port: CharacterWorkPort) -> None:
         """挂载角色→worker 轻量工作口（io 分流；不向角色注入工具目录）。"""
@@ -559,6 +875,11 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         """挂 Memory 实时检索到 ComposeManager staging 装入口。"""
         self._compose_live_search_fn = search_fn
 
+    def attach_compose_embedder(self, embedder) -> None:
+        """挂 embedding，供 buffer 内向量检索、导演 inject，以及编剧初始化场景种子近邻抽样。"""
+        self._compose_gateway.manager.set_embedder(embedder)
+        if getattr(self, "_screenwriter", None) is not None:
+            self._screenwriter.set_embedder(embedder)
     def _compose_meta_for_snapshot(self, session_id: str) -> dict[str, object]:
         base = dict(self._orchestrator.compose_cache(session_id).meta_snapshot() or {})
         extra = self._compose_manager_meta.get(session_id.strip()) or {}
@@ -650,9 +971,31 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             if (topic := str(getattr(item, "topic", "") or "").strip())
         ]
 
+    def _collect_share_texts_for_dynamic(self, session_id: str) -> list[str]:
+        """合并 session 延迟分享 + presence 待分享队列，供编剧写入剧情流调度。"""
+        texts: list[str] = []
+        seen: set[str] = set()
+
+        def _add(raw: str) -> None:
+            text = str(raw or "").strip()
+            if not text or text in seen:
+                return
+            seen.add(text)
+            texts.append(text)
+
+        for topic in self._deferred_share_texts(session_id):
+            _add(topic)
+        share_state = self._orchestrator.share_compose_state(session_id)
+        for event in share_state.events:
+            _add(getattr(event, "topic", "") or getattr(event, "brief", ""))
+        summary = str(share_state.summary or "").strip()
+        if summary:
+            _add(summary[:240])
+        return texts
+
     def _compose_manager_share_hint(self, session_id: str) -> str:
         # init 80% share 相关：只用分享意图正文，不用 planner/persona 预览壳
-        texts = self._deferred_share_texts(session_id, limit=3)
+        texts = self._collect_share_texts_for_dynamic(session_id)[:3]
         return " ".join(texts)
 
     def _role_generate(self, system: str, user_text: str) -> str:
@@ -676,7 +1019,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         materials = self._compose_gateway.manager.export_dynamic_materials(
             sid,
             user_text=user_text,
-            share_texts=self._deferred_share_texts(sid),
+            share_texts=self._collect_share_texts_for_dynamic(sid),
         )
         view = self._compose_gateway.context_for_director_or_empty(sid, user_text=user_text)
         self._compose_manager_meta[sid] = {
@@ -689,73 +1032,44 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             "compose_manager_role_memory_ids": list(view.role_memory_ids),
             "intervene_max": int(view.meta.get("intervene_max", 1) or 1),
             "role_hits_visible": True,
-            # 动态层库存：仅供导演调度，不自动进角色提示词
+            # 动态层库存：供编剧写入剧情流调度；导演不得挑选压入角色
             "dynamic_memory_ids": list(materials.memory_ids),
             "dynamic_memory_texts": list(materials.memory_texts),
             "dynamic_share_texts": list(materials.share_texts),
-            "dynamic_layer_scheduler": "director_only",
+            "dynamic_share_consumption_history": (
+                self._session_manager.queues.share_queue.consumption_history(sid)
+            ),
+            "dynamic_layer_scheduler": "screenwriter_plot_flow",
         }
         self._compose_manager_materials[sid] = materials
 
     def _director_dynamic_schedule(self, session_id: str):
-        from agent.soul.speak.responders.request_driven.orchestrator.compose_manager.projectors.dynamic_layer import (
+        """从剧情流读取编剧写入的记忆/分享调度（导演不得代决）。"""
+        from agent.soul.speak.responders.request_driven.composer.projectors.dynamic_layer import (
             DynamicLayerSchedule,
         )
 
         sid = session_id.strip()
         state = self._state_store.session(sid)
-        entry = state.director_cache.get("dynamic_layer") or {}
-        if not isinstance(entry, dict):
-            return DynamicLayerSchedule(reason="missing_director_schedule")
-        payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else entry
-        mem_ids = payload.get("memory_unit_ids") or []
-        share_idx = payload.get("share_indices") or []
-        if not isinstance(mem_ids, list):
-            mem_ids = []
-        if not isinstance(share_idx, list):
-            share_idx = []
+        flow = state.plot_flow
+        if flow is None or not getattr(flow, "ready", False):
+            # 场记未就绪时仍可读材料调度字段
+            if flow is None:
+                return DynamicLayerSchedule(reason="missing_plot_flow", source="screenwriter")
         return DynamicLayerSchedule(
-            inject_memory=bool(payload.get("inject_memory")),
-            memory_unit_ids=tuple(str(x) for x in mem_ids if str(x).strip()),
-            inject_share=bool(payload.get("inject_share")),
+            inject_memory=bool(getattr(flow, "inject_memory", False)),
+            memory_unit_ids=tuple(
+                str(x) for x in (getattr(flow, "memory_unit_ids", None) or []) if str(x).strip()
+            ),
+            inject_share=bool(getattr(flow, "inject_share", False)),
             share_indices=tuple(
-                int(x) for x in share_idx if str(x).lstrip("-").isdigit()
+                int(x)
+                for x in (getattr(flow, "share_indices", None) or [])
+                if str(x).lstrip("-").isdigit()
             ),
-            pass_info=bool(payload.get("pass_info")),
-            reason=str(payload.get("reason") or entry.get("reason") or "director"),
-            source="director",
-        )
-
-    def _apply_director_memory_intervention_from_cache(self, session_id: str) -> None:
-        if not self._compose_gateway.enabled:
-            return
-        sid = session_id.strip()
-        state = self._state_store.session(sid)
-        entry = state.director_cache.get("memory_inject") or {}
-        if not isinstance(entry, dict):
-            return
-        payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else entry
-        from agent.soul.speak.responders.request_driven.orchestrator.compose_manager.domain.intervention import (
-            DirectorMemoryIntervention,
-        )
-
-        action = str(payload.get("buffer_action") or "none").strip().lower()
-        if action not in ("inject", "remove"):
-            return
-        result = self._compose_gateway.manager.apply_director_memory_intervention(
-            sid,
-            DirectorMemoryIntervention(
-                action=action,  # type: ignore[arg-type]
-                unit_id=str(payload.get("unit_id") or ""),
-                text=str(payload.get("text") or ""),
-                reason=str(entry.get("reason") or payload.get("reason") or ""),
-            ),
-        )
-        self._compose_manager_meta.setdefault(sid, {})["director_intervene_result"] = result
-        logger.info(
-            "[compose_manager] director memory intervene session=%s result=%s",
-            sid,
-            result,
+            pass_info=bool(getattr(flow, "pass_info", False)),
+            reason=str(getattr(flow, "material_reason", "") or "screenwriter_plot_flow"),
+            source="screenwriter",
         )
 
     def _bind_director_system(self) -> None:
@@ -783,13 +1097,24 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             name="speak-character",
             auto_start=self._llm.llm is not None,
         )
+        self._character_runtime.bind_character_agent(self._character_agent)
         if self._director_llm.available:
+            from .responders.request_driven.composer.ports.buffer_tools import (
+                MemoryBufferActionRunner,
+            )
+
             self._director_llm_caller = DirectorLLMCaller(llm=self._director_llm._engine.llm)
+            memory_runner = MemoryBufferActionRunner(self._compose_gateway.manager)
             self._director_agent_host = DirectorAgentHost(
                 self._director_llm._engine.llm,
+                action_runner=memory_runner,
                 name="speak-director",
                 auto_start=True,
             )
+        self._screenwriter = Screenwriter(
+            llm=self._director_llm_caller,
+            on_opening_ready=self._on_screenwriter_opening_ready,
+        )
         self._director_coordinator = DirectorCoordinator(
             state_store=self._state_store,
             snapshot_builder=self._snapshot_builder,
@@ -799,43 +1124,91 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             silence_armed_fn=self._director_silence_armed,
             social_armed_fn=self._director_social_armed,
             director_agent=self._director_agent_host,
+            materials_refresh_fn=self._refresh_compose_manager_director_meta,
+            screenwriter=self._screenwriter,
+            peek_user_pending_fn=lambda sid: self._session_manager.user_queue.has_pending(sid),
+            is_turn_busy_fn=self._session_manager.is_turn_busy,
+            is_pushing_fn=self._session_manager.is_pushing,
         )
         self._orchestrator_thread = OrchestratorThread(
             state_store=self._state_store,
             coordinator=self._director_coordinator,
             on_delivery_ready=self._on_async_delivery_ready,
+            on_character_handoff=self._on_director_character_handoff,
         )
         self._session_ingress = SessionOrchestratorIngress(self._orchestrator_thread)
         self._delivery_executor = DeliveryExecutor(
             emit_fn=self._stream._emit,
             on_segment_progress=lambda sid, idx, total: None,
             on_done=lambda sid: self._orchestrator_thread.notify_delivery_done(sid),
-            should_continue_fn=self._should_continue_delivery,
         )
         queues.bind_typing_start(self._on_typing_start_for_directors)
         queues.bind_typing_idle(self._on_typing_idle_for_directors)
+
+    def _nudge_after_opening_ready(self, session_id: str) -> None:
+        """开场旁白就绪：往来水位标到当前 unit，轮询回到第一阶，并补一次导演初始化。"""
+        from .responders.request_driven.orchestrator.state.core.interaction_plan import (
+            reset_narrative_wake_counters,
+        )
+
+        sid = session_id.strip()
+        if not sid or self._state_store is None:
+            return
+        state = self._state_store.session(sid)
+        reset_narrative_wake_counters(state)
+        idle = self._state_store.poll_frame_manager(sid, "idle")
+        idle.reset_decay()
+        idle.schedule_next(advance=False)
+        coord = getattr(self, "_director_coordinator", None)
+        if coord is None:
+            return
+
+        def _run() -> None:
+            coord.ensure_director_init(sid)
+            frame = self._state_store.poll_frame_manager(sid, "idle")
+            frame.reset_decay()
+            frame.schedule_next(advance=False)
+
+        threading.Thread(
+            target=_run,
+            daemon=True,
+            name=f"director-init-{sid[:16]}",
+        ).start()
+
+    def _on_screenwriter_opening_ready(self, session_id: str, opening: str) -> None:
+        """编剧 Agent 后台写完 opening 后推送升级（占位 → 正文）。"""
+        sid = str(session_id or "").strip()
+        body = str(opening or "").strip()
+        if not sid or not body or body == _OPENING_PLACEHOLDER:
+            return
+        upgrade = True
+        if self._state_store is not None:
+            state = self._state_store.session(sid)
+            upgrade = bool(state.director_cache.get("narrative_opening_placeholder_sent"))
+        self._deliver_narrative_outline(sid, text=body, upgrade=upgrade)
 
     def _director_share_wants(self, session_id: str) -> bool:
         share_state = self._orchestrator.share_compose_state(session_id)
         return bool(share_state.wants_share)
 
     def _director_silence_armed(self, session_id: str) -> bool:
-        return session_id.strip() in self._session_manager.social.silence._armed
+        del session_id
+        return False
 
     def _director_social_armed(self, session_id: str) -> str | None:
         sid = session_id.strip()
         if sid in self._session_manager.social.enter_greeting._armed:
             return "enter_greeting"
-        if sid in self._session_manager.social.silence._armed:
-            return "silence_break"
         return None
 
     def _on_typing_start_for_directors(self, session_id: str) -> None:
         # 用户开始输入：暂停 idle 轮询，等 idle 后再按衰减重启
         if self._orchestrator_thread is None:
             return
-        cursor = self._orchestrator_thread._state_store.poll_cursor(session_id, "idle")
-        cursor.armed = False
+        frame_mgr = self._orchestrator_thread._state_store.poll_frame_manager(
+            session_id, "idle"
+        )
+        frame_mgr.armed = False
 
     def _on_typing_idle_for_directors(self, session_id: str) -> None:
         if self._orchestrator_thread is None:
@@ -843,14 +1216,504 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         sid = session_id.strip()
         runtime = self._session_manager.queues._runtime(sid)
         runtime.typing_idle_handoff.set()
-        # 输入停顿后恢复 idle 衰减轮询（5s → … → 120s），不短时狂刷
-        cursor = self._orchestrator_thread._state_store.poll_cursor(sid, "idle")
-        cursor.schedule_next()
+        # 输入停顿后恢复 idle：同阶重约，不升梯、不重置用户周期
+        frame_mgr = self._orchestrator_thread._state_store.poll_frame_manager(
+            sid, "idle"
+        )
+        frame_mgr.schedule_next(advance=False)
 
     def _on_async_delivery_ready(self, session_id: str, trigger: str) -> None:
-        # request_driven：可见正文只允许经主回复 LLM pace 后再 DeliveryExecutor。
-        # 导演 segments[].text 只是节奏占位；poll 可决策/衰减，但禁止直接推到前端。
-        return
+        # 占位导演文案禁止直推；可见正文只经角色交接（_on_director_character_handoff）
+        del session_id, trigger
+
+    def _on_director_character_handoff(
+        self,
+        session_id: str,
+        handoff: dict[str, Any],
+    ) -> None:
+        """导演主动开口：请求角色生成；不得占用用户角色 turn_busy。
+
+        权限边界：
+        - 导演无权阻塞角色用户接口；用户 turn / 用户队列优先。
+        - 用户已入站或用户角色正在开口时，本拍主动 handoff 直接丢弃（不 defer 挡路）。
+        - 仅在「非用户占用」的出站推送中才短暂 defer，等推送结束后再取。
+        """
+        sid = session_id.strip()
+        if not sid or not handoff:
+            return
+        self._record_agent_delivery_trace(
+            sid,
+            trigger_id=str(handoff.get("trigger_id") or ""),
+            status="generating",
+        )
+        state = self._state_store.session(sid)
+        if self._director_must_yield_to_user(sid):
+            # 用户优先：不把 handoff 塞回 pending，避免再次挡角色
+            self._abort_proactive_handoff(
+                sid,
+                None,
+                executable_unit_id=str(handoff.get("executable_unit_id") or "").strip(),
+                reason="dropped_user_priority",
+                rearm=False,
+            )
+            get_prompt_trace().emit_event(
+                sid,
+                label="character_handoff_dropped_user_priority",
+                turn_index=int(handoff.get("turn_index") or 0),
+                payload=dict(handoff),
+            )
+            return
+        if self._session_manager.is_pushing(sid):
+            # 非用户打断的出站：可 defer；用户打断则上面已 yield
+            state.pending_character_handoff = dict(handoff)
+            get_prompt_trace().emit_event(
+                sid,
+                label="character_handoff_deferred_pushing",
+                turn_index=int(handoff.get("turn_index") or 0),
+                payload=dict(handoff),
+            )
+            return
+        with self._character_handoff_guard:
+            if sid in self._character_handoff_inflight:
+                state.pending_character_handoff = dict(handoff)
+                return
+            self._character_handoff_inflight.add(sid)
+
+        def _run() -> None:
+            try:
+                self._execute_character_handoff(sid, dict(handoff))
+            finally:
+                with self._character_handoff_guard:
+                    self._character_handoff_inflight.discard(sid)
+                exec_id = str(handoff.get("executable_unit_id") or "").strip()
+                if exec_id:
+                    leftover = self._state_store.session(sid).character_rhythm_schedule
+                    still_reserved = any(
+                        e.unit_id == exec_id and e.status == "reserved"
+                        for e in leftover.executable_units
+                    )
+                    if still_reserved:
+                        self._abort_proactive_handoff(
+                            sid,
+                            None,
+                            executable_unit_id=exec_id,
+                            reason="handoff_thread_leftover_reserved",
+                        )
+                if (
+                    self._orchestrator_thread is not None
+                    and self._director_coordinator is not None
+                    and self._director_coordinator.peek_character_handoff(sid) is not None
+                    and not self._director_must_yield_to_user(sid)
+                    and not self._session_manager.is_pushing(sid)
+                ):
+                    self._orchestrator_thread._maybe_notify_character_handoff(sid)
+
+        threading.Thread(
+            target=_run,
+            name=f"speak-character-handoff-{sid[:16]}",
+            daemon=True,
+        ).start()
+
+    def _director_must_yield_to_user(self, session_id: str) -> bool:
+        """用户入站 / 用户角色 turn 优先于导演主动开口。"""
+        sid = session_id.strip()
+        if not sid:
+            return False
+        if self._session_manager.has_user_interrupt(sid):
+            return True
+        if self._session_manager.user_queue.has_pending(sid):
+            return True
+        if self._session_manager.is_turn_busy(sid):
+            return True
+        return False
+
+    def _record_agent_delivery_trace(
+        self,
+        session_id: str,
+        *,
+        trigger_id: str,
+        status: str,
+        text: str = "",
+    ) -> None:
+        state = self._state_store.session(session_id)
+        entries = list(state.director_cache.get("agent_delivery_trace") or [])
+        normalized_trigger = trigger_id.strip()
+        entry = {
+            "trigger_id": normalized_trigger,
+            "status": status.strip(),
+            "text": text.strip(),
+        }
+        for index in range(len(entries) - 1, -1, -1):
+            prior = entries[index]
+            if (
+                isinstance(prior, dict)
+                and str(prior.get("trigger_id") or "").strip() == normalized_trigger
+            ):
+                entries[index] = entry
+                break
+        else:
+            entries.append(entry)
+        state.director_cache["agent_delivery_trace"] = entries[-12:]
+
+    def _abort_proactive_handoff(
+        self,
+        session_id: str,
+        request: Any,
+        *,
+        reason: str,
+        executable_unit_id: str = "",
+        rearm: bool = True,
+    ) -> None:
+        """交接失败：把 reserved 放回 pending，避免预约再也叫不醒角色。"""
+        sid = session_id.strip()
+        state = self._state_store.session(sid)
+        exec_id = str(
+            executable_unit_id
+            or getattr(request, "executable_unit_id", "")
+            or ""
+        ).strip()
+        if exec_id:
+            state.character_rhythm_schedule.release_reserved(exec_id)
+            state.director_cache["character_rhythm_schedule"] = (
+                state.character_rhythm_schedule.snapshot()
+            )
+        trigger = str(getattr(request, "trigger_id", "") or "").strip()
+        state.notes.append(f"character_handoff: abort {reason} trigger={trigger}")
+        logger.info(
+            "[character_handoff] abort session=%s reason=%s origin=%s exec=%s",
+            sid,
+            reason,
+            getattr(request, "origin", ""),
+            exec_id,
+        )
+        if rearm and self._director_coordinator is not None:
+            self._director_coordinator.on_delivery_done(sid)
+
+    def _execute_character_handoff(
+        self,
+        session_id: str,
+        handoff: dict[str, Any],
+    ) -> None:
+        """导演主动：请求角色开口。不占用 turn_busy（用户角色接口不可被导演阻塞）。
+
+        产出中若发现用户入站：立刻停，把话筒交给用户热路径；导演稍后再请求交互记录重决策。
+        """
+        if self._director_coordinator is None:
+            return
+        sid = session_id.strip()
+        from .responders.request_driven.character import CharacterReplyRequest
+
+        payload = dict(handoff)
+        request = CharacterReplyRequest.from_dict({**payload, "session_id": sid})
+        if request is None or request.origin not in ("director", "booked"):
+            self._abort_proactive_handoff(
+                sid,
+                request,
+                executable_unit_id=str(payload.get("executable_unit_id") or "").strip(),
+                reason="origin_not_proactive",
+            )
+            return
+        state = self._state_store.session(sid)
+        if self._director_must_yield_to_user(sid) or (
+            float(request.created_at or 0.0) < float(state.last_user_speak_at or 0.0)
+        ):
+            self._abort_proactive_handoff(
+                sid,
+                request,
+                reason="yield_to_user",
+                rearm=False,
+            )
+            return
+        if (
+            request.trigger_id
+            and state.last_character_trigger_id
+            and request.trigger_id == state.last_character_trigger_id
+        ):
+            self._abort_proactive_handoff(
+                sid,
+                request,
+                reason="duplicate_trigger",
+            )
+            get_prompt_trace().emit_event(
+                sid,
+                label="character_handoff_duplicate_trigger",
+                turn_index=request.turn_index,
+                payload={"trigger_id": request.trigger_id},
+            )
+            return
+
+        user_text = request.effective_user_text
+        if request.origin in ("director", "booked") and not request.director_cue:
+            request.director_cue = "（系统：导演预约开口，用户仍沉默。）"
+        if request.origin not in ("director", "booked") and not user_text:
+            self._abort_proactive_handoff(
+                sid,
+                request,
+                reason="empty_user_text",
+            )
+            return
+        logger.info(
+            "[character_handoff] start session=%s origin=%s reason=%s exec=%s",
+            sid,
+            request.origin,
+            request.reason,
+            request.executable_unit_id,
+        )
+        if self._session_manager.is_pushing(sid):
+            if self._director_must_yield_to_user(sid):
+                self._abort_proactive_handoff(
+                    sid,
+                    request,
+                    reason="skip_push_user_priority",
+                    rearm=False,
+                )
+                return
+            state.pending_character_handoff = request.to_dict()
+            return
+
+        turn_index = int(request.turn_index or 0)
+        if turn_index <= 0:
+            turn_index = self.session_registry.current_turn_index(sid) + 1
+            request.turn_index = turn_index
+
+        # 故意不 begin_turn_busy：导演主动不得锁住用户→角色热路径
+        self._record_agent_delivery_trace(
+            sid,
+            trigger_id=request.trigger_id,
+            status="generating",
+        )
+        get_prompt_trace().emit_event(
+            sid,
+            label="character_handoff_start",
+            turn_index=turn_index,
+            payload=request.to_dict(),
+        )
+        notes: list[str] = [
+            "character_handoff",
+            request.reason,
+            f"trigger={request.trigger_id}",
+            "director_no_turn_busy",
+        ]
+        poll_silence = request.origin in ("director", "booked")
+        try:
+            if self._director_must_yield_to_user(sid):
+                notes.append("character_handoff: abort_before_generate_user_ingress")
+                self._abort_proactive_handoff(
+                    sid,
+                    request,
+                    reason="abort_before_generate_user_ingress",
+                    rearm=False,
+                )
+                return
+            self._refresh_compose_manager_director_meta(sid, user_text)
+            state = self._state_store.session(sid)
+            director_plan = state.pending_delivery_plan or state.delivery_plan
+            if director_plan is None or director_plan.is_empty:
+                from agent.soul.speak.responders.request_driven.orchestrator.state.core.delivery import (
+                    ReplySegment,
+                    build_delivery_plan,
+                )
+
+                director_plan = build_delivery_plan(
+                    segments=[ReplySegment(text="…", wait_ms=120, continuity="finish")],
+                    continuity="finish",
+                    plan_id=f"handoff-{sid}-{turn_index}",
+                    turn_index=turn_index,
+                )
+            bundle = self._compose_bundle(
+                sid,
+                user_text,
+                mode="proactive",
+                turn_index=turn_index,
+            )
+            if self._director_must_yield_to_user(sid) or (
+                float(request.created_at or 0.0)
+                < float(self._state_store.session(sid).last_user_speak_at or 0.0)
+            ):
+                notes.append("character_handoff: abort_before_role_user_ingress")
+                self._record_agent_delivery_trace(
+                    sid,
+                    trigger_id=request.trigger_id,
+                    status="aborted_user_ingress",
+                )
+                self._abort_proactive_handoff(
+                    sid,
+                    request,
+                    reason="abort_before_role_user_ingress",
+                    rearm=False,
+                )
+                return
+            answer_text, parsed, paced, used_role, role_timeline = (
+                self._run_booked_character_reply(
+                    request=request,
+                    bundle=bundle,
+                    notes=notes,
+                    director_plan=director_plan,
+                )
+            )
+            state.last_character_trigger_id = request.trigger_id
+            if self._director_must_yield_to_user(sid) or (
+                float(request.created_at or 0.0)
+                < float(self._state_store.session(sid).last_user_speak_at or 0.0)
+            ):
+                notes.append("character_handoff: abort_after_role_user_ingress")
+                self._record_agent_delivery_trace(
+                    sid,
+                    trigger_id=request.trigger_id,
+                    status="aborted_user_ingress",
+                )
+                self._abort_proactive_handoff(
+                    sid,
+                    request,
+                    reason="abort_after_role_user_ingress",
+                    rearm=False,
+                )
+                return
+            if paced.is_empty and not answer_text.strip() and role_timeline is None:
+                self._record_agent_delivery_trace(
+                    sid,
+                    trigger_id=request.trigger_id,
+                    status="released",
+                )
+                if request.executable_unit_id:
+                    state.character_rhythm_schedule.release_reserved(
+                        request.executable_unit_id
+                    )
+                    state.director_cache["character_rhythm_schedule"] = (
+                        state.character_rhythm_schedule.snapshot()
+                    )
+                get_prompt_trace().emit_event(
+                    sid,
+                    label="character_handoff_empty",
+                    turn_index=turn_index,
+                    payload={"notes": notes, "parsed": parsed.to_dict()},
+                )
+                return
+
+            self._state_store.set_delivery_plan(sid, paced)
+            state.pending_delivery_plan = None
+            events: list = []
+            answer = "\n".join(
+                segment.text for segment in paced.segments if segment.text.strip()
+            )
+            if not answer.strip() and answer_text.strip():
+                answer = answer_text.strip()
+            live_stream = self._has_live_stream_session(sid)
+            if live_stream:
+                self._record_agent_delivery_trace(
+                    sid,
+                    trigger_id=request.trigger_id,
+                    status="delivering",
+                    text=answer,
+                )
+                if used_role and role_timeline is not None:
+                    events = self._deliver_role_timeline(
+                        sid,
+                        role_timeline,
+                        user_text=user_text,
+                        background=True,
+                    )
+                else:
+                    notes.append("character_handoff: skipped_non_role_outbound")
+                self._record_agent_delivery_trace(
+                    sid,
+                    trigger_id=request.trigger_id,
+                    status="queued_for_delivery",
+                    text=answer,
+                )
+            else:
+                from agent.soul.speak.io.outbound.channel_ids import normalize_channel_id
+
+                channel_id = normalize_channel_id(
+                    self.session_registry.get_bound_interactor(sid) or "",
+                    sid,
+                )
+                if channel_id and answer.strip():
+                    self.enqueue_agent_outbound(
+                        {
+                            "session_id": sid,
+                            "channel_id": channel_id,
+                            "message": answer,
+                            "agent_initiated": True,
+                            "create_window": True,
+                            "source": "character_handoff",
+                            "proactive_intent_id": str(
+                                request.executable_unit_id
+                                or request.trigger_id
+                                or request.reason
+                                or f"handoff-{sid}-{turn_index}"
+                            ),
+                        }
+                    )
+                    self._record_agent_delivery_trace(
+                        sid,
+                        trigger_id=request.trigger_id,
+                        status="queued_offline",
+                        text=answer,
+                    )
+                else:
+                    self._record_agent_delivery_trace(
+                        sid,
+                        trigger_id=request.trigger_id,
+                        status="released",
+                        text=answer,
+                    )
+            if answer.strip():
+                last_fp = state.character_rhythm_schedule.last_answer_fingerprint()
+                same_answer = bool(last_fp) and last_fp == answer.strip()[:120]
+                self._commit_delivery_step(
+                    session_id=sid,
+                    request=request,
+                    answer_text=answer,
+                    chose_silence=False,
+                )
+                if not same_answer:
+                    self._session_manager.begin_turn(sid)
+                    self.record_dialogue(sid, user_text, answer)
+                    self.note_agent_visible_speak(
+                        sid,
+                        turn_index=turn_index,
+                        user_text=user_text,
+                        agent_text=answer,
+                    )
+                    session_state = paced.continuity
+                    if parsed is not None:
+                        session_state = parsed.session_state or paced.continuity
+                    self._on_compose_turn_complete(
+                        sid,
+                        user_text,
+                        answer,
+                        turn_index,
+                        session_state,
+                    )
+                    self._session_manager.on_turn_complete(
+                        sid,
+                        mode="inbound",
+                        session_state=session_state,
+                        answer=answer,
+                    )
+                else:
+                    state.notes.append("character_handoff: skip_duplicate_wm")
+            # poll 沉默 handoff 不碰真实用户队列；有用户入队时交给用户热路径直达角色
+            get_prompt_trace().emit_event(
+                sid,
+                label="character_handoff_done",
+                turn_index=turn_index,
+                payload={
+                    "answer": answer,
+                    "stream_event_count": len(events),
+                    "notes": notes,
+                    "poll_silence": poll_silence,
+                    "trigger_id": request.trigger_id,
+                    "user_queue_pending": self._session_manager.user_queue.has_pending(sid),
+                },
+            )
+        finally:
+            # 确保 handoff 路径也会续 poll（outbound on_done 若未触发则补一次）
+            if self._orchestrator_thread is not None:
+                idle = self._state_store.poll_frame_manager(sid, "idle")
+                if not idle.armed:
+                    self._orchestrator_thread.notify_delivery_done(sid)
 
     def _drain_async_delivery_queue(self, *, max_items: int = 4) -> None:
         # 同步出站路径已接管；清空遗留队列，避免重启后误推占位文案
@@ -863,10 +1726,68 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def flush_async_delivery(self, session_id: str) -> None:
         return
 
-    def _should_continue_delivery(self, session_id: str) -> bool:
-        if self._director_coordinator is None:
-            return True
-        return self._director_coordinator.should_continue_delivery(session_id)
+    def is_busy(self, session_id: str) -> bool:
+        return self._session_manager.is_busy(session_id)
+
+    def notify_director_user_input(
+        self,
+        session_id: str,
+        user_text: str,
+        *,
+        turn_index: int | None = None,
+    ) -> dict[str, Any]:
+        """旁路通知导演写表/清静默（仅供下一拍排程）。角色正文不经此路径。"""
+        sid = session_id.strip()
+        text = user_text.strip()
+        if not sid or not text:
+            return {"notified": False, "reason": "empty"}
+        if self._session_ingress is None:
+            return {"notified": False, "reason": "ingress_unbound"}
+        idx = (
+            int(turn_index)
+            if turn_index is not None
+            else self.session_registry.current_turn_index(sid) + 1
+        )
+        self._refresh_compose_manager_director_meta(sid, text)
+        self._session_ingress.notify_user_input(sid, text, turn_index=idx)
+        return {
+            "notified": True,
+            "turn_index": idx,
+            "busy": self.is_busy(sid),
+        }
+
+    def stamp_user_ingress(self, session_id: str, user_text: str) -> None:
+        """用户原文落地：清静默、撤销导演主动 handoff；不跑导演 LLM。
+
+        最新原话写入角色侧交互账本；编剧/导演稍后向角色请求，不阻塞热路径。
+        导演无权阻塞角色接口：此处直接撤掉 pending handoff，让用户 turn 独占角色。
+        """
+        from .responders.request_driven.character.interaction import note_pending_user
+
+        sid = session_id.strip()
+        text = user_text.strip()
+        if not sid or not text:
+            return
+        state = self._state_store.session(sid)
+        note_pending_user(state, user_text=text)
+        state.silence_log.clear()
+        state.director_cache.pop("user_silence", None)
+        state.pending_character_handoff = None
+        state.narrative_card.interaction_mode = "user_utterance"
+        state.narrative_card.user_activity = "正在与你文字往来"
+        state.notes.append("ingress: user_direct_to_character")
+        state.notes.append("ingress: director_handoff_cleared_for_user_priority")
+        if self._session_manager.is_pushing(sid):
+            self._session_manager.end_push(sid)
+            state.notes.append("ingress: outbound_push_released_for_user")
+
+    def _wait_session_idle(self, session_id: str, *, timeout_sec: float = 45.0) -> bool:
+        deadline = time.time() + max(0.0, float(timeout_sec))
+        while time.time() < deadline:
+            if not self.is_busy(session_id):
+                return True
+            time.sleep(0.05)
+        return not self.is_busy(session_id)
 
     def set_utterance_hold(
         self,
@@ -958,13 +1879,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         )
 
     def _before_compose_bundle(self, session_id: str, user_text: str) -> None:
-        if self._turn_coordinator is None:
-            return
-        turn_index = self.session_registry.current_turn_index(session_id)
-        self._turn_coordinator.wait_before_compose(
-            session_id,
-            turn_index=turn_index,
-        )
+        # 用户热路径禁止 wait 导演 compose；plan_control_arc 只异步 warm
+        del user_text
+        return
 
     def _bind_orchestrator_interactor_portrait(self) -> None:
         self._orchestrator.bind_interactor_portrait_bridge(
@@ -1094,13 +2011,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         session_id = spec.session_id.strip()
         if not session_id:
             return
-        if not self._has_live_stream_session(session_id):
-            # WS 已断：本次丢弃；前端重连时 routers.speak 会重新 arm_enter_greeting
-            logger.info(
-                "[Speak] enter_greeting skipped: no live stream session_id=%s",
-                session_id,
-            )
-            return
+        # Speak 独立运转：无前端连接也执行问候；事件经 outbound bus 缓冲，适配器随时可挂接冲刷
         if self._session_manager.is_pushing(session_id):
             logger.info(
                 "[Speak] enter_greeting skipped: pushing session_id=%s",
@@ -1117,23 +2028,178 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         # 不再 brew 内部决策文案（否则会把「角度」直接当消息推到前端）。
         self._session_manager.social.arm_enter_greeting(spec)
         logger.info(
-            "[Speak] enter_greeting fire session_id=%s elapsed=%.1fs",
+            "[Speak] enter_greeting fire session_id=%s elapsed=%.1fs live=%s",
             session_id,
             float(spec.elapsed_sec),
+            self._has_live_stream_session(session_id),
         )
-        stream = self._outbound_stream.port is not None
         self.run_turn(
             session_id,
             resolve_enter_greeting_user_text(spec),
-            stream=stream,
+            stream=True,
             mode="proactive",
             record=True,
         )
 
     def arm_enter_greeting(self, session_id: str) -> None:
+        """进房：先挂 poll/节奏（立刻），编剧开场后台跑（不堵事件循环）。"""
         sid = session_id.strip()
+        # 先挂生命线，避免等编剧 Agent 多步 LLM 把整条 Speak 热路径冻住
+        self.bootstrap_proactive_loop(sid)
         self._session_manager.social.enter_greeting.arm_session(sid)
         self._schedule_compose_prepare(sid, mode="proactive")
+        self._schedule_screenwriter_init(sid)
+
+    def bootstrap_proactive_loop(self, session_id: str) -> None:
+        """恢复生命线扫描；每个 generation 只预置一次节奏开口阶梯。"""
+        sid = session_id.strip()
+        if not sid or self._state_store is None:
+            return
+        if self._orchestrator_thread is not None:
+            self._orchestrator_thread.activate_session(sid)
+        idle = self._state_store.poll_frame_manager(sid, "idle")
+        if not idle.armed:
+            if float(idle.last_t_sec or 0.0) <= 0 and int(idle.ladder_step or 0) == 0:
+                idle.reset_decay()
+            idle.schedule_next()
+        append = self._state_store.poll_frame_manager(sid, "append")
+        append.armed = False
+        append.next_fire_at = 0.0
+        state = self._state_store.session(sid)
+        initialized = bool(state.director_cache.get("proactive_loop_initialized"))
+        from .responders.request_driven.directors.rhythm_schedule import (
+            seed_ladder_executable_units,
+        )
+
+        before = sum(
+            1
+            for e in state.character_rhythm_schedule.executable_units
+            if e.status == "pending"
+        )
+        if not initialized:
+            state.character_rhythm_schedule = seed_ladder_executable_units(
+                state.character_rhythm_schedule,
+                plot_arc=state.plot_arc,
+            )
+            state.director_cache["proactive_loop_initialized"] = True
+        state.director_cache["character_rhythm_schedule"] = (
+            state.character_rhythm_schedule.snapshot()
+        )
+        after = sum(
+            1
+            for e in state.character_rhythm_schedule.executable_units
+            if e.status == "pending"
+        )
+        logger.info(
+            "[Speak] proactive loop bootstrapped session_id=%s pending_opens=%s→%s next_t=%.2fs",
+            sid,
+            before,
+            after,
+            float(idle.last_t_sec or 0.0),
+        )
+
+    def is_live_warm(self, session_id: str) -> bool:
+        """生命线是否已有短期态（切页重连时勿重复 arm 问候）。
+
+        Speak 独立：若已超时静默 / 需再初始化，视为冷接入。
+        """
+        from .responders.request_driven.orchestrator.state.core.speak_dormant import (
+            needs_narrative_reinit,
+        )
+
+        sid = session_id.strip()
+        if not sid:
+            return False
+        state = self._state_store.session(sid)
+        if needs_narrative_reinit(state) or bool(state.speak_dormant):
+            return False
+        if state.presence_card.ready:
+            return True
+        if state.silence_log.ready:
+            return True
+        if int(state.agent_speak_count or 0) > 0:
+            return True
+        if float(state.last_user_speak_at or 0.0) > 0:
+            return True
+        if float(state.last_agent_speak_at or 0.0) > 0:
+            return True
+        return False
+
+    def enter_page_context(
+        self,
+        session_id: str,
+        *,
+        page_key: str,
+        messages: list[dict[str, Any]] | None = None,
+        lines: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """进入历史页：把该页对话标记为临时记忆，注入 buffer（最多两代）。
+
+        编剧/导演经 compose materials 调度；不重置 silence/presence 等内在短期态。
+        """
+        sid = session_id.strip()
+        if not sid:
+            return {"ok": False, "reason": "missing_session_id"}
+        text_lines = list(lines or [])
+        if not text_lines and messages:
+            text_lines = self._messages_to_page_lines(messages)
+        before_ids = {u.unit_id for u in self._page_temp.all_units(sid)}
+        gen = self._page_temp.enter_page(sid, page_key=page_key, lines=text_lines)
+        after_units = self._page_temp.all_units(sid)
+        after_ids = {u.unit_id for u in after_units}
+        self._ensure_compose_manager_session(sid, text_lines[0] if text_lines else "")
+        for uid in before_ids - after_ids:
+            self._compose_gateway.manager.remove_unit(sid, uid)
+        if gen.units:
+            self._compose_gateway.manager.ingest_units(sid, list(gen.units), kind="page_temp")
+        from .responders.request_driven.orchestrator.queue.memory import MemoryBufferItem
+
+        self._orchestrator.compose_queue_hub.set_warm_spread(
+            sid,
+            MemoryBufferItem(
+                turn_index=0,
+                lines=tuple(u.text for u in after_units),
+                unit_ids=tuple(u.unit_id for u in after_units),
+                source="warm_spread",
+            ),
+        )
+        self._refresh_compose_manager_director_meta(
+            sid,
+            text_lines[0] if text_lines else "page_enter",
+        )
+        meta = self._compose_manager_meta.get(sid) or {}
+        meta["page_temp"] = self._page_temp.snapshot(sid)
+        meta["page_temp_active"] = {
+            "generation": gen.generation,
+            "page_key": gen.page_key,
+            "unit_count": len(gen.units),
+        }
+        self._compose_manager_meta[sid] = meta
+        return {
+            "ok": True,
+            "session_id": sid,
+            "generation": gen.generation,
+            "page_key": gen.page_key,
+            "unit_count": len(gen.units),
+            "ring": self._page_temp.snapshot(sid),
+        }
+
+    def _messages_to_page_lines(self, messages: list[dict[str, Any]]) -> list[str]:
+        lines: list[str] = []
+        for raw in messages[-40:]:
+            if not isinstance(raw, dict):
+                continue
+            role = str(raw.get("role") or "").strip().lower()
+            content = str(raw.get("content") or "").strip()
+            if not content:
+                continue
+            if role in ("user", "human"):
+                lines.append(f"用户：{content[:400]}")
+            elif role in ("assistant", "agent"):
+                lines.append(f"角色：{content[:400]}")
+            else:
+                lines.append(content[:400])
+        return lines
 
     def cancel_enter_greeting(self, session_id: str) -> None:
         self._session_manager.social.enter_greeting.cancel_session(session_id.strip())
@@ -1151,33 +2217,6 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 unit_ids=tuple(unit_ids),
                 source="warm_spread",
             ),
-        )
-
-    def _execute_silence_break(self, spec: SilenceBreakTurnSpec) -> None:
-        from .responders.request_driven.orchestrator.blocks.guidance.session_bridge import (
-            resolve_silence_break_user_text,
-        )
-
-        session_id = spec.session_id.strip()
-        if not session_id:
-            return
-        if not self._has_live_stream_session(session_id):
-            return
-        if self._session_manager.is_pushing(session_id):
-            return
-        if self._session_manager.user_queue.has_pending(session_id):
-            return
-        if not self._session_manager.has_active_dialogue(session_id):
-            return
-        # 与 enter_greeting 一致：angle 仅作 guidance，不 brew 到用户可见通道。
-        self._session_manager.social.arm_silence_break(spec)
-        stream = self._outbound_stream.port is not None
-        self.run_turn(
-            session_id,
-            resolve_silence_break_user_text(spec),
-            stream=stream,
-            mode="inbound",
-            record=True,
         )
 
     def _has_live_stream_session(self, session_id: str) -> bool:
@@ -1208,19 +2247,20 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def start(self) -> None:
         self._compose_runner.start()
         self._queue_decision_runner.start()
+        self._delivery_worker.start()
         if self._orchestrator_thread is not None:
             self._orchestrator_thread.start()
-        self._session_manager.social.silence.start_worker()
         self._session_manager.social.enter_greeting.start_worker()
-        self._schedule_compose_prepare("tao")
 
     def stop(self) -> None:
         self._session_manager.queues.cancel_all_timers()
         self._session_manager.social.proactive_window.clear_all()
+        # 清理可能由旧进程/测试留下的 timer；生产不启动 silence worker。
         self._session_manager.social.silence.stop_worker()
         self._session_manager.social.enter_greeting.stop_worker()
         if self._orchestrator_thread is not None:
             self._orchestrator_thread.stop()
+        self._delivery_worker.stop()
         self._queue_decision_runner.stop()
         self._compose_runner.stop()
         from infra.threading import get_thread_registry
@@ -1376,6 +2416,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._compose_manager_sessions.discard(sid)
         self._compose_manager_meta.pop(sid, None)
         self._compose_manager_materials.pop(sid, None)
+        self._page_temp.clear(sid)
         if self._presence is not None:
             self._presence.apply_dialogue_session_boundary(session_id)
 
@@ -1477,6 +2518,60 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         mode = self._resolve_delivery_mode_from_port(port)
         self.set_delivery_mode(mode)
 
+    def attach_notify_port(self, port) -> None:
+        """挂接 notify 适配器（SSE/Bark 等）；可随时连接并冲刷积压。"""
+        self._io.outbound.attach_notify_port(port)
+
+    def detach_notify_port(self, port) -> None:
+        self._io.outbound.detach_notify_port(port)
+
+    def publish_notify(self, item: dict) -> None:
+        """Speak 向外抛通知；无适配器时入内部缓冲。"""
+        self._io.outbound.publish_notify(item)
+
+    def enqueue_agent_outbound(self, payload: dict) -> dict:
+        """主动会话出站：经 OutboundMessageManager → bus（推出成功即消费）。"""
+        result = self._outbound_manager.accept_pending_payload(payload)
+        return result.bus or {
+            "ok": result.ok,
+            "status": result.status,
+            "delivered": result.status == "delivered",
+        }
+
+    def bind_outbound_snapshot_sink(self, sink) -> None:
+        self._io.outbound.bind_snapshot_sink(sink)
+
+    def resolve_outbound_create_ui(
+        self,
+        delivery_id: str,
+        *,
+        accepted: bool,
+        channel_id: str = "",
+        session_id: str = "",
+    ) -> dict:
+        return self._io.outbound.resolve_create_ui(
+            delivery_id,
+            accepted=accepted,
+            channel_id=channel_id,
+            session_id=session_id,
+        )
+
+    def acknowledge_outbound_proactive(
+        self,
+        delivery_id: str,
+        *,
+        session_id: str = "",
+        channel_id: str = "",
+    ) -> bool:
+        return self._io.outbound.acknowledge_proactive(
+            delivery_id,
+            session_id=session_id,
+            channel_id=channel_id,
+        )
+
+    def outbound_snapshot(self) -> dict:
+        return self._io.outbound.bus.snapshot()
+
     @staticmethod
     def _resolve_delivery_mode_from_port(port: SpeakStreamPort) -> str:
         name = type(port).__name__
@@ -1519,32 +2614,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         if not line:
             return {"ok": False, "reason": "empty_text"}
         queued = self._session_manager.queues.enqueue_brew(sid, line, reason=reason)
-        flushed: list[str] = []
-        if flush_if_idle and not self._session_manager.queues.is_typing_without_idle(sid):
-            flushed = self._flush_brew_queue(sid)
+        _ = flush_if_idle
         return {
             "ok": queued,
             "reason": reason,
-            "flushed": flushed,
+            "flushed": [],
             "brew_queue": self._session_manager.queues.brew_queue_snapshot(sid),
         }
-
-    def _flush_brew_queue(self, session_id: str) -> list[str]:
-        lines = self._session_manager.queues.flush_brew(session_id)
-        if not lines:
-            return lines
-        from .responders.request_driven.orchestrator.state.core.delivery import ReplySegment, build_delivery_plan
-
-        segments = [
-            ReplySegment(text=line[:120], wait_ms=200, wait_reason="proactive_brew")
-            for line in lines
-            if line.strip()
-        ]
-        if not segments:
-            return lines
-        plan = build_delivery_plan(segments=segments, continuity="finish")
-        self._execute_delivery_plan(plan, session_id=session_id)
-        return lines
 
     def ingest_deferred_share_for_director(
         self,
@@ -1686,7 +2762,18 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         )
         if director_plan is None or director_plan.prepared_frame is None:
             record = self.session_registry.get(session_id)
-            if director_plan is None:
+            # inbound 用户热路径：禁止同步 bootstrap/ensure（会打 plan_control_arc）
+            # 拿不到导演新结果就用缓存层先组 bundle，完整 refresh 走异步 warm
+            if mode == "inbound":
+                director_plan = self._orchestrator.compose_director.hot_path_plan(
+                    session_id,
+                    target_turn_index=resolved_turn,
+                    user_text=user_text,
+                    generation=record.generation,
+                    mode=mode,
+                )
+                self._orchestrator.compose_director.save_plan(director_plan)
+            elif director_plan is None:
                 director_plan = self._orchestrator.compose_director.bootstrap_plan(
                     session_id,
                     target_turn_index=resolved_turn,
@@ -1695,13 +2782,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                     bundle_meta=self._orchestrator.compose_cache(session_id).meta_snapshot(),
                     mode=mode,
                 )
+                self._orchestrator.compose_director.save_plan(director_plan)
             else:
                 director_plan = self._orchestrator.compose_director.ensure_prepared_frame(
                     director_plan,
                     user_text=user_text,
                     mode=mode,
                 )
-            self._orchestrator.compose_director.save_plan(director_plan)
+                self._orchestrator.compose_director.save_plan(director_plan)
 
         queued = self._orchestrator.compose_queue_hub.pop_frame(session_id, mode=mode)
         if queued is not None:
@@ -1725,11 +2813,21 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             mode=mode,
         )
         if bundle is None:
-            director_plan = self._orchestrator.compose_director.ensure_prepared_frame(
-                director_plan,
-                user_text=user_text,
-                mode=mode,
-            )
+            if mode == "inbound":
+                record = self.session_registry.get(session_id)
+                director_plan = self._orchestrator.compose_director.hot_path_plan(
+                    session_id,
+                    target_turn_index=resolved_turn,
+                    user_text=user_text,
+                    generation=record.generation,
+                    mode=mode,
+                )
+            else:
+                director_plan = self._orchestrator.compose_director.ensure_prepared_frame(
+                    director_plan,
+                    user_text=user_text,
+                    mode=mode,
+                )
             self._orchestrator.compose_director.save_plan(director_plan)
             bundle = self._bundle_from_director_plan(
                 director_plan,
@@ -1887,9 +2985,18 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         record: bool = True,
         responder: str | None = None,
     ) -> SpeakTurnResult:
+        """用户→角色热路径。导演不得阻塞本接口。
+
+        - 原文先 stamp，并撤掉导演主动 handoff。
+        - 若仅因出站推送 / 既有用户 turn 而 queued：打断出站后直达角色。
+        - 队列竞态抽干时用 stamp 原文兜底，禁止空 answer（旧 user_input_drained 路径已废）。
+        - 导演编排只异步旁路；角色开口不依赖导演完成。
+        """
         selected_responder = normalize_speak_responder(responder)
         self._drain_async_delivery_queue()
         self._session_manager.open(session_id, trigger="user_message")
+        # 用户原文先落地：撤销导演主动 handoff，再决定是立刻角色回还是打断后回
+        self.stamp_user_ingress(session_id, user_text)
         submit = self._session_manager.submit_user_input(
             session_id,
             user_text,
@@ -1899,49 +3006,99 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             responder=selected_responder,
         )
         if submit.queued:
-            return SpeakTurnResult(
-                session_id=session_id,
-                answer="",
-                bundle=SpeakPromptBundle(session_id=session_id, mode=mode),
-                recorded=False,
-                notes=list(submit.notes),
-                meta={
+            # 打断出站后立刻进角色，不等 pushing / 上一拍 delivery 结束
+            if self._session_manager.is_pushing(session_id):
+                self._session_manager.end_push(session_id)
+            if self._session_manager.user_queue.has_pending(session_id):
+                self._session_manager.queues.begin_turn_busy(session_id)
+                try:
+                    result = self._process_user_inputs(session_id)
+                    self._drain_async_delivery_queue()
+                    result.notes = list(result.notes) + list(submit.notes) + [
+                        "user_direct_after_busy"
+                    ]
+                    result.meta = {
+                        **dict(result.meta),
+                        "queued": True,
+                        "interrupt": submit.interrupt,
+                        "responder": selected_responder,
+                    }
+                    return result
+                finally:
+                    self._session_manager.queues.end_turn_busy(session_id)
+                    self._flush_pending_character_handoff(session_id)
+            # 队列被竞态抽干：禁止空回；用 stamp 原文强制角色回
+            stamped = str(
+                getattr(self._state_store.session(session_id), "last_real_user_text", "")
+                or user_text
+                or ""
+            ).strip()
+            if not stamped:
+                raise RuntimeError(
+                    "speak: user ingress queued but no stamped text for character reply"
+                )
+            self._session_manager.queues.begin_turn_busy(session_id)
+            try:
+                initial = UserInputItem(
+                    session_id=session_id,
+                    user_text=stamped,
+                    mode=mode,
+                    stream=stream,
+                    record=record,
+                    responder=selected_responder,
+                    interrupted=bool(submit.interrupt),
+                )
+                result = self._process_user_inputs(session_id, initial=initial)
+                self._drain_async_delivery_queue()
+                result.notes = list(result.notes) + list(submit.notes) + [
+                    "user_direct_after_busy_stamp_fallback",
+                    "never_empty_on_director_drain",
+                ]
+                result.meta = {
+                    **dict(result.meta),
                     "queued": True,
                     "interrupt": submit.interrupt,
-                    "session_state": "queued",
                     "responder": selected_responder,
-                },
-            )
+                    "stamp_fallback": True,
+                }
+                return result
+            finally:
+                self._session_manager.queues.end_turn_busy(session_id)
+                self._flush_pending_character_handoff(session_id)
 
-        upcoming = self.session_registry.current_turn_index(session_id) + 1
-        self._kick_for_upcoming_turn(session_id, user_text, upcoming, mode=mode)
-
-        waited_typing = self._session_manager.queues.is_typing_without_idle(session_id)
-        if waited_typing:
-            user_text = self._session_manager.queues.merge_pending_user_text(
-                session_id,
-                user_text,
+        self._session_manager.queues.begin_turn_busy(session_id)
+        try:
+            upcoming = self.session_registry.current_turn_index(session_id) + 1
+            self._kick_for_upcoming_turn(session_id, user_text, upcoming, mode=mode)
+            initial = UserInputItem(
+                session_id=session_id,
+                user_text=user_text.strip(),
+                mode=mode,
+                stream=stream,
+                record=record,
+                responder=selected_responder,
             )
-            self._session_manager.queues.wait_typing_idle(session_id, timeout=120.0)
-            self._session_manager.queues.wait_typing_idle_handoff(
-                session_id,
-                timeout=120.0,
-            )
-        else:
-            self._flush_brew_queue(session_id)
+            result = self._process_user_inputs(session_id, initial=initial)
+            self._drain_async_delivery_queue()
+            logger.debug("speak prompt bundle: %s", result.bundle.summary_for_log())
+            return result
+        finally:
+            self._session_manager.queues.end_turn_busy(session_id)
+            self._flush_pending_character_handoff(session_id)
 
-        initial = UserInputItem(
-            session_id=session_id,
-            user_text=user_text.strip(),
-            mode=mode,
-            stream=stream,
-            record=record,
-            responder=selected_responder,
-        )
-        result = self._process_user_inputs(session_id, initial=initial)
-        self._drain_async_delivery_queue()
-        logger.debug("speak prompt bundle: %s", result.bundle.summary_for_log())
-        return result
+    def _flush_pending_character_handoff(self, session_id: str) -> None:
+        """用户角色 turn/出站空闲后：若有导演主动 due handoff，再请求角色。
+
+        用户优先：若仍有用户队列/打断，不 flush，避免导演再次挡角色接口。
+        """
+        sid = session_id.strip()
+        if not sid or self._orchestrator_thread is None:
+            return
+        if self._director_must_yield_to_user(sid):
+            return
+        if self._session_manager.is_pushing(sid) or self._session_manager.is_turn_busy(sid):
+            return
+        self._orchestrator_thread._maybe_notify_character_handoff(sid)
 
     def _process_user_inputs(
         self,
@@ -1977,6 +3134,503 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 item for item in self._async_ready_sessions if item != sid
             )
 
+    def _character_decision_llm(self):
+        """角色开口决策必须用 DirectorLLMCaller，不能把 SpeakDirectorLLMEngine 再包一层。"""
+        caller = getattr(self, "_director_llm_caller", None)
+        if caller is not None and getattr(caller, "available", False):
+            return caller
+        coord = getattr(self, "_director_coordinator", None)
+        if coord is not None:
+            nested = getattr(coord, "_llm", None)
+            if nested is not None and getattr(nested, "available", False):
+                return nested
+        return None
+
+    def _character_silence_result(
+        self,
+        *,
+        request,
+        notes: list[str],
+        flush_body: str,
+        reason: str,
+        note_label: str,
+    ):
+        from agent.soul.speak.io.outbound.stream.parse.model import SpeakAgentOutput
+
+        from .responders.request_driven.character.interaction import (
+            note_character_think_silence,
+        )
+        from .responders.request_driven.orchestrator.state.core.delivery import (
+            build_delivery_plan,
+        )
+        from .responders.request_driven.timeline import RoleTimeline, TimelineOp
+
+        sid = request.session_id.strip()
+        state = self._state_store.session(sid)
+        note_character_think_silence(state, reason=reason)
+        agenda = getattr(state, "speak_agenda", None)
+        if agenda is not None:
+            agenda.note_event()
+            state.director_cache["speak_agenda"] = agenda.snapshot()
+        notes.append(note_label)
+        timeline = RoleTimeline(
+            ops=(
+                TimelineOp(kind="body", body=flush_body or reason),
+                TimelineOp(kind="silence", seconds=0.0),
+            )
+        )
+        self._commit_delivery_step(
+            session_id=sid,
+            request=request,
+            answer_text="",
+            chose_silence=True,
+        )
+        empty_plan = build_delivery_plan(
+            segments=[],
+            continuity="finish",
+            plan_id=f"decision-{request.trigger_id}",
+            turn_index=int(request.turn_index or 0),
+        )
+        return (
+            "",
+            SpeakAgentOutput(session_state="finish"),
+            empty_plan,
+            True,
+            timeline,
+        )
+
+    def _character_generate_via_runtime(
+        self,
+        *,
+        request,
+        bundle: SpeakPromptBundle,
+        notes: list[str],
+        director_plan,
+        user_text: str,
+        record_user_text: str = "",
+    ):
+        from .responders.request_driven.character.interaction import (
+            note_character_exchange,
+        )
+        from .responders.request_driven.composer.projectors.dynamic_layer import (
+            DynamicLayerMaterials,
+        )
+
+        sid = request.session_id.strip()
+        state = self._state_store.session(sid)
+        view = self._compose_gateway.manager.context_for_role(
+            sid,
+            user_text=user_text,
+        )
+        materials = self._compose_manager_materials.get(sid)
+        if materials is None:
+            materials = self._compose_gateway.manager.export_dynamic_materials(
+                sid,
+                user_text=user_text,
+                share_texts=self._collect_share_texts_for_dynamic(sid),
+            )
+        if not isinstance(materials, DynamicLayerMaterials):
+            materials = DynamicLayerMaterials(session_id=sid)
+        schedule = self._director_dynamic_schedule(sid)
+        result = self._character_runtime.run(
+            request,
+            bundle=bundle,
+            view=view,
+            materials=materials,
+            schedule=schedule,
+            director_plan=director_plan,
+            notes=notes,
+        )
+        answer = str(result.answer_text or "").strip()
+        if answer:
+            note_character_exchange(
+                state,
+                user_text=record_user_text,
+                agent_text=answer,
+            )
+        consume_notes = self._finalize_character_reply(result)
+        notes[:] = list(result.notes) + list(consume_notes)
+        return (
+            answer,
+            result.parsed,
+            result.delivery_plan,
+            True,
+            result.timeline,
+        )
+
+    def _run_user_hot_character_reply(
+        self,
+        *,
+        request,
+        bundle: SpeakPromptBundle,
+        notes: list[str],
+        director_plan,
+    ):
+        """用户热路径：三选（沉默 / 延迟预约 / 立刻回复）。不与 booked 共用决策。"""
+        from .responders.request_driven.character.decision import (
+            decide_hot_turn,
+            write_hot_delay_booking,
+        )
+        from .responders.request_driven.character.interaction import (
+            export_interaction_record,
+            note_character_heard_user,
+        )
+
+        sid = request.session_id.strip()
+        user_text = request.effective_user_text
+        state = self._state_store.session(sid)
+        if str(user_text or "").strip():
+            note_character_heard_user(
+                state,
+                user_text=user_text,
+                turn_index=int(request.turn_index or 0),
+            )
+
+        narrative = getattr(request, "narrative", None)
+        plot_intent = str(getattr(narrative, "active_unit_intent", "") or "").strip()
+        enrichment = ""
+        if narrative is not None and hasattr(narrative, "render_director_instruction"):
+            enrichment = narrative.render_director_instruction()
+        interaction = export_interaction_record(state).render_for_character()
+        decision = decide_hot_turn(
+            self._character_decision_llm(),
+            session_id=sid,
+            turn_index=int(request.turn_index or 0),
+            user_text=user_text,
+            plot_intent=plot_intent,
+            rhythm_enrichment=enrichment,
+            interaction_record=interaction,
+        )
+        notes.append(
+            f"hot_decision: action={decision.action} reason={decision.reason[:60]}"
+        )
+        if decision.action == "silence":
+            return self._character_silence_result(
+                request=request,
+                notes=notes,
+                flush_body=decision.flush_body,
+                reason=decision.reason,
+                note_label="character_chose_silence_after_hot_decision",
+            )
+        if decision.action == "delay":
+            note = write_hot_delay_booking(
+                state,
+                decision,
+                plot_unit_id=str(getattr(narrative, "active_unit_id", "") or "").strip(),
+            )
+            if note:
+                notes.append(note)
+            return self._character_silence_result(
+                request=request,
+                notes=notes,
+                flush_body=decision.flush_body,
+                reason=decision.reason,
+                note_label="character_chose_delay_after_hot_decision",
+            )
+        return self._character_generate_via_runtime(
+            request=request,
+            bundle=bundle,
+            notes=notes,
+            director_plan=director_plan,
+            user_text=user_text,
+            record_user_text=user_text,
+        )
+
+    def _run_booked_character_reply(
+        self,
+        *,
+        request,
+        bundle: SpeakPromptBundle,
+        notes: list[str],
+        director_plan,
+    ):
+        """预约到点：重建叙事快照后二选（沉默 / 回复）。禁止再预约。"""
+        from .responders.request_driven.character.booked_path import decide_booked_turn
+        from .responders.request_driven.character.context import build_narrative_snapshot
+        from .responders.request_driven.character.interaction import (
+            export_interaction_record,
+            note_user_silence_on_wake,
+        )
+
+        sid = request.session_id.strip()
+        state = self._state_store.session(sid)
+        origin = str(getattr(request, "origin", "") or "").strip().lower()
+        if note_user_silence_on_wake(state):
+            notes.append("wake: user_silence_noted")
+
+        # 到点当场重建，不用下预约时的旧材料
+        narrative = build_narrative_snapshot(
+            state,
+            origin=origin or "booked",
+            user_text="",
+            executable_unit_id=str(getattr(request, "executable_unit_id", "") or ""),
+        )
+        request.narrative = narrative
+        plot_intent = str(getattr(narrative, "active_unit_intent", "") or "").strip()
+        enrichment = ""
+        if hasattr(narrative, "render_director_instruction"):
+            enrichment = narrative.render_director_instruction()
+        interaction = export_interaction_record(state).render_for_character()
+        decision = decide_booked_turn(
+            self._character_decision_llm(),
+            session_id=sid,
+            turn_index=int(request.turn_index or 0),
+            origin=origin or "booked",
+            plot_intent=plot_intent,
+            rhythm_enrichment=enrichment,
+            interaction_record=interaction,
+            director_cue=str(getattr(request, "director_cue", "") or ""),
+        )
+        notes.append(
+            f"booked_decision: action={decision.action} reason={decision.reason[:60]}"
+        )
+        if decision.action == "silence":
+            return self._character_silence_result(
+                request=request,
+                notes=notes,
+                flush_body=decision.flush_body,
+                reason=decision.reason,
+                note_label="character_chose_silence_after_booked_decision",
+            )
+        return self._character_generate_via_runtime(
+            request=request,
+            bundle=bundle,
+            notes=notes,
+            director_plan=director_plan,
+            user_text="",
+            record_user_text="",
+        )
+
+    def _run_character_reply(
+        self,
+        *,
+        request,
+        bundle: SpeakPromptBundle,
+        notes: list[str],
+        director_plan,
+    ):
+        """按 origin 分发到热路径或预约路径；两条决策互不调用。"""
+        origin = str(getattr(request, "origin", "") or "").strip().lower()
+        if origin in ("director", "booked"):
+            return self._run_booked_character_reply(
+                request=request,
+                bundle=bundle,
+                notes=notes,
+                director_plan=director_plan,
+            )
+        return self._run_user_hot_character_reply(
+            request=request,
+            bundle=bundle,
+            notes=notes,
+            director_plan=director_plan,
+        )
+
+    def _finalize_character_reply(self, result) -> list[str]:
+        """角色回合收尾：消费已压入的记忆/分享；路由角色对导演/编剧的反馈。"""
+        from .responders.request_driven.character.consume import consume_injected_materials
+
+        sid = str(result.session_id or "").strip()
+        notes: list[str] = []
+        if not sid:
+            return notes
+
+        def _clear_inject_flags(session_id: str) -> None:
+            state = self._state_store.session(session_id)
+            flow = getattr(state, "plot_flow", None)
+            if flow is not None and hasattr(flow, "clear_material_schedule"):
+                flow.clear_material_schedule()
+                state.director_cache["plot_flow"] = flow.snapshot()
+            # 旧导演 dynamic_layer 缓存不再驱动注入；顺手清掉避免误读
+            state.director_cache.pop("dynamic_layer", None)
+
+        presence = self._presence
+
+        def _pop_session_share(session_id: str, index: int):
+            return self._session_manager.queues.share_queue.consume_at(
+                session_id,
+                index,
+                turn_index=int(result.turn_index or 0),
+                trigger_id=str(result.trigger_id or ""),
+            )
+
+        def _peek_session_share(session_id: str):
+            return self._session_manager.queues.share_queue.peek_session(session_id)
+
+        def _pop_deferred_matching(session_id: str, topic: str) -> bool:
+            # deferred 已并入 session share_queue；再用 topic 精确弹出
+            return (
+                self._session_manager.queues.share_queue.consume_by_topic(
+                    session_id,
+                    topic,
+                    turn_index=int(result.turn_index or 0),
+                    trigger_id=str(result.trigger_id or ""),
+                )
+                is not None
+            )
+
+        notes.extend(
+            consume_injected_materials(
+                sid,
+                memory_unit_ids=tuple(result.consumed_memory_unit_ids or ()),
+                share_texts=tuple(result.consumed_share_texts or ()),
+                share_indices=tuple(result.consumed_share_indices or ()),
+                mark_recall_unit_consumed=self._mark_recall_unit_consumed,
+                pop_session_share_at=_pop_session_share,
+                pop_presence_share_at=(
+                    presence.consume_share_at if presence is not None else None
+                ),
+                peek_session_share=_peek_session_share,
+                pop_deferred_share_matching=_pop_deferred_matching,
+                clear_director_inject_flags=_clear_inject_flags,
+            )
+        )
+        share_history = self._session_manager.queues.share_queue.consumption_history(sid)
+        if share_history:
+            state = self._state_store.session(sid)
+            state.director_cache["share_consumption_history"] = share_history
+            state.notes.append(
+                "dynamic_share: consumed "
+                f"count={len(result.consumed_share_texts or ())} "
+                f"trigger={result.trigger_id}"
+            )
+        notes.extend(self._route_character_feedback(sid, result))
+        return notes
+
+    def _route_character_feedback(self, session_id: str, result) -> list[str]:
+        """角色 note → 导演缓存 / 编剧笔记（不对用户展示）。"""
+        sid = session_id.strip()
+        notes: list[str] = []
+        state = self._state_store.session(sid)
+        director_notes = tuple(result.notes_to_director or ())
+        writer_notes = tuple(result.notes_to_screenwriter or ())
+        if director_notes:
+            bucket = list(state.director_cache.get("character_feedback_to_director") or [])
+            for item in director_notes:
+                text = str(item or "").strip()
+                if not text:
+                    continue
+                bucket.append(
+                    {
+                        "turn_index": int(result.turn_index or 0),
+                        "trigger_id": str(result.trigger_id or ""),
+                        "text": text,
+                    }
+                )
+                state.notes.append(f"character→director:{text[:80]}")
+            state.director_cache["character_feedback_to_director"] = bucket[-12:]
+            notes.append(f"character_feedback_director:{len(director_notes)}")
+            # 异步唤醒导演修订时间轴/节奏卡
+            coord = getattr(self, "_director_coordinator", None)
+            if coord is not None and hasattr(coord, "on_character_feedback"):
+                import threading
+
+                threading.Thread(
+                    target=coord.on_character_feedback,
+                    args=(sid,),
+                    name=f"director-feedback-{sid[:12]}",
+                    daemon=True,
+                ).start()
+                notes.append("character_feedback_director_wake_async")
+        if writer_notes:
+            bucket = list(state.director_cache.get("character_feedback_to_screenwriter") or [])
+            for item in writer_notes:
+                text = str(item or "").strip()
+                if not text:
+                    continue
+                bucket.append(
+                    {
+                        "turn_index": int(result.turn_index or 0),
+                        "trigger_id": str(result.trigger_id or ""),
+                        "text": text,
+                    }
+                )
+                state.notes.append(f"character→screenwriter:{text[:80]}")
+            state.director_cache["character_feedback_to_screenwriter"] = bucket[-12:]
+            notes.append(f"character_feedback_screenwriter:{len(writer_notes)}")
+            # 编剧侧可读：挂到 narrative 缓存供下一拍 poll/refresh 看见
+            if getattr(self, "_screenwriter", None) is not None:
+                state.director_cache["screenwriter_character_notes"] = list(
+                    state.director_cache.get("character_feedback_to_screenwriter") or []
+                )[-6:]
+        return notes
+
+    def _commit_delivery_step(
+        self,
+        *,
+        session_id: str,
+        request,
+        answer_text: str,
+        chose_silence: bool = False,
+    ) -> None:
+        """角色可见输出成功后，原子消费唯一 delivery step 并记账。"""
+        from .responders.request_driven.orchestrator.state.core.character_rhythm_schedule import (
+            plot_progress_fingerprint,
+        )
+
+        sid = session_id.strip()
+        state = self._state_store.session(sid)
+        if request.origin == "user":
+            card = state.narrative_card
+            card.interaction_mode = "user_utterance"
+            card.user_activity = "正在与你文字往来"
+            state.director_cache["narrative_card_state"] = card.snapshot()
+        step_id = str(getattr(request, "executable_unit_id", "") or "").strip()
+        if not step_id:
+            return
+        if chose_silence or not str(answer_text or "").strip():
+            if hasattr(state.character_rhythm_schedule, "release_reserved"):
+                state.character_rhythm_schedule.release_reserved(step_id)
+                state.director_cache["character_rhythm_schedule"] = (
+                    state.character_rhythm_schedule.snapshot()
+                )
+            return
+        # 同对可多次开口：开口不翻卡。节奏+剧情消费只走窗口结束 / 预约跳下一对。
+        fingerprint = plot_progress_fingerprint(state.plot_arc, state.plot_flow)
+        script = ""
+        for entry in state.character_rhythm_schedule.executable_units:
+            if entry.unit_id == step_id:
+                script = str(entry.script_text or "").strip()
+                break
+        if hasattr(state.character_rhythm_schedule, "release_reserved"):
+            state.character_rhythm_schedule.release_reserved(step_id)
+        state.director_cache["character_rhythm_schedule"] = (
+            state.character_rhythm_schedule.snapshot()
+        )
+        agenda = getattr(state, "speak_agenda", None)
+        if agenda is not None:
+            agenda.note_event()
+            state.director_cache["speak_agenda"] = agenda.snapshot()
+        ledger = list(state.director_cache.get("delivery_step_ledger") or [])
+        ledger.append(
+            {
+                "delivery_step_id": step_id,
+                "origin": str(getattr(request, "origin", "") or ""),
+                "trigger_id": str(getattr(request, "trigger_id", "") or ""),
+                "plot_unit_ids": list(getattr(request, "plot_unit_ids", ()) or ()),
+                "script_text": script[:240],
+                "answer_fingerprint": str(answer_text or "").strip()[:120],
+                "turn_index": int(getattr(request, "turn_index", 0) or 0),
+                "plot_fingerprint": fingerprint,
+            }
+        )
+        state.director_cache["delivery_step_ledger"] = ledger[-24:]
+        state.notes.append(
+            f"delivery_step: noted exec_unit={step_id} "
+            f"origin={request.origin} trigger={request.trigger_id}"
+        )
+        from .responders.request_driven.character.consume import note_plot_bound_delivery
+
+        # 角色只记账；剧情 unit 完成权在时间轴/议程消费路径 → 编剧
+        noted = note_plot_bound_delivery(
+            state,
+            plot_unit_ids=tuple(getattr(request, "plot_unit_ids", ()) or ()),
+            reason=f"character_delivery:{request.origin}",
+        )
+        if noted:
+            state.notes.append(
+                f"plot_queue: delivery_noted_await_consume intent={noted[:60]}"
+            )
+
     def _generate_request_driven_with_role_sidechain(
         self,
         *,
@@ -1987,155 +3641,88 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         director_plan,
         turn_index: int,
     ):
-        from .responders.request_driven.orchestrator.assemble import build_turn_system
-        from .responders.request_driven.orchestrator.compose_manager.projectors.dynamic_layer import (
-            DynamicLayerMaterials,
-        )
-        from .responders.request_driven.prompt import build_role_prompt
-        from .responders.request_driven.delivery_bridge import timeline_to_delivery_plan
-        from .responders.request_driven.interpreter import interpret_role_packet
+        """用户直入：拿已有剧情卡构造 origin=user，由角色决定是否开口。
+
+        故意跳过编剧同步以保住交互时延；最新用户交互记入角色侧账本，
+        编剧/导演在 poll / refill 时向角色 export_interaction_record 拉取。
+        """
+        from .responders.request_driven.character import build_character_reply_request
 
         sid = session_id.strip()
-        view = self._compose_gateway.manager.context_for_role(
-            sid,
-            user_text=user_text,
-        )
-        materials = self._compose_manager_materials.get(sid)
-        if materials is None:
-            materials = self._compose_gateway.manager.export_dynamic_materials(
-                sid,
-                user_text=user_text,
-                share_texts=self._deferred_share_texts(sid),
-            )
-        if not isinstance(materials, DynamicLayerMaterials):
-            materials = DynamicLayerMaterials(session_id=sid)
-        schedule = self._director_dynamic_schedule(sid)
         state = self._state_store.session(sid)
-        active_guide = state.active_next_turn_guide or {}
-        behavior_guide = str(active_guide.get("behavior_guide") or "")
-        script_hint = str(active_guide.get("script_hint") or "")
-        presence_card = state.presence_card
-        presence_mood = str(getattr(presence_card, "mood", "") or "")
-        presence_brief = str(getattr(presence_card, "brief", "") or "")
-        # 角色 system：身份+材料，不含 compose [action]/[state] 协议
-        base_system = build_turn_system(bundle, for_character=True)
-        help_observations: tuple[str, ...] = ()
-
-        def _build_prompt(obs: tuple[str, ...] = ()) -> object:
-            return build_role_prompt(
-                view,
-                user_text=user_text,
-                materials=materials,
-                schedule=schedule,
-                behavior_guide=behavior_guide,
-                script_hint=script_hint,
-                help_observations=obs,
-                presence_mood=presence_mood,
-                presence_brief=presence_brief,
-            )
-
-        def _generate_once(obs: tuple[str, ...] = ()) -> tuple[str, object]:
-            role_prompt = _build_prompt(obs)
-            system = base_system
-            if role_prompt.system_extra.strip():
-                system = f"{system}\n\n{role_prompt.system_extra}".strip() if system else role_prompt.system_extra
-            cards: list[tuple[str, str]] = []
-            if presence_card is not None and getattr(presence_card, "ready", False):
-                body = presence_card.render()
-                if body.strip():
-                    cards.append(("临场状态", body))
-            if role_prompt.layers is not None and role_prompt.layers.dialogue_frame.strip():
-                cards.append(("对话轨迹", role_prompt.layers.dialogue_frame))
-            if self._character_agent is not None:
-                raw_text = self._character_agent.generate(
-                    system=system,
-                    user_text=user_text,
-                    context_cards=cards,
-                    help_observations=obs,
-                )
-            else:
-                raw_text = self._speak_role.generate(role_prompt, base_system=base_system)
-            return raw_text, role_prompt
-
-        raw, _prompt = _generate_once()
-        packet = interpret_role_packet(raw)
-        if packet.help_goals:
-            notes.append(f"character_ask_help:{len(packet.help_goals)}")
-            help_observations = self._character_work.request_helps(
-                session_id=sid,
-                goals=packet.help_goals,
-                user_text=user_text,
-                limit=1,
-            )
-            if help_observations:
-                notes.append("character_help_routed")
-                raw, _prompt = _generate_once(help_observations)
-                packet = interpret_role_packet(raw)
-
-        timeline = packet.timeline
-        paced = timeline_to_delivery_plan(
-            timeline,
-            turn_index=turn_index,
-            plan_id=f"role-{sid}-{turn_index}",
+        notes.append(
+            "character_pre_sync:skipped_hot_path;"
+            "interaction_via_character_export"
         )
-        answer_text = timeline.answer_text
-        if paced.is_empty and answer_text.strip():
-            paced = self._pace_delivery_plan_with_speak(director_plan, answer_text)
-        parsed = parse_agent_output(raw)
-        if not parsed.speak.strip() and answer_text.strip():
-            body_actions = tuple(
-                op.body.strip()
-                for op in timeline.ops
-                if op.kind == "body" and op.body.strip()
-            )
-            parsed = SpeakAgentOutput(
-                thought="\n".join(
-                    op.body.strip()
-                    for op in timeline.ops
-                    if op.kind == "think" and op.body.strip()
-                ),
-                speak=answer_text,
-                actions=body_actions,
-                raw=raw,
-            )
-        if timeline.ignored:
-            notes.append(f"role_ignored:{len(timeline.ignored)}")
-        notes.append(f"dynamic_schedule:{schedule.reason}")
-        if schedule.inject_memory:
-            notes.append("dynamic_inject_memory")
-        if schedule.inject_share:
-            notes.append("dynamic_inject_share")
-        if schedule.pass_info:
-            notes.append("dynamic_pass_info")
-        return answer_text, parsed, paced, True, timeline
+        request = build_character_reply_request(
+            origin="user",
+            session_id=sid,
+            turn_index=int(turn_index or 0),
+            state=state,
+            user_text=user_text,
+            reason="user_ingress",
+            bind_user_step=True,
+        )
+        if (
+            request.trigger_id
+            and state.last_character_trigger_id
+            and request.trigger_id == state.last_character_trigger_id
+        ):
+            notes.append(f"character_duplicate_trigger:{request.trigger_id}")
+        out = self._run_user_hot_character_reply(
+            request=request,
+            bundle=bundle,
+            notes=notes,
+            director_plan=director_plan,
+        )
+        state.last_character_trigger_id = request.trigger_id
+        answer_text = out[0] if isinstance(out, tuple) and out else ""
+        self._commit_delivery_step(
+            session_id=sid,
+            request=request,
+            answer_text=str(answer_text or ""),
+            chose_silence=not str(answer_text or "").strip(),
+        )
+        return out
 
     def _execute_outbound_request(
         self,
         request: OutboundRequest,
         *,
         user_text: str = "",
-        check_continue: bool = False,
+        background: bool = False,
     ) -> list[SpeakStreamEvent]:
-        result = execute_outbound(
-            request if not user_text else OutboundRequest(
-                session_id=request.session_id,
-                ops=request.ops,
-                user_text=user_text,
-                meta=dict(request.meta),
-            ),
-            emit_fn=self._stream._emit,
-            session_service=self._session_manager,
-            stream_channel=self._outbound_stream,
-            should_continue_fn=(
-                self._should_continue_delivery if check_continue else None
-            ),
-            on_done=(
-                (lambda sid: self._orchestrator_thread.notify_delivery_done(sid))
-                if self._orchestrator_thread is not None
-                else None
-            ),
+        outgoing = OutboundRequest(
+            session_id=request.session_id,
+            ops=request.ops,
+            user_text=user_text or request.user_text,
+            meta=dict(request.meta),
         )
-        return result.events
+        message = message_from_request(outgoing, mode="live")
+
+        def _runner(req: OutboundRequest):
+            return self._outbound_manager.run_execute(
+                req,
+                emit_fn=self._stream._emit,
+                session_service=self._session_manager,
+                stream_channel=self._outbound_stream,
+                on_done=(
+                    (lambda sid: self._orchestrator_thread.notify_delivery_done(sid))
+                    if self._orchestrator_thread is not None
+                    else None
+                ),
+            )
+
+        if background:
+            self._session_manager.queues.begin_push(outgoing.session_id, outgoing.user_text)
+
+            def _deliver() -> None:
+                self._outbound_manager.dispatch_live(message, runner=_runner)
+
+            self._delivery_worker.submit(_deliver)
+            return []
+        result = self._outbound_manager.dispatch_live(message, runner=_runner)
+        return list(result.events)
 
     def _deliver_role_timeline(
         self,
@@ -2143,6 +3730,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         timeline,
         *,
         user_text: str = "",
+        background: bool = False,
     ) -> list[SpeakStreamEvent]:
         request = timeline_to_outbound_request(
             timeline,
@@ -2150,149 +3738,11 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             user_text=user_text,
             finish=True,
         )
-        return self._execute_outbound_request(request, user_text=user_text, check_continue=False)
-
-    def _execute_delivery_plan(
-        self,
-        plan,
-        *,
-        session_id: str,
-        user_text: str = "",
-        include_prefix: list | None = None,
-    ) -> list[SpeakStreamEvent]:
-        request = outbound_from_delivery_plan(
-            plan,
-            session_id=session_id,
-            user_text=user_text,
-            include_prefix=include_prefix,
-        )
         return self._execute_outbound_request(
             request,
             user_text=user_text,
-            check_continue=True,
+            background=background,
         )
-    def _generate_request_driven_reply(
-        self,
-        *,
-        session_id: str,
-        bundle: SpeakPromptBundle,
-        user_text: str,
-        notes: list[str],
-    ) -> tuple[str, SpeakAgentOutput]:
-        from .responders.request_driven.orchestrator.assemble import (
-            build_turn_system,
-            resolve_llm_user_text,
-        )
-
-        partial_output = ""
-        parsed: SpeakAgentOutput | None = None
-        speak_parts: list[str] = []
-        for round_idx in range(8):
-            system = build_turn_system(
-                bundle,
-                round_idx=round_idx,
-                partial_output=partial_output,
-                parsed=parsed,
-            )
-            llm_user = resolve_llm_user_text(bundle, user_text, round_idx=round_idx, parsed=parsed)
-            raw = self._llm.generate(llm_user, system=system).text
-            parsed = parse_agent_output(raw)
-            speak = parsed.speak.strip()
-            if speak:
-                speak_parts.append(speak)
-                partial_output = "\n".join(speak_parts)
-
-            if parsed.session_state == "append":
-                notes.append("session_state:append")
-                continue
-
-            if parsed.session_state == "share":
-                notes.append("session_state:share")
-                handoff = self._request_driven_share_handoff_reply(
-                    session_id=session_id,
-                    llm_user=llm_user,
-                    system=system,
-                )
-                if handoff is not None:
-                    return handoff
-                break
-
-            if parsed.session_state == "recall":
-                notes.append("session_state:recall")
-                handoff = self._request_driven_recall_handoff_reply(
-                    session_id=session_id,
-                    llm_user=llm_user,
-                    system=system,
-                    parsed=parsed,
-                )
-                if handoff is not None:
-                    return handoff
-                break
-
-            break
-
-        if parsed is None:
-            parsed = SpeakAgentOutput()
-        return "\n".join(speak_parts).strip() or parsed.speak.strip(), parsed
-
-    def _request_driven_share_handoff_reply(
-        self,
-        *,
-        session_id: str,
-        llm_user: str,
-        system: str,
-    ) -> tuple[str, SpeakAgentOutput] | None:
-        if self._presence is None:
-            return None
-        shared = self._orchestrator.share.pop_handoff(
-            self._presence,
-            session_id,
-            pop_deferred=self._session_manager.pop_deferred_share_intent,
-        )
-        if not shared.ok:
-            return None
-        full_text = shared.full_text.strip()
-        if not full_text:
-            return None
-        handoff_system = (
-            system
-            + "\n\n[share_handoff]\n"
-            + "你刚才判断需要分享存在感队列中的内容。现在请自然融入以下内容，并只输出一次最终回复。\n"
-            + full_text
-            + "\n[/share_handoff]"
-        )
-        raw = self._llm.generate(llm_user, system=handoff_system).text
-        parsed = parse_agent_output(raw)
-        return parsed.speak.strip(), parsed
-
-    def _request_driven_recall_handoff_reply(
-        self,
-        *,
-        session_id: str,
-        llm_user: str,
-        system: str,
-        parsed: SpeakAgentOutput,
-    ) -> tuple[str, SpeakAgentOutput] | None:
-        handoff = perform_recall_handoff(
-            self._io.inbound.memory,
-            session_id=session_id,
-            query=parsed.recall_query,
-        )
-        if not handoff.ok:
-            return None
-        full_text = handoff.full_text.strip()
-        if not full_text:
-            return None
-        handoff_system = (
-            system
-            + "\n\n[recall_handoff]\n"
-            + "你刚才判断需要调用记忆。现在请基于以下召回内容回答用户，并只输出一次最终回复。\n"
-            + full_text
-            + "\n[/recall_handoff]"
-        )
-        raw = self._llm.generate(llm_user, system=handoff_system).text
-        next_parsed = parse_agent_output(raw)
-        return next_parsed.speak.strip(), next_parsed
 
     def _pace_delivery_plan_with_speak(self, director_plan, speak_text: str):
         from .io.outbound.stream import split_sentences
@@ -2349,35 +3799,34 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
 
         upcoming = self.session_registry.current_turn_index(sid) + 1
         self._kick_for_upcoming_turn(sid, user_text, upcoming, mode=item.mode)
-        if self._turn_coordinator is not None:
-            self._turn_coordinator.wait_before_compose(
-                sid,
-                mode=item.mode,
-                turn_index=upcoming,
-            )
+        # 故意不 wait_before_compose：角色不得等导演 plan_control_arc / bootstrap
         self._refresh_compose_manager_director_meta(sid, user_text)
 
-        plan = None
+        # 用户直达角色：不阻塞等导演；异步旁路仅供下一拍排程
         if self._orchestrator_thread is not None:
-            plan = self._orchestrator_thread.submit_user_input_sync(
-                sid,
-                user_text,
-                turn_index=upcoming,
-                timeout_sec=90.0,
-            )
-        self._apply_director_memory_intervention_from_cache(sid)
+            threading.Thread(
+                target=self.notify_director_user_input,
+                args=(sid, user_text),
+                kwargs={"turn_index": upcoming},
+                name=f"speak-director-bypass-{sid[:12]}",
+                daemon=True,
+            ).start()
+
         state = self._state_store.session(sid)
-        if plan is None:
-            plan = state.pending_delivery_plan
-        if plan is None:
-            plan = state.delivery_plan
+        plan = state.pending_delivery_plan or state.delivery_plan
         # Sync request_driven owns delivery; drop async ready so director text
         # is not pushed ahead of the main-LLM responder.
         self._clear_async_delivery_ready(sid)
         state.pending_delivery_plan = None
+        # 用户入站不受 speak_gate 卡住；角色拿已有剧情卡自行决定是否开口
+        state.speak_gate = "speak"
 
         bundle = self._compose_bundle(sid, user_text, mode=item.mode, turn_index=upcoming)
-        notes: list[str] = ["request_driven_pipeline"]
+        notes: list[str] = [
+            "request_driven_pipeline",
+            "user_direct_to_character",
+            "character_no_wait_director_compose",
+        ]
         meta: dict[str, object] = {
             "session_state": state.speak_gate,
             "speak_gate": state.speak_gate,
@@ -2388,45 +3837,26 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             "pending_plan_snapshot": plan.snapshot() if plan is not None else None,
         }
 
-        if plan is None or plan.is_empty or state.speak_gate not in ("speak", "brew"):
-            notes.append("no_delivery_segments")
-            if plan is None:
-                no_delivery_reason = "missing_delivery_plan"
-            elif plan.is_empty:
-                no_delivery_reason = "empty_delivery_plan"
-            else:
-                no_delivery_reason = f"speak_gate:{state.speak_gate}"
-            meta["no_delivery_reason"] = no_delivery_reason
-            get_prompt_trace().emit_event(
-                sid,
-                label="request_turn_no_delivery",
+        if plan is None or plan.is_empty:
+            from .responders.request_driven.orchestrator.state.core.delivery import (
+                ReplySegment,
+                build_delivery_plan,
+            )
+
+            plan = build_delivery_plan(
+                segments=[
+                    ReplySegment(
+                        text="",
+                        wait_ms=0,
+                        wait_reason="user_direct",
+                        continuity="finish",
+                    ),
+                ],
+                continuity="finish",
+                plan_id=f"user-direct-{sid}-{upcoming}",
                 turn_index=upcoming,
-                payload={
-                    "user_text": user_text,
-                    "reason": no_delivery_reason,
-                    "speak_gate": state.speak_gate,
-                    "plan": plan.snapshot() if plan is not None else None,
-                    "director_cache": dict(state.director_cache),
-                    "notes": notes,
-                },
             )
-            result = SpeakTurnResult(
-                session_id=sid,
-                answer="",
-                bundle=bundle,
-                recorded=False,
-                notes=notes,
-                meta=meta,
-            )
-            get_prompt_trace().emit_turn_finish(
-                sid,
-                turn_index=upcoming,
-                parsed=None,
-                answer=result.answer,
-                notes=result.notes,
-                cache=self.session_trace_cache(sid, turn_index=upcoming),
-            )
-            return result
+            notes.append("user_direct_fallback_delivery_plan")
 
         director_plan = plan
         answer_text, parsed, paced, used_role, role_timeline = (
@@ -2443,7 +3873,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             meta["responder"] = "speak_role"
             meta["role_timeline"] = True
             notes.append("speak_role_timeline")
-        if paced.is_empty:
+        if paced.is_empty and not (used_role and role_timeline is not None):
             notes.append("empty_main_llm_speak")
             meta["session_state"] = parsed.session_state
             meta["director_delivery_plan"] = director_plan.snapshot()
@@ -2460,6 +3890,8 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                     "notes": notes,
                 },
             )
+            if self._orchestrator_thread is not None:
+                self._orchestrator_thread.notify_delivery_done(sid)
             result = SpeakTurnResult(
                 session_id=sid,
                 answer="",
@@ -2487,25 +3919,36 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                     sid,
                     role_timeline,
                     user_text=user_text,
+                    background=True,
                 )
-            else:
-                events = self._execute_delivery_plan(
-                    paced,
-                    session_id=sid,
-                    user_text=user_text,
-                )
-        answer = "\n".join(segment.text for segment in paced.segments if segment.text.strip())
-        if not answer.strip() and answer_text.strip():
-            answer = answer_text.strip()
+        if events:
+            stamp = str((events[0].meta or {}).get("created_at") or "").strip()
+            if stamp:
+                meta["created_at"] = stamp
+        if not str(meta.get("created_at") or "").strip():
+            from datetime import datetime, timezone
+
+            meta["created_at"] = datetime.now(timezone.utc).isoformat()
+        spoken = str(answer_text or "").strip()
+        if not spoken:
+            spoken = "\n".join(
+                segment.text for segment in paced.segments if segment.text.strip()
+            )
         recorded = False
-        if item.record and answer.strip():
+        if item.record and spoken:
             self._session_manager.begin_turn(sid)
-            self.record_dialogue(sid, user_text, answer)
+            self.record_dialogue(sid, user_text, spoken)
+            self.note_agent_visible_speak(
+                sid,
+                turn_index=upcoming,
+                user_text=user_text,
+                agent_text=spoken,
+            )
             recorded = True
             self._on_compose_turn_complete(
                 sid,
                 user_text,
-                answer,
+                spoken,
                 upcoming,
                 parsed.session_state or paced.continuity,
             )
@@ -2513,8 +3956,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 sid,
                 mode=item.mode,
                 session_state=parsed.session_state or paced.continuity,
-                answer=answer,
+                answer=spoken,
             )
+        # timeline 已是唯一出站；turn_finish.answer 再带正文会被前端 dump 成第二站
+        answer = (
+            ""
+            if used_role and role_timeline is not None and item.stream
+            else spoken
+        )
 
         if self._orchestrator_thread is not None and not (
             used_role and role_timeline is not None and item.stream
@@ -2688,22 +4137,19 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def evaluate_drive(self, session_id: str) -> SpeakDriveResult:
         result = self._drive.evaluate(session_id)
         if result.should_speak and result.speak_reason.strip():
-            if self._session_manager.is_pushing(session_id):
-                self.enqueue_proactive_brew(
-                    session_id,
-                    result.speak_reason,
-                    reason="drive_while_pushing",
-                    flush_if_idle=False,
-                )
-            elif self._outbound_stream.port is not None:
-                self.enqueue_proactive_brew(
-                    session_id,
-                    result.speak_reason,
-                    reason="drive_eval",
-                    flush_if_idle=not self._session_manager.queues.is_typing_without_idle(
-                        session_id,
-                    ),
-                )
+            # 不依赖前端在线：brew 入队，出站经 bus 缓冲/扇出
+            self.enqueue_proactive_brew(
+                session_id,
+                result.speak_reason,
+                reason="drive_while_pushing"
+                if self._session_manager.is_pushing(session_id)
+                else "drive_eval",
+                flush_if_idle=(
+                    False
+                    if self._session_manager.is_pushing(session_id)
+                    else not self._session_manager.queues.is_typing_without_idle(session_id)
+                ),
+            )
         return result
 
     def tick_intrinsic_drive(self, session_id: str) -> SpeakDriveResult:

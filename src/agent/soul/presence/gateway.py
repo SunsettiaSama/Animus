@@ -71,7 +71,7 @@ class PresenceGateway:
             )
             session.awake = True
             session.last_wake_date = today
-            session.state.expectation.share_queue.drain()
+            svc.archive_and_drain_share_queue(sid, reason="wake")
             session.interaction.reset()
             svc._persist(sid)
             svc._maybe_scan_expectation(sid)
@@ -100,7 +100,7 @@ class PresenceGateway:
                 interaction=session.interaction,
             )
             session.awake = False
-            session.state.expectation.share_queue.drain()
+            svc.archive_and_drain_share_queue(sid, reason="sleep")
             svc._persist(sid)
             return GatewayResult(
                 outcome=outcome,

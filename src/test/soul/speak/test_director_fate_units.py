@@ -3,7 +3,7 @@ from __future__ import annotations
 from agent.soul.speak.io.outbound.execute import execute_outbound, outbound_from_speak_text
 from agent.soul.speak.io.outbound.protocol import OutboundOp, OutboundRequest
 from agent.soul.speak.io.outbound.stream.events import SpeakStreamEvent
-from agent.soul.speak.responders.request_driven.orchestrator.directors.agent import (
+from agent.soul.speak.responders.request_driven.directors.agent import (
     FateDiceUnit,
     RhythmCardUnit,
     build_rhythm_card,
@@ -43,10 +43,10 @@ def test_inject_director_frame_discards_previous_dice():
         rhythm_card="typing_idle=True",
     )
     second_prompt = str(state.director_cache["frame_prompt"])
-    assert "[命运骰]" in second_prompt
+    assert "[命运骰" in second_prompt
     assert "[节奏卡片]" in second_prompt
     # 当前帧覆盖：只保留一份 frame_prompt
-    assert second_prompt.count("[命运骰]") == 1
+    assert second_prompt.count("[命运骰") == 1
     assert first_prompt != second_prompt or first_roll == int(
         state.director_cache["fate_dice"]["roll"]
     )
@@ -61,7 +61,7 @@ def test_rhythm_and_fate_units_on_timeline():
     text = timeline.render()
     assert "[节奏卡片]" in text
     assert "放慢" in text
-    assert "[命运骰]" in text
+    assert "[命运骰" in text
     assert "42" in text
 
 
@@ -92,12 +92,13 @@ def test_execute_outbound_speak_finish_order():
         ops=(
             OutboundOp(kind="think", text="想"),
             OutboundOp(kind="speak", text="你好"),
-            OutboundOp(kind="finish", text="你好", final=True),
+            OutboundOp(kind="finish", text="", final=True),
         ),
     )
     result = execute_outbound(request, emit_fn=_emit, sleep_fn=lambda _s: None)
     assert result.answer == "你好"
-    assert [e.kind for e in events] == ["thought", "speak", "finish"]
+    assert [e.kind for e in events] == ["thought", "agent_typing", "speak", "finish"]
+    assert events[-1].text == ""
 
     events.clear()
     result2 = execute_outbound(
@@ -106,5 +107,7 @@ def test_execute_outbound_speak_finish_order():
         sleep_fn=lambda _s: None,
     )
     assert result2.answer == "单独一句"
-    assert events[0].kind == "speak"
+    assert events[0].kind == "agent_typing"
+    assert events[1].kind == "speak"
     assert events[-1].kind == "finish"
+    assert events[-1].text == ""

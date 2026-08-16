@@ -29,7 +29,7 @@ from .io import (
     SceneUpdateRequest,
 )
 from .director import ComposeDirector, DirectorPlan
-from .compose_manager import (
+from ..composer import (
     ComposeManager,
     ComposeManagerConfig,
     ComposeManagerGateway,

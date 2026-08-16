@@ -76,8 +76,6 @@ def _startup():
     state.channel_router = channel_router
 
     def _webui_deliver(target: ReplyTarget, title: str, message: str) -> None:
-        from agent.adapters.react_bridge import queue_agent_proactive_session
-
         channel_id = (
             str(target.params.get("channel_id", "")).strip()
             or state.default_notify_channel()
@@ -86,20 +84,27 @@ def _startup():
             raise RuntimeError("WebUI scheduled delivery requires channel_id")
         session_id = str(target.params.get("session_id", "")).strip()
         if not session_id:
-            session_id = f"scheduled-{uuid.uuid4()}"
-        queue_agent_proactive_session(
-            state,
-            {
-                "session_id": session_id,
-                "channel_id": channel_id,
-                "message": message,
-                "source": "scheduler",
-                "proactive_intent_id": str(uuid.uuid4()),
-                "agent_initiated": True,
-                "wait_reply": False,
-                "task_name": title,
-            },
-        )
+            session_id = f"live:{channel_id}"
+        payload = {
+            "session_id": session_id,
+            "channel_id": channel_id,
+            "message": message,
+            "source": "scheduler",
+            "proactive_intent_id": str(uuid.uuid4()),
+            "agent_initiated": True,
+            "wait_reply": False,
+            "task_name": title,
+            "create_window": True,
+        }
+        soul = getattr(state, "soul_service", None)
+        speak = getattr(soul, "_ensure_speak_service", None) if soul is not None else None
+        speak_svc = speak() if callable(speak) else None
+        if speak_svc is not None and hasattr(speak_svc, "enqueue_agent_outbound"):
+            speak_svc.enqueue_agent_outbound(payload)
+            return
+        from agent.adapters.react_bridge import queue_agent_proactive_session
+
+        queue_agent_proactive_session(state, payload)
 
     def _bot_deliver(target: ReplyTarget, title: str, message: str) -> None:
         if state.bot_service is not None:

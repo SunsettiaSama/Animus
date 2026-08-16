@@ -18,12 +18,22 @@ class SpeakSubjectiveChunk:
 
 @dataclass
 class SpeakFeelingChunk:
-    """体验感受的第一人称自叙（speak 层不做量化）。"""
+    """体验感受的第一人称自叙（speak 层不做量化）；结构化标注为可选边界字段。"""
 
     emotion: str = ""   # 命名情绪，如「专注」「有些不安」
     salience: str = ""  # 显著性自叙，如「这只是日常寒暄」「这轮对我很重要」
     valence: str = ""   # 情感走向自叙，如「心里渐渐安心」「略感压迫」
     arousal: str = ""   # 唤醒/能量自叙，如「精神集中」「有些疲惫」
+    # 边界结构化标注（不进入主回复 schema）
+    annotation_decided: bool = False
+    enqueue_share: bool = False
+    push_to_user: bool = False
+    share_content: str = ""
+    share_why: str = ""
+    share_desire: str = "mild"
+    promote_to_memory: bool = False
+    impression_intensity: float = 0.0
+    impression_why: str = ""
 
 
 @dataclass(frozen=True)

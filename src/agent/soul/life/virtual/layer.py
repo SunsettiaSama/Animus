@@ -180,9 +180,16 @@ class VirtualLayer:
         self,
         agenda: LandmarkAgenda,
     ) -> LandmarkAgendaPreviewResult:
+        public_cue = build_landmark_agenda_public_cue(agenda)
+        if self._story_port is None:
+            return LandmarkAgendaPreviewResult(
+                agenda=agenda,
+                public_cue=public_cue,
+                question="",
+                answer="storyview 通道已关闭，待场面引擎完善后再打开。",
+            )
         if not agenda.scene_id.strip():
             raise RuntimeError("LandmarkAgenda missing scene_id — preview requires grounded scene")
-        public_cue = build_landmark_agenda_public_cue(agenda)
         port = self._require_story_port()
         question = port.ask_gm_at_scene(
             self._world_id,
@@ -200,6 +207,12 @@ class VirtualLayer:
         )
 
     def fill_landmark_agenda(self, agenda: LandmarkAgenda) -> dict:
+        if self._story_port is None:
+            return {
+                "ok": False,
+                "reason": "storyview_channel_closed",
+                "hint": agenda.summary or agenda.title,
+            }
         if not agenda.scene_id.strip():
             raise RuntimeError("LandmarkAgenda missing scene_id — fill requires grounded scene")
         public_cue = build_landmark_agenda_public_cue(agenda)
@@ -321,6 +334,8 @@ class VirtualLayer:
         cue: str,
         kind: StoryEventKind | str,
     ):
+        if self._story_port is None:
+            return None
         port = self._require_story_port()
         packet = port.begin_event(self._world_id, cue, kind=kind)
         self.apply_world_background(packet.scene_text)
@@ -556,7 +571,8 @@ class VirtualLayer:
         objective_scene = ""
         if self._story_port is not None:
             packet = self._open_story_scene(query, StoryEventKind.fabricate)
-            objective_scene = packet.scene_text
+            if packet is not None:
+                objective_scene = packet.scene_text
 
         plan_seed = f"我刚为自己预约了一个体验时刻：{intention.strip() or '一个新的地标'}"
         if context.strip():
@@ -914,6 +930,18 @@ class VirtualLayer:
         if lm.context.strip():
             query = f"{query} {lm.context.strip()}"
         self.ensure_narrative_context(NarrativePurpose.fill, query=query)
+        if self._story_port is None:
+            lm.mark_done(
+                narrative=lm.intention,
+                experience_id="",
+                dice_value=0,
+                dice_tendency="",
+            )
+            self.save_journal()
+            return {
+                "hint": lm.intention,
+                "reason": "storyview_channel_closed",
+            }
         lm.mark_processing()
         story_outcome = self._run_story_arc(
             public_cue,
@@ -953,6 +981,12 @@ class VirtualLayer:
         return payload
 
     def tick_surprise(self, elapsed_sec: float) -> dict:
+        if self._story_port is None:
+            return {
+                "triggered": False,
+                "probability": 0.0,
+                "reason": "storyview_channel_closed",
+            }
         port = self._require_story_port()
         question = port.ask_surprise(self._world_id, elapsed_sec)
         if question is None:
@@ -999,7 +1033,8 @@ class VirtualLayer:
             objective_scene = ""
             if self._story_port is not None:
                 packet = self._open_story_scene(hint, StoryEventKind.wander)
-                objective_scene = packet.scene_text
+                if packet is not None:
+                    objective_scene = packet.scene_text
             narrative_hint = (
                 f"心跳反刍线索：{hint}"
             )
@@ -1052,7 +1087,8 @@ class VirtualLayer:
             objective_scene = ""
             if self._story_port is not None:
                 packet = self._open_story_scene(seed, StoryEventKind.wander)
-                objective_scene = packet.scene_text
+                if packet is not None:
+                    objective_scene = packet.scene_text
             narrative_hint = (
                 seed
             )

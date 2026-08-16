@@ -25,12 +25,12 @@ def collect_stable_portrait(
     persona_snap: dict,
     max_chars: int = STABLE_HARD_MAX_CHARS,
 ) -> str:
-    """从 persona_distill.general 读取稳定人格（profile+self_concept 已蒸馏合并）。"""
+    """Speak 角色 compose：优先 dialogue，缺省回落 general。"""
     pack = _load_distill_pack(persona_snap)
-    portrait = pack.slice("general")
+    portrait = pack.dialogue_text() or pack.slice("general")
     if not portrait:
         raise RuntimeError(
-            "persona_distill.general missing: 请先完成 general 切片蒸馏"
+            "persona_distill.dialogue/general missing: 请先完成对话切片蒸馏"
         )
     return clamp_identity_text(portrait, hard_max=max_chars)
 

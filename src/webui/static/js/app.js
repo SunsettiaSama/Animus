@@ -47,11 +47,10 @@ import { startNew, handleSend, handleMicClick,
          initTTSHandler, initLifecycleListeners,
          initSidebar, initSpeakDeliverySync, openKBPanel,
          rebuildFromHistory, prepareConversationSwitch,
-         openProactiveSession, openConversation,
+         openProactiveSession, handleCreateUiRequest, openConversation,
          registerModules as regWorkspace }
                                     from './screens/workspace.js';
 import { setAgentAvatar }           from './render.js';
-import { bindSpeakDeliverySetting } from './speak_delivery.js';
 import { bindSpeakResponderSetting } from './speak_responder.js';
 
 // ── Module dependency injection ───────────────────────────────────────────────
@@ -113,6 +112,11 @@ notifyMod.setCallbacks({
   onProactiveAvailable: payload => {
     _proactiveOpenChain = _proactiveOpenChain
       .then(() => openProactiveSession(payload))
+      .catch(e => showToast(String(e.message || e)));
+  },
+  onCreateUiRequest: payload => {
+    _proactiveOpenChain = _proactiveOpenChain
+      .then(() => handleCreateUiRequest(payload))
       .catch(e => showToast(String(e.message || e)));
   },
 });
@@ -323,7 +327,6 @@ async function boot() {
   initTTSHandler();
   initLifecycleListeners();
   initSidebar();
-  bindSpeakDeliverySetting();
   bindSpeakResponderSetting();
   initSpeakDeliverySync();
 

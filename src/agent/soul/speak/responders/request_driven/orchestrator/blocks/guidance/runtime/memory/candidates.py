@@ -199,8 +199,7 @@ def format_recall_candidates(candidates: tuple[RecallPlannerCandidate, ...]) -> 
     if not candidates:
         return ""
     lines = [
-        "回忆候选（social 偏新检索 + event 漫游/涌现池；上轮入选的 unit 下轮降权后加权抽样；"
-        "有候选≠必须叙述，仅下列下标可 emit_recall_index）：",
+        "回忆候选（social 偏新检索 + event 漫游/涌现池；上轮入选的 unit 下轮降权后加权抽样）：",
     ]
     for item in candidates:
         lines.append(f"- [{item.planner_index}] {item.line}")

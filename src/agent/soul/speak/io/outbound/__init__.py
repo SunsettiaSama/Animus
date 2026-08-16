@@ -8,16 +8,27 @@ from .execute import (
     outbound_from_parsed,
     outbound_from_speak_text,
 )
+from .manager import (
+    OutboundDispatchResult,
+    OutboundMessage,
+    OutboundMessageManager,
+    message_from_pending_payload,
+    message_from_request,
+    message_from_speak_text,
+    request_from_message,
+)
 from .notify import (
     SpeakNotifyPort,
     SpeakNotifySubscriberPort,
     make_notify_event,
     make_proactive_available_event,
 )
+from .bus import SpeakOutboundBus
 from .ports import SpeakOrchestratorPort, SpeakOutboundPort
 from .protocol import OutboundOp, OutboundRequest
 from .render_protocol import (
     FIELD_LABELS,
+    META_CREATED_AT,
     META_FIELD,
     META_LABEL,
     META_PHASE,
@@ -46,6 +57,7 @@ from .websocket import WebSocketSpeakStreamPort
 
 __all__ = [
     "FIELD_LABELS",
+    "META_CREATED_AT",
     "META_FIELD",
     "META_LABEL",
     "META_PHASE",
@@ -54,7 +66,10 @@ __all__ = [
     "META_WAIT_MS",
     "SPEAK_PARSE_FIELDS",
     "SPEAK_RENDER_FIELDS",
+    "OutboundDispatchResult",
     "OutboundExecuteResult",
+    "OutboundMessage",
+    "OutboundMessageManager",
     "OutboundOp",
     "OutboundRequest",
     "SpeakAgentOutput",
@@ -63,6 +78,7 @@ __all__ = [
     "SpeakNotifyPort",
     "SpeakNotifySubscriberPort",
     "SpeakOrchestratorPort",
+    "SpeakOutboundBus",
     "SpeakOutboundPort",
     "SpeakOutboundRouter",
     "SpeakPresenceOutbound",
@@ -78,6 +94,9 @@ __all__ = [
     "field_for_stream_kind",
     "make_notify_event",
     "make_proactive_available_event",
+    "message_from_pending_payload",
+    "message_from_request",
+    "message_from_speak_text",
     "normalize_render_field",
     "outbound_from_delivery_plan",
     "outbound_from_ops",
@@ -85,4 +104,5 @@ __all__ = [
     "outbound_from_speak_text",
     "parse_agent_output",
     "render_meta",
+    "request_from_message",
 ]

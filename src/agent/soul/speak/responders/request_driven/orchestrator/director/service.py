@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from ..pipeline.compose_pipeline import ComposePipeline
 from ..pipeline.context import ComposePipelineContext
 from ..blocks.system.role import SpeakTurnMode
-from .decide import decide_plan
+from .decide import decide_hot_path_plan, decide_plan
 from .store import DirectorPlanStore
 from .types import DirectorPlan
 
@@ -77,6 +77,38 @@ class ComposeDirector:
             cold_start=True,
         )
         return plan
+
+    def hot_path_plan(
+        self,
+        session_id: str,
+        *,
+        target_turn_index: int,
+        user_text: str,
+        generation: int = 0,
+        mode: SpeakTurnMode = "inbound",
+    ) -> DirectorPlan:
+        """用户热路径组 plan：只用已缓存 persona/scene/guidance，禁止同步 LLM。
+
+        导演无权阻塞角色接口；拿不到新的 control_arc 就带着旧的/空的先走。
+        完整 refresh（含 plan_control_arc）由 compose runner 异步 warm。
+        """
+        existing = self.load_plan(session_id, target_turn_index)
+        if existing is not None and existing.prepared_frame is not None:
+            return existing
+        ctx = self._orchestrator.pipeline_context(
+            session_id=session_id,
+            turn_index=target_turn_index,
+            user_text=user_text,
+            generation=generation,
+            mode=mode,
+        )
+        plan = decide_hot_path_plan(
+            session_id=session_id,
+            target_turn_index=target_turn_index,
+            user_text=user_text,
+            generation=generation,
+        )
+        return self._pipeline.refresh(plan, ctx)
 
     def ensure_prepared_frame(
         self,

@@ -44,6 +44,9 @@ class InboundGuidanceGateway:
             share_queue_count=request.share_queue_count,
             share_queue_full=request.share_queue_full,
             trigger=request.trigger,
+            user_text=request.user_text,
+            scene_brief=request.scene_brief,
+            recent_turns=request.recent_turns,
         )
 
     def plan(self, request: GuidancePlanRequest):

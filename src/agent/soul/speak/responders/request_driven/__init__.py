@@ -36,4 +36,20 @@ def __getattr__(name: str):
         from .delivery_bridge import timeline_to_outbound_request
 
         return timeline_to_outbound_request
+    if name in ("CharacterRuntime", "CharacterReplyRequest", "CharacterAgentHost"):
+        from . import character as _character
+
+        return getattr(_character, name)
+    if name in ("DirectorCoordinator", "DirectorLLMCaller"):
+        from . import directors as _directors
+
+        return getattr(_directors, name)
+    if name == "Screenwriter":
+        from .screenwriter import Screenwriter
+
+        return Screenwriter
+    if name in ("ComposeManager", "ComposeManagerConfig", "ComposeManagerGateway"):
+        from . import composer as _composer
+
+        return getattr(_composer, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

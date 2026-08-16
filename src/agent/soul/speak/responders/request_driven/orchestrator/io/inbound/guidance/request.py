@@ -26,3 +26,6 @@ class GuidancePlanRequest:
     share_queue_full: bool = False
     trigger: GuidanceTrigger = "turn"
     use_session_share_queue: bool = False
+    user_text: str = ""
+    scene_brief: str = ""
+    recent_turns: str = ""

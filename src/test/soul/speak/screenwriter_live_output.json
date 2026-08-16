@@ -1,0 +1,169 @@
+{
+  "llm_model": "deepseek-chat",
+  "used_fallback_init": false,
+  "reason_init": "开场场面，从材料中取台灯、干叶、标本台展开；角色安静观察，留出对方接话空间。",
+  "writing_materials_preview": "【交互记录｜高优先级｜含时间元数据】\n工作记忆/交互摘要=\n（新会话，尚无往返）\n\n【书写材料｜可选粘土｜自由取用】\n命运骰：开口欲=62/100（愿意接话）\n角色面板：mood=平静；brief=在标本台前整理\n人格摘要=\n安静、喜欢整理标本的角色；说话克制，观察力强。\n记忆池=\n- 昨夜在标本台整理蓟花标本\n- 帐篷角落有一盏暖色台灯\n- 桌上散着几片带横纹的干叶\n分享队列=\n- 想聊聊干叶上的横纹像不像潮水退去后的沙滩\n抽词种子（约十词）=蓟花、标本台、台灯、干叶、压纸、镊子、帐篷、暖光、花萼、吸水纸",
+  "narrative_opening": "你看到帐篷角落的暖色灯光下，她正坐在标本台前，指尖捻着一片带横纹的干叶，对着光细细端详。",
+  "scene_seeds": [
+    "盏暖色台灯",
+    "带横纹的干叶",
+    "帐篷角落有一",
+    "桌上散着几片带横纹的干叶",
+    "喜欢整理标本的角色",
+    "桌上散着几片",
+    "帐篷角落有一盏暖色台灯",
+    "说话克制",
+    "安静",
+    "昨夜在标本台"
+  ],
+  "consumed_units": [
+    "取下蓟花标本，检查压制状态",
+    "拿起一片带横纹的干叶，对着台灯细看纹路"
+  ],
+  "plot_arc": {
+    "summary": "角色在标本台前继续整理蓟花标本，专注观察干叶横纹，并考虑是否与人分享这个发现。",
+    "evidence": "昨夜整理蓟花标本，今晨继续；干叶横纹引起注意，台灯下细看。",
+    "units": [
+      {
+        "unit_id": "iu-9fa6289292",
+        "intent": "用镊子轻轻翻动蓟花标本，检查花萼与压纸之间的贴合状态",
+        "evidence": "标本台上有压了一半的蓟花，纸页微卷，需要确认压制是否均匀",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-1cd1c43899",
+        "intent": "将干叶横纹与潮水退去后的沙滩纹理做对比，形成观察笔记",
+        "evidence": "分享队列提到横纹像沙滩纹理，角色在灯下细看后有此联想",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-57241c5e00",
+        "intent": "从吸水纸下取出另一片干叶，比较两者横纹的疏密差异",
+        "evidence": "桌上散着几片带横纹的干叶，角色习惯整理标本时做对比",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      }
+    ],
+    "unit_history": [
+      {
+        "unit_id": "iu-b75f9722e1",
+        "intent": "取下蓟花标本，检查压制状态",
+        "evidence": "昨夜在标本台整理蓟花标本，尚未完成",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "done",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 1,
+        "archived_reason": "live_probe_consume",
+        "archived_at": 1786853151.99456
+      },
+      {
+        "unit_id": "iu-20d413b8df",
+        "intent": "拿起一片带横纹的干叶，对着台灯细看纹路",
+        "evidence": "桌上散着几片带横纹的干叶；帐篷角落有一盏暖色台灯",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "done",
+        "polls_consumed": 0,
+        "activated_at_poll": 1,
+        "completed_at_poll": 1,
+        "archived_reason": "live_probe_consume",
+        "archived_at": 1786853151.99456
+      }
+    ],
+    "current_index": 0,
+    "active_unit_id": "iu-9fa6289292",
+    "active_intent": "用镊子轻轻翻动蓟花标本，检查花萼与压纸之间的贴合状态",
+    "live_unit_count": 3,
+    "version": 4,
+    "initialized_at": 1786853151.99456,
+    "revised_at": 1786853157.1056116,
+    "ready": true
+  },
+  "plot_flow": {
+    "chronicle": "帐篷内，暖色台灯在角落投下一圈光晕。标本台上摊着压了一半的蓟花，纸页微卷。角色坐在台前，手指轻轻抚过干叶表面，目光停在横纹上。",
+    "focus_now": "角色指尖捻起一片干叶，凑近台灯，观察叶面横纹的走向，神情专注而平静。",
+    "next_push": "角色放下干叶，从吸水纸下抽出另一片叶子，开始对比横纹的疏密。",
+    "beats": [
+      {
+        "beat_id": "beat-34dbe92127",
+        "text": "角色在灯下细看干叶，手指沿着横纹轻轻划过，神情专注而平静。",
+        "kind": "open",
+        "at_poll": 0,
+        "at_turn": 0
+      },
+      {
+        "beat_id": "beat-b8fd7e6cde",
+        "text": "角色放下干叶，手指移到吸水纸边缘，轻轻掀起一角。",
+        "kind": "push",
+        "at_poll": 2,
+        "at_turn": 1
+      }
+    ],
+    "inject_memory": true,
+    "memory_unit_ids": [
+      "mem-thistle",
+      "mem-lamp"
+    ],
+    "inject_share": true,
+    "share_indices": [
+      0
+    ],
+    "pass_info": false,
+    "material_reason": "screenwriter_material_schedule",
+    "version": 3,
+    "poll_seq": 2,
+    "turn_index": 1,
+    "revised_at": 1786853157.1056116,
+    "ready": true
+  },
+  "material_schedule": {
+    "inject_memory": true,
+    "memory_unit_ids": [
+      "mem-thistle",
+      "mem-lamp"
+    ],
+    "inject_share": true,
+    "share_indices": [
+      0
+    ],
+    "material_reason": "screenwriter_material_schedule"
+  },
+  "presence_card": {
+    "mood": "平静",
+    "brief": "在标本台前整理蓟花标本，观察干叶横纹"
+  },
+  "narrative_card": {
+    "user_activity": "在场，尚未开口",
+    "interaction_mode": "no_utterance"
+  },
+  "refill": {
+    "ran": true,
+    "reason": "角色继续手头标本整理，从干叶横纹展开观察与对比，保持安静专注的节奏，为可能分享做准备。",
+    "live_after": 3,
+    "history_after": 2
+  },
+  "notes": [
+    "screenwriter:advance:开场场面，从材料中取台灯、干叶、标本台展开；角色安静观察，留出对方接话空间。",
+    "screenwriter:interaction_mode=no_utterance",
+    "screenwriter:interaction_unit_complete from=取下蓟花标本，检查压制状态 to=拿起一片带横纹的干叶，对着台灯细看纹路 live=1 history=1 reason=live_probe_consume",
+    "screenwriter:interaction_unit_complete from=拿起一片带横纹的干叶，对着台灯细看纹路 to=∅ live=0 history=2 reason=live_probe_consume",
+    "screenwriter:advance:角色继续手头标本整理，从干叶横纹展开观察与对比，保持安静专注的节奏，为可能分享做准备。",
+    "screenwriter:interaction_mode=no_utterance"
+  ]
+}

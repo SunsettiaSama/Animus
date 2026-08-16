@@ -1,0 +1,525 @@
+{
+  "llm_model": "deepseek-chat",
+  "used_fallback_init": false,
+  "reason_init": "agent_init_three_jobs",
+  "agent_init": {
+    "payload": {
+      "action": "advance",
+      "plot_arc": {
+        "summary": "角色低头在标本台上整理一只鸟的羽毛，手指拨弄翅尖，台面摊着镊子、棉线和半瓶酒精。帐篷外风掀帘角，光斜切过台面。角色听见脚步声，没抬头，继续把最后一根线穿进针眼，然后才放下工具，抬眼看向来访者，开口问来意。分三步：一，完成标本收尾动作；二，抬头打量来访者；三，开口问来意。",
+        "evidence": "交互记录显示新会话，来访者刚进帐篷，尚未开口；角色仍低头对着标本台。场景可拍：标本台、工具、光线、帘动。",
+        "units": [
+          {
+            "intent": "拨弄翅尖羽毛，检查羽轴是否顺直",
+            "evidence": "台面摊着镊子、棉线和半瓶酒精，帐篷外风掀帘角，光斜切过台面。",
+            "span_polls": 2
+          },
+          {
+            "intent": "将最后一根棉线穿过针眼，打结收尾",
+            "evidence": "手指拨弄翅尖后，继续把最后一根线穿进针眼。",
+            "span_polls": 2
+          },
+          {
+            "intent": "放下工具，指尖抚过标本的背羽，确认平整",
+            "evidence": "完成穿线后放下工具，标本台上有镊子和半瓶酒精。",
+            "span_polls": 2
+          },
+          {
+            "intent": "抬眼看向来访者，目光从靴子扫到脸",
+            "evidence": "听见脚步声，没抬头，完成收尾后才抬眼打量来访者。",
+            "span_polls": 2
+          },
+          {
+            "intent": "打量来访者时，注意到其衣角沾着蓟花碎屑",
+            "evidence": "抽词种子含蓟花，来访者刚进帐篷，可能从野外带来。",
+            "span_polls": 2
+          },
+          {
+            "intent": "短暂停顿，观察来访者神态是否急切",
+            "evidence": "新会话，来访者尚未开口，角色可先观察。",
+            "span_polls": 2
+          },
+          {
+            "intent": "开口问来意，语气平淡但带着探究",
+            "evidence": "大纲明确：开口问来意。",
+            "span_polls": 2
+          },
+          {
+            "intent": "问话时顺手将台灯调亮，照亮来访者面部",
+            "evidence": "台灯在抽词种子中，帐篷内光线斜切，调亮可增强细节。",
+            "span_polls": 2
+          },
+          {
+            "intent": "等待回应，同时手指无意识摩挲镊子柄",
+            "evidence": "工具在台面，角色刚放下工具，可能仍有接触。",
+            "span_polls": 2
+          },
+          {
+            "intent": "见对方未立即回答，补一句‘标本还没干透，别碰’",
+            "evidence": "角色在标本台工作，提醒可体现专业和边界。",
+            "span_polls": 2
+          }
+        ]
+      },
+      "plot_flow": {
+        "chronicle": "灯下，角色按大纲开场，手上有未完成的活计。",
+        "focus_now": "拨弄翅尖羽毛，检查羽轴是否顺直",
+        "next_push": "将最后一根棉线穿过针眼，打结收尾",
+        "beat": "角色在场，手边是蓟花。",
+        "beat_kind": "open",
+        "inject_memory": true,
+        "memory_unit_ids": [],
+        "inject_share": false,
+        "share_indices": []
+      },
+      "opening": "你看见她低头站在标本台前，指尖捻着一根细线穿过针眼，翅尖的羽毛在暖光里微微颤动。风掀动帐篷帘角，光斜切过台面，镊子、棉线和半瓶酒精摊在干叶与压纸之间。她放下工具，抬眼望向你。",
+      "side": {
+        "mood": "平静",
+        "brief": "在标本台前整理",
+        "user_identity": "同场的来访者",
+        "user_activity": "在场，尚未开口"
+      },
+      "reason": "agent_init_three_jobs"
+    },
+    "reason": "开场需要建立角色动作与空间感，标本台工作状态是角色人格的直观呈现。",
+    "used_fallback": false,
+    "steps": [
+      {
+        "think": "这是第一次进入，先看交互记录，了解已经发生的故事。",
+        "action": "look_interaction",
+        "observation": "【交互记录｜高优先级｜含时间元数据】\n工作记忆/交互摘要=\n（新会话）来访者刚进帐篷，尚未开口；角色仍低头对着标本台。"
+      },
+      {
+        "think": "新会话刚开始，来访者刚进帐篷。我先查看交互记录，了解当前场景的上下文和可用的叙事材料。",
+        "action": "look_interaction",
+        "observation": "【交互记录｜高优先级｜含时间元数据】\n工作记忆/交互摘要=\n（新会话）来访者刚进帐篷，尚未开口；角色仍低头对着标本台。"
+      },
+      {
+        "think": "来访者刚进帐篷，尚未开口；角色仍低头对着标本台。这是开场瞬间，角色尚未察觉或选择不抬头。我需要先确定角色此刻的状态——一个在标本台前工作的人，帐篷内光线、物件、动作都是可拍摄的。角色打算先完成手头标本的整理，再抬头招呼来访者。",
+        "action": "produce_outline",
+        "observation": "produce_outline"
+      },
+      {
+        "think": "",
+        "action": "produce_opening",
+        "observation": "你看见她低头站在标本台前，指尖捻着一根细线穿过针眼，翅尖的羽毛在暖光里微微颤动。风掀动帐篷帘角，光斜切过台面，镊子、棉线和半瓶酒精摊在干叶与压纸之间。她放下工具，抬眼望向你。"
+      },
+      {
+        "think": "",
+        "action": "produce_units",
+        "observation": "units=10"
+      }
+    ],
+    "lookups": [
+      "look_interaction"
+    ]
+  },
+  "agent_after_refill": {
+    "payload": {
+      "action": "advance",
+      "plot_arc": {
+        "summary": "角色低头在标本台上整理一只鸟的羽毛，手指拨弄翅尖，台面摊着镊子、棉线和半瓶酒精。帐篷外风掀帘角，光斜切过台面。角色听见脚步声，没抬头，继续把最后一根线穿进针眼，然后才放下工具，抬眼看向来访者，开口问来意。",
+        "evidence": "交互记录显示用户尚未开口；大纲当前步骤为开口问来意，后续步骤包含调亮台灯、摩挲镊子、补话。",
+        "units": [
+          {
+            "intent": "将最后一根棉线穿过针眼，打结收尾",
+            "evidence": "",
+            "span_polls": 2
+          },
+          {
+            "intent": "放下工具，指尖抚过标本背羽确认平整",
+            "evidence": "",
+            "span_polls": 2
+          },
+          {
+            "intent": "抬眼看向来访者，目光从靴子扫到脸",
+            "evidence": "",
+            "span_polls": 2
+          },
+          {
+            "intent": "注意到来访者衣角沾着蓟花碎屑",
+            "evidence": "",
+            "span_polls": 1
+          },
+          {
+            "intent": "短暂停顿，观察来访者神态是否急切",
+            "evidence": "",
+            "span_polls": 2
+          },
+          {
+            "intent": "开口问来意，语气平淡但带着探究",
+            "evidence": "",
+            "span_polls": 3
+          },
+          {
+            "intent": "问话时顺手将台灯调亮，照亮来访者面部",
+            "evidence": "",
+            "span_polls": 2
+          },
+          {
+            "intent": "等待回应，手指无意识摩挲镊子柄",
+            "evidence": "",
+            "span_polls": 2
+          },
+          {
+            "intent": "见对方未立即回答，补一句‘标本还没干透，别碰’",
+            "evidence": "",
+            "span_polls": 2
+          },
+          {
+            "intent": "保持注视，等对方开口",
+            "evidence": "",
+            "span_polls": 1
+          }
+        ]
+      },
+      "plot_flow": {
+        "chronicle": "",
+        "focus_now": "",
+        "next_push": "",
+        "beat": "",
+        "beat_kind": "open",
+        "inject_memory": false,
+        "memory_unit_ids": [],
+        "inject_share": false,
+        "share_indices": []
+      },
+      "opening": "",
+      "side": {
+        "mood": "平静",
+        "brief": "在标本台前整理",
+        "user_identity": "同场的来访者",
+        "user_activity": "在场，尚未开口"
+      },
+      "reason": "agent_produce_plot"
+    },
+    "reason": "agent_produce_plot",
+    "used_fallback": false,
+    "steps": [
+      {
+        "think": "我需要先看看交互记录，了解来访者是谁以及当前情境的细节，然后才能补仓。",
+        "action": "look_interaction",
+        "observation": "【交互记录｜高优先级｜含时间元数据】\n工作记忆/交互摘要=\n用户还没开口；角色继续手头标本。"
+      },
+      {
+        "think": "用户尚未开口，角色按大纲继续手头标本收尾。当前步骤是开口问来意，但需要先完成收尾动作的最后一笔——把线穿进针眼。材料已足够，直接交稿。",
+        "action": "produce_plot",
+        "observation": "produce_plot"
+      }
+    ],
+    "lookups": [
+      "look_interaction"
+    ]
+  },
+  "writing_materials_preview": "【交互记录｜高优先级｜含时间元数据】\n距上次角色发言=140.5s\n工作记忆/交互摘要=\n（新会话）来访者刚进帐篷，尚未开口；角色仍低头对着标本台。\n沉默日志=\n静默｜角色指腹摩挲压纸边缘\n静默｜台灯发出细微电流声\n\n【书写材料｜可选粘土｜自由取用】\n命运骰：开口欲=62/100（愿意接话）\n角色面板：mood=平静；brief=在标本台前整理\n人格摘要=\n角色安静、手稳，喜欢把物件摆齐；说话前会先摸一摸手里的东西。\n场景锚定=\n场景：帐篷内标本台。桌上有蓟花标本、压纸、镊子、吸水纸；角落台灯亮着，篷外偶有水声。\n世界观请求=\n野外帐篷营地，夜里主要靠灯工作。\n记忆池=\n- 昨夜在标本台整理蓟花标本，压纸还没换干净\n- 帐篷角落有一盏暖色台灯，灯罩边缘有一道旧划痕\n- 桌上散着几片带横纹的干叶，像潮退后的沙滩纹理\n- 傍晚雨敲过篷顶，水珠从绳结处慢慢滑下\n- 上次有人问起花萼，自己只点了点头，没把镊子递过去\n分享队列=\n- 想聊聊干叶上的横纹像不像潮水退去后的沙滩\n- 想说台灯一亮，标本台就变得很近\n抽词种子（约十词）=蓟花、标本台、台灯、干叶、压纸、镊子、帐篷、暖光、花萼、吸水纸\n角色反馈=\n- 镊子有点滑，想先擦一下再继续",
+  "narrative_opening": "你看见她低头站在标本台前，指尖捻着一根细线穿过针眼，翅尖的羽毛在暖光里微微颤动。风掀动帐篷帘角，光斜切过台面，镊子、棉线和半瓶酒精摊在干叶与压纸之间。",
+  "scene_seeds": [
+    "蓟花",
+    "标本台",
+    "台灯",
+    "干叶",
+    "压纸",
+    "镊子",
+    "帐篷",
+    "暖光",
+    "花萼",
+    "吸水纸"
+  ],
+  "consumed_units": [
+    "拨弄翅尖羽毛，检查羽轴是否顺直",
+    "将最后一根棉线穿过针眼，打结收尾",
+    "放下工具，指尖抚过标本的背羽，确认平整",
+    "抬眼看向来访者，目光从靴子扫到脸",
+    "打量来访者时，注意到其衣角沾着蓟花碎屑",
+    "短暂停顿，观察来访者神态是否急切"
+  ],
+  "plot_arc": {
+    "summary": "角色低头在标本台上整理一只鸟的羽毛，手指拨弄翅尖，台面摊着镊子、棉线和半瓶酒精。帐篷外风掀帘角，光斜切过台面。角色听见脚步声，没抬头，继续把最后一根线穿进针眼，然后才放下工具，抬眼看向来访者，开口问来意。",
+    "evidence": "交互记录显示用户尚未开口；大纲当前步骤为开口问来意，后续步骤包含调亮台灯、摩挲镊子、补话。",
+    "units": [
+      {
+        "unit_id": "iu-bae2c1b065",
+        "intent": "开口问来意，语气平淡但带着探究",
+        "evidence": "大纲明确：开口问来意。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "active",
+        "polls_consumed": 0,
+        "activated_at_poll": 1,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-8404f8a11d",
+        "intent": "问话时顺手将台灯调亮，照亮来访者面部",
+        "evidence": "台灯在抽词种子中，帐篷内光线斜切，调亮可增强细节。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-8d80d58337",
+        "intent": "等待回应，同时手指无意识摩挲镊子柄",
+        "evidence": "工具在台面，角色刚放下工具，可能仍有接触。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-983ddf1f5c",
+        "intent": "见对方未立即回答，补一句‘标本还没干透，别碰’",
+        "evidence": "角色在标本台工作，提醒可体现专业和边界。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-70d6062015",
+        "intent": "将最后一根棉线穿过针眼，打结收尾",
+        "evidence": "交互记录显示用户尚未开口；大纲当前步骤为开口问来意，后续步骤包含调亮台灯、摩挲镊子、补话。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-b4fc8d2057",
+        "intent": "放下工具，指尖抚过标本背羽确认平整",
+        "evidence": "交互记录显示用户尚未开口；大纲当前步骤为开口问来意，后续步骤包含调亮台灯、摩挲镊子、补话。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-6acc55d9cb",
+        "intent": "抬眼看向来访者，目光从靴子扫到脸",
+        "evidence": "交互记录显示用户尚未开口；大纲当前步骤为开口问来意，后续步骤包含调亮台灯、摩挲镊子、补话。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-4ba8d8d355",
+        "intent": "注意到来访者衣角沾着蓟花碎屑",
+        "evidence": "交互记录显示用户尚未开口；大纲当前步骤为开口问来意，后续步骤包含调亮台灯、摩挲镊子、补话。",
+        "span_polls": 1,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-52cd4b668e",
+        "intent": "短暂停顿，观察来访者神态是否急切",
+        "evidence": "交互记录显示用户尚未开口；大纲当前步骤为开口问来意，后续步骤包含调亮台灯、摩挲镊子、补话。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-61a156ac8f",
+        "intent": "开口问来意，语气平淡但带着探究",
+        "evidence": "交互记录显示用户尚未开口；大纲当前步骤为开口问来意，后续步骤包含调亮台灯、摩挲镊子、补话。",
+        "span_polls": 3,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-77770c3879",
+        "intent": "问话时顺手将台灯调亮，照亮来访者面部",
+        "evidence": "交互记录显示用户尚未开口；大纲当前步骤为开口问来意，后续步骤包含调亮台灯、摩挲镊子、补话。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      },
+      {
+        "unit_id": "iu-74e2923cbf",
+        "intent": "等待回应，手指无意识摩挲镊子柄",
+        "evidence": "交互记录显示用户尚未开口；大纲当前步骤为开口问来意，后续步骤包含调亮台灯、摩挲镊子、补话。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "pending",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 0
+      }
+    ],
+    "unit_history": [
+      {
+        "unit_id": "iu-196978ee64",
+        "intent": "拨弄翅尖羽毛，检查羽轴是否顺直",
+        "evidence": "台面摊着镊子、棉线和半瓶酒精，帐篷外风掀帘角，光斜切过台面。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "done",
+        "polls_consumed": 0,
+        "activated_at_poll": 0,
+        "completed_at_poll": 1,
+        "archived_reason": "live_probe_consume",
+        "archived_at": 1786859036.151145
+      },
+      {
+        "unit_id": "iu-38966f8e57",
+        "intent": "将最后一根棉线穿过针眼，打结收尾",
+        "evidence": "手指拨弄翅尖后，继续把最后一根线穿进针眼。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "done",
+        "polls_consumed": 0,
+        "activated_at_poll": 1,
+        "completed_at_poll": 1,
+        "archived_reason": "live_probe_consume",
+        "archived_at": 1786859036.151145
+      },
+      {
+        "unit_id": "iu-dcf8fa63fe",
+        "intent": "放下工具，指尖抚过标本的背羽，确认平整",
+        "evidence": "完成穿线后放下工具，标本台上有镊子和半瓶酒精。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "done",
+        "polls_consumed": 0,
+        "activated_at_poll": 1,
+        "completed_at_poll": 1,
+        "archived_reason": "live_probe_consume",
+        "archived_at": 1786859036.151145
+      },
+      {
+        "unit_id": "iu-4fac64951c",
+        "intent": "抬眼看向来访者，目光从靴子扫到脸",
+        "evidence": "听见脚步声，没抬头，完成收尾后才抬眼打量来访者。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "done",
+        "polls_consumed": 0,
+        "activated_at_poll": 1,
+        "completed_at_poll": 1,
+        "archived_reason": "live_probe_consume",
+        "archived_at": 1786859036.151145
+      },
+      {
+        "unit_id": "iu-6e7009d325",
+        "intent": "打量来访者时，注意到其衣角沾着蓟花碎屑",
+        "evidence": "抽词种子含蓟花，来访者刚进帐篷，可能从野外带来。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "done",
+        "polls_consumed": 0,
+        "activated_at_poll": 1,
+        "completed_at_poll": 1,
+        "archived_reason": "live_probe_consume",
+        "archived_at": 1786859036.151145
+      },
+      {
+        "unit_id": "iu-e2df329a25",
+        "intent": "短暂停顿，观察来访者神态是否急切",
+        "evidence": "新会话，来访者尚未开口，角色可先观察。",
+        "span_polls": 2,
+        "expected_speak_turns": 1,
+        "status": "done",
+        "polls_consumed": 0,
+        "activated_at_poll": 1,
+        "completed_at_poll": 1,
+        "archived_reason": "live_probe_consume",
+        "archived_at": 1786859036.151145
+      }
+    ],
+    "current_index": 0,
+    "active_unit_id": "iu-bae2c1b065",
+    "active_intent": "开口问来意，语气平淡但带着探究",
+    "live_unit_count": 12,
+    "version": 8,
+    "initialized_at": 1786859036.1501405,
+    "revised_at": 1786859044.4138224,
+    "ready": true
+  },
+  "unit_count_live": 12,
+  "unit_count_history": 6,
+  "plot_flow": {
+    "chronicle": "灯下，角色按大纲开场，手上有未完成的活计。",
+    "focus_now": "开口问来意，语气平淡但带着探究",
+    "next_push": "开口问来意，语气平淡但带着探究",
+    "beats": [
+      {
+        "beat_id": "beat-410a20cc7a",
+        "text": "角色在场，手边是蓟花。",
+        "kind": "open",
+        "at_poll": 0,
+        "at_turn": 0
+      }
+    ],
+    "inject_memory": true,
+    "memory_unit_ids": [
+      "mem-thistle"
+    ],
+    "inject_share": true,
+    "share_indices": [
+      0
+    ],
+    "pass_info": false,
+    "material_reason": "screenwriter_material_schedule",
+    "version": 3,
+    "poll_seq": 4,
+    "turn_index": 1,
+    "revised_at": 1786859044.4138224,
+    "ready": true
+  },
+  "material_schedule": {
+    "inject_memory": true,
+    "memory_unit_ids": [
+      "mem-thistle"
+    ],
+    "inject_share": true,
+    "share_indices": [
+      0
+    ],
+    "material_reason": "screenwriter_material_schedule"
+  },
+  "refill": {
+    "ran": true,
+    "reason": "agent_produce_plot",
+    "live_after": 12,
+    "history_after": 6
+  },
+  "notes": [
+    "screenwriter:agent task=init steps=5 lookups=look_interaction reason=开场需要建立角色动作与空间感，标本台工作状态是角色人格的直观呈现。 fallback=0",
+    "screenwriter:advance:agent_init_three_jobs",
+    "screenwriter:interaction_mode=no_utterance",
+    "screenwriter:interaction_unit_complete from=拨弄翅尖羽毛，检查羽轴是否顺直 to=将最后一根棉线穿过针眼，打结收尾 live=9 history=1 reason=live_probe_consume",
+    "screenwriter:interaction_unit_complete from=将最后一根棉线穿过针眼，打结收尾 to=放下工具，指尖抚过标本的背羽，确认平整 live=8 history=2 reason=live_probe_consume",
+    "screenwriter:interaction_unit_complete from=放下工具，指尖抚过标本的背羽，确认平整 to=抬眼看向来访者，目光从靴子扫到脸 live=7 history=3 reason=live_probe_consume",
+    "screenwriter:interaction_unit_complete from=抬眼看向来访者，目光从靴子扫到脸 to=打量来访者时，注意到其衣角沾着蓟花碎屑 live=6 history=4 reason=live_probe_consume",
+    "screenwriter:interaction_unit_complete from=打量来访者时，注意到其衣角沾着蓟花碎屑 to=短暂停顿，观察来访者神态是否急切 live=5 history=5 reason=live_probe_consume",
+    "screenwriter:interaction_unit_complete from=短暂停顿，观察来访者神态是否急切 to=开口问来意，语气平淡但带着探究 live=4 history=6 reason=live_probe_consume",
+    "screenwriter:refill_on_unit_consume live=4 min=5 async=1",
+    "screenwriter:agent task=refill steps=2 lookups=look_interaction reason=agent_produce_plot fallback=0",
+    "screenwriter:advance:agent_produce_plot",
+    "screenwriter:interaction_mode=no_utterance"
+  ]
+}

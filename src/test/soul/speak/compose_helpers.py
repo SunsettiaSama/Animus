@@ -7,9 +7,9 @@ from agent.soul.speak.responders.request_driven.orchestrator.blocks.core.base im
 from agent.soul.speak.responders.request_driven.orchestrator.blocks.registry import BlockRegistry
 from agent.soul.speak.responders.request_driven.orchestrator.director.types import DirectorPlan, ModuleDecision
 from agent.soul.speak.responders.request_driven.orchestrator.frame import PreparedComposeFrame
-from agent.soul.speak.responders.request_driven.orchestrator.system.reply_style import SpeakReplyStyle
-from agent.soul.speak.responders.request_driven.orchestrator.system.build import build_system_layer
-from agent.soul.speak.responders.request_driven.orchestrator.system.role import SpeakTurnMode
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.system.reply_style import SpeakReplyStyle
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.system.build import build_system_layer
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.system.role import SpeakTurnMode
 
 
 def _default_modules() -> tuple[ModuleDecision, ...]:

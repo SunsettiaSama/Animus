@@ -27,7 +27,10 @@ class SpeakLifeOutboundBridge:
         return self._life
 
     def emit_dialogue_turn(self, chunk: SpeakTurnChunk) -> None:
+        from ....session.annotation import annotation_from_feeling
+
         resolved = resolve_feeling(chunk)
+        annot = annotation_from_feeling(chunk.feeling, agent_text=chunk.agent_text)
         self._life.submit_dialogue_turn(
             DialogueTurnInbound(
                 session_id=chunk.session_id,
@@ -40,6 +43,16 @@ class SpeakLifeOutboundBridge:
                 arousal_delta=resolved.arousal_delta,
                 activated_memory_ids=tuple(chunk.activated_memory_ids),
                 proactive_intent_id=chunk.proactive_intent_id,
+                channel_id=chunk.session_id,
+                enqueue_share=annot.enqueue_share,
+                push_to_user=annot.push_to_user,
+                share_content=annot.share_content,
+                share_why=annot.share_why,
+                share_desire=annot.share_desire,
+                promote_to_memory=annot.promote_to_memory,
+                impression_intensity=annot.impression_intensity,
+                impression_why=annot.impression_why,
+                annotation_decided=annot.annotation_decided,
             ),
         )
 

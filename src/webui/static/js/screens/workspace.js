@@ -1,9 +1,9 @@
 /**
- * screens/workspace.js — Speak 工作区 + 前端 history 多会话（类微信/FB）。
+ * screens/workspace.js — Speak 工作区 + 前端 history 多会话。
  *
- * history：展示与持久化消息列表
- * sessionId：后端 Speak 上下文（与 convId 一一对应，存于历史 JSON）
- * channelId：记忆渠道（localStorage，多线程共享）
+ * history：展示与持久化消息列表（convId）
+ * sessionId：Speak 生命线（live:channelId），切页不重建内在态
+ * channelId：记忆渠道（多线程共享）
  */
 
 import { S, setState, set }    from '../state.js';
@@ -11,9 +11,10 @@ import * as speakMod            from '../modules/speak.js';
 import * as render              from '../render.js';
 import * as streaming           from '../streaming.js';
 import * as history             from '../history.js';
-import { getChannelId }         from '../channel.js';
-import { getSpeakDeliveryMode, isSimulatedDelivery } from '../speak_delivery.js';
+import { channelIdFromLiveSession, getChannelId, isLiveSessionId, speakLiveSessionId } from '../channel.js';
+import { getSpeakDeliveryMode } from '../speak_delivery.js';
 import { getSpeakResponder }     from '../speak_responder.js';
+import { sortEventsByOrder }   from '../speak_render_protocol.js';
 import { goWorkspace }         from '../router.js';
 import { showToast }           from '../shared/toast.js';
 import * as workUi              from '../work/ui.js';
@@ -23,6 +24,8 @@ let _voiceMod     = null;
 let _knowledgeMod = null;
 let _speakSession = null;
 let _connectPromise = null;
+/** 关闭会话时递增；进行中的 connect 据此丢弃，避免 startNew 抢到旧 Promise 后连不上。 */
+let _connectEpoch = 0;
 
 export function registerModules({ voiceMod, knowledgeMod }) {
   _voiceMod     = voiceMod;
@@ -30,6 +33,7 @@ export function registerModules({ voiceMod, knowledgeMod }) {
 }
 
 function _closeSpeakSession() {
+  _connectEpoch += 1;
   if (_speakSession) {
     _speakSession.close();
     _speakSession = null;
@@ -38,7 +42,11 @@ function _closeSpeakSession() {
 }
 
 function _speakStreamOpts() {
-  return { deliveryMode: getSpeakDeliveryMode(), pipeline: getSpeakResponder() };
+  return {
+    deliveryMode: getSpeakDeliveryMode(),
+    pipeline: getSpeakResponder(),
+    onSlotReplace: (slot, text, meta) => _patchHistoryOutlineSlot(slot, text, meta),
+  };
 }
 
 function _msgDraft() {
@@ -53,6 +61,67 @@ function _sendWorkFrame(payload) {
 }
 
 let _fallbackStreamCtrl = null;
+let _lastSpeakCtrl = null;
+
+function _isOutlineUpgrade(kind, meta = {}) {
+  return (
+    kind === 'outline'
+    && Boolean(meta?.upgrade || meta?.replace)
+    && String(meta?.slot || '').trim()
+  );
+}
+
+function _routeSpeakEvent(kind, text, meta, holder) {
+  const upgrade = _isOutlineUpgrade(kind, meta);
+  let ctrl = holder.ctrl;
+  if (ctrl && !ctrl._finalized) {
+    if (S.lifecycle === 'idle') setState('streaming');
+    ctrl.onEvent(kind, text, meta);
+    return;
+  }
+  if (upgrade && _lastSpeakCtrl) {
+    _lastSpeakCtrl.onEvent(kind, text, meta);
+    return;
+  }
+  if (upgrade && render.replaceOutlineSlot(String(meta.slot || '').trim(), text, meta)) {
+    _patchHistoryOutlineSlot(meta.slot, text, meta);
+    return;
+  }
+  ctrl = _ensureFallbackStreamCtrl();
+  holder.ctrl = ctrl;
+  _lastSpeakCtrl = ctrl;
+  if (S.lifecycle === 'idle') setState('streaming');
+  ctrl.onEvent(kind, text, meta);
+}
+
+function _patchHistoryOutlineSlot(slot, text, meta = {}) {
+  const key = String(slot || '').trim();
+  const body = String(text ?? '').trim();
+  if (!key || !body) return;
+  const msgs = history.getMessages();
+  for (let i = msgs.length - 1; i >= 0; i -= 1) {
+    const msg = msgs[i];
+    if (msg?.role !== 'assistant') continue;
+    const events = Array.isArray(msg.speak_events) ? [...msg.speak_events] : [];
+    let hit = false;
+    for (let j = events.length - 1; j >= 0; j -= 1) {
+      const ev = events[j];
+      if (String(ev?.meta?.slot || '').trim() !== key) continue;
+      events[j] = {
+        ...ev,
+        text: body,
+        meta: { ...ev.meta, ...meta, slot: key, upgrade: true, replace: true, placeholder: false },
+      };
+      hit = true;
+      break;
+    }
+    if (!hit) continue;
+    msgs[i] = { ...msg, speak_events: events, content: msg.content || body };
+    history.setMessages(msgs);
+    history.saveConversation().catch(() => {});
+    return;
+  }
+}
 
 function _ensureFallbackStreamCtrl() {
   if (_fallbackStreamCtrl) return _fallbackStreamCtrl;
@@ -83,8 +152,10 @@ function _onWorkEvent(msg) {
 function _speakSessionOpts(genId, streamCtrl) {
   // Mutable holder so fallback Speak after work confirm can swap the stream ctrl.
   const holder = { ctrl: streamCtrl, meta: {}, session: null };
+  const liveId = speakLiveSessionId(S.channelId || getChannelId());
+  if (S.sessionId !== liveId) set('sessionId', liveId);
   return {
-    sessionId: S.sessionId || S.convId || getChannelId(),
+    sessionId: liveId,
     channelId: S.channelId || getChannelId(),
     deliveryMode: getSpeakDeliveryMode(),
     pipeline: getSpeakResponder(),
@@ -94,8 +165,7 @@ function _speakSessionOpts(genId, streamCtrl) {
       if (meta?.agent_initiated || meta?.proactive_intent_id) {
         holder.meta = { ...holder.meta, ...meta };
       }
-      const ctrl = holder.ctrl || _fallbackStreamCtrl;
-      ctrl?.onEvent(kind, text, meta);
+      _routeSpeakEvent(kind, text, meta, holder);
     },
     onWorkEvent: _onWorkEvent,
     onTurnStart: payload => {
@@ -103,8 +173,10 @@ function _speakSessionOpts(genId, streamCtrl) {
       if (!holder.ctrl || holder.ctrl._finalized) {
         holder.ctrl = _ensureFallbackStreamCtrl();
       }
+      _lastSpeakCtrl = holder.ctrl || _lastSpeakCtrl;
+      const stamp = String(payload?.created_at ?? '').trim();
+      if (stamp) holder.ctrl?.setCreatedAt?.(stamp);
       if (S.lifecycle === 'idle') setState('streaming');
-      if (isSimulatedDelivery()) render.showSpeakTurnTyping();
     },
     onUserAck: msg => {
       if (msg.interrupt) showToast('已插队，Agent 将转向新消息');
@@ -112,6 +184,7 @@ function _speakSessionOpts(genId, streamCtrl) {
     },
     onTurnFinish: payload => {
       const ctrl = holder.ctrl || _fallbackStreamCtrl;
+      _lastSpeakCtrl = ctrl || _lastSpeakCtrl;
       const metadata = { ...holder.meta, ...payload };
       _finishTurn(ctrl, payload, metadata).then(() => {
         holder.session?.acknowledgeProactive(metadata.delivery_id);
@@ -143,9 +216,21 @@ async function _finishTurn(streamCtrl, payload, turnMeta = {}) {
     return;
   }
   const answer = payload.answer ?? streamCtrl?.speakText ?? '';
-  await streamCtrl?.finalize(answer, aborted);
+  const createdAt = String(
+    payload.created_at
+    || turnMeta.created_at
+    || streamCtrl?.createdAt
+    || ''
+  ).trim();
+  if (createdAt) streamCtrl?.setCreatedAt?.(createdAt);
+  const replay = streamCtrl?.hasLiveInput ? null : (payload.speak_events ?? null);
+  await streamCtrl?.finalize(answer, aborted, replay);
 
-  if (!aborted && answer) {
+  const events = streamCtrl?.events ?? [];
+  const hasOutline = events.some(
+    (ev) => ev?.kind === 'outline' || ev?.meta?.field === 'outline',
+  );
+  if (!aborted && (answer || hasOutline)) {
     const metadata = { ...turnMeta, ...payload };
     const proactiveId = String(metadata.proactive_intent_id ?? '').trim();
     const duplicate = proactiveId && history.getMessages().some(
@@ -154,8 +239,9 @@ async function _finishTurn(streamCtrl, payload, turnMeta = {}) {
     if (!duplicate) {
       history.pushMessage({
         role: 'assistant',
-        content: answer,
-        speak_events: streamCtrl?.events ?? [],
+        content: answer || String(events.find((ev) => ev?.kind === 'outline')?.text || ''),
+        speak_events: events,
+        created_at: createdAt || metadata.created_at,
         agent_initiated: Boolean(metadata.agent_initiated),
         proactive_intent_id: proactiveId,
         proactive: metadata.proactive ?? (
@@ -191,7 +277,9 @@ function _bindTurnCallbacks(session, streamCtrl) {
       if (meta?.agent_initiated || meta?.proactive_intent_id) {
         turnMeta = { ...turnMeta, ...meta };
       }
-      activeCtrl?.onEvent(kind, text, meta);
+      const holder = { ctrl: activeCtrl };
+      _routeSpeakEvent(kind, text, meta, holder);
+      activeCtrl = holder.ctrl || activeCtrl;
     },
     onWorkEvent: _onWorkEvent,
     onTurnStart: payload => {
@@ -199,14 +287,17 @@ function _bindTurnCallbacks(session, streamCtrl) {
       if (!activeCtrl || activeCtrl._finalized) {
         activeCtrl = _ensureFallbackStreamCtrl();
       }
+      _lastSpeakCtrl = activeCtrl || _lastSpeakCtrl;
+      const stamp = String(payload?.created_at ?? '').trim();
+      if (stamp) activeCtrl?.setCreatedAt?.(stamp);
       if (S.lifecycle === 'idle') setState('streaming');
-      if (isSimulatedDelivery()) render.showSpeakTurnTyping();
     },
     onUserAck: msg => {
       if (msg.interrupt) showToast('已插队，Agent 将转向新消息');
       else if (msg.queued) showToast('消息已排队');
     },
     onTurnFinish: payload => {
+      _lastSpeakCtrl = activeCtrl || _lastSpeakCtrl;
       const metadata = { ...turnMeta, ...payload };
       _finishTurn(activeCtrl, payload, metadata).then(() => {
         session.acknowledgeProactive(metadata.delivery_id);
@@ -217,7 +308,7 @@ function _bindTurnCallbacks(session, streamCtrl) {
     },
     onError: e => {
       showToast('Speak error: ' + e.message);
-      streamCtrl?.finalize('', true);
+      (activeCtrl || streamCtrl)?.finalize?.('', true);
       render.setTitleBarTyping(false);
       _closeSpeakSession();
       setState('idle');
@@ -256,17 +347,34 @@ export function toggleSidebar(forceOpen) {
 
 export async function connectSpeakSession() {
   if (!S.speakReady || !S.sessionId) return null;
-  // 合并并发 connect（boot / speakReady / startNew），避免刚 open 就被第二路拆掉
+  const epoch = _connectEpoch;
+
+  // 等旧 connect 落定；若期间被 close/startNew 抬升 epoch，则放弃，由调用方重试。
+  if (_connectPromise) {
+    const existing = await _connectPromise.catch(() => null);
+    if (epoch !== _connectEpoch) return null;
+    if (existing?.sessionId === S.sessionId && existing.isConnected()) return existing;
+  }
   if (_connectPromise) return _connectPromise;
+  if (epoch !== _connectEpoch) return null;
 
   _connectPromise = (async () => {
+    if (epoch !== _connectEpoch) return null;
+
     if (_speakSession?.sessionId === S.sessionId) {
       if (_speakSession.isConnected()) return _speakSession;
       await _speakSession.connect();
+      if (epoch !== _connectEpoch || _speakSession?.sessionId !== S.sessionId) return null;
       return _speakSession;
     }
 
-    _closeSpeakSession();
+    // 换 session 时只拆旧连接，不抬升 epoch（否则会把自己刚开的连接判废）
+    if (_speakSession) {
+      _speakSession.close();
+      _speakSession = null;
+      streaming.clearCurrent();
+    }
+
     const genId = crypto.randomUUID();
     set('genId', genId);
     const opts = _speakSessionOpts(genId, null);
@@ -276,8 +384,9 @@ export async function connectSpeakSession() {
     streaming.startSession(session);
     await session.connect();
 
-    if (_speakSession !== session || S.sessionId !== session.sessionId) {
+    if (epoch !== _connectEpoch || _speakSession !== session || S.sessionId !== session.sessionId) {
       session.close();
+      if (_speakSession === session) _speakSession = null;
       return null;
     }
     return session;
@@ -289,8 +398,63 @@ export async function connectSpeakSession() {
 }
 
 export async function openProactiveSession(payload) {
+  const channelId = String(payload?.channel_id ?? '').trim()
+    || channelIdFromLiveSession(payload?.session_id)
+    || getChannelId();
+  const liveId = speakLiveSessionId(channelId);
   await history.noteProactiveConversation(payload);
   showToast('Agent 发来一条通信');
+  const shouldOpen = payload?.create_window !== false && Boolean(liveId);
+  if (!shouldOpen) return;
+  if (channelId) set('channelId', channelId);
+  set('sessionId', liveId);
+  if (_speakSession?.sessionId === liveId && _speakSession?.isConnected?.()) {
+    goWorkspace();
+    return;
+  }
+  const existing = await history.findConversationForChannel(channelId);
+  if (existing?.id && !isLiveSessionId(existing.id)) {
+    await openConversation(existing.id);
+    return;
+  }
+  history.ensureActiveConversation();
+  goWorkspace();
+  _syncProactiveUrgeDot();
+  await connectSpeakSession();
+}
+
+/** SSE create_ui_request：前端自动判断能否创建/切换界面并回执。 */
+export async function handleCreateUiRequest(payload) {
+  const channelId = String(payload?.channel_id ?? '').trim() || getChannelId();
+  const deliveryId = String(payload?.delivery_id ?? '').trim();
+  const liveId = speakLiveSessionId(channelId);
+  if (!deliveryId) return { ok: false, accepted: false };
+  if (channelId) set('channelId', channelId);
+  set('sessionId', liveId);
+  history.ensureActiveConversation();
+  goWorkspace();
+  if (_speakSession?.sessionId === liveId) {
+    if (!_speakSession.isConnected()) {
+      await _speakSession.connect().catch(() => null);
+    }
+  } else {
+    if (_speakSession && _speakSession.sessionId !== liveId) {
+      _closeSpeakSession();
+    }
+    if (_connectPromise) await _connectPromise.catch(() => null);
+    await connectSpeakSession().catch(() => null);
+  }
+  const connected = Boolean(_speakSession?.sessionId === liveId && _speakSession?.isConnected?.());
+  const accepted = connected || Boolean(S.speakReady && liveId);
+  const { http, PATHS } = await import('../api.js');
+  await http.post(PATHS.speak.createUi, {
+    delivery_id: deliveryId,
+    accepted,
+    channel_id: channelId,
+    session_id: liveId,
+  });
+  if (accepted) showToast('Agent 发来一条通信');
+  return { ok: true, accepted };
 }
 
 export async function startNew() {
@@ -306,17 +470,19 @@ export async function startNew() {
     const tb = document.getElementById('tb-title');
     if (tb) tb.textContent = S.convTitle || '连续会话';
     _closeSpeakSession();
+    if (_connectPromise) await _connectPromise.catch(() => null);
     await connectSpeakSession();
     return;
   }
   streaming.abortCurrent();
   _closeSpeakSession();
+  if (_connectPromise) await _connectPromise.catch(() => null);
   workStore.clear();
   workUi.closeMonitor();
   set('proactiveUrge', false);
   set('proactiveUnread', false);
   _syncProactiveUrgeDot();
-  await history.beginNewConversation({ resetBackend: true });
+  await history.beginNewConversation();
   render.clearMsgs();
   render.showEmptyState('speak');
   goWorkspace();
@@ -357,8 +523,9 @@ export async function handleSend() {
     if (session?.sendUserMessage(question)) {
       if (inputEl) inputEl.value = '';
       goWorkspace();
-      render.appendUserMsg(question);
-      history.pushMessage({ role: 'user', content: question });
+      const createdAt = new Date().toISOString();
+      render.appendUserMsg(question, { created_at: createdAt });
+      history.pushMessage({ role: 'user', content: question, created_at: createdAt });
       showToast('已发送，Agent 回复中可继续输入');
       return;
     }
@@ -382,8 +549,9 @@ export async function handleSend() {
   _syncTraceButton().catch(() => {});
   goWorkspace();
   import('/static/js/modules/plan.js').then(m => m.initSubPanel()).catch(() => {});
-  render.appendUserMsg(question);
-  history.pushMessage({ role: 'user', content: question });
+  const createdAt = new Date().toISOString();
+  render.appendUserMsg(question, { created_at: createdAt });
+  history.pushMessage({ role: 'user', content: question, created_at: createdAt });
   await history.saveConversation({ clearProactiveUnread: true }).catch(() => {});
 
   if (_speakSession?.isConnected()) {
@@ -400,10 +568,9 @@ async function _continueSpeakTurn(question) {
   }
 
   setState('streaming');
-  const streamCtrl = render.appendSpeakStream(_speakStreamOpts());
-  _bindTurnCallbacks(_speakSession, streamCtrl);
+  _bindTurnCallbacks(_speakSession, null);
   const result = await _speakSession.sendTurn(question);
-  _handleDisconnectedTurn(streamCtrl, result);
+  _handleDisconnectedTurn(_lastSpeakCtrl, result);
 }
 
 function _handleDisconnectedTurn(streamCtrl, result) {
@@ -423,16 +590,15 @@ async function _runSpeak(question) {
   const session = await connectSpeakSession();
   if (!session) return;
   setState('streaming');
-  const streamCtrl = render.appendSpeakStream(_speakStreamOpts());
-  _bindTurnCallbacks(session, streamCtrl);
+  _bindTurnCallbacks(session, null);
   const result = await session.sendTurn(question);
-  _handleDisconnectedTurn(streamCtrl, result);
+  _handleDisconnectedTurn(_lastSpeakCtrl, result);
   if (result?.type === 'session_end') {
     _speakSession = null;
   }
   if (result?.type === 'work_pending') {
     // Keep SpeakSession open for confirmation / later Speak fallback.
-    streamCtrl?.discardAgentTurn?.();
+    _lastSpeakCtrl?.discardAgentTurn?.();
     render.setTitleBarTyping(false);
     setState('idle');
     _syncSendButton();
@@ -472,13 +638,17 @@ export function rebuildFromHistory(messages, workItems) {
       });
     } else if (m.role === 'assistant') {
       if (m.speak_events?.length) {
-        const ctrl = render.appendSpeakStream({ deliveryMode: 'stream' });
-        m.speak_events.forEach(ev => {
-          ctrl.onEvent(ev.kind, ev.text ?? '', ev.meta ?? {});
+        const ctrl = render.appendSpeakStream({
+          deliveryMode: 'stream',
+          created_at: m.created_at,
+          instant: true,
         });
+        for (const ev of sortEventsByOrder(m.speak_events)) {
+          ctrl.onEvent(ev.kind, ev.text ?? '', ev.meta ?? {});
+        }
         void ctrl.finalize(m.content, false);
       } else {
-        const ctrl = render.appendAssistantMsg();
+        const ctrl = render.appendAssistantMsg({ created_at: m.created_at });
         ctrl.append(m.content);
         ctrl.finalize();
       }
@@ -491,17 +661,42 @@ export function rebuildFromHistory(messages, workItems) {
 }
 
 export function prepareConversationSwitch() {
+  // 只中止当前流式 UI；不拆 Speak WS——同一 channel 生命线应连续
   streaming.abortCurrent();
-  _closeSpeakSession();
 }
 
 export async function openConversation(convId) {
+  const id = String(convId || '').trim();
+  if (!id) {
+    const liveId = speakLiveSessionId(S.channelId || getChannelId());
+    set('sessionId', liveId);
+    history.ensureActiveConversation();
+    goWorkspace();
+    _syncProactiveUrgeDot();
+    await connectSpeakSession();
+    return;
+  }
   prepareConversationSwitch();
-  await history.loadConversation(convId);
+  if (_connectPromise) await _connectPromise.catch(() => null);
+  await history.loadConversation(id);
+  const liveId = speakLiveSessionId(S.channelId || getChannelId());
+  set('sessionId', liveId);
   if (!S.sessionId) return;
   goWorkspace();
   _syncProactiveUrgeDot();
   await connectSpeakSession();
+  // 将该页历史注入 speak 生命线临时记忆（最多两代），供 composer→编剧/导演调度
+  const msgs = history.getMessages?.() ?? [];
+  await speakMod.enterPageContext({
+    sessionId: liveId,
+    pageKey: String(convId || '').trim() || 'page',
+    messages: msgs.map(m => ({
+      role: m.role,
+      content: m.content,
+    })),
+  }).catch(err => {
+    console.warn('[speak] page_enter skipped', err?.message ?? String(err));
+  });
 }
 
 export async function handleMicClick() {
@@ -572,11 +767,6 @@ async function _syncTraceButton() {
 }
 
 export function initSpeakDeliverySync() {
-  window.addEventListener('speak:delivery_mode', e => {
-    if (_speakSession?.isConnected?.()) {
-      _speakSession.setDeliveryMode(e.detail);
-    }
-  });
   window.addEventListener('speak:responder', e => {
     if (_speakSession?.isConnected?.()) {
       _speakSession.setPipeline(e.detail);
@@ -602,7 +792,7 @@ export function initSidebar() {
   }
 
   document.getElementById('btn-new-chat')?.addEventListener('click', () => {
-    startNew();
+    startNew().catch(err => showToast('新对话失败: ' + (err?.message ?? err)));
   });
   document.getElementById('btn-sidebar-open')?.addEventListener('click', () => {
     toggleSidebar(true);

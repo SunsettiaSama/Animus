@@ -11,6 +11,42 @@ from ..persona import collect_persona_outbound_brief
 from ..core.base import BlockContext, ComposeTarget
 from ..core.util import distilled_context
 
+_SCENE_BRIEF_LIMIT = 720
+_RECENT_TURNS_LIMIT = 480
+_USER_TEXT_LIMIT = 240
+
+
+def _clip_block(text: str, *, limit: int) -> str:
+    body = text.strip()
+    if len(body) <= limit:
+        return body
+    return body[:limit].rstrip()
+
+
+def _recent_turns_for_planner(ctx: BlockContext) -> str:
+    distiller = getattr(ctx.orchestrator, "_context", None)
+    if distiller is None:
+        return ""
+    lines = distiller.recent_turn_lines(ctx.session_id, limit=6)
+    return _clip_block("\n".join(lines), limit=_RECENT_TURNS_LIMIT)
+
+
+def _scene_brief_for_planner(ctx: BlockContext, bundle) -> str:
+    parts: list[str] = []
+    plot_fn = getattr(ctx.orchestrator, "plot_brief", None)
+    if callable(plot_fn):
+        plot = str(plot_fn(ctx.session_id) or "").strip()
+        if plot:
+            parts.append(plot)
+    scene = bundle.scene.world_scene.strip()
+    if not scene:
+        compose = getattr(ctx.orchestrator, "scene_compose", None)
+        if compose is not None:
+            scene = str(compose.director_scene_brief(ctx.session_id) or "").strip()
+    if scene:
+        parts.append(scene)
+    return _clip_block("\n".join(parts), limit=_SCENE_BRIEF_LIMIT)
+
 
 def _recall_candidates_from_bundle(bundle) -> tuple[RecallPlannerCandidate, ...]:
     raw = bundle.meta.get("guidance_recall_candidates")
@@ -116,6 +152,9 @@ def refresh_guidance(
         share_queue_full=io.inbound.guidance.share_queue_full(ctx.share_queue_count),
         use_session_share_queue=ctx.use_session_share_queue,
         trigger=guidance_trigger,  # type: ignore[arg-type]
+        user_text=_clip_block(ctx.user_text, limit=_USER_TEXT_LIMIT),
+        scene_brief=_scene_brief_for_planner(ctx, bundle),
+        recent_turns=_recent_turns_for_planner(ctx),
     )
     io.inbound.guidance.sync_for_compose(request, force=decision.refresh)
     io.outbound.guidance.apply_to_bundle(bundle, sid)

@@ -67,16 +67,15 @@ class LifeExperienceStack:
     def _sync_presence_after_unit(self, unit: ExperienceUnit) -> None:
         session_id = (unit.situation.session_id or "tao").strip() or "tao"
         self._presence.on_unit_ingested(unit, self.log)
-        if unit.source == "collision":
-            # 折叠产物：直接 life_sync 本条（hot 列表曾排除 collision，会漏掉主动分享）
-            from agent.soul.life.anchor.presence_bundle import presence_bundle_from_unit
+        # 分享按单条 annotation 入队；static 叙事仍可另走 pull merge
+        from agent.soul.life.anchor.presence_bundle import presence_bundle_from_unit
 
-            bundle = presence_bundle_from_unit(unit)
-            if not str(bundle.session_id or "").strip():
-                bundle.session_id = session_id
-            self._presence.sync_life_bundle(bundle)
-            return
-        self._presence.pull_and_sync_from_life(self.log, session_id)
+        bundle = presence_bundle_from_unit(unit)
+        if not str(bundle.session_id or "").strip():
+            bundle.session_id = session_id
+        if not str(bundle.channel_id or "").strip():
+            bundle.channel_id = (unit.situation.channel_id or "").strip()
+        self._presence.sync_life_bundle(bundle)
 
     def sync_presence(
         self,
@@ -125,6 +124,15 @@ class LifeExperienceStack:
         arousal_delta: float = 0.0,
         activated_memory_ids: list[str] | None = None,
         proactive_intent_id: str = "",
+        enqueue_share: bool = False,
+        push_to_user: bool = False,
+        share_content: str = "",
+        share_why: str = "",
+        share_desire: str = "mild",
+        promote_to_memory: bool = False,
+        impression_intensity: float = 0.0,
+        impression_why: str = "",
+        annotation_decided: bool = False,
     ) -> None:
         self.dialogue.record_dialogue_turn(
             self._require_presence(),
@@ -138,6 +146,15 @@ class LifeExperienceStack:
             arousal_delta=arousal_delta,
             activated_memory_ids=activated_memory_ids,
             proactive_intent_id=proactive_intent_id,
+            enqueue_share=enqueue_share,
+            push_to_user=push_to_user,
+            share_content=share_content,
+            share_why=share_why,
+            share_desire=share_desire,
+            promote_to_memory=promote_to_memory,
+            impression_intensity=impression_intensity,
+            impression_why=impression_why,
+            annotation_decided=annotation_decided,
         )
 
     def close_dialogue(self, session_id: str = "tao") -> ExperienceUnit | None:

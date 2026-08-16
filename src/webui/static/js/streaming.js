@@ -183,7 +183,7 @@ export class SpeakSession extends BaseSession {
     this._onTurnStart = opts.onTurnStart ?? (() => {});
     this._onError = opts.onError ?? (() => {});
     this._onWorkEvent = opts.onWorkEvent ?? (() => {});
-    this._deliveryMode = opts.deliveryMode === 'simulated' ? 'simulated' : 'stream';
+    this._deliveryMode = 'stream';
     this._pipeline = 'request_driven';
     this._typingIdleMs = opts.typingIdleMs === 5000 ? 5000 : 3000;
     this._getDraft = opts.getDraft ?? (() => '');
@@ -198,6 +198,7 @@ export class SpeakSession extends BaseSession {
     this._connectionEpoch = 0;
     this._proactiveResolvers = new Map();
     this._completedProactive = new Set();
+    this._suppressProactiveId = '';
   }
 
   isConnected() {
@@ -225,19 +226,32 @@ export class SpeakSession extends BaseSession {
 
   acknowledgeProactive(deliveryId) {
     const id = String(deliveryId ?? '').trim();
-    if (!id || !this.isConnected()) return false;
-    this._send({
-      type: 'proactive_ack',
-      delivery_id: id,
-      ...this._wsPayload(),
-    });
+    if (!id) return false;
+    // 本地先记完成：断线时 ack 发不出去，重连重推也不得再渲染
     this._completedProactive.add(id);
     const resolve = this._proactiveResolvers.get(id);
     if (resolve) {
       this._proactiveResolvers.delete(id);
       resolve();
     }
+    if (!this.isConnected()) return false;
+    this._send({
+      type: 'proactive_ack',
+      delivery_id: id,
+      ...this._wsPayload(),
+    });
     return true;
+  }
+
+  _proactiveDeliveryId(msg) {
+    if (!msg || typeof msg !== 'object') return '';
+    const top = String(msg.delivery_id ?? '').trim();
+    if (top) return top;
+    const meta = msg.meta;
+    if (meta && typeof meta === 'object') {
+      return String(meta.delivery_id ?? '').trim();
+    }
+    return '';
   }
 
   waitForProactiveDelivery(deliveryId) {
@@ -248,8 +262,8 @@ export class SpeakSession extends BaseSession {
     });
   }
 
-  setDeliveryMode(mode) {
-    this._deliveryMode = mode === 'simulated' ? 'simulated' : 'stream';
+  setDeliveryMode() {
+    this._deliveryMode = 'stream';
   }
 
   setPipeline(pipeline) {
@@ -307,11 +321,25 @@ export class SpeakSession extends BaseSession {
     }
 
     if (msg.type === 'turn_start') {
+      const deliveryId = this._proactiveDeliveryId(msg);
+      if (deliveryId && this._completedProactive.has(deliveryId)) {
+        this._suppressProactiveId = deliveryId;
+        return;
+      }
+      this._suppressProactiveId = '';
       this._onTurnStart(msg);
       return;
     }
 
     if (msg.type === 'speak_event') {
+      const deliveryId = this._proactiveDeliveryId(msg);
+      if (
+        (deliveryId && this._completedProactive.has(deliveryId))
+        || (this._suppressProactiveId
+          && (!deliveryId || deliveryId === this._suppressProactiveId))
+      ) {
+        return;
+      }
       this._onEvent(msg.kind, msg.text ?? '', msg.meta ?? {});
       return;
     }
@@ -322,6 +350,16 @@ export class SpeakSession extends BaseSession {
     }
 
     if (msg.type === 'turn_finish') {
+      const deliveryId = this._proactiveDeliveryId(msg);
+      this._suppressProactiveId = '';
+      if (deliveryId && this._completedProactive.has(deliveryId)) {
+        // 已展示过的 proactive：跳过 UI，补发 ack 清 bus
+        this.acknowledgeProactive(deliveryId);
+        const resolveDup = this._turnResolvers.shift();
+        if (resolveDup) resolveDup({ type: 'proactive_duplicate', ...msg });
+        return;
+      }
+      if (deliveryId) this._completedProactive.add(deliveryId);
       this._aborted = Boolean(msg.aborted);
       this._onTurnFinish(msg);
       const resolve = this._turnResolvers.shift();
@@ -430,12 +468,15 @@ export class SpeakSession extends BaseSession {
     const text = String(question ?? '').trim();
     if (!text) return null;
     if (!this.isConnected()) await this.connect();
+    // 先登记 waiter，再发送：本地/快速 fallback 可在 send() 返回前收到 turn_finish，
+    // 否则 finish 没有对应 resolver，会让前端永远停在 streaming。
+    const resultPromise = this._waitTurn();
     this._send({
       type: 'user_message',
       question: text,
       ...this._wsPayload(),
     });
-    const result = await this._waitTurn();
+    const result = await resultPromise;
     if (result?.type === 'error') {
       this._onError(new Error(result.message ?? 'Speak error'));
     }

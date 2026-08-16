@@ -54,7 +54,7 @@ class CharacterAgentHost:
             self._service = AgentService(
                 llm,
                 action_runner or _CharacterNoopRunner(),
-                system="你是对话中的角色个体。用交付块开口；具体办事交给后台分流。",
+                system="你是对话中的角色个体。按回复格式开口；具体办事交给后台分流。",
                 max_steps=1,
                 name=name,
                 owner="speak.character",
@@ -112,6 +112,8 @@ class CharacterAgentHost:
             help_observations=help_observations,
         )
         human = self.render_human() or user_text
+        if not str(human or "").strip():
+            human = "（系统：按台本推进本拍演出。）"
         if self._generate_fn is not None:
             return self._generate_fn(system, human)
         if self._llm is None:

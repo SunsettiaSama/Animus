@@ -19,15 +19,26 @@ if TYPE_CHECKING:
     from ..service import SpeakTurnResult
 
 
+def _speak_text_from_events(events: list[SpeakStreamEvent]) -> str:
+    parts = [str(event.text or "") for event in events if event.kind == "speak"]
+    joined = "".join(parts).strip()
+    if joined:
+        return joined
+    finish = next((event for event in reversed(events) if event.kind == "finish"), None)
+    if finish is None:
+        return ""
+    return str((finish.meta or {}).get("speak") or "").strip()
+
+
 def _parsed_from_stream_events(
     events: list[SpeakStreamEvent],
     parse: Callable[[str], SpeakAgentOutput],
 ) -> SpeakAgentOutput:
     finish = next((event for event in reversed(events) if event.kind == "finish"), None)
+    speak_fallback = _speak_text_from_events(events)
     if finish is not None and finish.meta:
-        return SpeakAgentOutput.from_finish_meta(finish.meta, speak_fallback=finish.text)
-    raw = finish.text if finish is not None else ""
-    return parse(raw)
+        return SpeakAgentOutput.from_finish_meta(finish.meta, speak_fallback=speak_fallback)
+    return parse(speak_fallback)
 
 
 @dataclass
@@ -77,8 +88,7 @@ def _generate_with_outbound(
                 context="",
             )
         )
-        finish = next((event for event in reversed(events) if event.kind == "finish"), None)
-        answer = finish.text if finish is not None else ""
+        answer = _speak_text_from_events(events)
         if on_partial is not None:
             spoken = ""
             for event in events:

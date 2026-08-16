@@ -49,6 +49,36 @@ def test_calc_typing_delay_caps_at_max():
     assert calc_typing_delay_ms(long_text) == 900
 
 
+def test_role_timeline_speak_passes_through_without_buffer():
+    async def _run() -> None:
+        inner = _RecordingPort()
+        loop = asyncio.get_running_loop()
+        port = SimulatedTypingStreamPort(inner=inner, loop=loop, ms_per_char=0.0)
+        sid = "s1"
+        port.emit(
+            sid,
+            SpeakStreamEvent(
+                kind="agent_typing",
+                text="",
+                meta={"field": "typing", "render_target": "speak", "render_time_ms": 450},
+            ),
+        )
+        port.emit(
+            sid,
+            SpeakStreamEvent(
+                kind="speak",
+                text="你好",
+                meta={"field": "speak", "render_target": "speak", "render_time_ms": 450},
+            ),
+        )
+        kinds = [e.kind for e in inner.events]
+        assert kinds == ["agent_typing", "speak"]
+        await port.flush_pending(sid)
+        assert [e.kind for e in inner.events] == ["agent_typing", "speak"]
+
+    asyncio.run(_run())
+
+
 def test_flush_emits_state_after_speak_before_finish():
     async def _run() -> None:
         inner = _RecordingPort()

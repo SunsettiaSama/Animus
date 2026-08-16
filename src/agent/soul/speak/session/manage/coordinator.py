@@ -19,6 +19,9 @@ class SessionSocialManager:
     proactive_window: ProactiveSessionWindowManager = field(default_factory=ProactiveSessionWindowManager)
     silence: SilenceBreakManager | None = None
     enter_greeting: EnterGreetingManager | None = None
+    # request-driven 的 executable rhythm units 是唯一静默开口调度器。
+    # 旧 SilenceBreakManager 仅留给独立组件测试，不在生产会话中调度。
+    silence_break_enabled: bool = False
     _dialogue_supplier: Callable[[str], str] | None = None
 
     def __post_init__(self) -> None:
@@ -96,6 +99,8 @@ class SessionSocialManager:
         session_state: str,
         answer: str,
     ) -> None:
+        if not self.silence_break_enabled:
+            return
         if mode != "inbound":
             return
         if session_state != "finish":

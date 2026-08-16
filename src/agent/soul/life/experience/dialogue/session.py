@@ -25,6 +25,15 @@ class DialogueTurn:
     arousal_delta: float = 0.0
     activated_memory_ids: list[str] = field(default_factory=list)
     proactive_intent_id: str = ""
+    enqueue_share: bool = False
+    push_to_user: bool = False
+    share_content: str = ""
+    share_why: str = ""
+    share_desire: str = "mild"
+    promote_to_memory: bool = False
+    impression_intensity: float = 0.0
+    impression_why: str = ""
+    annotation_decided: bool = False
 
 
 @dataclass
@@ -64,6 +73,7 @@ def unit_from_dialogue_session(
     memory_ids: list[str] = []
     seen: set[str] = set()
     salience_notes: list[str] = []
+    peak_annot = peak
     for turn in session.turns:
         for mid in turn.activated_memory_ids:
             if mid and mid not in seen:
@@ -72,10 +82,17 @@ def unit_from_dialogue_session(
         note = turn.salience_note.strip()
         if note and note not in salience_notes:
             salience_notes.append(note)
+        if turn.annotation_decided and (
+            turn.impression_intensity >= peak_annot.impression_intensity
+            or not peak_annot.annotation_decided
+        ):
+            peak_annot = turn
 
+    channel_id = session.session_id
     unit = ExperienceUnit.make(
         situation=ExperienceSituation(
             session_id=session.session_id,
+            channel_id=channel_id,
             turn_index=n,
             perception=transcript,
             narration=experience.narration.strip() or experience.perception.strip(),
@@ -91,6 +108,15 @@ def unit_from_dialogue_session(
             salience=salience,
             emotion_label=emotion_label,
             salience_note="；".join(salience_notes),
+            enqueue_share=bool(peak_annot.enqueue_share),
+            push_to_user=bool(peak_annot.push_to_user),
+            share_content=peak_annot.share_content,
+            share_why=peak_annot.share_why,
+            share_desire=peak_annot.share_desire or "mild",
+            promote_to_memory=bool(peak_annot.promote_to_memory),
+            impression_intensity=float(peak_annot.impression_intensity or 0.0),
+            impression_why=peak_annot.impression_why,
+            annotation_decided=bool(peak_annot.annotation_decided),
         ),
         source=ExperienceSource.interaction.value,
     )

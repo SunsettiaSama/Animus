@@ -20,6 +20,16 @@ class DialogueTurnInbound:
     arousal_delta: float = 0.0
     activated_memory_ids: tuple[str, ...] = ()
     proactive_intent_id: str = ""
+    channel_id: str = ""
+    enqueue_share: bool = False
+    push_to_user: bool = False
+    share_content: str = ""
+    share_why: str = ""
+    share_desire: str = "mild"
+    promote_to_memory: bool = False
+    impression_intensity: float = 0.0
+    impression_why: str = ""
+    annotation_decided: bool = False
 
 
 @dataclass(frozen=True)

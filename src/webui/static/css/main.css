@@ -686,25 +686,134 @@
     @keyframes pulse-dots { 0%,100%{opacity:1}50%{opacity:.2} }
     .step-pill.streaming .pill-dots { animation: pulse-dots 1.2s ease-in-out infinite; letter-spacing: 1px; }
 
-    /* Soul Speak tag pills — reuse step-pill layout */
-    .speak-meta { margin-bottom: 4px; }
-    .speak-meta.hidden { display: none; }
-    .step-pill.speak-thought { background: #faf5ff; color: #6b21a8; }
-    .step-pill.speak-thought:hover { background: #f3e8ff; }
-    .step-pill.speak-action  { background: #fff7ed; color: #c2410c; }
-    .step-pill.speak-action:hover  { background: #ffedd5; }
-    .step-pill.speak-state   { background: #eff6ff; color: #1d4ed8; }
-    .step-pill.speak-state:hover   { background: #dbeafe; }
-    .step-pill.speak-observe { background: var(--bg3); color: var(--text2); }
-    .step-pill.speak-anchor  { background: #ecfdf5; color: #047857; }
-    .step-pill.speak-chunk.streaming { background: #faf5ff; color: #7e22ce; }
-
-    /* Soul Speak — ordered chunk bubbles (one event = one bubble) */
+    /* Soul Speak — 分字段色块 */
     .speak-stream {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
       width: 100%;
+    }
+    .message.speak-msg:not(:has(.speak-field)):not(:has(.speak-render-spinner)):not(:has(.speak-abort-note)) {
+      display: none;
+    }
+    .speak-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      width: fit-content;
+      max-width: 100%;
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      border-left-width: 3px;
+      box-sizing: border-box;
+    }
+    .speak-field.streaming { opacity: 0.92; }
+    .speak-field-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      opacity: 0.75;
+      line-height: 1;
+    }
+    .speak-field-content {
+      font-size: 13.5px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .speak-field-thought {
+      background: #faf5ff;
+      border-color: #e9d5ff;
+      border-left-color: #7c3aed;
+      color: #5b21b6;
+    }
+    .speak-field-thought .speak-field-label { color: #7c3aed; }
+    .speak-field-speak {
+      background: #ecfdf5;
+      border-color: #a7f3d0;
+      border-left-color: #059669;
+      color: #065f46;
+    }
+    .speak-field-speak .speak-field-label { color: #059669; }
+    .speak-render-spinner {
+      display: flex;
+      align-items: center;
+      width: fit-content;
+      padding: 11px 14px;
+      border: 1px solid #a7f3d0;
+      border-left: 3px solid #059669;
+      border-radius: 10px;
+      background: #ecfdf5;
+    }
+    .speak-render-spinner-icon {
+      width: 16px;
+      height: 16px;
+      border: 2px solid #6ee7b7;
+      border-top-color: #059669;
+      border-radius: 50%;
+      animation: notify-spin .7s linear infinite;
+    }
+    .speak-render-spinner-body {
+      border-color: #fed7aa;
+      border-left-color: #ea580c;
+      background: #fff7ed;
+    }
+    .speak-render-spinner-body .speak-render-spinner-icon {
+      border-color: #fdba74;
+      border-top-color: #ea580c;
+    }
+    .speak-field-body {
+      background: #fff7ed;
+      border-color: #fed7aa;
+      border-left-color: #ea580c;
+      color: #9a3412;
+    }
+    .speak-field-body .speak-field-label { color: #ea580c; }
+    .speak-field-wait,
+    .speak-field-silence {
+      background: #eff6ff;
+      border-color: #bfdbfe;
+      border-left-color: #2563eb;
+      color: #1e40af;
+      padding: 6px 10px;
+    }
+    .speak-field-wait .speak-field-label,
+    .speak-field-silence .speak-field-label { color: #2563eb; }
+    .speak-field-finish,
+    .speak-field-session {
+      background: #f8fafc;
+      border-color: #e2e8f0;
+      border-left-color: #64748b;
+      color: #475569;
+      padding: 6px 10px;
+    }
+    .speak-field-observe {
+      background: var(--bg3);
+      border-color: var(--border);
+      border-left-color: var(--text3);
+      color: var(--text2);
+    }
+    .speak-field-outline {
+      background: #f8fafc;
+      border-color: #cbd5e1;
+      border-left-color: #64748b;
+      color: #334155;
+    }
+    .speak-field-outline .speak-field-label { color: #64748b; }
+    .speak-field-anchor {
+      background: #ecfdf5;
+      border-color: #a7f3d0;
+      border-left-color: #047857;
+      color: #047857;
+    }
+    .speak-field.sim-typing-cursor .speak-field-content::after {
+      content: '▍';
+      display: inline-block;
+      margin-left: 2px;
+      animation: pulse-dots 1s steps(1) infinite;
+      opacity: 0.55;
     }
     .message.speak-msg .msg-bubble.speak-chunk-bubble,
     .message.speak-msg .msg-bubble.speak-action-bubble {
@@ -4036,6 +4145,50 @@
   background: #2a2218;
   border: 1px solid #5b4630;
   color: #f0c28a;
+}
+.codex-workspace .message.speak-msg .speak-field-thought {
+  background: #241f2e;
+  border-color: #3b3348;
+  border-left-color: #a78bfa;
+  color: #ddd6fe;
+}
+.codex-workspace .message.speak-msg .speak-field-thought .speak-field-label { color: #c4b5fd; }
+.codex-workspace .message.speak-msg .speak-field-speak {
+  background: #1a2820;
+  border-color: #2f4a3a;
+  border-left-color: #34d399;
+  color: #d1fae5;
+}
+.codex-workspace .message.speak-msg .speak-field-speak .speak-field-label { color: #6ee7b7; }
+.codex-workspace .message.speak-msg .speak-field-body {
+  background: #2a2218;
+  border-color: #5b4630;
+  border-left-color: #fb923c;
+  color: #f0c28a;
+}
+.codex-workspace .message.speak-msg .speak-field-body .speak-field-label { color: #fdba74; }
+.codex-workspace .message.speak-msg .speak-field-outline {
+  background: #1e2430;
+  border-color: #3a4558;
+  border-left-color: #94a3b8;
+  color: #cbd5e1;
+}
+.codex-workspace .message.speak-msg .speak-field-outline .speak-field-label { color: #94a3b8; }
+.codex-workspace .message.speak-msg .speak-field-wait,
+.codex-workspace .message.speak-msg .speak-field-silence {
+  background: #1c2420;
+  border-color: #2a3830;
+  border-left-color: #60a5fa;
+  color: #bfdbfe;
+}
+.codex-workspace .message.speak-msg .speak-field-wait .speak-field-label,
+.codex-workspace .message.speak-msg .speak-field-silence .speak-field-label { color: #93c5fd; }
+.codex-workspace .message.speak-msg .speak-field-finish,
+.codex-workspace .message.speak-msg .speak-field-session {
+  background: #1c2420;
+  border-color: #2a3830;
+  border-left-color: #94a3b8;
+  color: #9ca3af;
 }
 .codex-workspace .message.speak-msg .step-pill.speak-thought {
   background: #241f2e;

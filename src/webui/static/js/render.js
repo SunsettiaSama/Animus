@@ -13,12 +13,15 @@
  */
 
 import {
-  META_LABEL,
+  META_ORDER,
   META_PHASE,
+  META_RENDER_TIME_MS,
   META_SESSION_STATE,
-  bubbleKindForField,
+  META_WAIT_MS,
   fieldLabel,
   resolveRenderField,
+  resolveRenderOrder,
+  sortEventsByOrder,
 } from './speak_render_protocol.js';
 
 const _msgsEl = () => document.getElementById('msgs');
@@ -147,21 +150,25 @@ export function appendProactiveBanner(bannerText, meta = {}) {
  * Creates an assistant bubble for streaming chat output.
  * Returns a controller object.
  */
-export function appendAssistantMsg(id) {
+export function appendAssistantMsg(idOrOpts) {
+  const opts = typeof idOrOpts === 'object' && idOrOpts !== null
+    ? idOrOpts
+    : { id: idOrOpts };
   const el = _msgsEl();
   if (!el) return null;
   el.querySelector('.empty-state')?.remove();
 
   const div = document.createElement('div');
   div.className = 'message assistant';
-  if (id) div.dataset.msgId = id;
+  if (opts.id) div.dataset.msgId = opts.id;
 
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble streaming';
 
+  const createdAt = String(opts.created_at ?? '').trim();
   const timeEl = document.createElement('span');
   timeEl.className = 'msg-time';
-  timeEl.textContent = _ts();
+  timeEl.textContent = _ts(createdAt || undefined);
 
   const ttsBtn = document.createElement('button');
   ttsBtn.className = 'msg-tts-btn hidden';
@@ -195,6 +202,7 @@ export function appendAssistantMsg(id) {
     },
     finalize(aborted = false) {
       bubble.classList.remove('streaming');
+      if (createdAt) timeEl.textContent = _ts(createdAt);
       if (aborted) {
         bubble.innerHTML += '<br><span style="color:var(--text3);font-size:11px">⊘ aborted</span>';
       } else {
@@ -1052,58 +1060,39 @@ export function appendStepStrip() {
   };
 }
 
-// ── Speak stream（按协议字段渲染；不做字符串标签提取）──────────────────────────
+// ── Speak stream：按协议字段分色分块渲染 ──────────────────────────────────────
 
-const _SPEAK_FIELD_UI = {
-  thought: { tag: 'think', cls: 'speak-thought' },
-  body: { tag: 'body', cls: 'speak-action' },
-  wait: { tag: 'wait', cls: 'speak-state' },
-  silence: { tag: 'silence', cls: 'speak-state' },
-  typing: { tag: 'typing', cls: 'speak-chunk' },
-  finish: { tag: 'finish', cls: 'speak-state' },
-  // 非 character 字段：会话态 / 观测
-  observe: { tag: 'observe', cls: 'speak-observe' },
-  anchor: { tag: 'anchor', cls: 'speak-anchor' },
-  chunk: { tag: '…', cls: 'speak-chunk' },
-  session: { tag: 'state', cls: 'speak-state' },
-};
-
-function _shortSpeakText(text, max = 28) {
-  const s = String(text ?? '').trim().replace(/\s+/g, ' ');
-  if (!s) return '';
-  return s.length > max ? `${s.slice(0, max)}…` : s;
-}
-
-function _mkSpeakDetail(label, content, opts = {}) {
-  const d = document.createElement('div');
-  d.className = 'pill-detail hidden';
-  const row = document.createElement('div');
-  row.className = 'pd-row';
-  const lbl = document.createElement('div');
-  lbl.className = 'pd-lbl';
-  lbl.textContent = label;
-  const val = document.createElement('div');
-  val.className = 'pd-val';
-  const str = String(content ?? '').trim();
-  if (str) {
-    if (opts.markdown) renderMarkdown(val, str);
-    else val.textContent = str;
-  }
-  row.append(lbl, val);
-  d.appendChild(row);
-  return d;
-}
+const _SPEAK_FIELD_LABEL = Object.freeze({
+  thought: 'think',
+  speak: 'speak',
+  body: 'body',
+  wait: 'wait',
+  silence: 'silence',
+  typing: 'typing',
+  finish: 'finish',
+  observe: 'narrative',
+  outline: 'outline',
+  anchor: 'anchor',
+  session: 'state',
+});
 
 /**
- * Soul Speak 流式消息容器：按事件顺序逐条渲染，speak/action 各为独立 bubble。
- * @param {{ deliveryMode?: 'stream'|'simulated' }} [opts]
+ * Soul Speak 流式消息：每个协议字段一块，带标签与独立配色。
  */
+function _isHollowSpeakMsg(node) {
+  return Boolean(
+    node?.classList?.contains('speak-msg')
+    && !node.querySelector('.speak-field, .speak-render-spinner, .speak-abort-note')
+  );
+}
+
 export function appendSpeakStream(opts = {}) {
-  const deliveryMode = opts.deliveryMode === 'simulated' ? 'simulated' : 'stream';
-  const simulated = deliveryMode === 'simulated';
   const el = _msgsEl();
   if (!el) return null;
   el.querySelector('.empty-state')?.remove();
+  while (_isHollowSpeakMsg(el.lastElementChild)) {
+    el.lastElementChild.remove();
+  }
 
   const div = document.createElement('div');
   div.className = 'message assistant speak-msg';
@@ -1118,9 +1107,10 @@ export function appendSpeakStream(opts = {}) {
   const streamCol = document.createElement('div');
   streamCol.className = 'speak-stream';
 
+  let _createdAt = String(opts.created_at ?? '').trim();
   const timeEl = document.createElement('span');
   timeEl.className = 'msg-time';
-  timeEl.textContent = _ts();
+  timeEl.textContent = _ts(_createdAt || undefined);
 
   const ttsBtn = document.createElement('button');
   ttsBtn.className = 'msg-tts-btn hidden';
@@ -1133,27 +1123,16 @@ export function appendSpeakStream(opts = {}) {
   scrollBottom();
 
   let _speakParts = [];
-  let _chunkPill = null;
   let _events = [];
-  let _lastBubble = null;
-  let _openBubble = null;
-  let _simAnimToken = 0;
-  let _simAnimPromise = null;
-  let _deferredStates = [];
-
-  function _splitSimChunks(text) {
-    const chunks = [];
-    let buf = '';
-    for (const ch of String(text ?? '')) {
-      buf += ch;
-      if (/[。！？；，、\n]/.test(ch) || buf.length >= 14) {
-        chunks.push(buf);
-        buf = '';
-      }
-    }
-    if (buf) chunks.push(buf);
-    return chunks.length ? chunks : [String(text ?? '')];
-  }
+  let _openBlock = null; // { wrap, content, field, kind, meta }
+  let _thinkPending = null;
+  let _finalized = false;
+  let _renderSpinner = null;
+  const _playQueue = [];
+  let _acceptedLive = false;
+  let _pumping = false;
+  let _stopped = false;
+  let _idleWaiters = [];
 
   function _showTypingIndicator() {
     setTitleBarTyping(true);
@@ -1163,335 +1142,493 @@ export function appendSpeakStream(opts = {}) {
     setTitleBarTyping(false);
   }
 
-  function _flushDeferredStates() {
-    if (!_deferredStates.length) return;
-    const pending = _deferredStates;
-    _deferredStates = [];
-    for (const item of pending) {
-      _addTagPill('state', item.text, item.meta);
-    }
+  function _spinnerTarget(meta = {}) {
+    const target = String(meta.render_target || meta.role_op || '').trim().toLowerCase();
+    if (target === 'body' || target === 'action') return 'body';
+    return 'speak';
   }
 
-  async function _animateSimulatedSpeak(fullText) {
-    const text = String(fullText ?? '').trim();
+  function _showRenderSpinner(meta = {}) {
+    const target = _spinnerTarget(meta);
+    if (_renderSpinner) {
+      const current = _renderSpinner.className.includes('spinner-body') ? 'body' : 'speak';
+      if (current === target) return;
+      _hideRenderSpinner();
+    }
+    const wrap = document.createElement('div');
+    wrap.className = `speak-render-spinner speak-render-spinner-${target}`;
+    wrap.innerHTML = '<span class="speak-render-spinner-icon"></span>';
+    const order = resolveRenderOrder(meta?.[META_ORDER]);
+    if (order != null) wrap.dataset.order = String(order);
+    _insertFieldWrap(wrap, order);
+    _renderSpinner = wrap;
+    scrollBottom();
+  }
+
+  function _hideRenderSpinner() {
+    _renderSpinner?.remove();
+    _renderSpinner = null;
+  }
+
+  function _fieldKey(kind, meta = {}) {
+    return resolveRenderField(kind, meta)
+      || (kind === 'action' ? 'body' : null)
+      || (kind === 'thought' ? 'thought' : null)
+      || (kind === 'speak' || kind === 'segment' ? 'speak' : null)
+      || (kind === 'observe' ? 'observe' : null)
+      || (kind === 'outline' ? 'outline' : null)
+      || (kind === 'anchor' ? 'anchor' : null)
+      || 'speak';
+  }
+
+  function _closeOpenBlock() {
+    if (!_openBlock) return;
+    const { wrap, content, field, kind, meta } = _openBlock;
+    wrap.classList.remove('streaming');
+    const text = String(content.textContent || '').trim();
     if (!text) {
-      _flushDeferredStates();
+      wrap.remove();
+    } else {
+      if (field === 'speak') _speakParts.push(text);
+      _events.push({
+        kind: kind === 'segment' ? 'speak' : kind,
+        text,
+        meta: { ...meta, field },
+      });
+    }
+    _openBlock = null;
+  }
+
+  function _insertFieldWrap(wrap, order) {
+    if (order == null) {
+      if (_renderSpinner && wrap !== _renderSpinner) {
+        streamCol.insertBefore(wrap, _renderSpinner);
+      } else {
+        streamCol.appendChild(wrap);
+      }
       return;
     }
-    _hideTypingIndicator();
-    const token = ++_simAnimToken;
-    const bubble = _ensureOpenBubble('speak');
-    bubble.classList.add('sim-typing-cursor');
-    const run = async () => {
-      try {
-        for (const chunk of _splitSimChunks(text)) {
-          if (token !== _simAnimToken) return;
-          bubble.textContent += chunk;
-          scrollBottom();
-          await new Promise(r => setTimeout(r, 36 + Math.min(chunk.length * 22, 320)));
-        }
-        if (token !== _simAnimToken) return;
-        _finalizeOpenBubble('speak');
-        _flushDeferredStates();
-      } finally {
-        bubble.classList.remove('sim-typing-cursor');
-        if (token === _simAnimToken) {
-          bubble.classList.remove('streaming');
-        }
+    const kids = [...streamCol.children].filter(
+      (el) => el.classList && (
+        el.classList.contains('speak-field')
+        || el.classList.contains('speak-render-spinner')
+      ),
+    );
+    for (const kid of kids) {
+      if (kid === wrap) continue;
+      const ko = resolveRenderOrder(kid.dataset.order);
+      if (ko != null && ko > order) {
+        streamCol.insertBefore(wrap, kid);
+        return;
       }
-    };
-    const p = run();
-    _simAnimPromise = p;
-    await p;
-    if (_simAnimPromise === p) _simAnimPromise = null;
-  }
-
-  function _clearChunkPill() {
-    if (!_chunkPill) return;
-    _chunkPill.wrap.remove();
-    _chunkPill = null;
-  }
-
-  function _ensureOpenBubble(kind) {
-    if (_openBubble && _openBubble.dataset.kind === kind) return _openBubble;
-    if (_lastBubble) _lastBubble.classList.remove('streaming');
-    const bubble = document.createElement('div');
-    bubble.className = kind === 'action'
-      ? 'msg-bubble speak-action-bubble streaming'
-      : 'msg-bubble speak-chunk-bubble streaming';
-    bubble.dataset.kind = kind;
-    streamCol.appendChild(bubble);
-    _lastBubble = bubble;
-    _openBubble = bubble;
-    scrollBottom();
-    return bubble;
-  }
-
-  function _finalizeOpenBubble(kind) {
-    if (!_openBubble || _openBubble.dataset.kind !== kind) return;
-    const text = _openBubble.textContent.trim();
-    _openBubble.classList.remove('streaming');
-    if (text) {
-      if (kind === 'speak') _speakParts.push(text);
-      _events.push({ kind, text, meta: {} });
-    } else {
-      _openBubble.remove();
-      if (_lastBubble === _openBubble) _lastBubble = null;
     }
-    _openBubble = null;
+    streamCol.appendChild(wrap);
   }
 
-  function _appendToOpenStream(kind, chunk) {
+  function _ensureFieldBlock(field, kind, meta = {}) {
+    if (_openBlock && _openBlock.field === field) {
+      const openOrder = resolveRenderOrder(_openBlock.meta?.[META_ORDER]);
+      const nextOrder = resolveRenderOrder(meta?.[META_ORDER]);
+      // 同 field 但索引不同：拆成新块，避免交叉演出被合并
+      if (openOrder == null || nextOrder == null || openOrder === nextOrder) {
+        _openBlock.meta = { ...meta, field };
+        return _openBlock;
+      }
+    }
+    _closeOpenBlock();
+    if (_thinkPending) {
+      _thinkPending.wrap.remove();
+      _thinkPending = null;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = `speak-field speak-field-${field} streaming`;
+    wrap.dataset.field = field;
+    const order = resolveRenderOrder(meta?.[META_ORDER]);
+    if (order != null) wrap.dataset.order = String(order);
+    const slot = String(meta?.slot ?? '').trim();
+    if (slot) wrap.dataset.slot = slot;
+
+    const label = document.createElement('span');
+    label.className = 'speak-field-label';
+    label.textContent = _SPEAK_FIELD_LABEL[field] || fieldLabel(field) || field;
+
+    const content = document.createElement('div');
+    content.className = 'speak-field-content';
+
+    wrap.append(label, content);
+    _insertFieldWrap(wrap, order);
+    _openBlock = { wrap, content, field, kind, meta: { ...meta, field } };
+    scrollBottom();
+    return _openBlock;
+  }
+
+  function _appendFieldChunk(field, kind, chunk, meta = {}) {
     const piece = String(chunk ?? '');
     if (!piece) return;
-    const bubble = _ensureOpenBubble(kind);
-    bubble.textContent += piece;
+    const block = _ensureFieldBlock(field, kind, meta);
+    block.content.textContent += piece;
+    scrollBottom();
+  }
+
+  function _lastCommittedText(field) {
+    for (let i = _events.length - 1; i >= 0; i -= 1) {
+      if (String(_events[i]?.meta?.field || '') === field) {
+        return String(_events[i].text || '').trim();
+      }
+    }
+    return '';
+  }
+
+  function _sameFieldTextOrder(field, text, meta, otherField, otherText, otherMeta) {
+    if (field !== otherField) return false;
+    if (String(text ?? '').trim() !== String(otherText ?? '').trim()) return false;
+    const order = resolveRenderOrder(meta?.[META_ORDER]);
+    const other = resolveRenderOrder(otherMeta?.[META_ORDER]);
+    if (order != null && other != null) return order === other;
+    return true;
+  }
+
+  function _isDuplicateContent(field, text, meta = {}) {
+    const body = String(text ?? '').trim();
+    if (!body || (field !== 'body' && field !== 'speak')) return false;
+    for (const ev of _events) {
+      if (_sameFieldTextOrder(field, body, meta, ev?.meta?.field, ev.text, ev.meta)) return true;
+    }
+    for (const item of _playQueue) {
+      if (_sameFieldTextOrder(field, body, meta, item.field, item.text, item.meta)) return true;
+    }
+    if (_lastCommittedText(field) === body) return true;
+    const wraps = streamCol.querySelectorAll(`.speak-field-${field} .speak-field-content`);
+    const last = wraps.length ? String(wraps[wraps.length - 1].textContent || '').trim() : '';
+    return last === body;
+  }
+
+  function _commitField(field, kind, text, meta = {}) {
+    // wait / think 不对用户展示
+    if (field === 'wait' || field === 'thought' || field === 'silence') return;
+    const body = String(text ?? '').trim();
+    if (!body && field !== 'silence' && field !== 'finish') return;
+    if (_isDuplicateContent(field, body, meta)) return;
+    _closeOpenBlock();
+    if (_thinkPending) {
+      _thinkPending.wrap.remove();
+      _thinkPending = null;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = `speak-field speak-field-${field}`;
+    wrap.dataset.field = field;
+    const order = resolveRenderOrder(meta?.[META_ORDER]);
+    if (order != null) wrap.dataset.order = String(order);
+    const slot = String(meta?.slot ?? '').trim();
+    if (slot) wrap.dataset.slot = slot;
+
+    const label = document.createElement('span');
+    label.className = 'speak-field-label';
+    label.textContent = _SPEAK_FIELD_LABEL[field] || fieldLabel(field) || field;
+
+    const content = document.createElement('div');
+    content.className = 'speak-field-content';
+
+    if (field === 'silence') {
+      const seconds = meta.seconds ?? (meta.wait_ms != null ? Number(meta.wait_ms) / 1000 : null);
+      content.textContent = seconds != null && !Number.isNaN(seconds)
+        ? `${field} ${seconds}s`
+        : (body || field);
+    } else if (field === 'finish' || field === 'session') {
+      content.textContent = body || String(meta[META_SESSION_STATE] || field);
+    } else {
+      content.textContent = body;
+    }
+
+    wrap.append(label, content);
+    _insertFieldWrap(wrap, order);
+
+    if (field === 'speak' && body) _speakParts.push(body);
+    if (meta?.placeholder) wrap.classList.add('speak-outline-placeholder');
+    _events.push({
+      kind: kind === 'segment' ? 'speak' : kind,
+      text: content.textContent,
+      meta: { ...meta, field },
+    });
     scrollBottom();
   }
 
   function _handleStreamChunk(kind, text, meta = {}) {
-    const phase = meta[META_PHASE] ?? meta.phase;
+    const field = _fieldKey(kind, meta);
+    const phase = String(meta[META_PHASE] ?? meta.phase ?? '').trim();
     const chunk = String(text ?? '');
 
-    if (simulated && kind === 'speak' && phase === 'simulated') {
-      _simAnimPromise = _animateSimulatedSpeak(chunk);
+    if (phase === 'delta') {
+      _appendFieldChunk(field, kind, chunk, meta);
       return;
     }
-
-    if (simulated && kind === 'speak') {
-      return;
-    }
-
-    const phaseNorm = phase;
-    if (phaseNorm === 'delta') {
-      _appendToOpenStream(kind, chunk);
-      return;
-    }
-    if (phaseNorm === 'end') {
+    if (phase === 'end') {
       if (chunk) {
-        if (_openBubble && _openBubble.dataset.kind === kind) {
-          if (!_openBubble.textContent) _openBubble.textContent = chunk;
-          else if (!_openBubble.textContent.endsWith(chunk)) _openBubble.textContent += chunk;
+        if (_openBlock && _openBlock.field === field) {
+          if (!_openBlock.content.textContent) _openBlock.content.textContent = chunk;
+          else if (!_openBlock.content.textContent.endsWith(chunk)) {
+            _openBlock.content.textContent += chunk;
+          }
         } else {
-          _appendToOpenStream(kind, chunk);
+          _appendFieldChunk(field, kind, chunk, meta);
         }
       }
-      _finalizeOpenBubble(kind);
+      _closeOpenBlock();
       scrollBottom();
       return;
     }
-    // segment 模式或 legacy speak 事件（无 phase）：同一轮内追加到同一 bubble
-    _appendToOpenStream(kind, chunk);
+    _commitField(field, kind, chunk, meta);
   }
 
-  function _appendChunkBubble(kind, text) {
-    const chunk = String(text ?? '').trim();
-    if (!chunk) return;
-    _clearChunkPill();
-
-    if (_lastBubble) _lastBubble.classList.remove('streaming');
-
-    const bubble = document.createElement('div');
-    bubble.className = kind === 'action'
-      ? 'msg-bubble speak-action-bubble streaming'
-      : 'msg-bubble speak-chunk-bubble streaming';
-    bubble.textContent = chunk;
-    streamCol.appendChild(bubble);
-    _lastBubble = bubble;
-
-    const eventKind = kind === 'segment' ? 'speak' : kind;
-    if (eventKind === 'speak') _speakParts.push(chunk);
-    _events.push({ kind: eventKind, text: chunk, meta: {} });
-    scrollBottom();
+  function _ensureThinkPending() {
+    // think 隐藏：不创建占位卡片
+    return null;
   }
 
-  function _ensureChunkPill() {
-    if (_chunkPill) return _chunkPill;
-    const wrap = document.createElement('div');
-    wrap.className = 'step-pill-wrap';
-    const pill = document.createElement('button');
-    pill.className = 'step-pill streaming speak-chunk';
-    pill.innerHTML =
-      `<span class="pill-step">think</span>` +
-      `<span class="pill-sep">·</span>` +
-      `<span class="pill-dots">···</span>`;
-    wrap.appendChild(pill);
-    streamCol.appendChild(wrap);
-    _chunkPill = { wrap, pill };
-    scrollBottom();
-    return _chunkPill;
-  }
-
-  function _finalizeChunkPill(label, text) {
-    if (!_chunkPill) return;
-    const { wrap, pill } = _chunkPill;
-    _chunkPill = null;
-    const cfg = _SPEAK_FIELD_UI.thought;
-    pill.className = `step-pill pill-done ${cfg.cls}`;
-    const short = _shortSpeakText(text);
-    pill.innerHTML =
-      `<span class="pill-step">${cfg.tag}</span>` +
-      `<span class="pill-sep">·</span>` +
-      `<span class="pill-label">${short || label}</span>` +
-      `<span class="pill-check">✓</span>`;
-    if (text && text.trim()) {
-      const detail = _mkSpeakDetail('THINK', text, { markdown: true });
-      wrap.appendChild(detail);
-      pill.addEventListener('click', () => {
-        detail.classList.toggle('hidden');
-        pill.classList.toggle('expanded');
-      });
-    }
-    _events.push({ kind: 'thought', text, meta: { field: 'thought' } });
-    scrollBottom();
-  }
-
-  function _addTagPill(kind, text, meta = {}) {
-    if (_chunkPill && (kind === 'thought' || resolveRenderField(kind, meta) === 'thought')) {
-      _finalizeChunkPill('think', text);
+  function _renderByField(kind, text, meta = {}) {
+    const field = _fieldKey(kind, meta);
+    if (!field || field === 'finish' || field === 'typing') {
+      // finish 一律空文案；有正文也不渲染成可见字段
       return;
     }
-    _clearChunkPill();
-
-    const field = resolveRenderField(kind, meta);
-    let cfgKey = field;
-    let label = fieldLabel(field) || (meta[META_LABEL] ? String(meta[META_LABEL]) : '');
-    let detailText = text;
-
-    if (field === 'wait' || field === 'silence') {
-      cfgKey = field;
-      label = fieldLabel(field);
-      const seconds = meta.seconds ?? (meta.wait_ms != null ? Number(meta.wait_ms) / 1000 : null);
-      detailText = seconds != null ? `${field} ${seconds}s` : field;
-    } else if (field === 'thought') {
-      label = _shortSpeakText(text) || fieldLabel(field);
-    } else if (field == null && kind === 'state') {
-      cfgKey = 'session';
-      const sessionState = String(meta[META_SESSION_STATE] || text || 'state');
-      label = sessionState;
-      detailText = sessionState;
-    } else if (kind === 'observe') {
-      cfgKey = 'observe';
-      label = _shortSpeakText(text) || 'observe';
-    } else if (kind === 'anchor') {
-      cfgKey = 'anchor';
-      label = _shortSpeakText(text) || 'anchor';
-    }
-
-    const cfg = _SPEAK_FIELD_UI[cfgKey] ?? { tag: label || kind, cls: '' };
-    const wrap = document.createElement('div');
-    wrap.className = 'step-pill-wrap';
-    const pill = document.createElement('button');
-    pill.className = `step-pill pill-done ${cfg.cls}`;
-
-    pill.innerHTML =
-      `<span class="pill-step">${cfg.tag}</span>` +
-      `<span class="pill-sep">·</span>` +
-      `<span class="pill-label">${_esc(label || cfg.tag)}</span>` +
-      `<span class="pill-check">✓</span>`;
-
-    if (detailText && String(detailText).trim()) {
-      const detail = _mkSpeakDetail(String(cfg.tag).toUpperCase(), detailText, {
-        markdown: field === 'thought' || kind === 'observe',
-      });
-      wrap.appendChild(detail);
-      pill.addEventListener('click', () => {
-        detail.classList.toggle('hidden');
-        pill.classList.toggle('expanded');
-      });
-    }
-
-    wrap.appendChild(pill);
-    streamCol.appendChild(wrap);
-    _events.push({ kind, text, meta });
-    scrollBottom();
+    if (field === 'speak' || field === 'body' || field === 'outline') _hideRenderSpinner();
+    _handleStreamChunk(kind, text, { ...meta, field });
   }
 
-  return {
+  function _replaceSlotContent(slot, text, meta = {}) {
+    const key = String(slot || '').trim();
+    const body = String(text ?? '').trim();
+    if (!key || !body) return false;
+    const wrap = streamCol.querySelector(`.speak-field[data-slot="${CSS.escape(key)}"]`)
+      || document.querySelector(`.speak-field[data-slot="${CSS.escape(key)}"]`);
+    if (!wrap) return false;
+    const content = wrap.querySelector('.speak-field-content');
+    if (!content) return false;
+    content.textContent = body;
+    wrap.classList.remove('streaming', 'speak-outline-placeholder');
+    if (meta?.placeholder) wrap.classList.add('speak-outline-placeholder');
+    else wrap.classList.remove('speak-outline-placeholder');
+    const field = String(wrap.dataset.field || meta?.field || 'outline').trim() || 'outline';
+    let patched = false;
+    for (let i = _events.length - 1; i >= 0; i -= 1) {
+      const ev = _events[i];
+      if (String(ev?.meta?.slot || '').trim() !== key) continue;
+      _events[i] = {
+        ...ev,
+        text: body,
+        meta: { ...ev.meta, ...meta, field, slot: key, upgrade: true, replace: true },
+      };
+      patched = true;
+      break;
+    }
+    if (!patched) {
+      _events.push({
+        kind: 'outline',
+        text: body,
+        meta: { ...meta, field, slot: key, upgrade: true, replace: true },
+      });
+    }
+    if (typeof opts.onSlotReplace === 'function') {
+      opts.onSlotReplace(key, body, { ...meta, field, slot: key });
+    }
+    scrollBottom();
+    return true;
+  }
+
+  function _dispatchEvent(kind, text, meta = {}) {
+    const isSlotUpgrade = (
+      (kind === 'outline' || resolveRenderField(kind, meta) === 'outline')
+      && Boolean(meta?.upgrade || meta?.replace)
+      && String(meta?.slot || '').trim()
+    );
+    if (_finalized && !isSlotUpgrade) return;
+    if (isSlotUpgrade && _replaceSlotContent(meta.slot, text, meta)) return;
+    if (_finalized) return;
+    const eventStamp = String(meta?.created_at ?? '').trim();
+    if (eventStamp && !_createdAt) api.setCreatedAt(eventStamp);
+    const field = resolveRenderField(kind, meta);
+    switch (kind) {
+      case 'agent_typing':
+        if (Number(meta.render_time_ms) > 0 || Number(meta.wait_ms) > 0) _showRenderSpinner(meta);
+        else if (meta.active === false || meta.active === 'false') _hideTypingIndicator();
+        else _showTypingIndicator();
+        break;
+      case 'tag':
+        if (meta.tag === 'think' || field === 'thought') {
+          // think 隐藏
+          break;
+        } else if (meta.tag === 'speak' || field === 'speak') {
+          _ensureFieldBlock('speak', 'speak', meta);
+        } else if (meta.tag === 'action' || field === 'body') {
+          _ensureFieldBlock('body', 'action', meta);
+        }
+        break;
+      case 'chunk':
+        // 旧 chunk=think 流；隐藏后不再建占位
+        break;
+      case 'thought':
+        break;
+      case 'action':
+      case 'state':
+      case 'observe':
+      case 'outline':
+      case 'anchor':
+      case 'speak':
+      case 'segment':
+      case 'finish':
+        _renderByField(kind, text, meta);
+        break;
+      case 'error':
+        _commitField('body', 'action', text || 'error', { field: 'body' });
+        break;
+      default:
+        if (field) _renderByField(kind, text, meta);
+        break;
+    }
+  }
+
+  function _packetWaitMs(meta = {}) {
+    const renderMs = Number(meta[META_RENDER_TIME_MS] ?? meta.render_time_ms);
+    const waitMs = Number(meta[META_WAIT_MS] ?? meta.wait_ms);
+    const a = Number.isFinite(renderMs) && renderMs > 0 ? renderMs : 0;
+    const b = Number.isFinite(waitMs) && waitMs > 0 ? waitMs : 0;
+    return Math.max(a, b);
+  }
+
+  function _notifyIdle() {
+    if (_pumping || _playQueue.length) return;
+    const waiters = _idleWaiters;
+    _idleWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  function _waitUntilIdle() {
+    if (!_pumping && !_playQueue.length) return Promise.resolve();
+    return new Promise((resolve) => {
+      _idleWaiters.push(resolve);
+    });
+  }
+
+  async function _playPacket(pkt) {
+    if (_stopped) return;
+    const field = pkt.field;
+    if (field === 'thought' || field === 'finish') return;
+
+    if (field === 'typing') {
+      _showRenderSpinner(pkt.meta);
+      return;
+    }
+
+    if (_isDuplicateContent(field, pkt.text, pkt.meta)) return;
+    _hideRenderSpinner();
+    _dispatchEvent(pkt.kind, pkt.text, pkt.meta);
+  }
+
+  async function _pumpQueue() {
+    if (_pumping || _stopped) return;
+    _pumping = true;
+    while (_playQueue.length && !_stopped) {
+      const pkt = _playQueue.shift();
+      await _playPacket(pkt);
+    }
+    _pumping = false;
+    if (_playQueue.length && !_stopped) {
+      _pumpQueue();
+      return;
+    }
+    _notifyIdle();
+  }
+
+  function _enqueuePacket(kind, text, meta = {}) {
+    if (kind === 'tag' || kind === 'chunk') return;
+    if (kind === 'error') {
+      _acceptedLive = true;
+      _playQueue.push({ kind, text, meta, field: 'body', waitMs: 0 });
+      _pumpQueue();
+      return;
+    }
+    const field = resolveRenderField(kind, meta) || _fieldKey(kind, meta);
+    if (!field || field === 'thought' || field === 'finish' || field === 'silence' || field === 'wait') return;
+    const body = String(text ?? '').trim();
+    if ((field === 'speak' || field === 'body' || field === 'observe' || field === 'outline') && !body) return;
+    if ((field === 'speak' || field === 'body') && _isDuplicateContent(field, body, meta)) return;
+    _acceptedLive = true;
+    _playQueue.push({
+      kind,
+      text,
+      meta,
+      field,
+      waitMs: (field === 'body' || field === 'speak' || field === 'outline' || field === 'observe')
+        ? _packetWaitMs(meta)
+        : 0,
+    });
+    _pumpQueue();
+  }
+
+  const api = {
     el,
-    onEvent(kind, text, meta = {}) {
-      const field = resolveRenderField(kind, meta);
-      switch (kind) {
-        case 'agent_typing':
-          if (meta.active === false) _hideTypingIndicator();
-          else _showTypingIndicator();
-          break;
-        case 'tag':
-          _clearChunkPill();
-          if (meta.tag === 'think' || field === 'thought') {
-            if (simulated) _showTypingIndicator();
-            else _ensureChunkPill();
-          } else if (meta.tag === 'speak' || meta.tag === 'action' || field === 'speak' || field === 'body') {
-            if (simulated && (meta.tag === 'speak' || field === 'speak')) _showTypingIndicator();
-            else {
-              const bubbleKind = bubbleKindForField(field) || (meta.tag === 'action' ? 'action' : 'speak');
-              _ensureOpenBubble(bubbleKind);
-            }
-          }
-          break;
-        case 'chunk':
-          _ensureChunkPill();
-          break;
-        case 'thought':
-          _addTagPill('thought', text, meta);
-          break;
-        case 'action':
-          _handleStreamChunk('action', text, meta);
-          break;
-        case 'state':
-          if (simulated) {
-            _deferredStates.push({ text, meta });
-          } else {
-            _addTagPill('state', text, meta);
-          }
-          break;
-        case 'observe':
-          _addTagPill('observe', text, meta);
-          break;
-        case 'anchor':
-          _addTagPill('anchor', text, meta);
-          break;
-        case 'speak':
-        case 'segment':
-          _handleStreamChunk('speak', text, meta);
-          break;
-        case 'finish':
-          break;
-        case 'error':
-          _appendChunkBubble('action', text || 'error');
-          break;
-        default:
-          break;
-      }
+    get _finalized() { return _finalized; },
+    setCreatedAt(iso) {
+      const stamp = String(iso ?? '').trim();
+      if (!stamp) return;
+      _createdAt = stamp;
+      timeEl.textContent = _ts(stamp);
     },
-    async finalize(answer, aborted = false) {
+    get createdAt() { return _createdAt; },
+    get hasLiveInput() {
+      return _acceptedLive || _events.length > 0 || _playQueue.length > 0;
+    },
+    onEvent(kind, text, meta = {}) {
+      const isSlotUpgrade = (
+        kind === 'outline'
+        && Boolean(meta?.upgrade || meta?.replace)
+        && String(meta?.slot || '').trim()
+      );
+      if (_stopped && !isSlotUpgrade) return;
+      if (_finalized && !isSlotUpgrade) return;
+      const eventStamp = String(meta?.created_at ?? '').trim();
+      if (eventStamp && !_createdAt) api.setCreatedAt(eventStamp);
+      _enqueuePacket(kind, text, meta);
+    },
+    async finalize(answer, aborted = false, replayEvents = null) {
       _hideTypingIndicator();
-      if (_simAnimPromise) {
-        await _simAnimPromise;
+      if (aborted) {
+        _stopped = true;
+        _playQueue.length = 0;
       }
-      _simAnimToken += 1;
-      _simAnimPromise = null;
-      _clearChunkPill();
-      if (_openBubble) {
-        _openBubble.classList.remove('sim-typing-cursor', 'streaming');
-        _finalizeOpenBubble(_openBubble.dataset.kind);
+
+      if (
+        !_acceptedLive
+        && !_events.length
+        && !_playQueue.length
+        && Array.isArray(replayEvents)
+        && replayEvents.length
+      ) {
+        for (const ev of sortEventsByOrder(replayEvents)) {
+          api.onEvent(ev.kind, ev.text ?? '', ev.meta ?? {});
+        }
       }
-      if (_lastBubble) _lastBubble.classList.remove('streaming', 'sim-typing-cursor');
+
+      await _waitUntilIdle();
+      _hideRenderSpinner();
+
+      if (_thinkPending) {
+        _thinkPending.wrap.remove();
+        _thinkPending = null;
+      }
+      _closeOpenBlock();
 
       const finalText = (_speakParts.join('') || String(answer ?? '')).trim();
-      if (!_speakParts.length && finalText && !aborted) {
-        if (simulated) {
-          await _animateSimulatedSpeak(finalText);
-        } else {
-          _appendChunkBubble('speak', finalText);
-          if (_lastBubble) _lastBubble.classList.remove('streaming');
-        }
-      } else {
-        _flushDeferredStates();
+      // 已有分字段事件时绝不再整段 dump answer
+      if (!_events.length && finalText && !aborted) {
+        _commitField('speak', 'speak', finalText, { field: 'speak' });
       }
 
+      if (_createdAt) timeEl.textContent = _ts(_createdAt);
+
       if (aborted) {
-        _deferredStates = [];
         const note = document.createElement('div');
         note.className = 'speak-abort-note';
         note.textContent = '⊘ aborted';
@@ -1500,26 +1637,51 @@ export function appendSpeakStream(opts = {}) {
         ttsBtn.classList.remove('hidden');
         ttsBtn.dataset.text = finalText;
       }
+      _finalized = true;
+      if (_isHollowSpeakMsg(div)) {
+        div.remove();
+        return;
+      }
       scrollBottom();
     },
     discardAgentTurn() {
+      _stopped = true;
+      _finalized = true;
+      _playQueue.length = 0;
+      _notifyIdle();
       _hideTypingIndicator();
-      _simAnimToken += 1;
-      _simAnimPromise = null;
-      _deferredStates = [];
+      _hideRenderSpinner();
       div.remove();
-      _clearChunkPill();
-      _openBubble = null;
-      _lastBubble = null;
+      _openBlock = null;
+      _thinkPending = null;
       _speakParts = [];
       _events = [];
     },
     get speakText() { return _speakParts.join(''); },
     get events() { return _events; },
+    replaceSlot(slot, text, meta = {}) {
+      return _replaceSlotContent(slot, text, meta);
+    },
   };
+  return api;
 }
 
-/** 顶栏「对方正在输入」+ 转圈（逐字呈现模式）。 */
+/** 就地替换已渲染的 outline 占位（可跨回合、已 finalize）。 */
+export function replaceOutlineSlot(slot, text, meta = {}) {
+  const key = String(slot || '').trim();
+  const body = String(text ?? '').trim();
+  if (!key || !body) return false;
+  const wrap = document.querySelector(`.speak-field[data-slot="${CSS.escape(key)}"]`);
+  if (!wrap) return false;
+  const content = wrap.querySelector('.speak-field-content');
+  if (!content) return false;
+  content.textContent = body;
+  wrap.classList.remove('streaming', 'speak-outline-placeholder');
+  if (meta?.placeholder) wrap.classList.add('speak-outline-placeholder');
+  return true;
+}
+
+/** 顶栏「对方正在输入」状态。 */
 export function setTitleBarTyping(active) {
   const tb = document.getElementById('tb-title');
   const spin = document.getElementById('tb-typing');

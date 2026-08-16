@@ -42,8 +42,14 @@ class _StorySceneGroundingAdapter(StorySceneGroundingPort):
         self._virtual = virtual
 
     def ground_scene_for_cue(self, cue: str, *, policy=None):
-        from storyview.types import SceneGroundingPolicy
+        from storyview.types import SceneGroundingPolicy, SceneGroundingResult
 
+        if self._virtual._story_port is None:
+            return SceneGroundingResult(
+                scene_id="",
+                scene_name="",
+                blocked_reason="storyview 通道已关闭，待场面引擎完善后再打开。",
+            )
         port = self._virtual._require_story_port()
         resolved_policy = (
             policy

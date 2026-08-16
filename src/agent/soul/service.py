@@ -41,7 +41,7 @@ from .ports import EmbeddingPort, ListEmbeddingAdapter, LLMServicePort
 from .request import SoulDomain, SoulRequest
 from .speak.io import SpeakOutboundRouter
 from .speak.io.handler import SpeakHandler
-from .speak.responders.request_driven.orchestrator.compose_manager import ComposeManagerConfig
+from .speak.responders.request_driven.composer import ComposeManagerConfig
 
 if TYPE_CHECKING:
     from infra.db.mysql import MySQLClient
@@ -221,8 +221,12 @@ class SoulService:
         return self._ensure_speak_outbound_router()
 
     def bind_speak_stream_port(self, port: SpeakStreamPort | None) -> None:
-        """???? Speak ?????? port????? delivery_mode / TypingHold????"""
+        """挂接 Speak 流式适配器；可随时连接并冲刷积压。"""
         self.speak_outbound.bind_stream(port)
+
+    def attach_speak_notify_port(self, port) -> None:
+        """挂接 Speak notify 适配器（SSE 等）。"""
+        self._ensure_speak_service().attach_notify_port(port)
 
     def deliver_speak_text(
         self,
@@ -240,18 +244,21 @@ class SoulService:
         *,
         trigger: str = "user_message",
     ) -> dict[str, Any]:
-        """?? dialogue ???????Speak lifecycle ????????? dispatch????"""
+        """打开或恢复同一条 Speak 生命线；仅 Registry 的物理 idle 可轮转。"""
         self._require_running()
-        from agent.soul.life.io.speak import DialogueSessionOpenInbound
-
-        ack = self.life_io.speak.open_dialogue_session(
-            DialogueSessionOpenInbound(session_id=session_id, trigger=trigger),
-        )
+        speak = self._ensure_speak_service()
+        opened = speak.session_manager.open(session_id, trigger=trigger)
+        speak.ensure_screenwriter_init(session_id)
+        # Registry.open 已决定本次是否为新 generation；这里仅恢复生命线扫描。
+        speak.bootstrap_proactive_loop(session_id)
         return {
-            "ok": ack.ok,
-            "session_id": ack.session_id,
-            "trigger": ack.trigger,
-            "turn_count": ack.turn_count,
+            "ok": True,
+            "session_id": opened.session_id,
+            "trigger": opened.trigger,
+            "turn_count": speak.session_registry.current_turn_index(session_id),
+            "generation": opened.generation,
+            "started": opened.started,
+            "temporal_rotated": opened.temporal_rotated,
         }
 
     def hydrate_speak_channel(self, session_id: str) -> str:
@@ -492,10 +499,12 @@ class SoulService:
         record: bool = True,
         responder: str | None = None,
     ) -> dict[str, Any]:
-        """Speak 用户输入入队。"""
+        """Speak 用户输入入队；忙碌时打断出站，由后续 run_turn 把原文直达角色。"""
         if self._state != "running":
             raise RuntimeError(f"SoulService 未运行：state={self._state!r}")
-        submit = self._ensure_speak_service().session_manager.submit_user_input(
+        speak = self._ensure_speak_service()
+        speak.stamp_user_ingress(session_id, user_text)
+        submit = speak.session_manager.submit_user_input(
             session_id,
             user_text,
             stream=stream,
@@ -508,12 +517,18 @@ class SoulService:
             "interrupt": bool(submit.interrupt),
             "responder": responder,
             "notes": list(submit.notes),
+            "director_notified": {"notified": False, "reason": "user_direct_to_character"},
         }
 
     def speak_is_pushing(self, session_id: str) -> bool:
         if self._speak_service is None:
             return False
         return self._speak_service.session_manager.is_pushing(session_id)
+
+    def speak_is_busy(self, session_id: str) -> bool:
+        if self._speak_service is None:
+            return False
+        return self._speak_service.is_busy(session_id)
 
     def attach_character_work_port(self, port) -> None:
         """把角色求助口接到 worker 轻量执行（严格分流，不写进角色提示词）。"""
@@ -800,14 +815,6 @@ class SoulService:
         self._require_running()
 
         def _run() -> dict[str, Any]:
-            if self._speak_has_active_dialogue(session_id):
-                defer = self._defer_share_to_active_session(session_id, limit=2)
-                return {
-                    "ok": defer.get("ok", False),
-                    "session_id": session_id,
-                    "deferred": defer,
-                    "reason": defer.get("reason", ""),
-                }
             discharge = self.presence.discharge_accumulated(
                 session_id=session_id,
                 source=source,
@@ -824,7 +831,7 @@ class SoulService:
             request = self._speak_request_from_discharge(discharge, session_id=session_id)
             speak_result = self._handle_presence_speak_trigger(session_id, request)
             return {
-                "ok": True,
+                "ok": bool(speak_result.get("ok")),
                 "session_id": session_id,
                 "speak": speak_result,
                 "presence_narrative": request.presence_narrative,
@@ -850,6 +857,58 @@ class SoulService:
 
     def arm_enter_greeting(self, session_id: str) -> None:
         self._ensure_speak_service().arm_enter_greeting(session_id)
+
+    def ensure_screenwriter_init(self, session_id: str) -> None:
+        self._ensure_speak_service().ensure_screenwriter_init(session_id)
+
+    def speak_is_live_warm(self, session_id: str) -> bool:
+        return self._ensure_speak_service().is_live_warm(session_id)
+
+    def speak_bootstrap_proactive_loop(self, session_id: str) -> None:
+        self._ensure_speak_service().bootstrap_proactive_loop(session_id)
+
+    def speak_resolve_create_ui(
+        self,
+        delivery_id: str,
+        *,
+        accepted: bool,
+        channel_id: str = "",
+        session_id: str = "",
+    ) -> dict[str, Any]:
+        return self._ensure_speak_service().resolve_outbound_create_ui(
+            delivery_id,
+            accepted=accepted,
+            channel_id=channel_id,
+            session_id=session_id,
+        )
+
+    def speak_acknowledge_proactive(
+        self,
+        delivery_id: str,
+        *,
+        session_id: str = "",
+        channel_id: str = "",
+    ) -> bool:
+        return self._ensure_speak_service().acknowledge_outbound_proactive(
+            delivery_id,
+            session_id=session_id,
+            channel_id=channel_id,
+        )
+
+    def speak_enter_page_context(
+        self,
+        session_id: str,
+        *,
+        page_key: str,
+        messages: list[dict] | None = None,
+        lines: list[str] | None = None,
+    ) -> dict:
+        return self._ensure_speak_service().enter_page_context(
+            session_id,
+            page_key=page_key,
+            messages=messages,
+            lines=lines,
+        )
 
     def cancel_enter_greeting(self, session_id: str) -> None:
         if self._speak_service is not None:
@@ -883,7 +942,6 @@ class SoulService:
         self.memory.api.init_infra(on_ready=self._on_memory_infra_ready)
         self._ensure_life_handler()
         self._ensure_persona_handler()
-        self._ensure_story_service()
         self._wire_workers()
         self._sync_presence_expectation_from_persona()
         self._sync_agent_persona_context()
@@ -1108,17 +1166,6 @@ class SoulService:
         if not opportune:
             return {"checked": True, "opportune": False, "triggered": False}
 
-        if self._speak_has_active_dialogue(session_id):
-            defer = self._defer_share_to_active_session(session_id, limit=2)
-            return {
-                "checked": True,
-                "opportune": True,
-                "triggered": defer.get("ok", False),
-                "deferred": True,
-                "session_id": session_id,
-                "defer": defer,
-            }
-
         discharge = self.presence.discharge_accumulated(
             session_id=session_id,
             source="external_opportunity_scan",
@@ -1126,16 +1173,19 @@ class SoulService:
             expectation=Expectation.required,
         )
         triggered = discharge is not None
+        speak_result: dict[str, Any] | None = None
         if discharge is not None:
-            self._handle_presence_speak_trigger(
+            speak_result = self._handle_presence_speak_trigger(
                 session_id,
                 self._speak_request_from_discharge(discharge, session_id=session_id),
             )
+            triggered = bool(speak_result.get("ok"))
         return {
             "checked": True,
             "opportune": True,
             "triggered": triggered,
             "session_id": session_id,
+            "speak": speak_result,
         }
 
     def run_expectation_scan(self, session_id: str = "tao") -> dict[str, Any]:
@@ -1589,11 +1639,13 @@ class SoulService:
                 )
                 self._speak_service._context.set_on_block_ready(_on_compression_block)
                 from agent.soul.memory.facade.persona_context import (
-                    build_agent_persona_narrative,
+                    build_speak_dialogue_persona_anchor,
                 )
 
                 self._speak_service._context.set_agent_persona_provider(
-                    lambda: build_agent_persona_narrative(self.get_persona_snapshot()),
+                    lambda: build_speak_dialogue_persona_anchor(
+                        self.get_persona_snapshot()
+                    ),
                 )
 
             from agent.soul.memory.io.session import DialogueTurnInbound
@@ -1726,7 +1778,7 @@ class SoulService:
                 limit: int,
                 hint: str,
             ):
-                from agent.soul.speak.responders.request_driven.orchestrator.compose_manager.ports.adapters import (
+                from agent.soul.speak.responders.request_driven.composer.ports.adapters import (
                     units_from_search_hits,
                 )
 
@@ -1740,6 +1792,9 @@ class SoulService:
                 return units_from_search_hits(hits, limit=cap)
 
             self._speak_service.attach_compose_memory_search(_compose_memory_search_for_speak)
+            embedder = self.resolve_embedding_port()
+            if embedder is not None:
+                self._speak_service.attach_compose_embedder(embedder)
 
             def _portrait_query_for_speak(request: InteractorPortraitRequest) -> None:
                 self.memory.api.session_io.submit_dialogue_turn(
@@ -2010,16 +2065,7 @@ class SoulService:
                 "skipped_proactive": True,
                 "source": request.source,
             }
-        if self._speak_has_active_dialogue(session_id):
-            intents = self._intents_from_speak_request(request, limit=2)
-            defer = self._defer_share_to_active_session(
-                session_id,
-                limit=2,
-                intents=intents,
-            )
-            defer["skipped_proactive"] = True
-            defer["source"] = request.source
-            return defer
+        # Agent 想 speak：允许创建新窗口向外抛出，不再因活跃对话 defer 掉
         return self._emit_presence_speak(request)
 
     def _emit_presence_speak(self, request: SpeakRequest) -> dict[str, Any]:
@@ -2116,35 +2162,23 @@ class SoulService:
             self.life.api.sync_agent_persona_narrative(narrative)
 
         if self._speak_service is not None and self._speak_service._context is not None:
+            from agent.soul.memory.facade.persona_context import (
+                build_speak_dialogue_persona_anchor,
+            )
+
             self._speak_service._context.set_agent_persona_provider(
-                lambda: build_agent_persona_narrative(self.get_persona_snapshot()),
+                lambda: build_speak_dialogue_persona_anchor(self.get_persona_snapshot()),
             )
 
     def _ensure_story_service(self):
-        if self._story_service is not None:
-            return self._story_service
-        from storyview import StoryPort, StoryService, StoryWorldview
+        """Storyview 通道暂时关闭：不启动 StoryService，不接线 StoryPort。
 
-        llm = resolve_module_llm(
-            self._llm_service,
-            self._cfg.life_llm_aux_name,
-            self._primary_llm,
-        )
-        service = StoryService(
-            self._mysql_client,
-            llm=llm,
-            storage_backend=self._storage_backend,
-            json_root=self._json_root,
-        )
-        service.init_schema()
-        self._story_service = service
-        self._story_port = StoryPort(service)
-        service.engine._worldview = StoryWorldview.default()
-        return service
+        等 storyview 场面不再幻觉、世界观落地后，再恢复本方法，
+        并重新 register_story / speak.set_story_port / life.set_story_port。
+        """
+        return None
 
     def _wire_workers(self) -> None:
-        story = self._ensure_story_service()
-        self._workers.register_story(story)
         self._workers.register_life(self.life.api.worker)
         self.memory.set_worker(self._workers.memory)
         self.persona.set_worker(self._workers.persona)
@@ -2157,21 +2191,16 @@ class SoulService:
         self.life.api.set_narrative_context_supplier(
             _MemoryNarrativeContextSupplier(self)
         )
-        self.life.api.set_story_port(self._story_port)
-        self.life.api.set_gm_answerer(self._answer_gm_question_with_speak)
+        # Storyview 端口暂不接线；地标/意外不跑 GM。
         profile = self.life.api.load_profile()
         world_id = profile.resolved_world_id()
         if not profile.world_id.strip():
             profile.world_id = world_id
             self.life.api.save_profile()
         self.life.api.bind_story_world(world_id)
-        from storyview import StoryWorldContextBridge, ensure_default_world_scenes
+        from storyview import PlaceholderWorldContext
 
-        ensure_default_world_scenes(story.engine, world_id)
-
-        self.set_story_world_context_supplier(
-            StoryWorldContextBridge(self._story_port, world_id=world_id)
-        )
+        self.set_story_world_context_supplier(PlaceholderWorldContext())
         self._ensure_experience_pipeline()
         self._experience_pipeline.orchestrator._memory_port = life_memory
         self._experience_pipeline.life.set_memory_port(life_memory)

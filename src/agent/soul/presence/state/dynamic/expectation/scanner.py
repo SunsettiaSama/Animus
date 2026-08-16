@@ -63,12 +63,7 @@ def scan_expectation_thresholds(
     proactive_threshold: float | None = None,
     reply_threshold: float | None = None,
 ) -> ExpectationScanResult:
-    """扫描 FSM 期待驱动：超阈值则标记 proactive 开聊或对话内追加（不构造 speak 请求）。"""
-    proactive = (
-        presence_cfg.PROACTIVE_OPEN_THRESHOLD
-        if proactive_threshold is None
-        else proactive_threshold
-    )
+    """扫描期待驱动：agent push 标注或 reply_urge → 开口/追加（不构造 speak 请求）。"""
     reply = (
         presence_cfg.REPLY_URGE_THRESHOLD
         if reply_threshold is None
@@ -95,7 +90,7 @@ def scan_expectation_thresholds(
             triggered=True,
             mode=ExpectationScanMode.append_message,
             payload=payload,
-            notes=["reply_urge threshold → append message"],
+            notes=["reply_urge → append message"],
         )
 
     if interaction.expectation.value in _BLOCKED_PROACTIVE_VALUES:
@@ -104,18 +99,24 @@ def scan_expectation_thresholds(
             notes=["proactive blocked by interaction expectation"],
         )
 
-    if expectation.at_proactive_threshold(threshold=proactive):
+    # agent 显式 push，或仍兼容 toward_user 累积（enqueue-only 排序用）
+    if expectation.at_proactive_threshold(threshold=proactive_threshold):
         package = _package_from_queue(expectation.share_queue, interaction, summary)
         share_desire = package.peak_share_desire or ShareDesire.mild
         if share_desire == ShareDesire.none:
             share_desire = ShareDesire.mild
+        push_driven = expectation.pending_push or expectation.share_queue.has_push_intent()
         payload = ExpectationScanPayload(
             reason=summary,
             impulse_level=max(expectation.toward_user, share_desire_weight(share_desire)),
             share_desire=share_desire,
             expectation=Expectation.required,
             package=package,
-            source="expectation_scan:proactive_open",
+            source=(
+                "expectation_scan:push_to_user"
+                if push_driven
+                else "expectation_scan:proactive_open"
+            ),
             wait_reply=True,
         )
         return ExpectationScanResult(
@@ -123,7 +124,11 @@ def scan_expectation_thresholds(
             triggered=True,
             mode=ExpectationScanMode.proactive_open,
             payload=payload,
-            notes=["toward_user threshold → proactive open"],
+            notes=[
+                "push_to_user → proactive open"
+                if push_driven
+                else "toward_user → proactive open"
+            ],
         )
 
     return ExpectationScanResult(session_id=session_id)

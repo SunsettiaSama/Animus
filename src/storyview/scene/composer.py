@@ -87,6 +87,8 @@ class SceneComposer:
         )
         entity_ids = tuple(str(e["id"]) for e in entities)
         world_time = str(runtime.get("world_time") or "")
+        locate = None
+        resolved_scene_id = str(scene_id or "").strip()
         if scene_id:
             scene = self._scene_network.get(scene_id)
             if scene is None:
@@ -101,6 +103,12 @@ class SceneComposer:
             scene_inject = render_scene_inject(locate)
             if locate.scene is not None and locate.scene.location_id:
                 loc_id = locate.scene.location_id
+            if locate.scene is not None:
+                resolved_scene_id = str(
+                    getattr(locate.scene, "scene_id", "") or ""
+                ).strip()
+        prior = str(self._stores.runtime.snapshot_text(world_id) or "").strip()
+        last_change = str(transition_text or "").strip()
         scene_text = self._compose_scene(
             world_row=world_row,
             canon=canon,
@@ -110,6 +118,9 @@ class SceneComposer:
             world_time=world_time,
             loc_id=loc_id,
             scene_inject=scene_inject,
+            prior_snapshot=prior,
+            scene_id=resolved_scene_id,
+            last_change=last_change,
         )
         event_id = self._stores.events.create_open(
             world_id,
@@ -132,16 +143,19 @@ class SceneComposer:
     def snapshot(self, world_id: str, cue: str = "") -> str:
         self._stores.runtime.ensure(world_id)
         query = cue.strip()
+        # 优先返回已持久化场景；普通轮询 cue 不强制 open_scene 重生成
+        cached = self._stores.runtime.snapshot_text(world_id)
         if query:
             inject = self._scene_network.scene_inject_text(world_id, query)
             if inject.strip():
                 return inject.strip()
-        if not query:
+            if cached:
+                return cached
+        else:
             locate = self._scene_network.locate(world_id, "")
             inject = render_scene_inject(locate)
             if inject.strip():
                 return inject.strip()
-            cached = self._stores.runtime.snapshot_text(world_id)
             if cached:
                 return cached
         packet, _ = self.open_scene(
@@ -162,6 +176,9 @@ class SceneComposer:
         world_time: str,
         loc_id: str | None,
         scene_inject: str = "",
+        prior_snapshot: str = "",
+        scene_id: str = "",
+        last_change: str = "",
     ) -> str:
         if scene_inject.strip() and self._llm is None:
             return enforce_canon(scene_inject.strip()[:400], canon)
@@ -184,6 +201,8 @@ class SceneComposer:
         if self._llm is None:
             if scene_inject.strip():
                 return enforce_canon(scene_inject.strip()[:400], canon)
+            if prior_snapshot.strip():
+                return enforce_canon(prior_snapshot.strip()[:280], canon)
             base = f"你注意到{cue.strip() or '周围'}——"
             if loc_name:
                 base = f"你在{loc_name}，{base}"
@@ -196,7 +215,17 @@ class SceneComposer:
             f"【故事观】\n{wv.render()}\n\n"
             f"【世界时刻】\n{world_time or '（未设定）'}\n\n"
             f"【当前地点】\n{loc_name or '（未指定）'}\n\n"
+            f"【场景 id】\n{scene_id or '（无）'}\n\n"
         )
+        if prior_snapshot.strip():
+            prompt += (
+                "【上一拍场景快照｜连续性锚点】\n"
+                f"{prior_snapshot.strip()[:400]}\n\n"
+                "除非线索明确要求转场/结构变化，否则保持地点与未变更物件一致，"
+                "只增量更新可见变化。\n\n"
+            )
+        if last_change.strip():
+            prompt += f"【最近场景变更】\n{last_change.strip()[:200]}\n\n"
         if scene_inject.strip():
             prompt += f"【场景网络·检索】\n{scene_inject.strip()}\n\n"
         prompt += (

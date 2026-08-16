@@ -1,5 +1,4 @@
 import * as soulMod from '../../modules/soul.js';
-import { syncSpeakDeliverySetting } from '../../speak_delivery.js';
 import { syncSpeakResponderSetting } from '../../speak_responder.js';
 import { _v, _c, _si, _sc } from './_helpers.js';
 
@@ -14,7 +13,6 @@ function _int(id, fallback = 0) {
 }
 
 export async function load() {
-  syncSpeakDeliverySetting();
   syncSpeakResponderSetting();
 
   const [soul, mem, infra] = await Promise.all([
