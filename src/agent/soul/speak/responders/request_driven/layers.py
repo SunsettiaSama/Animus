@@ -45,10 +45,20 @@ class RoleDynamicLayer:
     memory_texts: tuple[str, ...] = ()
     share_texts: tuple[str, ...] = ()
     pass_info_texts: tuple[str, ...] = ()
+    presence_mood: str = ""
+    presence_brief: str = ""
     behavior_guide: str = ""
     script_hint: str = ""
     schedule_reason: str = ""
     help_observations: tuple[str, ...] = ()
+
+    def presence_card_text(self) -> str:
+        lines: list[str] = []
+        if self.presence_mood.strip():
+            lines.append(f"心情：{self.presence_mood.strip()}")
+        if self.presence_brief.strip():
+            lines.append(f"简述：{self.presence_brief.strip()}")
+        return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -66,6 +76,9 @@ class RolePromptLayers:
         if self.dialogue_frame.strip():
             parts.append(self.dialogue_frame.strip())
         dyn_blocks: list[str] = []
+        presence = self.dynamic.presence_card_text()
+        if presence:
+            dyn_blocks.append("【临场状态卡片｜导演写入】\n" + presence)
         if self.dynamic.behavior_guide.strip():
             dyn_blocks.append(
                 "【动态层·行为指引｜上轮导演对当前轮的预测】\n"
@@ -97,12 +110,15 @@ class RolePromptLayers:
                 + "\n".join(f"- {t}" for t in self.dynamic.help_observations)
             )
         if dyn_blocks:
-            header = "【动态层】以下内容由导演调度/预测或后台回传注入；未列出的材料不得擅自当作已注入。"
+            header = (
+                "【动态层】以下内容由导演作为指挥家组装/写入；"
+                "未列出的材料不得擅自当作已注入。"
+            )
             if self.dynamic.schedule_reason.strip():
                 header += f"\n调度理由：{self.dynamic.schedule_reason.strip()}"
             parts.append(header + "\n\n" + "\n\n".join(dyn_blocks))
         else:
-            parts.append("【动态层】本轮导演未调度记忆/分享/传递信息。")
+            parts.append("【动态层】本轮导演未调度记忆/分享/传递信息，也未写入临场卡。")
         return "\n\n".join(p for p in parts if p.strip())
 
 
@@ -125,11 +141,15 @@ def assemble_role_layers(
     behavior_guide: str = "",
     script_hint: str = "",
     help_observations: tuple[str, ...] = (),
+    presence_mood: str = "",
+    presence_brief: str = "",
 ) -> RolePromptLayers:
     dynamic = RoleDynamicLayer(
         memory_texts=schedule.selected_memory_texts(materials),
         share_texts=schedule.selected_share_texts(materials),
         pass_info_texts=schedule.selected_pass_info_texts(materials),
+        presence_mood=presence_mood.strip(),
+        presence_brief=presence_brief.strip(),
         behavior_guide=behavior_guide.strip(),
         script_hint=script_hint.strip(),
         schedule_reason=schedule.reason,

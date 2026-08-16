@@ -29,6 +29,8 @@ def build_role_prompt(
     behavior_guide: str = "",
     script_hint: str = "",
     help_observations: tuple[str, ...] = (),
+    presence_mood: str = "",
+    presence_brief: str = "",
 ) -> RolePrompt:
     """静态层 +（仅导演调度后的）动态层。未给 schedule 时动态层为空。"""
     mats = materials or DynamicLayerMaterials(session_id=view.session_id)
@@ -41,6 +43,8 @@ def build_role_prompt(
         behavior_guide=behavior_guide,
         script_hint=script_hint,
         help_observations=help_observations,
+        presence_mood=presence_mood,
+        presence_brief=presence_brief,
     )
     return RolePrompt(
         system_extra=layers.render_system_extra(),

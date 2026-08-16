@@ -2014,6 +2014,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         active_guide = state.active_next_turn_guide or {}
         behavior_guide = str(active_guide.get("behavior_guide") or "")
         script_hint = str(active_guide.get("script_hint") or "")
+        presence_card = state.presence_card
+        presence_mood = str(getattr(presence_card, "mood", "") or "")
+        presence_brief = str(getattr(presence_card, "brief", "") or "")
         # 角色 system：身份+材料，不含 compose [action]/[state] 协议
         base_system = build_turn_system(bundle, for_character=True)
         help_observations: tuple[str, ...] = ()
@@ -2027,6 +2030,8 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 behavior_guide=behavior_guide,
                 script_hint=script_hint,
                 help_observations=obs,
+                presence_mood=presence_mood,
+                presence_brief=presence_brief,
             )
 
         def _generate_once(obs: tuple[str, ...] = ()) -> tuple[str, object]:
@@ -2035,6 +2040,10 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             if role_prompt.system_extra.strip():
                 system = f"{system}\n\n{role_prompt.system_extra}".strip() if system else role_prompt.system_extra
             cards: list[tuple[str, str]] = []
+            if presence_card is not None and getattr(presence_card, "ready", False):
+                body = presence_card.render()
+                if body.strip():
+                    cards.append(("临场状态", body))
             if role_prompt.layers is not None and role_prompt.layers.dialogue_frame.strip():
                 cards.append(("对话轨迹", role_prompt.layers.dialogue_frame))
             if self._character_agent is not None:
