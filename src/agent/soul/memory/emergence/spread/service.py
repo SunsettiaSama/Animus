@@ -53,6 +53,9 @@ class SpreadActivationService:
         self._traversal = GraphTraversal(edges)
         self._query = query
         self._cluster_index = cluster_index
+        self._keyword_weight = keyword_weight
+        self._seed_top_k = seed_top_k
+        self._cluster_core_top_k = cluster_core_top_k
         self._seeds = SeedResolver(
             nodes,
             vectors,
@@ -131,7 +134,7 @@ class SpreadActivationService:
         return self._point_store.get(session_id, turn_index)
 
     def activate_sync(self, cue: ActivationCue) -> ActivationSnapshot:
-        return self._run_spread(cue, seed_top_k=self._seeds._seed_top_k, max_hops=self._max_hops)
+        return self._run_spread(cue, seed_top_k=self._seed_top_k, max_hops=self._max_hops)
 
     def query_spread_sync(self, cue: ActivationCue) -> HotEmergenceResult:
         seed_scores = self._resolve_seeds(cue, seed_top_k=self._hot_seed_top_k)
@@ -362,13 +365,15 @@ class SpreadActivationService:
 
     def _resolve_seeds(self, cue: ActivationCue, *, seed_top_k: int) -> dict[str, float]:
         text = self._cue_text(cue)
+        if not text.strip():
+            return {}
         resolver = SeedResolver(
             self._nodes,
             self._vectors,
-            keyword_weight=self._seeds._keyword_weight,
+            keyword_weight=self._keyword_weight,
             seed_top_k=seed_top_k,
             cluster_index=self._cluster_index,
-            cluster_core_top_k=self._seeds._cluster_core_top_k,
+            cluster_core_top_k=self._cluster_core_top_k,
         )
         return resolver.resolve(
             text,

@@ -274,6 +274,26 @@ class CharacterSpeakAgenda:
             self.version = int(self.version) + 1
         return cancelled
 
+    def cancel_near_future(self, *, now: float | None = None, window_sec: float = 90.0) -> int:
+        """用户刚交换过：取消近端未到期的开口预约。
+
+        预约梯子在用户说话后照常逐个到点，会让角色对着刚聊过的内容
+        连续自说自话；近端 due 作废，远端保留，节奏由下一次导演醒时重排。
+        """
+        current = time.time() if now is None else float(now)
+        cancelled = 0
+        for entry in self.entries:
+            if entry.status != "pending" or entry.kind != "speak":
+                continue
+            at = float(entry.at)
+            if current <= at <= current + float(window_sec):
+                entry.status = "cancelled"
+                cancelled += 1
+        if cancelled:
+            self.revised_at = time.time()
+            self.version = int(self.version) + 1
+        return cancelled
+
     def render_for_director(self) -> str:
         lines = [
             "[开口议程｜导演戳优先]",

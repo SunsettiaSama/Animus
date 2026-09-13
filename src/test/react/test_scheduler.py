@@ -1,21 +1,21 @@
 """
-µ÷¶ÈÆ÷Ä£¿é²âÊÔ
+è°ƒåº¦å™¨æ¨¡å—æµ‹è¯•
 ==============
-¸²¸Ç src/scheduler/ µÄºËĞÄĞĞÎª£¨ÎŞÍâ²¿ÒÀÀµ£©£º
+è¦†ç›– src/scheduler/ çš„æ ¸å¿ƒè¡Œä¸ºï¼ˆæ— å¤–éƒ¨ä¾èµ–ï¼‰ï¼š
 
-  µ¥Ôª²âÊÔ
-  ©À©¤©¤ SchedulerConfig£ºÄ¬ÈÏÖµ / from_dict / profiles ÀÁ¼ÓÔØ
-  ©À©¤©¤ Trigger / TaskStatus£ºĞòÁĞ»¯ / ·´ĞòÁĞ»¯
-  ©À©¤©¤ ScheduledTask£ºto_dict / from_dict Íù·µ
-  ©À©¤©¤ TaskStore£ºadd / get / list_all / update / cancel / get_due_tasks
-  ©À©¤©¤ SchedulerEngine£ºschedule_once / schedule_interval / cancel / list_timeline
-  ©¸©¤©¤ Ô­×Ó¹¤¾ß£ºscheduler_add / scheduler_list / scheduler_cancel
+  å•å…ƒæµ‹è¯•
+  â”œâ”€â”€ SchedulerConfigï¼šé»˜è®¤å€¼ / from_dict / profiles æ‡’åŠ è½½
+  â”œâ”€â”€ Trigger / TaskStatusï¼šåºåˆ—åŒ– / ååºåˆ—åŒ–
+  â”œâ”€â”€ ScheduledTaskï¼što_dict / from_dict å¾€è¿”
+  â”œâ”€â”€ TaskStoreï¼šadd / get / list_all / update / cancel / get_due_tasks
+  â”œâ”€â”€ SchedulerEngineï¼šschedule_once / schedule_interval / cancel / list_timeline
+  â””â”€â”€ åŸå­å·¥å…·ï¼šscheduler_add / scheduler_list / scheduler_cancel
 
-²»ÒÀÀµ LLM¡¢asyncio ÔËĞĞÊ±¡¢TaoLoop¡£
-ÔËĞĞ·½Ê½£º
+ä¸ä¾èµ– LLMã€asyncio è¿è¡Œæ—¶ã€TaoLoopã€‚
+è¿è¡Œæ–¹å¼ï¼š
   cd E:/ReAct
   python -m pytest src/test/test_scheduler.py -v
-  # »òÖ±½Ó£º
+  # æˆ–ç›´æ¥ï¼š
   python src/test/test_scheduler.py
 """
 
@@ -37,12 +37,12 @@ SRC = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(SRC))
 
 
-# ©¤©¤ Stub ²ßÂÔ ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
-# react/__init__.py ¡ú tao.py ¡ú memory ¡ú embedding ¡ú torch ¡ú DLL crash / hang
-# ÍêÈ«ÈÆ¿ª react °ü³õÊ¼»¯£º
-#   1. ½« react / react.action / react.action.base ×¢²áÎªÇáÁ¿ stub
-#   2. ÓÃ spec_from_file_location Ö±½Ó¼ÓÔØÈı¸ö¹¤¾ßÎÄ¼ş
-# scheduler ºËĞÄÄ£¿é£¨config/task/store/engine£©±¾ÉíÎŞÖØÁ¿¼¶ÒÀÀµ£¬Ö±½Óµ¼Èë¼´¿É¡£
+# â”€â”€ Stub ç­–ç•¥ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# react/__init__.py â†’ tao.py â†’ memory â†’ embedding â†’ torch â†’ DLL crash / hang
+# å®Œå…¨ç»•å¼€ react åŒ…åˆå§‹åŒ–ï¼š
+#   1. å°† react / react.action / react.action.base æ³¨å†Œä¸ºè½»é‡ stub
+#   2. ç”¨ spec_from_file_location ç›´æ¥åŠ è½½ä¸‰ä¸ªå·¥å…·æ–‡ä»¶
+# scheduler æ ¸å¿ƒæ¨¡å—ï¼ˆconfig/task/store/engineï¼‰æœ¬èº«æ— é‡é‡çº§ä¾èµ–ï¼Œç›´æ¥å¯¼å…¥å³å¯ã€‚
 
 
 def _pkg_stub(name: str) -> types.ModuleType:
@@ -60,7 +60,7 @@ def _mod_stub(name: str) -> types.ModuleType:
     return m
 
 
-# Stub react °üÌåÏµ£¨×èÖ¹ tao.py / memory / embedding / torch ¼ÓÔØ£©
+# Stub react åŒ…ä½“ç³»ï¼ˆé˜»æ­¢ tao.py / memory / embedding / torch åŠ è½½ï¼‰
 _react = _pkg_stub("agent.react")
 _react_action = _pkg_stub("agent.react.action")
 _react_action_tools = _pkg_stub("agent.react.action.tools")
@@ -70,16 +70,16 @@ _react_action_base = _mod_stub("react.action.base")
 
 
 class _BaseAction:
-    """×îĞ¡»¯ BaseAction stub£º¼æÈİ Pydantic »·¾³ºÍ·Ç Pydantic£¨stub£©»·¾³¡£
+    """æœ€å°åŒ– BaseAction stubï¼šå…¼å®¹ Pydantic ç¯å¢ƒå’Œé Pydanticï¼ˆstubï¼‰ç¯å¢ƒã€‚
 
-    ²»¼Ì³Ğ pydantic.BaseModel£¬¸ÄÓÃ×Ô¶¨Òå __init__ Ö§³Ö¹Ø¼ü×Ö²ÎÊı×¢Èë£¬
-    ±ÜÃâÔÚÈ«Á¿ pytest ÔËĞĞÊ±Òò pydantic ÒÑ±»ÆäËû²âÊÔ stub ¶øÊ§Ğ§¡£
+    ä¸ç»§æ‰¿ pydantic.BaseModelï¼Œæ”¹ç”¨è‡ªå®šä¹‰ __init__ æ”¯æŒå…³é”®å­—å‚æ•°æ³¨å…¥ï¼Œ
+    é¿å…åœ¨å…¨é‡ pytest è¿è¡Œæ—¶å›  pydantic å·²è¢«å…¶ä»–æµ‹è¯• stub è€Œå¤±æ•ˆã€‚
     """
 
     model_config = {"arbitrary_types_allowed": True}
     model_fields: dict = {}
 
-    # ×ÓÀàÔÚ´ËÉùÃ÷´øÄ¬ÈÏÖµµÄ×Ö¶Î
+    # å­ç±»åœ¨æ­¤å£°æ˜å¸¦é»˜è®¤å€¼çš„å­—æ®µ
     name: str = ""
     description: str = ""
 
@@ -87,12 +87,12 @@ class _BaseAction:
         super().__init_subclass__(**kwargs)
 
     def __init__(self, **kwargs):
-        # ÏÈÓÃÀà²ã´ÎµÄ×¢½âÄ¬ÈÏÖµ³õÊ¼»¯
+        # å…ˆç”¨ç±»å±‚æ¬¡çš„æ³¨è§£é»˜è®¤å€¼åˆå§‹åŒ–
         for klass in reversed(type(self).__mro__):
             for field_name in getattr(klass, "__annotations__", {}):
                 if not hasattr(self, field_name):
                     setattr(self, field_name, getattr(klass, field_name, None))
-        # ÔÙÓÃ´«Èë kwargs ¸²¸Ç
+        # å†ç”¨ä¼ å…¥ kwargs è¦†ç›–
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -104,7 +104,7 @@ _react_action_base.BaseAction = _BaseAction
 
 
 def _load_tool_file(dotted_name: str, file_path: Path):
-    """Ö±½Ó´ÓÎÄ¼şÂ·¾¶¼ÓÔØÄ£¿é£¬×¢²áµ½ sys.modules¡£"""
+    """ç›´æ¥ä»æ–‡ä»¶è·¯å¾„åŠ è½½æ¨¡å—ï¼Œæ³¨å†Œåˆ° sys.modulesã€‚"""
     spec = importlib.util.spec_from_file_location(dotted_name, str(file_path))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[dotted_name] = mod
@@ -128,9 +128,9 @@ class _NoopTaskExecutor:
         pass
 
 
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
-# °ïÖúº¯Êı
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# å¸®åŠ©å‡½æ•°
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=timezone.utc)
@@ -144,9 +144,9 @@ def _past(seconds: int = 60) -> datetime:
     return _utc(datetime.now(timezone.utc) - timedelta(seconds=seconds))
 
 
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # SchedulerConfig
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class TestSchedulerConfig(unittest.TestCase):
 
@@ -172,7 +172,7 @@ class TestSchedulerConfig(unittest.TestCase):
         self.assertEqual(cfg.scheduler_dir, ".react/scheduler")  # default intact
 
     def test_profiles_default_keys(self):
-        # profiles ÊÇ¹¤³§º¯Êı·µ»ØµÄ×Öµä£¬¼üÃû¹Ì¶¨
+        # profiles æ˜¯å·¥å‚å‡½æ•°è¿”å›çš„å­—å…¸ï¼Œé”®åå›ºå®š
         cfg = SchedulerConfig(profiles={"minimal": object(), "with_memory": object(), "full": object()})
         self.assertIn("minimal", cfg.profiles)
         self.assertIn("with_memory", cfg.profiles)
@@ -184,9 +184,9 @@ class TestSchedulerConfig(unittest.TestCase):
         self.assertIs(cfg.profiles["custom"], fake["custom"])
 
 
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Trigger
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class TestTrigger(unittest.TestCase):
 
@@ -212,9 +212,9 @@ class TestTrigger(unittest.TestCase):
         self.assertIsNone(t2.at)
 
 
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # TaskStatus
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class TestTaskStatus(unittest.TestCase):
 
@@ -228,9 +228,9 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual(TaskStatus("done"), TaskStatus.done)
 
 
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # ScheduledTask
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class TestScheduledTask(unittest.TestCase):
 
@@ -238,7 +238,7 @@ class TestScheduledTask(unittest.TestCase):
         defaults = dict(
             id="test-id-001",
             name="daily_summary",
-            instruction="ÇëÉú³É½ñÈÕÕªÒª",
+            instruction="è¯·ç”Ÿæˆä»Šæ—¥æ‘˜è¦",
             trigger=Trigger(type="once", at="2026-04-29T17:00:00+00:00"),
             config_profile="minimal",
             status=TaskStatus.pending,
@@ -289,9 +289,9 @@ class TestScheduledTask(unittest.TestCase):
         self.assertEqual(t.status, TaskStatus.pending)
 
 
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # TaskStore
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class TestTaskStore(unittest.TestCase):
 
@@ -361,7 +361,7 @@ class TestTaskStore(unittest.TestCase):
 
     def test_persistence(self):
         self.store.add(self._task("p1"))
-        # Create a fresh store pointing at same dir ¡ª should read back the same data
+        # Create a fresh store pointing at same dir â€” should read back the same data
         store2 = TaskStore(self._tmp)
         t = store2.get("p1")
         self.assertIsNotNone(t)
@@ -409,21 +409,21 @@ class TestTaskStore(unittest.TestCase):
         self.assertIn("j1", data)
 
 
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
-# SchedulerEngine£¨store ²ãĞĞÎª£¬²»´¥·¢ asyncio loop£©
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# SchedulerEngineï¼ˆstore å±‚è¡Œä¸ºï¼Œä¸è§¦å‘ asyncio loopï¼‰
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class TestSchedulerEngine(unittest.TestCase):
 
     def setUp(self):
         self._tmp = tempfile.mkdtemp()
-        # ×¢Èë¿Õ profiles ±ÜÃâ´¥·¢ _default_profiles() µÄÀÁ¼ÓÔØµ¼Èë
+        # æ³¨å…¥ç©º profiles é¿å…è§¦å‘ _default_profiles() çš„æ‡’åŠ è½½å¯¼å…¥
         self.cfg = SchedulerConfig(scheduler_dir=self._tmp, profiles={})
         self.engine = SchedulerEngine(self.cfg, executor=_NoopTaskExecutor())
 
     def test_schedule_once_returns_task(self):
         at = _future(3600)
-        task = self.engine.schedule_once("morning_report", "ÇëÉú³É±¨¸æ", at)
+        task = self.engine.schedule_once("morning_report", "è¯·ç”ŸæˆæŠ¥å‘Š", at)
         self.assertIsNotNone(task.id)
         self.assertEqual(task.name, "morning_report")
         self.assertEqual(task.trigger.type, "once")
@@ -480,9 +480,9 @@ class TestSchedulerEngine(unittest.TestCase):
         self.assertIn("+00:00", task.next_run_at)
 
 
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
-# Ô­×Ó¹¤¾ß
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# åŸå­å·¥å…·
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 SchedulerAddAction    = _sa_mod.SchedulerAddAction
 SchedulerListAction   = _sl_mod.SchedulerListAction
@@ -504,31 +504,31 @@ class TestSchedulerAddAction(unittest.TestCase):
     def test_no_engine_returns_error(self):
         a = SchedulerAddAction(engine=None)
         result = a.execute(name="t", instruction="i")
-        self.assertIn("Î´³õÊ¼»¯", result)
+        self.assertIn("æœªåˆå§‹åŒ–", result)
 
     def test_once_valid(self):
         at = _future(3600).isoformat()
         result = self.action.execute(
-            name="report", instruction="Éú³É±¨¸æ",
+            name="report", instruction="ç”ŸæˆæŠ¥å‘Š",
             trigger_type="once", at=at,
         )
         self.assertIn("task_id", result)
-        self.assertIn("ÒÑÔ¤Ô¼Ò»´ÎĞÔÈÎÎñ", result)
+        self.assertIn("å·²é¢„çº¦ä¸€æ¬¡æ€§ä»»åŠ¡", result)
 
     def test_once_missing_at(self):
         result = self.action.execute(name="t", instruction="i", trigger_type="once", at="")
-        self.assertIn("±ØĞëÌá¹© at", result)
+        self.assertIn("å¿…é¡»æä¾› at", result)
 
     def test_once_invalid_at(self):
         result = self.action.execute(name="t", instruction="i", trigger_type="once", at="not-a-date")
-        self.assertIn("¸ñÊ½ÎŞĞ§", result)
+        self.assertIn("æ ¼å¼æ— æ•ˆ", result)
 
     def test_interval_valid(self):
         result = self.action.execute(
             name="hourly", instruction="i",
             trigger_type="interval", interval_seconds=3600,
         )
-        self.assertIn("ÒÑÔ¤Ô¼ÖÜÆÚĞÔÈÎÎñ", result)
+        self.assertIn("å·²é¢„çº¦å‘¨æœŸæ€§ä»»åŠ¡", result)
         self.assertIn("task_id", result)
 
     def test_interval_missing_seconds(self):
@@ -536,11 +536,11 @@ class TestSchedulerAddAction(unittest.TestCase):
             name="t", instruction="i",
             trigger_type="interval", interval_seconds=0,
         )
-        self.assertIn("interval_seconds ±ØĞë > 0", result)
+        self.assertIn("interval_seconds å¿…é¡» > 0", result)
 
     def test_unknown_trigger_type(self):
         result = self.action.execute(name="t", instruction="i", trigger_type="daily")
-        self.assertIn("Î´Öª trigger_type", result)
+        self.assertIn("æœªçŸ¥ trigger_type", result)
 
     def test_profile_propagated(self):
         at = _future(3600).isoformat()
@@ -561,17 +561,17 @@ class TestSchedulerListAction(unittest.TestCase):
 
     def test_no_engine(self):
         a = SchedulerListAction(engine=None)
-        self.assertIn("Î´³õÊ¼»¯", a.execute())
+        self.assertIn("æœªåˆå§‹åŒ–", a.execute())
 
     def test_empty_timeline(self):
         result = self.action.execute()
-        self.assertIn("Îª¿Õ", result)
+        self.assertIn("ä¸ºç©º", result)
 
     def test_lists_once_task(self):
-        self.engine.schedule_once("evening", "×ö×Ü½á", _future(7200))
+        self.engine.schedule_once("evening", "åšæ€»ç»“", _future(7200))
         result = self.action.execute()
         self.assertIn("evening", result)
-        self.assertIn("Ò»´ÎĞÔ", result)
+        self.assertIn("ä¸€æ¬¡æ€§", result)
 
     def test_lists_interval_task(self):
         self.engine.schedule_interval("ping", "ping", 300)
@@ -595,17 +595,17 @@ class TestSchedulerCancelAction(unittest.TestCase):
 
     def test_no_engine(self):
         a = SchedulerCancelAction(engine=None)
-        self.assertIn("Î´³õÊ¼»¯", a.execute(task_id="x"))
+        self.assertIn("æœªåˆå§‹åŒ–", a.execute(task_id="x"))
 
     def test_cancel_existing(self):
         task = self.engine.schedule_once("t", "i", _future())
         result = self.action.execute(task_id=task.id)
-        self.assertIn("ÒÑÈ¡Ïû", result)
+        self.assertIn("å·²å–æ¶ˆ", result)
         self.assertIn(task.id, result)
 
     def test_cancel_nonexistent(self):
         result = self.action.execute(task_id="no-such-id")
-        self.assertIn("Î´ÕÒµ½", result)
+        self.assertIn("æœªæ‰¾åˆ°", result)
 
     def test_cancel_reflects_in_list(self):
         task = self.engine.schedule_once("x", "i", _future())
@@ -614,7 +614,7 @@ class TestSchedulerCancelAction(unittest.TestCase):
         self.assertEqual(fetched.status, TaskStatus.cancelled)
 
 
-# ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

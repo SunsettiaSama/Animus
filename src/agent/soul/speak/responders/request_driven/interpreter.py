@@ -23,6 +23,15 @@ def interpret_role_output(raw: str) -> RoleTimeline:
     return interpret_role_packet(raw).timeline
 
 
+def _split_speak_messages(text: str) -> tuple[str, ...]:
+    """speak 块内按空行拆消息；无空行则整块算一条。"""
+    body = str(text or "").strip()
+    if not body:
+        return ()
+    pieces = tuple(p.strip() for p in re.split(r"\n\s*\n", body) if p.strip())
+    return pieces or (body,)
+
+
 def interpret_role_packet(raw: str) -> RoleInterpretResult:
     """按标签出现顺序解析；order 由解析侧递增编号，不依赖模型写 i=。"""
     blocks = parse_role_blocks(raw)
@@ -43,8 +52,10 @@ def interpret_role_packet(raw: str) -> RoleInterpretResult:
     for block in blocks:
         if block.kind == "speak":
             text = strip_role_tag_debris(block.content)
-            if text:
-                ops.append(TimelineOp(kind="emit", texts=(text,), meta=_next_meta()))
+            # 一块 speak 里的多条消息（空行分隔）拆成多个 emit：
+            # 每条独立投递、独立入账本，前端才是一个气泡一句话。
+            for piece in _split_speak_messages(text):
+                ops.append(TimelineOp(kind="emit", texts=(piece,), meta=_next_meta()))
             continue
         if block.kind == "think":
             thought = block.content.strip()

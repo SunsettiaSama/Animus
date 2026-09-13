@@ -74,7 +74,7 @@ class TestHumanEditChannel:
         ch, doc = channel_and_doc
         ch.materialize(doc)
 
-        # Write a partially malformed shadow (missing objective) â€?strict=False should tolerate it
+        # Write a partially malformed shadow (missing objective) éˆ¥?strict=False should tolerate it
         text = ch._shadow_path.read_text(encoding="utf-8")
         text = text.replace("## Objective\nTest the human edit channel.", "")
         ch._shadow_path.write_text(text, encoding="utf-8")

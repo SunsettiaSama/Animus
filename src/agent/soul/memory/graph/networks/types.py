@@ -7,7 +7,7 @@ from agent.soul.memory.graph.base_node import BaseNode
 
 
 class ExperienceKind(str, Enum):
-    """Life ?????????????"""
+    """Life 体验块在记忆侧的注入类型。"""
 
     anchor = "anchor"
     event = "event"
@@ -15,7 +15,7 @@ class ExperienceKind(str, Enum):
 
 @dataclass(frozen=True)
 class ExperienceBlock:
-    """? Life ????????????"""
+    """从 Life 体验单元解析出的写入块。"""
 
     experience_id: str
     source: str

@@ -5,18 +5,22 @@ from agent.soul.speak.responders.request_driven.composer.projectors.role_view im
 )
 from agent.soul.speak.responders.request_driven import SpeakRole, interpret_role_output, parse_role_blocks
 from agent.soul.speak.responders.request_driven.delivery_bridge import timeline_to_delivery_plan
-from agent.soul.speak.responders.request_driven.layers import _ROLE_PROTOCOL_HINT, build_dialogue_frame
+from agent.soul.speak.responders.request_driven.layers import build_dialogue_frame
+from agent.soul.speak.responders.request_driven.orchestrator.blocks.system.role import (
+    build_role as _role_text,
+)
 from agent.soul.speak.responders.request_driven.protocol.scrub import scrub_compose_markup
 
 
 def test_role_protocol_hint_speak_only():
-    assert "[speak]" not in _ROLE_PROTOCOL_HINT
-    assert "[action]" not in _ROLE_PROTOCOL_HINT
-    assert "[state]" not in _ROLE_PROTOCOL_HINT
-    assert "<speak>一条短消息</speak>" in _ROLE_PROTOCOL_HINT
-    assert "<body action>" not in _ROLE_PROTOCOL_HINT
-    assert "短消息" in _ROLE_PROTOCOL_HINT
-    assert 'i="' not in _ROLE_PROTOCOL_HINT
+    protocol = _role_text("inbound")
+    assert "[speak]" not in protocol
+    assert "[action]" not in protocol
+    assert "[state]" not in protocol
+    assert "<speak>" in protocol
+    assert "<body action>" not in protocol
+    assert "短消息" in protocol
+    assert 'i="' not in protocol
 
 
 def test_parse_keeps_plain_text_between_body_tags_as_speak():
@@ -255,10 +259,7 @@ def test_speak_role_run_turn_with_override():
     bare = role.prepare(view, user_text="在吗")
     assert "记忆卡片" not in bare.system_extra
     assert "一次性记忆" not in bare.system_extra
-    assert "即时往来" in bare.system_extra or "对方刚发来" in bare.system_extra
-    assert "「你」指用户" in bare.system_extra
-    assert "「我」指你自己" in bare.system_extra
-    assert "只指 NPC" in bare.system_extra
-    assert "【回复格式】" in bare.system_extra
-    assert "<body action>" not in bare.system_extra
-    assert "<speak>" in bare.system_extra
+    assert "对方刚发来" in bare.system_extra
+    # 协议与规则文本已上移 system role；动态材料层不再包含指令
+    assert "<speak>" not in bare.system_extra
+    assert "回复格式" not in bare.system_extra

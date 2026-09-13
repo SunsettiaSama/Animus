@@ -920,6 +920,10 @@ class VirtualLayer:
     def due_landmarks(self) -> list[Landmark]:
         return self._journal.due_landmarks()
 
+    def upcoming_landmarks(self, *, within_sec: float = 3600.0) -> list[Landmark]:
+        """1 小时内（可调）即将到点的地标；供叙事侧提前接入演绎。"""
+        return self._journal.upcoming_landmarks(within_sec=within_sec)
+
     def fill_landmark(self, landmark_id: str) -> dict | None:
         lm = self._journal.get_landmark(landmark_id)
         if lm is None or lm.status == LandmarkStatus.done:

@@ -68,7 +68,7 @@ def _extract_json(raw: str) -> dict:
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     if m:
         return json.loads(m.group())
-    raise ValueError(f"LLM ???????? JSON?{raw[:200]}")
+    raise ValueError(f"LLM 归档未返回 JSON：{raw[:200]}")
 
 
 def _valence(raw: str, block: ExperienceBlock) -> Valence:
@@ -94,7 +94,7 @@ def _render_node(node: BaseNode, score: float) -> str:
 
 
 class ExperienceArchiver:
-    """???? + LLM ???????? + ???????"""
+    """相似度归档 + LLM 语义放置：新记忆并入已有父节点或自立。"""
 
     def __init__(
         self,

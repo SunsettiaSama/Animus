@@ -11,34 +11,16 @@ from agent.soul.speak.responders.request_driven.composer.projectors.role_view im
 )
 from agent.soul.speak.responders.request_driven.protocol.scrub import scrub_compose_markup
 
-# 交付协议：对外只走文字消息，索引由解析侧按出现顺序生成。
-_ROLE_PROTOCOL_HINT = (
-    "回复格式：这个端口是你对外发消息的渠道，对方是通过文字与你通信的人。"
-    "所有可见表达写在 <speak> 标签里，不用写动作标签，也不用写 body。"
-    "标签名按原样使用。格式如下：\n"
-    "<speak>一条短消息</speak>\n"
-    "如果一段话内容比较多，可以分成多条来发，不用挤进一条里。"
-    "手头在做什么由导演材料提供，不用在消息里重复写动作。"
-    "也可以整段留空，表示沉默。"
-)
-
-_ROLE_SOFT_AGENCY_HINT = (
-    "你是角色本人，用这个端口与对方远程文字往来。"
-    "代入此刻：对方发来文字时，按你会怎么回这条消息来写。"
-    "不演独角戏，不把整段探索讲完，也不旁白解说自己。"
-    "编剧材料提供处境参考；导演用「你」写的本拍动作、感受、过渡、姿态，是给你自己看的，不是替你写消息。"
-    "对方刚发来消息时，认真回、先丢一句、或先不回应，都行。"
-    "对方还没回话时，可以拆成几条来发，不用挤进一条里。发完之后停住等对方回应。"
-    "人称：「你」指对方，「我」指你自己，「他/她」只指 NPC。"
-    "导演材料里的「你」是对你的提示，不要把那种旁观口吻写进消息。"
-)
+# 策略与材料分离：指令性文本已全部上移至 blocks/system/role.py 三段式 role。
+# 本文件 render_system_extra() 只产出材料与事实标注；policy-lint 会对
+# 指令模式（<speak>、"请勿" 等）在动态层出现时告警。
 
 
 @dataclass(frozen=True)
 class RoleStaticLayer:
-    """静态层：角色只产出可见的 speak 消息，人格壳由 base_system 提供。"""
+    """静态层已并入 system role（见 blocks/system/role.py），保留壳以兼容装配。"""
 
-    protocol: str = _ROLE_PROTOCOL_HINT
+    protocol: str = ""
 
 
 @dataclass(frozen=True)
@@ -100,9 +82,8 @@ class RolePromptLayers:
     user_text: str = ""
 
     def render_system_extra(self) -> str:
-        parts: list[str] = [
-            self.static.protocol.strip(),
-        ]
+        """纯材料区：只含事实标注与材料正文，不含任何指令性文本。"""
+        parts: list[str] = []
         # 角色与用户的往来记录优先放入上下文
         if self.user_text.strip():
             parts.append(
@@ -113,8 +94,6 @@ class RolePromptLayers:
         elif self.dialogue_frame.strip():
             parts.append(self.dialogue_frame.strip())
         dyn_blocks: list[str] = []
-        if self.dynamic.interaction_channel.strip():
-            dyn_blocks.append(self.dynamic.interaction_channel.strip())
         if self.dynamic.plot_outline_text.strip():
             dyn_blocks.append(
                 "本场故事线（客观材料）：\n"
@@ -122,12 +101,12 @@ class RolePromptLayers:
             )
         if self.dynamic.plot_flow_text.strip():
             dyn_blocks.append(
-                "此刻情景（客观材料，你正在做什么）：\n"
+                "此刻情景（客观材料）：\n"
                 + self.dynamic.plot_flow_text.strip()
             )
         stage = self.dynamic.user_stage_text()
         if stage:
-            dyn_blocks.append("对方当前舞台信息（附带参考）：\n" + stage)
+            dyn_blocks.append("对方当前舞台信息：\n" + stage)
         # 如果没有情景材料，才回落到临场事件
         if (
             not self.dynamic.plot_flow_text.strip()
@@ -138,8 +117,8 @@ class RolePromptLayers:
             )
         presence = self.dynamic.presence_card_text()
         if presence:
-            dyn_blocks.append("你的临场状态（附带参考）：\n" + presence)
-        instruction_lines: list[str] = []
+            dyn_blocks.append("你的临场状态：\n" + presence)
+        note_lines: list[str] = []
         detail = self.dynamic.director_detail.strip() or self.dynamic.director_focus.strip()
         inner = self.dynamic.director_inner.strip() or self.dynamic.director_intent.strip()
         transition = (
@@ -148,28 +127,20 @@ class RolePromptLayers:
         )
         stance = self.dynamic.director_stance.strip() or self.dynamic.director_exit.strip()
         if detail:
-            instruction_lines.append(f"手头动作：{detail}")
+            note_lines.append(f"手头动作：{detail}")
         if inner:
-            instruction_lines.append(f"内心状态：{inner}")
+            note_lines.append(f"内心状态：{inner}")
         if transition:
-            instruction_lines.append(f"过渡方式：{transition}")
+            note_lines.append(f"过渡方式：{transition}")
         if stance:
-            instruction_lines.append(f"姿态：{stance}")
-        if instruction_lines:
+            note_lines.append(f"姿态：{stance}")
+        if note_lines:
+            # 「你」在笔记中指角色自己——此标注是人称消歧，不是指令；
+            # 对应的"勿带入旁观口吻"规则在 system role 第三段。
             dyn_blocks.append(
-                "导演用「你」给出的本拍扩充如下。只写 <speak> 短消息，不用写动作：\n"
-                + "\n".join(instruction_lines)
+                "本拍处境笔记（此处「你」指角色自己）：\n"
+                + "\n".join(note_lines)
             )
-        if (
-            self.dynamic.plot_flow_text.strip()
-            or self.dynamic.plot_outline_text.strip()
-            or stage
-            or self.dynamic.scene_event.strip()
-            or self.dialogue_frame.strip()
-            or self.dynamic.interaction_record_text.strip()
-            or self.user_text.strip()
-        ):
-            dyn_blocks.append(_ROLE_SOFT_AGENCY_HINT)
         if self.dynamic.memory_texts:
             dyn_blocks.append(
                 "本轮一次性记忆卡片：\n"
@@ -191,19 +162,7 @@ class RolePromptLayers:
                 + "\n".join(f"- {t}" for t in self.dynamic.help_observations)
             )
         if dyn_blocks:
-            header = (
-                "下面是本轮动态材料。"
-                "编剧维护完整故事线和此刻情景，记忆和分享按剧情流调度写入。"
-                "舞台与临场状态作为附带参考。"
-                "记忆与分享以卡片形式压入，本轮用完即消费。"
-                "以本层列出的材料为准。"
-            )
-            parts.append(header + "\n\n" + "\n\n".join(dyn_blocks))
-        else:
-            parts.append(
-                "本轮没有额外的故事线、情景或记忆分享注入。"
-                "如果有临场状态，以编剧已写入的内容为准。"
-            )
+            parts.append("\n\n".join(dyn_blocks))
         return "\n\n".join(p for p in parts if p.strip())
 
 

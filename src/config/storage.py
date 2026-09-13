@@ -57,6 +57,10 @@ class StorageConfig:
         return os.path.join(self.root, "life")
 
     @property
+    def story_pool_dir(self) -> str:
+        return os.path.join(self.root, "story_pool")
+
+    @property
     def worker_dir(self) -> str:
         return os.path.join(self.root, "worker")
 

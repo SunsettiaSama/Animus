@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..directors.base import DirectorLLMCaller, extract_json_object
-from .materials import WritingMaterials
+from .materials import USER_PRESENCE_RULE, WritingMaterials
 from .scene_seed import is_usable_scene_seed
 
 _MAX_REACT_STEPS = 6
@@ -20,6 +20,7 @@ _LOOKS = frozenset(
         "look_seeds",
         "look_fate_panel",
         "look_scene",
+        "look_landmark",
     }
 )
 _PRODUCE_OUTLINE = "produce_outline"
@@ -77,6 +78,9 @@ class ScreenwriterAgent:
         "不抒情，不说教，不用「你看见……」这类旁白，不写角色台词。\n"
         "交互记录优先参考：写交互如何发生、对角色后续故事线有什么影响。"
         "记忆、分享、抽词种子、场面与临场状态按需要取用，嵌进故事线里，不要罗列堆砌。\n"
+        + USER_PRESENCE_RULE +
+        "若存在 1 小时内即将到点的手账地标，优先把它的发生编进故事线："
+        "让那一刻在场上实时上演，而不是只当背景。若要取用，选 look_landmark。\n"
         "每一步选一个动作：\n"
         "- look_interaction｜交互记录\n"
         "- look_memory｜记忆\n"
@@ -84,6 +88,7 @@ class ScreenwriterAgent:
         "- look_seeds｜抽词种子\n"
         "- look_fate_panel｜开口欲与临场状态\n"
         "- look_scene｜场面与人格\n"
+        "- look_landmark｜即将到点的手账地标\n"
         "- produce_outline｜交大纲\n"
         "交大纲时写：\n"
         "1) plot_arc.summary 完整故事线（一段连贯叙述，含始末与中间节点）；\n"
@@ -114,9 +119,13 @@ class ScreenwriterAgent:
         f"写大约 {_TARGET_UNITS} 个角色步骤，按顺序覆盖大纲故事线的起因→经过→转折→收束，"
         "不要写成互不相关的零散动作。\n"
         "intent 用动宾短句，主语是角色；写客观、可执行的内容。\n"
+        "estimate_sec：这一步在现实中大概耗多少秒（发条短消息 5–15，一眼 3–8，"
+        "整理/检查 30–60，读/比对/翻找 60–120）；导演按它排现实时间轴。\n"
+        "用户随时可能发来消息；某一步因角色烦闷或专注而暂不回消息，"
+        "是合法的一拍，不要因此中断或重排整条故事线。\n"
         "需要时带上 memory_unit_ids 或 share_indices，把材料续进戏里。\n"
         "输出 JSON："
-        '{"plot_arc":{"units":[{"intent":"…","evidence":"…","span_polls":2}]},'
+        '{"plot_arc":{"units":[{"intent":"…","evidence":"…","span_polls":2,"estimate_sec":40}]},'
         '"inject_memory":true,"memory_unit_ids":[],'
         '"inject_share":false,"share_indices":[],'
         '"reason":"…"}'
@@ -131,6 +140,7 @@ class ScreenwriterAgent:
         "后续 unit 按完整故事线接上角色的注意点和手头活计。\n"
         "交互记录优先参考：写交互如何发生、对角色后续故事线有什么影响，不写角色台词。"
         "记忆、分享、抽词种子、场面与临场状态按需要取用。\n"
+        + USER_PRESENCE_RULE +
         "每一步选一个动作：\n"
         "- look_interaction｜交互记录\n"
         "- look_memory｜记忆\n"
@@ -138,17 +148,19 @@ class ScreenwriterAgent:
         "- look_seeds｜抽词种子\n"
         "- look_fate_panel｜开口欲与临场状态\n"
         "- look_scene｜场面与人格\n"
+        "- look_landmark｜即将到点的手账地标\n"
         "- produce_plot｜交对齐后的后续步骤\n"
         "交稿时写：\n"
         "1) plot_arc.summary 完整故事线（可以沿用或按交互微调）；\n"
-        f"2) plot_arc.units 大约 {_TARGET_UNITS} 个后续角色步骤（动宾短句，覆盖故事线剩下的段落）；\n"
+        f"2) plot_arc.units 大约 {_TARGET_UNITS} 个后续角色步骤（动宾短句，覆盖故事线剩下的段落；"
+        "estimate_sec 写现实耗时秒数）；\n"
         "3) plot_flow 场记（chronicle / interaction_process / focus_now / next_push / beat）；"
         "interaction_process 写交互如何发生、对角色后续的影响，不写角色台词；\n"
         "4) 需要时带上 memory_unit_ids 或 share_indices。\n"
         "每步输出 JSON："
         '{"think":"…","action":"look_interaction|look_memory|look_share|look_seeds|'
         'look_fate_panel|look_scene|produce_plot",'
-        '"plot_arc":{"summary":"…","evidence":"…","units":[{"intent":"…","span_polls":2}]},'
+        '"plot_arc":{"summary":"…","evidence":"…","units":[{"intent":"…","span_polls":2,"estimate_sec":40}]},'
         '"plot_flow":{"chronicle":"…","interaction_process":"…","focus_now":"…","beat":"…","beat_kind":"push"},'
         '"side":{"mood":"…","brief":"…","user_identity":"…","user_activity":"…"},'
         '"inject_memory":true,"memory_unit_ids":[],"inject_share":false,"share_indices":[],'
@@ -599,6 +611,9 @@ class ScreenwriterAgent:
                 f"面板 mood={materials.presence_mood or '—'}；"
                 f"brief={materials.presence_brief or '—'}"
             )
+        if action == "look_landmark":
+            rendered = materials.render_landmarks()
+            return rendered or "（1 小时内没有即将到点的手账地标）"
         if action == "look_scene":
             bits = []
             if materials.persona_brief:

@@ -34,6 +34,7 @@ from .session import SpeakSessionManager, SpeakSessionService
 from .session.queue import UserInputItem
 from .session.turn import SessionTurnHost
 from .responders import SpeakResponderRouter, normalize_speak_responder
+from .responders.direct import DirectPipelineRunner
 from .responders.legacy_qa import LegacyQAPipelineRunner
 from .responders.request_driven import RequestDrivenPipelineRunner
 from .responders.rhythm import RhythmPipelineRunner
@@ -103,6 +104,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _OPENING_PLACEHOLDER = "（场面铺开中）"
+# init 冷却：窗口内重复触发（页面刷新/双入口）不再全量重写大纲
+_SCREENWRITER_INIT_COOLDOWN_SEC = 600.0
+# 开场白投递 memo：记在 service 上而非 state——轮转/重置清掉 state 后，
+# 同一份开场白也不得对用户推第二遍
+_OPENING_MEMO_CAP = 64
 _OPENING_SLOT = "narrative_opening"
 
 
@@ -165,6 +171,8 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         typing_idle_ms: int = 3000,
         compose_manager_enabled: bool | None = None,
         compose_manager_config: ComposeManagerConfig | None = None,
+        story_pool_dir: str | None = None,
+        story_pool_depth: int = 3,
     ) -> None:
         self._presence = presence
         self._persona = persona
@@ -238,6 +246,12 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._async_ready_guard = threading.Lock()
         self._character_handoff_inflight: set[str] = set()
         self._character_handoff_guard = threading.Lock()
+        self._opening_delivered: dict[str, str] = {}
+        from .responders.request_driven.character.context_provider import (
+            CharacterContextProvider,
+        )
+
+        self._context_provider = CharacterContextProvider()
         self._session_manager.bind_record_fn(self.record_turn)
         self._bind_session_social()
         self._inbound_hub = SpeakInboundHub(
@@ -307,7 +321,10 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             enabled=compose_manager_enabled,
             config=compose_manager_config,
         )
-        self._bind_director_system()
+        self._bind_director_system(
+            story_pool_dir=story_pool_dir,
+            story_pool_depth=story_pool_depth,
+        )
         self._compose_runner.set_frame_ready_handler(
             lambda frame, mode: self._orchestrator.compose_queue_hub.on_frame_ready(
                 frame, mode=mode,
@@ -378,6 +395,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             request_driven=RequestDrivenPipelineRunner(
                 run_request_driven_turn=self._run_request_driven_turn,
             ),
+            direct=DirectPipelineRunner(
+                run_direct_turn=self._run_direct_turn,
+            ),
             rhythm=self._rhythm_runner,
         )
 
@@ -445,6 +465,10 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         """会话打开：编剧写弧 + 场记 + opening。
 
         可同步调用；arm_enter_greeting 走后台线程，避免卡住 WS/热路径。
+        冷启动顺序：活体快照（重启续写）→ 预热池候选 → 正常编剧初始化；
+        走池/快照后异步回填候选，维持池水位。
+        近因守卫：冷却窗口内已 init 过的会话不再全量重跑（页面刷新、
+        重复连接只会补投开场白），否则每次刷新都重写一遍大纲。
         """
         from .responders.request_driven.orchestrator.state.core.speak_dormant import (
             clear_narrative_for_reinit,
@@ -457,16 +481,207 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         state = self._state_store.session(sid)
         if needs_narrative_reinit(state):
             clear_narrative_for_reinit(state)
+            # 休眠重初始化：旧开场候选随剧情一并失效（活体快照同样清除）
+            self._story_pool_invalidate(sid)
         if state.presence_card.ready and state.plot_arc.ready:
+            state.director_cache["screenwriter_inited_at"] = time.time()
             self._maybe_deliver_narrative_opening(sid)
             return
+
+        inited_at = float(state.director_cache.get("screenwriter_inited_at") or 0.0)
+        if inited_at > 0 and (time.time() - inited_at) < _SCREENWRITER_INIT_COOLDOWN_SEC:
+            # 冷却窗口内已 init 过（即使卡被外部清掉也不立刻重写）
+            self._maybe_deliver_narrative_opening(sid)
+            return
+
+        if self._try_restore_from_story_pool(state, sid):
+            state.director_cache["screenwriter_inited_at"] = time.time()
+            self._maybe_deliver_narrative_opening(sid)
+            return
+
         self._screenwriter.init_presence(
             state,
             session_id=sid,
             turn_index=0,
             background_agent=True,
         )
+        state.director_cache["screenwriter_inited_at"] = time.time()
         self._maybe_deliver_narrative_opening(sid)
+        # 未命中池：本轮真实初始化落定后，异步补一批候选供水次冷启动
+        self._story_pool_refill_async(sid, user_text=str(state.last_real_user_text or ""))
+
+    # ── 剧情预热池接线（story_pool 层的薄适配） ─────────────────────────────
+
+    def _story_pool_key(self, session_id: str) -> str:
+        """池 key：live:<channel> 生命线即会话身份，直接沿用；去前缀保持文件名稳定。"""
+        sid = str(session_id or "").strip()
+        return sid[5:] if sid.startswith("live:") else sid
+
+    def _story_pool_invalidate(self, session_id: str) -> None:
+        if self._story_pool is None:
+            return
+        try:
+            self._story_pool.invalidate(self._story_pool_key(session_id))
+        except Exception:
+            pass
+
+    def _story_pool_refill_async(self, session_id: str, *, user_text: str = "") -> None:
+        if self._story_prewarmer is None:
+            return
+        try:
+            self._story_prewarmer.prewarm_async(
+                pool_key=self._story_pool_key(session_id),
+                user_text=user_text,
+            )
+        except Exception:
+            pass
+
+    def _try_restore_from_story_pool(self, state, session_id: str) -> bool:
+        """池候选或活体快照命中时注入 state；返回是否命中。"""
+        if self._story_pool is None:
+            return False
+        key = self._story_pool_key(session_id)
+
+        # 1) 活体快照：重启续写（TTL 对齐休眠语义，过期视为需重init）
+        live = None
+        try:
+            live = self._story_pool.load_live(key)
+        except Exception:
+            live = None
+        if live:
+            try:
+                self._apply_story_snapshot(state, live)
+                return True
+            except Exception:
+                pass
+
+        # 2) 候选池：全新开场的预载大纲（consume=一次性入场材料）
+        try:
+            entry = self._story_pool.take_freshest(key, consume=True)
+        except Exception:
+            entry = None
+        if entry is None:
+            return False
+        try:
+            self._apply_story_entry(state, entry)
+        except Exception:
+            return False
+        # 消费后异步补水，维持池水位
+        self._story_pool_refill_async(session_id)
+        return True
+
+    def _apply_story_entry(self, state, entry) -> None:
+        from .responders.request_driven.orchestrator.state.core.interaction_plan import (
+            PlotArc,
+        )
+        from .responders.request_driven.orchestrator.state.core.narrative_card import (
+            NarrativeStageCard,
+        )
+        from .responders.request_driven.orchestrator.state.core.plot_flow import PlotFlow
+        from .responders.request_driven.orchestrator.state.core.presence_card import (
+            CharacterPresenceCard,
+        )
+        from .responders.request_driven.orchestrator.state.core.interaction_plan import (
+            reset_narrative_wake_counters,
+        )
+
+        state.plot_arc = PlotArc.from_dict(entry.plot_arc)
+        state.plot_flow = PlotFlow.from_dict(entry.plot_flow)
+        restored_presence = CharacterPresenceCard.from_dict(entry.presence_card)
+        if restored_presence is not None:
+            state.presence_card = restored_presence
+        restored_narrative = NarrativeStageCard.from_dict(entry.narrative_card)
+        if restored_narrative is not None:
+            state.narrative_card = restored_narrative
+        opening = str(entry.opening or "").strip()
+        if opening:
+            state.director_cache["narrative_opening"] = opening
+        reset_narrative_wake_counters(state)
+
+    def _apply_story_snapshot(self, state, live: dict) -> None:
+        from .responders.request_driven.orchestrator.state.core.interaction_plan import (
+            PlotArc,
+        )
+        from .responders.request_driven.orchestrator.state.core.narrative_card import (
+            NarrativeStageCard,
+        )
+        from .responders.request_driven.orchestrator.state.core.plot_flow import PlotFlow
+        from .responders.request_driven.orchestrator.state.core.presence_card import (
+            CharacterPresenceCard,
+        )
+        from .responders.request_driven.orchestrator.state.core.interaction_plan import (
+            reset_narrative_wake_counters,
+        )
+
+        plot_arc = live.get("plot_arc")
+        plot_flow = live.get("plot_flow")
+        if not isinstance(plot_arc, dict):
+            raise ValueError("live snapshot missing plot_arc")
+        state.plot_arc = PlotArc.from_dict(plot_arc)
+        if isinstance(plot_flow, dict):
+            state.plot_flow = PlotFlow.from_dict(plot_flow)
+        presence = live.get("presence_card")
+        if isinstance(presence, dict):
+            restored = CharacterPresenceCard.from_dict(presence)
+            if restored is not None:
+                state.presence_card = restored
+        narrative = live.get("narrative_card")
+        if isinstance(narrative, dict):
+            restored_n = NarrativeStageCard.from_dict(narrative)
+            if restored_n is not None:
+                state.narrative_card = restored_n
+        opening = str(live.get("opening") or "").strip()
+        if opening:
+            state.director_cache["narrative_opening"] = opening
+        # 已投递标记与 init 时间戳一并恢复：轮转清空 state 后，
+        # 池恢复不该把同一份开场白当成没发过再推一遍
+        if opening and bool(live.get("opening_delivered")):
+            state.director_cache["narrative_opening_delivered"] = True
+            state.director_cache["narrative_opening_ready"] = True
+        inited_at = float(live.get("screenwriter_inited_at") or 0.0)
+        if inited_at > 0:
+            state.director_cache["screenwriter_inited_at"] = inited_at
+        counters = live.get("counters") if isinstance(live.get("counters"), dict) else {}
+        state.interaction_exchange_count = int(counters.get("exchange_count") or 0)
+        state.screenwriter_aligned_at_exchange = state.interaction_exchange_count
+        reset_narrative_wake_counters(state)
+
+    def persist_story_live(self, session_id: str) -> None:
+        """剧情状态写透（编剧每次写卡后调用；失败静默）。供监听器接线。"""
+        if self._story_pool is None or self._state_store is None:
+            return
+        sid = str(session_id or "").strip()
+        if not sid or sid.startswith("pool-"):
+            return  # 预热 scratch 会话不写透
+        try:
+            state = self._state_store.session(sid)
+            if not (state.plot_arc.ready and state.plot_flow is not None):
+                return
+            self._story_pool.save_live(
+                self._story_pool_key(sid),
+                {
+                    "created_at": time.time(),
+                    "plot_arc": state.plot_arc.snapshot(),
+                    "plot_flow": state.plot_flow.snapshot(),
+                    "presence_card": state.presence_card.snapshot(),
+                    "narrative_card": state.narrative_card.snapshot(),
+                    "opening": str(
+                        state.director_cache.get("narrative_opening") or ""
+                    ),
+                    "opening_delivered": bool(
+                        state.director_cache.get("narrative_opening_delivered")
+                    ),
+                    "screenwriter_inited_at": float(
+                        state.director_cache.get("screenwriter_inited_at") or 0.0
+                    ),
+                    "counters": {
+                        "exchange_count": int(state.interaction_exchange_count or 0),
+                        "turn_index": int(getattr(state, "agent_speak_count", 0) or 0),
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     def _schedule_screenwriter_init(self, session_id: str) -> None:
         """后台跑编剧开场：前端先收占位 outline，完成后再升级推送。"""
@@ -513,10 +728,15 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         if not self._has_live_stream_session(sid):
             return
         state = self._state_store.session(sid)
-        if placeholder and bool(state.director_cache.get("narrative_opening_placeholder_sent")):
+        if not placeholder and self._opening_delivered.get(sid) == body:
+            # state 被轮转/重置清空后，memo 仍拦住同一份开场白的第二次推送
             return
-        already = bool(state.director_cache.get("narrative_opening_delivered"))
         prev = str(state.director_cache.get("narrative_opening") or "").strip()
+        already = bool(state.director_cache.get("narrative_opening_delivered"))
+        if placeholder and (prev or already):
+            # 已有真开场白（在途或已投递）：不再推「场面铺开中」占位，
+            # 避免真旁白在前、占位在后的倒挂与重复气泡。
+            return
         if not placeholder and already and prev == body:
             return
         if upgrade and prev == body and not placeholder:
@@ -533,6 +753,10 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             state.director_cache["narrative_opening_is_placeholder"] = False
             state.director_cache["narrative_opening_delivered"] = True
             state.director_cache["narrative_opening_ready"] = True
+            self._opening_delivered[sid] = body
+            if len(self._opening_delivered) > _OPENING_MEMO_CAP:
+                for key in list(self._opening_delivered)[:-_OPENING_MEMO_CAP]:
+                    self._opening_delivered.pop(key, None)
             if first_ready:
                 self._nudge_after_opening_ready(sid)
 
@@ -650,6 +874,15 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             state.interaction_exchange_count = int(
                 getattr(state, "interaction_exchange_count", 0) or 0
             ) + 1
+            # 用户刚交换过：取消近端预约 due，防止预约梯子对着刚聊完的内容连发自言
+            agenda = getattr(state, "speak_agenda", None)
+            if agenda is not None:
+                cancelled = agenda.cancel_near_future()
+                if cancelled:
+                    state.director_cache["speak_agenda"] = agenda.snapshot()
+                    state.notes.append(
+                        f"agenda: cancel_near_future x{cancelled} after_exchange"
+                    )
             coord = getattr(self, "_director_coordinator", None)
             if coord is not None:
                 coord.maybe_wake_narrative(
@@ -868,6 +1101,33 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         """挂载角色→worker 轻量工作口（io 分流；不向角色注入工具目录）。"""
         self._character_work.bind(port)
 
+    def attach_landmark_port(self, port: Callable[[], list[dict]] | None) -> None:
+        """挂载手账地标口：返回 1 小时内即将到点的地标简报（供编剧接入大纲）。"""
+        self._landmark_port = port
+
+    def _landmark_briefs(self) -> tuple[str, ...]:
+        port = getattr(self, "_landmark_port", None)
+        if port is None:
+            return ()
+        try:
+            items = port() or []
+        except Exception:
+            return ()
+        out: list[str] = []
+        for item in items[:4]:
+            if not isinstance(item, dict):
+                continue
+            intention = str(item.get("intention") or "").strip()
+            if not intention:
+                continue
+            at = str(item.get("scheduled_at") or "").strip()
+            ctx = str(item.get("context") or "").strip()
+            line = f"{intention}（到点：{at}）" if at else intention
+            if ctx:
+                line += f"——{ctx[:60]}"
+            out.append(line)
+        return tuple(out)
+
     def attach_compose_memory_search(
         self,
         search_fn: Callable[[str, str, int, MemoryHint], list[MemoryUnit]],
@@ -1072,7 +1332,11 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             source="screenwriter",
         )
 
-    def _bind_director_system(self) -> None:
+    def _bind_director_system(
+        self,
+        story_pool_dir: str | None = None,
+        story_pool_depth: int = 3,
+    ) -> None:
         queues = self._session_manager.queues
         self._snapshot_port = RegistrySessionSnapshotPort(
             self.session_registry,
@@ -1115,6 +1379,27 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             llm=self._director_llm_caller,
             on_opening_ready=self._on_screenwriter_opening_ready,
         )
+        # 剧情预热池：冷启动先查池，未命中走正常 init 并回填（story_pool 层）
+        self._story_pool_dir = str(story_pool_dir or "").strip()
+        self._story_pool = None
+        self._story_prewarmer = None
+        if self._story_pool_dir:
+            from .responders.request_driven.story_pool import (
+                StoryMaterialPool,
+                StoryPoolStore,
+                StoryPrewarmer,
+            )
+
+            self._story_pool = StoryMaterialPool(
+                StoryPoolStore(self._story_pool_dir),
+                max_entries=max(1, int(story_pool_depth)),
+            )
+            self._story_prewarmer = StoryPrewarmer(
+                screenwriter=self._screenwriter,
+                pool=self._story_pool,
+                pool_depth=story_pool_depth,
+            )
+            self._screenwriter.set_story_change_listener(self.persist_story_live)
         self._director_coordinator = DirectorCoordinator(
             state_store=self._state_store,
             snapshot_builder=self._snapshot_builder,
@@ -1129,6 +1414,8 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             peek_user_pending_fn=lambda sid: self._session_manager.user_queue.has_pending(sid),
             is_turn_busy_fn=self._session_manager.is_turn_busy,
             is_pushing_fn=self._session_manager.is_pushing,
+            ensure_narrative_fn=self.ensure_screenwriter_init,
+            landmark_briefs_fn=self._landmark_briefs,
         )
         self._orchestrator_thread = OrchestratorThread(
             state_store=self._state_store,
@@ -2615,6 +2902,23 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             return {"ok": False, "reason": "empty_text"}
         queued = self._session_manager.queues.enqueue_brew(sid, line, reason=reason)
         _ = flush_if_idle
+        # 受限升级路径：brew 自身永远不直接产生消息；积压越过阈值时仅记录水位。
+        # 预约权归导演：不再召唤编剧重排来消化积压，积压由下一次导演醒时作为材料读走。
+        if queued:
+            try:
+                from .responders.request_driven.character.frame import DirectTuning
+
+                depth = int(
+                    self._session_manager.queues.brew_queue_snapshot(sid).get("depth") or 0,
+                )
+                if depth >= max(1, int(DirectTuning.load().brew_upgrade_depth)):
+                    logger.info(
+                        "[speak] brew backlog deep session=%s depth=%d",
+                        sid,
+                        depth,
+                    )
+            except Exception:
+                pass
         return {
             "ok": queued,
             "reason": reason,
@@ -3134,71 +3438,6 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 item for item in self._async_ready_sessions if item != sid
             )
 
-    def _character_decision_llm(self):
-        """角色开口决策必须用 DirectorLLMCaller，不能把 SpeakDirectorLLMEngine 再包一层。"""
-        caller = getattr(self, "_director_llm_caller", None)
-        if caller is not None and getattr(caller, "available", False):
-            return caller
-        coord = getattr(self, "_director_coordinator", None)
-        if coord is not None:
-            nested = getattr(coord, "_llm", None)
-            if nested is not None and getattr(nested, "available", False):
-                return nested
-        return None
-
-    def _character_silence_result(
-        self,
-        *,
-        request,
-        notes: list[str],
-        flush_body: str,
-        reason: str,
-        note_label: str,
-    ):
-        from agent.soul.speak.io.outbound.stream.parse.model import SpeakAgentOutput
-
-        from .responders.request_driven.character.interaction import (
-            note_character_think_silence,
-        )
-        from .responders.request_driven.orchestrator.state.core.delivery import (
-            build_delivery_plan,
-        )
-        from .responders.request_driven.timeline import RoleTimeline, TimelineOp
-
-        sid = request.session_id.strip()
-        state = self._state_store.session(sid)
-        note_character_think_silence(state, reason=reason)
-        agenda = getattr(state, "speak_agenda", None)
-        if agenda is not None:
-            agenda.note_event()
-            state.director_cache["speak_agenda"] = agenda.snapshot()
-        notes.append(note_label)
-        timeline = RoleTimeline(
-            ops=(
-                TimelineOp(kind="body", body=flush_body or reason),
-                TimelineOp(kind="silence", seconds=0.0),
-            )
-        )
-        self._commit_delivery_step(
-            session_id=sid,
-            request=request,
-            answer_text="",
-            chose_silence=True,
-        )
-        empty_plan = build_delivery_plan(
-            segments=[],
-            continuity="finish",
-            plan_id=f"decision-{request.trigger_id}",
-            turn_index=int(request.turn_index or 0),
-        )
-        return (
-            "",
-            SpeakAgentOutput(session_state="finish"),
-            empty_plan,
-            True,
-            timeline,
-        )
-
     def _character_generate_via_runtime(
         self,
         *,
@@ -3208,6 +3447,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         director_plan,
         user_text: str,
         record_user_text: str = "",
+        retry_policy=None,
     ):
         from .responders.request_driven.character.interaction import (
             note_character_exchange,
@@ -3232,6 +3472,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         if not isinstance(materials, DynamicLayerMaterials):
             materials = DynamicLayerMaterials(session_id=sid)
         schedule = self._director_dynamic_schedule(sid)
+        if retry_policy is None:
+            # 跨轮去重：向上下文 provider 要自己最近几条 speak，
+            # 近似复述时触发一次带注记的重生成（预约连发与热路径通用）。
+            from .responders.request_driven.character.runtime import DirectRetryPolicy
+
+            recent_agent = self._context_provider.snapshot(state).recent_self_messages
+            if recent_agent:
+                retry_policy = DirectRetryPolicy(recent_answers=recent_agent)
         result = self._character_runtime.run(
             request,
             bundle=bundle,
@@ -3240,6 +3488,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             schedule=schedule,
             director_plan=director_plan,
             notes=notes,
+            retry_policy=retry_policy,
         )
         answer = str(result.answer_text or "").strip()
         if answer:
@@ -3266,13 +3515,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         notes: list[str],
         director_plan,
     ):
-        """用户热路径：三选（沉默 / 延迟预约 / 立刻回复）。不与 booked 共用决策。"""
-        from .responders.request_driven.character.decision import (
-            decide_hot_turn,
-            write_hot_delay_booking,
-        )
+        """用户热路径：直达角色生成。
+
+        职责分离：预约权（何时主动开口）归导演；沉默权在生成协议里
+        （<speak> 留空即沉默），热路径不再做 silence/delay/speak 预决策，
+        也不存在角色自约的 delay 预约。
+        """
         from .responders.request_driven.character.interaction import (
-            export_interaction_record,
             note_character_heard_user,
         )
 
@@ -3285,48 +3534,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 user_text=user_text,
                 turn_index=int(request.turn_index or 0),
             )
-
-        narrative = getattr(request, "narrative", None)
-        plot_intent = str(getattr(narrative, "active_unit_intent", "") or "").strip()
-        enrichment = ""
-        if narrative is not None and hasattr(narrative, "render_director_instruction"):
-            enrichment = narrative.render_director_instruction()
-        interaction = export_interaction_record(state).render_for_character()
-        decision = decide_hot_turn(
-            self._character_decision_llm(),
-            session_id=sid,
-            turn_index=int(request.turn_index or 0),
-            user_text=user_text,
-            plot_intent=plot_intent,
-            rhythm_enrichment=enrichment,
-            interaction_record=interaction,
-        )
-        notes.append(
-            f"hot_decision: action={decision.action} reason={decision.reason[:60]}"
-        )
-        if decision.action == "silence":
-            return self._character_silence_result(
-                request=request,
-                notes=notes,
-                flush_body=decision.flush_body,
-                reason=decision.reason,
-                note_label="character_chose_silence_after_hot_decision",
-            )
-        if decision.action == "delay":
-            note = write_hot_delay_booking(
-                state,
-                decision,
-                plot_unit_id=str(getattr(narrative, "active_unit_id", "") or "").strip(),
-            )
-            if note:
-                notes.append(note)
-            return self._character_silence_result(
-                request=request,
-                notes=notes,
-                flush_body=decision.flush_body,
-                reason=decision.reason,
-                note_label="character_chose_delay_after_hot_decision",
-            )
+            notes.append("hot: heard_user")
         return self._character_generate_via_runtime(
             request=request,
             bundle=bundle,
@@ -3344,11 +3552,15 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         notes: list[str],
         director_plan,
     ):
-        """预约到点：重建叙事快照后二选（沉默 / 回复）。禁止再预约。"""
-        from .responders.request_driven.character.booked_path import decide_booked_turn
+        """预约到点：向上下文 provider 请求「当下」快照后直达角色生成。
+
+        到点不再二选（沉默/开口）：导演是唯一预约来源，何时开口已由导演
+        排程决定；角色在生成里写正文，沉默由 <speak> 留空表达，禁止再预约。
+        新鲜度熔断：这份预约开出之后若用户或角色已发生过一轮往来，
+        说明它要回应的局面已经被消费——弃拍，交给下一轮重新决策。
+        """
         from .responders.request_driven.character.context import build_narrative_snapshot
         from .responders.request_driven.character.interaction import (
-            export_interaction_record,
             note_user_silence_on_wake,
         )
 
@@ -3358,6 +3570,16 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         if note_user_silence_on_wake(state):
             notes.append("wake: user_silence_noted")
 
+        # 实时上下文：开拍前向 provider 要「当下」，不得用预约时的旧账本
+        ctx = self._context_provider.snapshot(state)
+        created_at = float(getattr(request, "created_at", 0.0) or 0.0)
+        if created_at > 0 and ctx.last_agent_speak_at > created_at:
+            notes.append(
+                "wake: stale_handoff_already_answered "
+                f"(agent_spoke {ctx.last_agent_speak_at - created_at:.1f}s after handoff)"
+            )
+            return self._empty_wake_outcome(request, notes=notes)
+
         # 到点当场重建，不用下预约时的旧材料
         narrative = build_narrative_snapshot(
             state,
@@ -3366,32 +3588,6 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             executable_unit_id=str(getattr(request, "executable_unit_id", "") or ""),
         )
         request.narrative = narrative
-        plot_intent = str(getattr(narrative, "active_unit_intent", "") or "").strip()
-        enrichment = ""
-        if hasattr(narrative, "render_director_instruction"):
-            enrichment = narrative.render_director_instruction()
-        interaction = export_interaction_record(state).render_for_character()
-        decision = decide_booked_turn(
-            self._character_decision_llm(),
-            session_id=sid,
-            turn_index=int(request.turn_index or 0),
-            origin=origin or "booked",
-            plot_intent=plot_intent,
-            rhythm_enrichment=enrichment,
-            interaction_record=interaction,
-            director_cue=str(getattr(request, "director_cue", "") or ""),
-        )
-        notes.append(
-            f"booked_decision: action={decision.action} reason={decision.reason[:60]}"
-        )
-        if decision.action == "silence":
-            return self._character_silence_result(
-                request=request,
-                notes=notes,
-                flush_body=decision.flush_body,
-                reason=decision.reason,
-                note_label="character_chose_silence_after_booked_decision",
-            )
         return self._character_generate_via_runtime(
             request=request,
             bundle=bundle,
@@ -3399,6 +3595,28 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             director_plan=director_plan,
             user_text="",
             record_user_text="",
+        )
+
+    def _empty_wake_outcome(self, request, *, notes: list[str]):
+        """弃拍产出：空时间轴 + finish，不出正文也不记账。"""
+        from agent.soul.speak.io.outbound.stream.parse.model import SpeakAgentOutput
+        from agent.soul.speak.responders.request_driven.orchestrator.state.core.delivery import (
+            build_delivery_plan,
+        )
+        from agent.soul.speak.responders.request_driven.timeline import RoleTimeline
+
+        empty_plan = build_delivery_plan(
+            segments=[],
+            continuity="finish",
+            plan_id=f"wake-skip-{request.session_id}-{request.turn_index}",
+            turn_index=int(request.turn_index or 0),
+        )
+        return (
+            "",
+            SpeakAgentOutput(session_state="finish"),
+            empty_plan,
+            True,
+            RoleTimeline(ops=()),
         )
 
     def _run_character_reply(
@@ -3786,6 +4004,286 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             turn_index=director_plan.turn_index,
         )
 
+    def _run_direct_turn(self, item: UserInputItem) -> SpeakTurnResult:
+        """direct 旁路：帧内零前置 LLM 调用，用户直达角色，债与去重在生成后兜底。"""
+        from dataclasses import replace as _dc_replace
+
+        from .responders.request_driven.character import (
+            build_character_reply_request,
+        )
+        from .responders.request_driven.character.frame import (
+            DirectTuning,
+            frame_meta,
+            note_debt_agent_reply,
+            note_debt_user_message,
+            recent_answers,
+            remember_answer,
+        )
+        from .responders.request_driven.character.interaction import (
+            note_character_heard_user,
+        )
+        from .responders.request_driven.character.runtime import (
+            DirectRetryPolicy,
+        )
+
+        sid = item.session_id.strip()
+        user_text = item.user_text.strip()
+        if not user_text:
+            raise RuntimeError("speak: empty user input")
+
+        tuning = DirectTuning.load()
+        state = self._state_store.session(sid)
+
+        if item.interrupted:
+            ctx = self._session_manager.interrupt_context_for(sid, item)
+            if ctx is not None:
+                self._orchestrator.compose_queue_hub.prepare_interrupt_turn(sid, ctx)
+
+        upcoming = self.session_registry.current_turn_index(sid) + 1
+        frame = frame_meta(state, tuning)
+        # 帧内不做任何前置 LLM 调用；编剧刷新由帧边界钩子/后台状态事件承担
+        self._clear_async_delivery_ready(sid)
+        state.pending_delivery_plan = None
+        state.speak_gate = "speak"
+
+        bundle = self._compose_bundle(sid, user_text, mode=item.mode, turn_index=upcoming)
+        notes: list[str] = [
+            "direct_pipeline",
+            "frame_zero_preflight",
+            f"frame_age:{float(frame['frame_age']):.0f}s",
+        ]
+        meta: dict[str, object] = {
+            "session_state": state.speak_gate,
+            "speak_gate": state.speak_gate,
+            "direct": True,
+            "responder": "main_llm",
+            **frame,
+        }
+
+        debt = note_debt_user_message(state)
+        debt_lines = debt.material_lines()
+        if debt_lines:
+            notes.append("debt_material:" + "；".join(debt_lines))
+            meta["debt_unanswered"] = debt.unanswered
+            meta["debt_wait_seconds"] = round(debt.wait_seconds, 1)
+
+        from .responders.request_driven.orchestrator.state.core.delivery import (
+            ReplySegment,
+            build_delivery_plan,
+        )
+
+        static_plan = build_delivery_plan(
+            segments=[
+                ReplySegment(text="", wait_ms=0, wait_reason="direct", continuity="finish"),
+            ],
+            continuity="finish",
+            plan_id=f"direct-{sid}-{upcoming}",
+            turn_index=upcoming,
+        )
+
+        request = build_character_reply_request(
+            origin="user",
+            session_id=sid,
+            turn_index=int(upcoming or 0),
+            state=state,
+            user_text=user_text,
+            reason="user_ingress_direct",
+            bind_user_step=True,
+        )
+        if request.trigger_id and state.last_character_trigger_id \
+                and request.trigger_id == state.last_character_trigger_id:
+            notes.append(f"character_duplicate_trigger:{request.trigger_id}")
+        note_character_heard_user(state, user_text=user_text, turn_index=int(upcoming or 0))
+
+        # 债材料化进往来账本区（NarrativeSnapshot 冻结 → 整体替换）
+        if debt_lines:
+            base_txt = str(request.narrative.interaction_record_text or "").strip()
+            request.narrative = _dc_replace(
+                request.narrative,
+                interaction_record_text=(
+                    (base_txt + "\n\n" if base_txt else "") + "\n".join(debt_lines)
+                ),
+            )
+
+        policy = DirectRetryPolicy(
+            force_ack_note=("\n".join(debt_lines) if debt.hard_exceeded else ""),
+            recent_answers=tuple(recent_answers(state)),
+            dedup_threshold=tuning.dedup_similarity,
+        )
+
+        answer_text, parsed, paced, used_role, role_timeline = (
+            self._direct_character_generate(
+                request=request,
+                bundle=bundle,
+                user_text=user_text,
+                notes=notes,
+                director_plan=static_plan,
+                turn_index=int(upcoming or 0),
+                retry_policy=policy,
+            )
+        )
+        state.last_character_trigger_id = request.trigger_id
+
+        spoken_now = str(answer_text or "").strip()
+        if spoken_now:
+            remember_answer(state, spoken_now)
+            note_debt_agent_reply(state)
+        elif debt.hard_exceeded:
+            notes.append("debt_hardline_still_silent")
+
+        events: list[SpeakStreamEvent] = []
+        if item.stream:
+            if used_role and role_timeline is not None:
+                events = self._deliver_role_timeline(
+                    sid,
+                    role_timeline,
+                    user_text=user_text,
+                    background=True,
+                )
+        if events:
+            stamp = str((events[0].meta or {}).get("created_at") or "").strip()
+            if stamp:
+                meta["created_at"] = stamp
+        if not str(meta.get("created_at") or "").strip():
+            from datetime import datetime, timezone
+
+            meta["created_at"] = datetime.now(timezone.utc).isoformat()
+
+        paced_empty = getattr(paced, "is_empty", True) if paced is not None else True
+        role_streamed = bool(used_role and role_timeline is not None and item.stream)
+        if paced_empty and not role_streamed and not spoken_now:
+            notes.append("empty_main_llm_speak")
+            meta["session_state"] = parsed.session_state
+            meta["delivery_plan"] = paced.snapshot() if paced is not None else None
+            get_prompt_trace().emit_event(
+                sid,
+                label="direct_turn_empty_responder",
+                turn_index=upcoming,
+                payload={
+                    "user_text": user_text,
+                    "parsed": parsed.to_dict(),
+                    "notes": notes,
+                },
+            )
+            if self._orchestrator_thread is not None:
+                self._orchestrator_thread.notify_delivery_done(sid)
+            result = SpeakTurnResult(
+                session_id=sid,
+                answer="",
+                bundle=bundle,
+                output=parsed,
+                recorded=False,
+                notes=notes,
+                meta=meta,
+            )
+            get_prompt_trace().emit_turn_finish(
+                sid,
+                turn_index=upcoming,
+                parsed=parsed,
+                answer="",
+                notes=result.notes,
+                cache=self.session_trace_cache(sid, turn_index=upcoming),
+            )
+            return result
+
+        recorded = False
+        if item.record and spoken_now:
+            self._session_manager.begin_turn(sid)
+            self.record_dialogue(sid, user_text, spoken_now)
+            self.note_agent_visible_speak(
+                sid,
+                turn_index=upcoming,
+                user_text=user_text,
+                agent_text=spoken_now,
+            )
+            recorded = True
+            self._on_compose_turn_complete(
+                sid,
+                user_text,
+                spoken_now,
+                upcoming,
+                parsed.session_state or "finish",
+            )
+            self._session_manager.on_turn_complete(
+                sid,
+                mode=item.mode,
+                session_state=parsed.session_state or "finish",
+                answer=spoken_now,
+            )
+
+        answer = "" if role_streamed else spoken_now
+        if self._orchestrator_thread is not None and not role_streamed:
+            self._orchestrator_thread.notify_delivery_done(sid)
+
+        meta["delivery_plan"] = paced.snapshot() if paced is not None else None
+        meta["session_state"] = parsed.session_state
+        meta["stream_event_count"] = len(events)
+        notes.append("main_llm_responder")
+        get_prompt_trace().emit_event(
+            sid,
+            label="direct_turn_delivery",
+            turn_index=upcoming,
+            payload={
+                "user_text": user_text,
+                "answer": answer,
+                "recorded": recorded,
+                "stream_event_count": len(events),
+                "delivery_plan": paced.snapshot() if paced is not None else None,
+                "speak_gate": state.speak_gate,
+                "session_state": parsed.session_state,
+                "notes": notes,
+            },
+        )
+        result = SpeakTurnResult(
+            session_id=sid,
+            answer=answer,
+            bundle=bundle,
+            output=parsed,
+            stream_events=events,
+            recorded=recorded,
+            notes=notes,
+            meta=meta,
+        )
+        get_prompt_trace().emit_turn_finish(
+            sid,
+            turn_index=upcoming,
+            parsed=parsed,
+            answer=result.answer,
+            notes=result.notes,
+            cache=self.session_trace_cache(sid, turn_index=upcoming),
+        )
+        return result
+
+    def _direct_character_generate(
+        self,
+        *,
+        request,
+        bundle: SpeakPromptBundle,
+        user_text: str,
+        notes: list[str],
+        director_plan,
+        turn_index: int,
+        retry_policy=None,
+    ):
+        """direct 版角色生成：跳过热路径预决策，直达角色生成。"""
+        state = self._state_store.session(request.session_id)
+        out = self._character_generate_via_runtime(
+            request=request,
+            bundle=bundle,
+            notes=notes,
+            director_plan=director_plan,
+            user_text=user_text,
+            record_user_text=user_text,
+            retry_policy=retry_policy,
+        )
+        self._commit_delivery_step(
+            session_id=request.session_id.strip(),
+            request=request,
+            answer_text=str((out[0] if isinstance(out, tuple) and out else "") or ""),
+            chose_silence=not str((out[0] if isinstance(out, tuple) and out else "") or "").strip(),
+        )
+        return out
+
     def _run_request_driven_turn(self, item: UserInputItem) -> SpeakTurnResult:
         sid = item.session_id.strip()
         user_text = item.user_text.strip()
@@ -4011,6 +4509,8 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             notes=result.notes,
             cache=self.session_trace_cache(sid, turn_index=upcoming),
         )
+        # 回合收尾：预约权归导演——下一次开口由导演节奏表 timeline 写入议程，
+        # 这里不再召唤编剧偏检/重排演出表。
         return result
 
     def handle_proactive(

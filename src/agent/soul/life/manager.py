@@ -264,6 +264,22 @@ class LifeManager:
     def run_surprise_tick(self, elapsed_sec: float) -> dict:
         return self._virtual.tick_surprise(elapsed_sec=elapsed_sec)
 
+    def upcoming_landmarks(self, *, within_sec: float = 3600.0) -> list[dict]:
+        """1 小时内（可调）即将到点的地标简报；供叙事侧提前接入演绎。"""
+        try:
+            lms = self._virtual.upcoming_landmarks(within_sec=within_sec)
+        except Exception:
+            return []
+        return [
+            {
+                "id": lm.id,
+                "intention": lm.intention,
+                "scheduled_at": lm.scheduled_at,
+                "context": lm.context,
+            }
+            for lm in lms
+        ]
+
     def fill_due_landmarks(self, *, only_ids: list[str] | None = None) -> list[dict]:
         due = list(self._virtual.due_landmarks())
         if only_ids:

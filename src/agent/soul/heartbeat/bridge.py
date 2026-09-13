@@ -2,6 +2,11 @@
 heartbeat/bridge.py — 心跳层 Memory / Presence / Persona / Life 接口规范
 ====================================================================
 
+本模块是心跳域的**契约叶子**：只定义跨模块数据类型与 Port 协议，
+不得 import memory / presence / persona / life 的任何实现模块
+（实现方向反过来依赖本模块），否则会与 ``agent.soul.memory.__init__``
+的 eager import 形成环。
+
 心跳 wander tick
 ----------------
 1. SoulService 组装 PersonaSnapshot（Presence.affect + self_concept 检索偏置）
@@ -20,9 +25,7 @@ buffer 主题 → Memory 回查 → Tao 整合 → ``SelfConcept.apply_delta()``
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
-
-from agent.soul.memory.unit import Valence
+from typing import Any, Protocol, runtime_checkable
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -55,7 +58,8 @@ class PersonaSnapshot:
         本次心跳的唯一标识，用于追踪一次 tick 的全链路日志。
     """
     emotional_state: str = ""
-    valence_bias: Valence | None = None
+    # str 类型（接受 memory.domain.Valence 成员，str-mixin 枚举可直接比较/取值）
+    valence_bias: str | None = None
     attention_keywords: list[str] = field(default_factory=list)
     persona_profile: str = ""
     tick_id: str = ""
@@ -65,7 +69,8 @@ class PersonaSnapshot:
 class EmotionalSignal:
     """Memory → Presence 方向：本次心跳记忆浮现的情绪信号（快变，非 self_concept 漂移）。"""
     dominant_emotion: str = ""
-    dominant_valence: Valence = Valence.neutral
+    # 同上：接受 Valence 成员，默认中性
+    dominant_valence: str = "neutral"
     intensity: float = 0.0
     source_unit_ids: list[str] = field(default_factory=list)
     narrative_hint: str = ""

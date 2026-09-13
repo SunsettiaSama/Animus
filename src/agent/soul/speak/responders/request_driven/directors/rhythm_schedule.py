@@ -34,9 +34,8 @@ _DIRECTOR_VOICE = (
 
 _ENRICH_RULE = (
     "一张节奏卡对应一个剧情 unit。"
-    "用第二人称「你」扩充这张剧情卡：写这一拍的动作、情感和过渡，形成连续过程。"
-    "角色通过端口给对方发短消息，不写动作；动作写进这张卡里。"
-    "detail 写物件、手势、光线、位置，让角色清楚自己在做什么。\n"
+    "用第二人称「你」扩充这张剧情卡：写这一拍的动作、情感和过渡。"
+    "角色通过端口给对方发短消息，不写动作；动作写进这张卡里。\n"
     "不写角色台词，不演独角戏，不把后续步骤一次讲完。"
     "你只写处境。\n"
     "detail：手头具体的动作细节。\n"
@@ -46,10 +45,28 @@ _ENRICH_RULE = (
     "duration_sec：这个动作在现实里完成需要的时间。"
     "不同动作耗时不同，按实际情况估算。\n"
     "window_start_sec：相对现在，这一步何时开始；window_end = 开始 + duration_sec。\n"
-    "timeline 里每条是开口预约：at_sec 是距现在的秒数，plot_unit_id 绑定对应的剧情卡。"
-    "下一次开口至少等上一动作做完；系统硬间隔约 25 秒是下限，实际间隔按动作时长往后排。\n"
+    "现实时间感（预约必须踩在地面上，不许没有时间概念）：\n"
+    "- 发一条短消息——决定、拿起设备、打出、发出——约 5–15 秒；\n"
+    "- 一眼看过去、一句应答，3–8 秒；\n"
+    "- 整理、检查、收拾一类活计，30–60 秒；\n"
+    "- 读一段、比对、翻找、核对，60–120 秒。\n"
+    "timeline 是开口预约：at_sec 是距现在的秒数，plot_unit_id 绑定对应的剧情卡。"
+    "开口只能落在绑定动作做完之后（at_sec ≥ window_start_sec + duration_sec）；"
+    "两条预约至少间隔 25 秒；没有可绑定的完成动作就不要预约。\n"
     "reason 写清这个动作为什么需要这么长时间。\n"
 )
+
+# 输出预算：4096 截断曾把 JSON 打碎后跌入启发式兜底，节奏卡文风也必须收敛。
+_OUTPUT_BUDGET = (
+    "输出预算（硬约束）：整个 JSON 有且仅有不超过 200 词。"
+    "每次最多补 3 张卡；每张卡的 detail/inner/transition/stance 各写一句短句，"
+    "每句不超过 20 字；客观朴实，不渲染、不排比、不堆形容词。\n"
+)
+
+# 单次调用最多接受的 LLM 节奏卡数；缺卡由启发式补齐（零 token）
+_MAX_LLM_CARDS_PER_CALL = 3
+# 节奏表在卡硬顶：live 卡涨到上限就不再补仓（观测到 27 张卡滚雪球、JSON 打满 4096）
+_MAX_LIVE_CARDS = 16
 
 _UNIT_JSON = (
     '"plot_unit_id":"","detail":"","inner":"","transition":"","stance":"",'
@@ -66,6 +83,7 @@ class RhythmScheduleDirector:
         f"{_DIRECTOR_VOICE}\n"
         "维护节奏扩充表与现实时间轴。当可用队列不足时，给还没有节奏卡的剧情 unit 写扩充。\n"
         f"{_ENRICH_RULE}"
+        f"{_OUTPUT_BUDGET}"
         "timeline 按动作时长串联：后一条 at_sec ≥ 前一条 at_sec + 前一条 duration_sec。\n"
         "输出 JSON："
         '{"action":"refill",'
@@ -78,6 +96,7 @@ class RhythmScheduleDirector:
         f"{_DIRECTOR_VOICE}\n"
         "角色给了反馈，或时间轴需要调整。修订节奏扩充与时间轴。\n"
         f"{_ENRICH_RULE}"
+        f"{_OUTPUT_BUDGET}"
         "action=keep：只改 private；update：修改已有节奏卡（带 unit_id）；"
         "refill：给缺少节奏卡的剧情 unit 补扩充。\n"
         "输出 JSON："
@@ -109,7 +128,10 @@ class RhythmScheduleDirector:
         del force_open_now  # 开口权在议程/角色决策，不再 force ladder
         is_revise = bool(revise) or bool(str(character_feedback or "").strip())
         need_refill = current.needs_refill(min_live=MIN_LIVE_UNITS_BEFORE_WAKE)
-        if plot_arc is not None and getattr(plot_arc, "ready", False):
+        if current.live_unit_count() >= _MAX_LIVE_CARDS:
+            # 硬顶：表已满，停止补仓，只保留修订通道
+            need_refill = False
+        if plot_arc is not None and getattr(plot_arc, "ready", False) and need_refill:
             uncovered = self._uncovered_plot_units(plot_arc, current)
             need_refill = need_refill or bool(uncovered)
         # poll 且不需补仓、无反馈：跳过 LLM
@@ -231,41 +253,44 @@ class RhythmScheduleDirector:
             f"need_refill={need_refill}",
             f"live_rhythm={current.live_unit_count()} min={MIN_LIVE_UNITS_BEFORE_WAKE}",
         ]
-        lines.append("不要问剧情卡是否完备。只扩充、补仓、改时间轴。")
+        lines.append("不要问剧情卡是否完备。只扩充、补仓。")
         lines.append(
             "每张卡先估 duration_sec：角色做完这一步实际要多久。"
-            "下一开口至少排在上一动作做完之后，不要用同一秒数填所有卡。"
+            "不要用同一秒数填所有卡。"
         )
         if character_feedback.strip():
             lines.append("[角色反馈｜据此修订]")
-            lines.append(character_feedback.strip()[:1200])
-        lines.append(current.render_for_director())
+            lines.append(character_feedback.strip()[:300])
+        # 输入上下文收敛：只给在表卡片的摘要，避免 4096 截断
+        lines.append(current.render_for_director()[:1800])
         if agenda is not None:
             lines.append(agenda.render_for_director())
         if plot_arc is not None and getattr(plot_arc, "ready", False):
             lines.append("[叙事剧情 unit｜缺卡的请补节奏扩充]")
-            lines.append(plot_arc.render_for_inject(max_pending=8))
+            lines.append(plot_arc.render_for_inject(max_pending=4))
             uncovered = self._uncovered_plot_units(plot_arc, current)
             if uncovered:
-                lines.append("尚未有节奏卡的剧情 unit：")
-                for unit in uncovered:
+                lines.append("尚未有节奏卡的剧情 unit（最多列 3 个）：")
+                for unit in uncovered[:3]:
+                    estimate = float(getattr(unit, "estimate_sec", 0.0) or 0.0)
+                    tail = f" estimate={estimate:.0f}s" if estimate > 0 else ""
                     lines.append(
-                        f"- id={unit.unit_id} intent={getattr(unit, 'intent', '')}"
+                        f"- id={unit.unit_id} intent={getattr(unit, 'intent', '')}{tail}"
                     )
         brief = interaction_unit_brief.strip()
         if brief:
             lines.append("[当前交互单元]")
-            lines.append(brief)
+            lines.append(brief[:400])
         evidence = interaction_evidence.strip()
         if evidence:
-            lines.append(evidence)
+            lines.append(evidence[:400])
         history = dialogue_history.strip()
         if history:
             lines.append("[用户交互历史]")
-            lines.append(history[:1200])
+            lines.append(history[:400])
         text = user_text.strip() or snapshot.dialogue.user_text.strip()
         if text:
-            lines.append(f"user_text={text[:400]}")
+            lines.append(f"user_text={text[:200]}")
         return append_frame_prompt("\n".join(lines), snapshot)
 
     def _uncovered_plot_units(self, plot_arc, current: CharacterRhythmSchedule) -> list[Any]:
@@ -424,7 +449,10 @@ class RhythmScheduleDirector:
         covered = nxt.covered_plot_ids()
         raw = payload.get("executable_units")
         if isinstance(raw, list):
+            accepted = 0
             for item in raw:
+                if accepted >= _MAX_LLM_CARDS_PER_CALL:
+                    break
                 if not isinstance(item, dict):
                     continue
                 entry = self._parse_unit_item(
@@ -441,14 +469,17 @@ class RhythmScheduleDirector:
                 if not entry.has_enrichment():
                     entry.detail = entry.detail or "你按台本把手头这一步做扎实"
                     entry.inner = entry.inner or "你留意对方有没有搭话"
-                    entry.transition = entry.transition or "你先做完眼前的，再决定开不开口"
+                    entry.transition = entry.transition or "手头这一步照常推进；有消息就自然接话"
                     entry.stance = entry.stance or "你自然推进，不强求对方立刻回"
                 nxt.executable_units.append(entry)
                 covered.add(entry.plot_unit_id)
-        # 仍缺卡：启发式补
+                accepted += 1
+        # 仍缺卡：启发式补（受在表硬顶约束）
         if plot_arc is not None:
             delay = 0.0
             for unit in self._uncovered_plot_units(plot_arc, nxt):
+                if nxt.live_unit_count() >= _MAX_LIVE_CARDS:
+                    break
                 entry = _heuristic_enrich_unit(
                     unit, now=now, delay=delay, index=nxt.live_unit_count()
                 )
@@ -459,6 +490,27 @@ class RhythmScheduleDirector:
         nxt.revised_at = now
         if plot_arc is not None:
             nxt.sync_scripts_from_plot_arc(plot_arc)
+        return nxt
+
+    def _fallback_enrich(
+        self,
+        current: CharacterRhythmSchedule,
+        *,
+        plot_arc,
+        poll_seq: int,
+    ) -> CharacterRhythmSchedule:
+        now = time.time()
+        nxt = CharacterRhythmSchedule.from_dict(current.snapshot())
+        if plot_arc is not None:
+            delay = 0.0
+            for index, unit in enumerate(self._uncovered_plot_units(plot_arc, nxt)):
+                entry = _heuristic_enrich_unit(unit, now=now, delay=delay, index=index)
+                nxt.executable_units.append(entry)
+                delay += entry.action_duration_sec() or BOOKING_GAP_MIN_SEC
+            nxt.sync_scripts_from_plot_arc(plot_arc)
+        nxt.poll_seq = int(poll_seq)
+        nxt.version = int(current.version) + 1
+        nxt.revised_at = now
         return nxt
 
     def _parse_timeline(
@@ -494,27 +546,6 @@ class RhythmScheduleDirector:
             )
         return _chain_timeline_by_duration(out)
 
-    def _fallback_enrich(
-        self,
-        current: CharacterRhythmSchedule,
-        *,
-        plot_arc,
-        poll_seq: int,
-    ) -> CharacterRhythmSchedule:
-        now = time.time()
-        nxt = CharacterRhythmSchedule.from_dict(current.snapshot())
-        if plot_arc is not None:
-            delay = 0.0
-            for index, unit in enumerate(self._uncovered_plot_units(plot_arc, nxt)):
-                entry = _heuristic_enrich_unit(unit, now=now, delay=delay, index=index)
-                nxt.executable_units.append(entry)
-                delay += entry.action_duration_sec() or BOOKING_GAP_MIN_SEC
-            nxt.sync_scripts_from_plot_arc(plot_arc)
-        nxt.poll_seq = int(poll_seq)
-        nxt.version = int(current.version) + 1
-        nxt.revised_at = now
-        return nxt
-
     def _fallback_timeline(self, schedule: CharacterRhythmSchedule) -> list[dict[str, Any]]:
         now = time.time()
         out: list[dict[str, Any]] = []
@@ -546,7 +577,11 @@ def _heuristic_enrich_unit(
 ) -> ExecutableUnit:
     intent = str(getattr(unit, "intent", "") or "").strip()
     uid = str(getattr(unit, "unit_id", "") or "").strip()
-    duration = estimate_action_duration_sec(intent)
+    # 编剧在剧情 unit 上标注的现实耗时优先，其次按动作关键词估
+    duration = float(getattr(unit, "estimate_sec", 0.0) or 0.0)
+    if duration <= 0:
+        duration = estimate_action_duration_sec(intent)
+    duration = _clamp_duration_sec(duration)
     return ExecutableUnit(
         plot_unit_id=uid,
         reason=f"heuristic_enrich_{index}",
@@ -556,8 +591,9 @@ def _heuristic_enrich_unit(
             if intent
             else "你把眼前这一步的手和物件走实，不要空演。"
         ),
-        inner="你留意手头触感，也留意对方有没有回消息",
-        transition="你先把这一步做完，再决定要不要发一条短消息",
+        inner="你留意手头触感，也留意对方有没有搭话",
+        # 不暗示「先做完再决定发不发消息」——那句话被证实是角色连续沉默的推手
+        transition="手头这一步照常推进；有消息就自然接话",
         stance="你按自己的节奏来，不朝空气演独角戏",
         window_start=now + delay,
         window_end=now + delay + duration,
@@ -690,7 +726,7 @@ def apply_rhythm_schedule_output(state, output: DirectorOutput) -> CharacterRhyt
     state.director_cache["rhythm_schedule_private"] = schedule.private.snapshot()
     state.director_cache.pop("pending_unit_complete", None)
 
-    # 导演时间轴写入议程（过硬间隔）
+    # 导演时间轴写入议程（过硬间隔）：导演是角色主动性的唯一预约来源
     timeline = output.payload.get("timeline")
     if isinstance(timeline, list):
         agenda = getattr(state, "speak_agenda", None)

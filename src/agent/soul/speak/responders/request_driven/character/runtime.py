@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from agent.soul.speak.io.outbound.stream.parse.model import SpeakAgentOutput
@@ -29,6 +30,18 @@ from .memory_buffer import CharacterMemoryBuffer
 
 HelpFn = Callable[[str, tuple[str, ...], str], tuple[str, ...]]
 PaceFn = Callable[[Any, str], DeliveryPlan]
+
+
+@dataclass(frozen=True)
+class DirectRetryPolicy:
+    """direct 管线的生成后重试策略（每轮至多触发一次重生成）。"""
+
+    force_ack_note: str = ""          # 非空且首轮空输出时：附注后重生成
+    recent_answers: tuple[str, ...] = ()
+    dedup_threshold: float = 0.85
+    dedup_note: str = (
+        "你上一轮已经说过非常相近的内容；这一轮请换个说法或推进情节，不要重复。"
+    )
 
 
 class CharacterRuntime:
@@ -68,6 +81,7 @@ class CharacterRuntime:
         schedule: DynamicLayerSchedule,
         director_plan: DeliveryPlan | None = None,
         notes: list[str] | None = None,
+        retry_policy: DirectRetryPolicy | None = None,
     ) -> CharacterReplyResult:
         note_buf = notes if notes is not None else []
         note_buf.append(f"character_runtime:origin={request.origin}")
@@ -110,9 +124,16 @@ class CharacterRuntime:
                 interaction_record_text=narrative.interaction_record_text,
             )
 
-        def _generate_once(obs: tuple[str, ...] = ()) -> tuple[str, Any]:
+        def _generate_once(obs: tuple[str, ...] = (), extra_system: str = "") -> tuple[str, Any]:
             role_prompt = _build_prompt(obs)
-            system = base_system
+            merged_base = base_system
+            if extra_system.strip():
+                merged_base = (
+                    f"{base_system}\n\n{extra_system.strip()}"
+                    if base_system
+                    else extra_system.strip()
+                )
+            system = merged_base
             if role_prompt.system_extra.strip():
                 system = (
                     f"{system}\n\n{role_prompt.system_extra}".strip()
@@ -138,10 +159,18 @@ class CharacterRuntime:
                     help_observations=obs,
                 )
             else:
-                raw_text = self._speak_role.generate(role_prompt, base_system=base_system)
+                raw_text = self._speak_role.generate(
+                    role_prompt,
+                    base_system=merged_base,
+                )
             return raw_text, role_prompt
 
         raw, _prompt = _generate_once()
+        from ..policy_lint import lint_policy_text
+
+        lint_hits = lint_policy_text(_prompt.system_extra if _prompt else "")
+        if lint_hits:
+            note_buf.append(f"dynamic_layer_policy_lint:{','.join(lint_hits)}")
         packet = interpret_role_packet(raw)
         if packet.help_goals and self._request_helps is not None:
             note_buf.append(f"character_ask_help:{len(packet.help_goals)}")
@@ -162,6 +191,38 @@ class CharacterRuntime:
             plan_id=f"role-{request.session_id}-{request.turn_index}",
         )
         answer_text = timeline.answer_text
+
+        # direct 管线的生成后重试：强制回应 / 跨轮去重，每轮至多一次。
+        if retry_policy is not None:
+            extra = ""
+            if not answer_text.strip() and retry_policy.force_ack_note.strip():
+                note_buf.append("direct_forced_ack_retry")
+                extra = (
+                    "（处境注记）对方已经等了很久；这一轮你必须给出至少一个反应——"
+                    "哪怕一句敷衍的短句，也可以。不要完全沉默。\n"
+                    + retry_policy.force_ack_note
+                )
+            else:
+                from .frame import find_duplicate
+
+                dup = find_duplicate(
+                    answer_text,
+                    retry_policy.recent_answers,
+                    threshold=retry_policy.dedup_threshold,
+                )
+                if dup:
+                    note_buf.append("direct_dedup_retry")
+                    extra = f"（处境注记）{retry_policy.dedup_note}\n已说过的是：「{dup[:160]}」"
+            if extra:
+                raw, _prompt = _generate_once(extra_system=extra)
+                packet = interpret_role_packet(raw)
+                timeline = packet.timeline
+                paced = timeline_to_delivery_plan(
+                    timeline,
+                    turn_index=request.turn_index,
+                    plan_id=f"role-{request.session_id}-{request.turn_index}",
+                )
+                answer_text = timeline.answer_text
         if paced.is_empty and answer_text.strip() and self._pace_delivery is not None:
             paced = self._pace_delivery(director_plan, answer_text)
         parsed = parse_agent_output(raw)

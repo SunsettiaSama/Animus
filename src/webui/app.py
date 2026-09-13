@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from agent.adapters.fastapi_react import create_react_router
 from agent.adapters.fastapi_chat import create_chat_router
-from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe, soul, speak, accounts
+from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe, soul, speak, accounts, agent
 from routers.infra import router as infra_router
 from state import get_state
 
@@ -29,7 +29,7 @@ app = FastAPI(title="ReAct Agent")
 @app.middleware("http")
 async def _no_cache_js(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith("/static/js/") or request.url.path.startswith("/static/css/"):
+    if request.url.path.startswith(("/static/js/", "/static/js2/")) or request.url.path.startswith("/static/css/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -57,6 +57,7 @@ for _r in [
     benchmark.router,
     probe.router,
     soul.router,
+    agent.router,
     speak.router,
     accounts.router,
 ]:
@@ -161,6 +162,33 @@ def _startup():
         state.llm_service.start(cfg)
         print(f"[webui] LLM auto-loaded  model={cfg.model!r}")
 
+        # ── 次语言模型（aux）启动注册 ────────────────────────────────────────
+        # 必须在 do_soul_init 之前：soul 各子模块经 resolve_module_llm 取 aux，
+        # 未注册的槽位会静默回退主模型。
+        try:
+            from config.llm_core.aux_config import AUX_SLOTS, AuxLLMRegistry
+            from config.llm_core.config import LLMConfig
+
+            aux_registry = AuxLLMRegistry.load_default()
+            for slot in AUX_SLOTS:
+                aux_cfg = aux_registry.slot(slot)
+                if not aux_cfg.enabled or aux_cfg.validate():
+                    continue
+                try:
+                    state.llm_service.register_aux(slot, LLMConfig(
+                        model=aux_cfg.model,
+                        api_key=aux_cfg.api_key,
+                        base_url=aux_cfg.base_url or None,
+                        max_tokens=aux_cfg.max_tokens,
+                        temperature=aux_cfg.temperature,
+                        device=aux_cfg.device,
+                        backend=aux_cfg.backend,
+                    ))
+                except Exception as exc:
+                    print(f"[webui] aux model {slot!r} register failed: {exc}")
+        except Exception as exc:
+            print(f"[webui] aux models load failed: {exc}")
+
         from agent.adapters.soul_bootstrap import do_soul_init
 
         state.react_init_event.clear()
@@ -170,6 +198,23 @@ def _startup():
         do_soul_init(state)
 
         from worker.state import build_agent_state_service
+        from agent.inbound import InboundRouteStore, InboundRouter
+        from config.soul.memory.infra_config import SoulMemoryInfraConfig
+        from infra.embedding.service import EmbeddingService
+
+        emb_cfg = SoulMemoryInfraConfig.load_default()
+        state.inbound_router = InboundRouter(
+            store=InboundRouteStore(os.path.join(state.cache.root, "inbound")),
+            embedder=EmbeddingService(
+                model_name_or_path=emb_cfg.model_name_or_path,
+                device=emb_cfg.device,
+                use_fp16=emb_cfg.use_fp16,
+                batch_size=emb_cfg.batch_size,
+                query_prefix=emb_cfg.query_prefix,
+                passage_prefix=emb_cfg.passage_prefix,
+            ),
+            llm=state.llm,
+        )
 
         state.worker_state_service = build_agent_state_service(
             state_dir=state.worker_state_dir,

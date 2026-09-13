@@ -1,22 +1,25 @@
 # agent 运行时边界
 
-`src/agent/` 承载 Soul/Speak 主对话、legacy ReAct 接口、会话适配和兼容的 Agent Flow 实现。真实任务执行域位于 `src/worker/`，见 [worker/README.md](../worker/README.md)。
+`src/agent/` 承载 Soul/Speak 主对话、会话首轮入站路由、legacy ReAct 接口、会话适配和兼容的 Agent Flow 实现。真实任务执行域位于 `src/worker/`，见 [worker/README.md](../worker/README.md)。
 
 ## 主路径
 
 ```text
-WebUI /ws/speak/run
-  -> SoulService.speak_*
+WebUI /ws/agent/run
+  -> agent.inbound.InboundRouter   # 仅会话首轮
+       speak -> SoulService.speak_run_turn
+       work  -> WorkerWorkService.submit_intent
   -> SpeakService / SpeakPipelineRouter
   -> request_driven（默认）| rhythm
   -> Speak LLM + Speak 自己的 Prompt、Memory、Session
 ```
 
 **Soul/Speak 主对话不调用 `TaoLoop`，也不经过 `ConvLoop`。** `SpeakService` 在
-`src/agent/soul/speak/service.py` 中自行组装上下文并调用 `SpeakLLMEngine`。WebUI 在
-`src/webui/routers/speak.py` 先用 `WorkerWorkService` 检测任务意图；普通对话继续走 Speak，
-用户确认的工作才转入 Worker。`legacy_qa` 仍存在于 `SpeakPipelineRouter` 的内部 runner
-表和类型声明中，但 `normalize_speak_pipeline()` 不接受该值，因此不是可公开选择的主路径。
+`src/agent/soul/speak/service.py` 中自行组装上下文并调用 `SpeakLLMEngine`。分类在
+`src/agent/inbound/`，由 `src/webui/routers/agent.py` 调用；`/ws/speak/run` 不参与分类。
+`SoulService.speak_turn()` 已转到 `speak_run_turn()`。`legacy_qa` 仍存在于
+`SpeakPipelineRouter` 的内部 runner 表和类型声明中，但 `normalize_speak_pipeline()`
+不接受该值，因此不是可公开选择的主路径。详见 [inbound/README.md](./inbound/README.md)。
 
 ## ReAct 的实际入口
 
@@ -59,9 +62,10 @@ worker profile 虽限制初始集合，也不是完整沙箱或最终权限边�
 
 ## 确认边界
 
+- 会话首轮分类：`agent.inbound` 判定 speak/work；击穿是用户指出该标签错误。
 - 任务级 work confirmation：`WorkerWorkService` 在启动 Worker 之前发出
   `work_confirmation_required`；同意后才从 `pending_confirmation` 转为
-  `starting/running`，拒绝或超时回落 Speak。
+  `starting/running`，拒绝或超时回落 Speak。这是执行授权，不是分类。
 - 工具级 approval：`RiskGate` 在 TaoLoop 已开始推理后，对单个工具调用发出
   `ApprovalRequestEvent`。它不是任务接管确认。
 - 当前 `RiskGate` 只在 `agent.react.factory.build_conv_loop()` 与
@@ -70,6 +74,7 @@ worker profile 虽限制初始集合，也不是完整沙箱或最终权限边�
 
 ## 子文档
 
+- [inbound/README.md](./inbound/README.md)
 - [react/README.md](./react/README.md)
 - [session/README.md](./session/README.md)
 - [adapters/README.md](./adapters/README.md)

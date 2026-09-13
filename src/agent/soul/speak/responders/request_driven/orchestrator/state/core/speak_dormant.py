@@ -145,6 +145,7 @@ def clear_narrative_for_reinit(state: Any) -> None:
             "narrative_opening_placeholder_sent",
             "narrative_opening_is_placeholder",
             "screenwriter_init_scheduled",
+            "screenwriter_inited_at",
             "screenwriter_agent_upgrade_scheduled",
             "director_init_scheduled",
         ):

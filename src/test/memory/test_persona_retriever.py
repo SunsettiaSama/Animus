@@ -32,7 +32,7 @@ def _unit(
     return FactualMemory(
         id=uid,
         focus=focus,
-        fact=f"关于{focus}的事�?,
+        fact=f"关于{focus}的事情",
         perception=f"体验{focus}",
         emotion="焦虑",
         emotion_intensity=0.6,
@@ -67,7 +67,7 @@ def test_persona_clusters_accepts_cross_day_recurring_theme():
     units = [
         _unit(
             "a",
-            "项目延期：初�?,
+            "项目延期：初版",
             days_ago=10.0,
             tier=MemoryTier.long,
             recall_count=2,
@@ -75,7 +75,7 @@ def test_persona_clusters_accepts_cross_day_recurring_theme():
         ),
         _unit(
             "b",
-            "项目延期：复�?,
+            "项目延期：复盘",
             days_ago=3.0,
             recall_count=1,
             rehearsal_count=2,

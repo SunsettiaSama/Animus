@@ -6,6 +6,7 @@ _MEMORY_KIND_PROMPT_LABELS: dict[str, str] = {
     "narrative": "叙事的记忆",
     "social_core": "与你对话的TA",
     "social_neighborhood": "和TA相关的事情",
+    "stack": "旁路的记忆",
 }
 
 

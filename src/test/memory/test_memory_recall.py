@@ -1,9 +1,9 @@
 """
-SoulMemorySearchAction µ¥Ôª²âÊÔ
+SoulMemorySearchAction å•å…ƒæµ‹è¯•
 ================================
-¸²¸Ç soul_memory_search ¹¤¾ß¶Ô SoulService.search_memory µÄÎ¯ÍĞÓë±ß½ç¡£
+è¦†ç›– soul_memory_search å·¥å…·å¯¹ SoulService.search_memory çš„å§”æ‰˜ä¸è¾¹ç•Œã€‚
 
-ÔËĞĞ·½Ê½£º
+è¿è¡Œæ–¹å¼ï¼š
   python src/test/memory/test_memory_recall.py
 """
 
@@ -89,33 +89,33 @@ def make_action(soul=None) -> SoulMemorySearchAction:
 
 def test_hybrid_delegates_to_soul():
     soul = make_soul([
-        {"focus": "¼Ü¹¹", "final_score": 0.8, "source": "ltm", "memory_type": "factual", "fact": "ÌÖÂÛÎ¢·şÎñ"},
+        {"focus": "æ¶æ„", "final_score": 0.8, "source": "ltm", "memory_type": "factual", "fact": "è®¨è®ºå¾®æœåŠ¡"},
     ])
     action = make_action(soul)
-    out = action.execute(mode="hybrid", query="¼Ü¹¹", top_k=3)
+    out = action.execute(mode="hybrid", query="æ¶æ„", top_k=3)
     soul.search_memory.assert_called_once()
-    assert "¼Ü¹¹" in out
+    assert "æ¶æ„" in out
     print("[OK] test_hybrid_delegates_to_soul")
 
 
 def test_no_soul_returns_message():
     action = make_action(None)
     out = action.execute(mode="recent", top_k=3)
-    assert "Î´¾ÍĞ÷" in out
+    assert "æœªå°±ç»ª" in out
     print("[OK] test_no_soul_returns_message")
 
 
 def test_semantic_without_query():
     action = make_action(make_soul())
     out = action.execute(mode="semantic", query="", top_k=3)
-    assert "ĞèÒª query" in out
+    assert "éœ€è¦ query" in out
     print("[OK] test_semantic_without_query")
 
 
 def test_empty_results():
     action = make_action(make_soul([]))
     out = action.execute(mode="hybrid", query="x", top_k=3)
-    assert "ÔİÎŞ" in out
+    assert "æš‚æ— " in out
     print("[OK] test_empty_results")
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol
 
-SpeakResponderName = Literal["legacy_qa", "request_driven", "rhythm"]
+SpeakResponderName = Literal["legacy_qa", "request_driven", "rhythm", "direct"]
 DEFAULT_SPEAK_RESPONDER: SpeakResponderName = "request_driven"
 
 
@@ -16,6 +16,8 @@ def normalize_speak_responder(value: str | None) -> SpeakResponderName:
         return "request_driven"
     if normalized == "rhythm":
         return "rhythm"
+    if normalized == "direct":
+        return "direct"
     raise ValueError(f"unknown speak responder: {value!r}")
 
 

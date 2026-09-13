@@ -39,13 +39,10 @@ def test_character_system_excludes_compose_action_protocol():
     assert fmt in full
 
 
-def test_role_static_only_prompts_short_speak():
+def test_role_static_layer_is_empty_shell():
+    """策略已上移 system role；静态层仅保留兼容空壳。"""
     static = RoleStaticLayer()
-    assert "<speak>一条短消息</speak>" in static.protocol
-    assert "短消息" in static.protocol
-    assert 'i="' not in static.protocol
-    assert "emit" not in static.protocol
-    assert "ask help" not in static.protocol
+    assert static.protocol == ""
 
 
 def test_interpret_ask_help_separate_from_timeline():

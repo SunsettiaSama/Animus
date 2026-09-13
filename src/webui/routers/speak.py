@@ -286,6 +286,10 @@ async def ws_speak_run(websocket: WebSocket) -> None:
 
 async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
     first = await websocket.receive_json()
+    if str(first.get("type", "")).strip() != "session_open":
+        await websocket.send_json({"type": "error", "message": "expected session_open"})
+        await websocket.close()
+        return
     session_id = str(first.get("session_id", "")).strip()
     if not session_id:
         await websocket.send_json({"type": "error", "message": "missing session_id"})
@@ -353,11 +357,6 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
     soul.bind_speak_stream_port(hub)
     soul.start_dialogue_session(session_id)
     soul.align_speak_visitor(session_id, channel_id)
-
-    if first.get("type") in ("start", "user_message", None):
-        question = str(first.get("question", "")).strip()
-        if question:
-            await inbound_q.put(first)
 
     _CLOSE_SENTINEL = {"type": "close", "reason": "disconnect"}
     client_gone = False
@@ -524,7 +523,7 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
                 })
                 continue
 
-            if msg_type not in ("start", "user_message"):
+            if msg_type != "user_message":
                 continue
 
             soul.speak_set_delivery_mode(delivery_mode)

@@ -1,6 +1,6 @@
 # agent/soul/speak
 
-Speak 负责会话入站、导演决策、Prompt 组装、主 LLM 回复、流式交付与 Life 体验记账。入口是 `SpeakService.run_turn()`，Soul 对外提供 `speak_turn()` 和 `speak_run_turn()`。
+Speak 负责会话入站、导演决策、Prompt 组装、主 LLM 回复、流式交付与 Life 体验记账。入口是 `SpeakService.run_turn()`。Soul 对外 L0 是 `speak_run_turn()`；`speak_turn()` 只是转到同一入口，不再走 `dispatch(RUN_TURN)`。Speak/Worker 分类在 [`agent/inbound`](../../inbound/README.md)，不在本模块。
 
 ## 当前管线
 

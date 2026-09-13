@@ -146,3 +146,38 @@ class MemoryEmergencePort(Protocol):
     def get_point_emergence(self, session_id: str, turn_index: int): ...
 
     def get_snapshot(self, session_id: str) -> ActivationSnapshot | None: ...
+
+
+@runtime_checkable
+class MemoryBasePort(Protocol):
+    """可替换记忆基座的统一检索协议。
+
+    语义边界：graph（event/social 双网）、stack（增量旁路）、none（空基座）
+    等不同实现都只承诺这一组方法，供 Speak 注入与 benchmark 换基座对比：
+
+    - ``ingest``：写入一条自由文本记忆，返回 unit_id；
+    - ``recall``：自然语言查询 → 渲染好的 MemoryBlock（prompt 注入用）；
+    - ``search``：结构化检索，与 ``MemoryService.search`` 同构，
+      返回 ``scored_to_dict`` 兼容 dict 列表
+      （mode ∈ recent | semantic | by_valence | by_field | hybrid）。
+    """
+
+    def ingest(
+        self,
+        text: str,
+        *,
+        focus: str = "",
+        emotion: str = "",
+        valence: str = "neutral",
+        interactor_id: str = "",
+        meta: dict | None = None,
+    ) -> str: ...
+
+    def recall(
+        self,
+        query: str,
+        top_k: int = 5,
+        emotional_context: str = "",
+    ) -> MemoryBlock: ...
+
+    def search(self, mode: str, **kwargs) -> list[dict]: ...

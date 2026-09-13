@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -224,6 +225,105 @@ def status():
         "speak_ready":     bool(soul_running and soul is not None and soul.speak_initialized),
         "turn_count":      turn_count,
         "is_streaming":    state.is_streaming,
+        "aux_models":      _aux_runtime_status(),
     }
+
+
+# ── Auxiliary named models (次语言模型) ───────────────────────────────────────
+#
+# 协议：config/llm_core/aux_models.yaml（AuxLLMRegistry）是槽位级次模型配置的
+# 唯一载体；槽位名与 agent/soul/handlers/api/_llm.py 的 aux 名一一对应。
+# enabled=False 或未列出的槽位回退主模型。仅允许 openai 兼容 API 后端。
+
+
+def _aux_runtime_status() -> dict:
+    llm_service = getattr(get_state(), "llm_service", None)
+    if llm_service is None:
+        return {}
+    try:
+        return llm_service.aux_status()
+    except Exception:
+        return {}
+
+
+def _aux_llm_service():
+    llm_service = getattr(get_state(), "llm_service", None)
+    if llm_service is None:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "LLM service not initialized."},
+        )
+    return None
+
+
+@router.get("/api/llm/aux")
+def get_aux_models():
+    from config import paths
+    from config.llm_core.aux_config import AUX_SLOTS, AuxLLMRegistry
+
+    registry = AuxLLMRegistry.load_default()
+    return {
+        "slots": list(AUX_SLOTS),
+        "models": registry.to_dict()["models"],
+        "runtime": _aux_runtime_status(),
+        "path": str(paths.aux_models_yaml),
+    }
+
+
+@router.post("/api/llm/aux/save")
+def save_aux_models(body: dict[str, Any]):
+    """持久化 aux_models.yaml 并热应用到运行中的 LLMService。
+
+    逐槽隔离错误：单槽配置非法或构建失败不影响其他槽位，结果在
+    ``applied`` 中逐槽回报（"ok" / "skipped: ..." / "error: ..."）。
+    """
+    from config import paths
+    from config.llm_core.aux_config import AUX_SLOTS, AuxLLMRegistry
+    from config.llm_core.config import LLMConfig
+
+    not_ready = _aux_llm_service()
+    payload = body if "models" in body else {"models": body}
+    registry = AuxLLMRegistry.from_dict(payload if isinstance(payload, dict) else {})
+    path = str(paths.aux_models_yaml)
+    registry.save_yaml(path)
+    if not_ready is not None:
+        return {
+            "status": "saved",
+            "path": path,
+            "applied": {"_": "skipped: LLM service not initialized"},
+        }
+
+    llm_service = get_state().llm_service
+    applied: dict[str, str] = {}
+    for slot in AUX_SLOTS:
+        cfg = registry.slot(slot)
+        errors = cfg.validate()
+        if errors:
+            applied[slot] = "skipped: " + "; ".join(errors)
+            continue
+        if not cfg.enabled:
+            try:
+                llm_service.unregister_aux(slot)
+                applied[slot] = "ok (fallback to primary)"
+            except Exception as exc:
+                applied[slot] = f"error: {exc}"
+            continue
+        try:
+            llm_service.register_aux(
+                slot,
+                LLMConfig(
+                    model=cfg.model,
+                    api_key=cfg.api_key,
+                    base_url=cfg.base_url or None,
+                    max_tokens=cfg.max_tokens,
+                    temperature=cfg.temperature,
+                    device=cfg.device,
+                    backend=cfg.backend,
+                ),
+            )
+            applied[slot] = "ok"
+        except Exception as exc:
+            applied[slot] = f"error: {exc}"
+    return {"status": "ok", "path": path, "applied": applied}
 
 

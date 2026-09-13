@@ -81,6 +81,8 @@ class DirectorCoordinator:
         peek_user_pending_fn: Callable[[str], bool] | None = None,
         is_turn_busy_fn: Callable[[str], bool] | None = None,
         is_pushing_fn: Callable[[str], bool] | None = None,
+        ensure_narrative_fn: Callable[[str], None] | None = None,
+        landmark_briefs_fn: Callable[[], tuple] | None = None,
     ) -> None:
         self._state_store = state_store
         self._snapshot_builder = snapshot_builder
@@ -102,6 +104,10 @@ class DirectorCoordinator:
         self._peek_user_pending_fn = peek_user_pending_fn
         self._is_turn_busy_fn = is_turn_busy_fn
         self._is_pushing_fn = is_pushing_fn
+        # 叙事初始化统一入口（带冷却与预热池恢复），fast 路径不得绕过
+        self._ensure_narrative_fn = ensure_narrative_fn
+        # 1 小时内即将到点的手账地标简报（实时演绎用）
+        self._landmark_briefs_fn = landmark_briefs_fn
 
     @property
     def screenwriter(self) -> Screenwriter:
@@ -122,6 +128,11 @@ class DirectorCoordinator:
 
         meta = getattr(getattr(snapshot, "orchestrator", None), "compose_meta", None) or {}
         base = dict(meta) if isinstance(meta, dict) else {}
+        if self._landmark_briefs_fn is not None:
+            try:
+                base["landmark_briefs"] = list(self._landmark_briefs_fn() or ())
+            except Exception:
+                pass
         sid = str(getattr(snapshot, "session_id", "") or "").strip()
         dialogue_history = ""
         recent_turns: tuple[str, ...] = ()
@@ -505,14 +516,17 @@ class DirectorCoordinator:
             clear_narrative_for_reinit(state)
             state.notes.append("ingress: narrative_reinit after speak_dormant/idle")
         if not state.presence_card.ready or not state.plot_arc.ready:
-            self._screenwriter.init_presence(
-                state,
-                session_id=session_id,
-                user_text=user_text,
-                turn_index=turn_index,
-                materials=materials,
-                background_agent=True,
-            )
+            if self._ensure_narrative_fn is not None:
+                self._ensure_narrative_fn(session_id)
+            else:
+                self._screenwriter.init_presence(
+                    state,
+                    session_id=session_id,
+                    user_text=user_text,
+                    turn_index=turn_index,
+                    materials=materials,
+                    background_agent=True,
+                )
         self._arm_frame(
             session_id,
             user_text=user_text,
@@ -988,18 +1002,7 @@ class DirectorCoordinator:
                 fuel,
                 turn_index=snapshot.signals.turn_index,
             )
-        # 角色后台预约轮询：独立计数器，不复用导演唤醒
-        from agent.soul.speak.responders.request_driven.character.book_poll import (
-            maybe_poll_character_book,
-        )
-
-        book_llm = self._llm
-        maybe_poll_character_book(
-            book_llm,
-            state,
-            session_id=session_id,
-            turn_index=int(snapshot.signals.turn_index or 0),
-        )
+        # 职责分离：预约权归导演（节奏表 timeline → agenda），角色不自约
 
         self._arm_frame(
             session_id,

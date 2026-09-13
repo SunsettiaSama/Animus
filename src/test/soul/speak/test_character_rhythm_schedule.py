@@ -148,6 +148,7 @@ def test_replace_keeps_fired_units_and_one_to_one():
 
 
 def test_apply_rhythm_schedule_writes_director_timeline():
+    """导演是唯一预约来源：timeline 写入议程（source=director，过硬间隔）。"""
     state = SessionSchedulingState(session_id="s1")
     now = time.time()
     schedule = CharacterRhythmSchedule(
@@ -515,49 +516,6 @@ def test_window_consume_pair_via_coordinator():
     assert all(u.unit_id != first for u in state.plot_arc.units)
     assert state.plot_arc.active_unit().intent == "辨认方向"
     assert any("pair_consume: window_end" in n for n in state.notes)
-
-
-def test_booking_next_plot_consumes_pair():
-    from agent.soul.speak.responders.request_driven.character.booking import (
-        apply_bookings_to_agenda,
-    )
-    from agent.soul.speak.responders.request_driven.orchestrator.state.core.interaction_plan import (
-        InteractionUnit,
-        PlotArc,
-    )
-
-    state = SessionSchedulingState(session_id="book")
-    state.plot_arc = PlotArc(
-        summary="爪印",
-        units=[
-            InteractionUnit(intent="蹲下看爪印", status="active", span_polls=2),
-            InteractionUnit(intent="辨认方向", status="pending", span_polls=2),
-        ],
-    )
-    state.plot_arc.current_index = 0
-    first = state.plot_arc.units[0].unit_id
-    second = state.plot_arc.units[1].unit_id
-    state.character_rhythm_schedule = CharacterRhythmSchedule(
-        executable_units=[
-            ExecutableUnit(
-                plot_unit_id=first,
-                status="pending",
-                detail="你蹲下",
-                window_start=time.time(),
-                window_end=time.time() + 120,
-            )
-        ]
-    )
-    agenda = CharacterSpeakAgenda()
-    state.speak_agenda = agenda
-    notes = apply_bookings_to_agenda(
-        agenda,
-        [{"kind": "speak", "at_sec": 40, "reason": "下一对再开口", "plot_unit_id": second}],
-        state=state,
-    )
-    assert any("consume_pair_before_book" in n for n in notes)
-    assert state.plot_arc.active_unit().intent == "辨认方向"
-    assert agenda.entries[0].source == "character"
 
 
 def test_mark_schedule_speak_handoff_uses_agenda_origin():

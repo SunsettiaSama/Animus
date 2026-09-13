@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agent.soul.heartbeat.bridge import EmotionalSignal, MemoryHeartbeatResult
 from agent.soul.memory.domain.enums import MemoryNetwork
 from agent.soul.memory.graph.networks.event.node import ReconstructiveMemory
 from agent.soul.memory.emotion_intensity import node_emotion_intensity
@@ -166,8 +167,6 @@ class RuminationService:
         return out
 
     def tick(self, snapshot):
-        from agent.soul.heartbeat.bridge import EmotionalSignal, MemoryHeartbeatResult
-
         tid = getattr(snapshot, "tick_id", "") or ""
         kws = [k for k in (getattr(snapshot, "attention_keywords", None) or []) if k]
         emotional_ctx = getattr(snapshot, "emotional_state", "") or ""
@@ -265,8 +264,6 @@ class RuminationService:
         return {"node_id": entry.node_id, "entry": entry, "skill": skill_result}
 
     def _build_signal(self, *, picked_id: str, wandered_units, emotional_ctx: str, tick_id: str):
-        from agent.soul.heartbeat.bridge import EmotionalSignal
-
         if picked_id:
             node = self._nodes.get(picked_id)
             if node is not None:

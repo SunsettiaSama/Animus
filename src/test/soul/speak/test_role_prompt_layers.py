@@ -23,15 +23,15 @@ def test_role_identity_is_remote_text_channel():
     for text in (inbound, proactive):
         assert "远程" in text
         assert "短消息" in text
-        assert "「你」指用户" in text
+        assert "「你」指对方" in text
         assert "「我」指你自己" in text
         assert "只指 NPC" in text
         assert "当面" not in text
         assert "body action" not in text
         assert "(speak)" not in text
-    assert "主动发一条短消息" in proactive
+    assert "主动给对方发消息" in proactive
     assert "刚发来一条消息" in inbound
-    assert "先不回" in inbound
+    assert "先不回应" in inbound
 
 
 def test_narrative_snapshot_includes_remote_interaction_channel():
@@ -79,4 +79,5 @@ def test_static_and_dynamic_separation_screenwriter_schedules_injection():
     assert "导演侧检索到的线索" in scheduled.system_extra
     assert "剧情流传递" in scheduled.system_extra
     assert "记忆卡片" in scheduled.system_extra or "一次性记忆" in scheduled.system_extra
-    assert "本轮动态材料" in scheduled.system_extra
+    # 策略与材料分离：动态层头部指令已上移 system role，材料区只含材料小节
+    assert "本轮动态材料" not in scheduled.system_extra

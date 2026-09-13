@@ -45,7 +45,7 @@ POST /api/react/init
   -> TaoLoop.stream
 ```
 
-该 API 明确标记 deprecated；WebUI 主入口是 `/ws/speak/run`。
+该 API 明确标记 deprecated；WebUI 主入口是 `/ws/agent/run`。
 
 ### Scheduler、SubAgent、Flow
 

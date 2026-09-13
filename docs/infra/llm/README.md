@@ -33,6 +33,14 @@ LLMService(transformers_backend, vllm_backend, clone_backend)
 
 `LLMHandle` 完整转发四个 `BaseLLM` 方法。`register_aux()`、`get_aux_llm()`、`unregister_aux()` 管理不负责 subprocess 生命周期的命名辅助模型：`register_aux()` 直接调用 `LLM(cfg)`，因此既可创建 OpenAI 兼容模型，也可在 `backend="transformers"` 时创建进程内 `CausalLLM`。未命中名称时 `get_aux_llm()` 回退到主模型。
 
+### 次模型（aux）如何配置
+
+载体：`config/llm_core/aux_models.yaml`（dataclass 在 `src/config/llm_core/aux_config.py`：`AuxLLMRegistry` / `AuxLLMConfig`）。槽位与 soul 消费方 `agent/soul/handlers/api/_llm.py` 的 aux 名一一对应：`life / persona / memory / presence / speak / speak_director / heartbeat`。
+
+- 每槽位 `enabled: false`（默认）或字段不完整时，`resolve_module_llm` 回退主模型；
+- WebUI 设置页「模型 → 次语言模型（Aux）」可编辑并热应用（`POST /api/llm/aux/save`）；webui 启动时也在 Soul 初始化之前自动加载注册；
+- 协议约定 aux 只允许 `openai` 兼容 API 后端（文档语境下的 "API-only"）：本地大模型的进程生命周期必须经 `LLMService.start/reload` 管理，因此 aux 配置页禁用 `transformers`/`vllm`。
+
 ## 四种 backend
 
 `LLMService` 识别以下 `LLMConfig.backend`：

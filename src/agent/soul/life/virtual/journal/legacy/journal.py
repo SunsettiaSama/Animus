@@ -61,6 +61,29 @@ class LifeJournal:
         """返回已到触发时间但尚未处理的地标（pending / overdue）。"""
         return [lm for lm in self._landmarks if lm.is_due()]
 
+    def upcoming_landmarks(self, *, within_sec: float = 3600.0) -> list[Landmark]:
+        """返回 1 小时内（可调）即将到点、尚未处理的地标，按时间升序。
+
+        供叙事侧（Speak 编剧大纲）提前把这些地标接进当前故事线实时演绎，
+        而不是等它们到点后才作为孤立的填充事件掉进来。
+        """
+        now = datetime.now(timezone.utc)
+        out: list[Landmark] = []
+        for lm in self._landmarks:
+            if lm.status != LandmarkStatus.pending:
+                continue
+            try:
+                at = datetime.fromisoformat(str(lm.scheduled_at))
+            except (TypeError, ValueError):
+                continue
+            if at.tzinfo is None:
+                at = at.replace(tzinfo=timezone.utc)
+            delta = (at - now).total_seconds()
+            if 0 < delta <= float(within_sec):
+                out.append(lm)
+        out.sort(key=lambda lm: lm.scheduled_at)
+        return out
+
     def scan_overdue(self) -> list[Landmark]:
         """扫描并标记所有超时地标，返回标记后的列表（服务重启时调用）。"""
         overdue: list[Landmark] = []

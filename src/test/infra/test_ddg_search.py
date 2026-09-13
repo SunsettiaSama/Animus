@@ -14,20 +14,20 @@ from infra.network.search.result import SearchResult
 pytestmark = pytest.mark.network
 
 
-# ©¤©¤ helpers ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _print_results(results: list[SearchResult], label: str) -> None:
-    print(f"\n{'©¤' * 60}")
+    print(f"\n{'â”€' * 60}")
     print(f"  {label}  ({len(results)} results)")
-    print(f"{'©¤' * 60}")
+    print(f"{'â”€' * 60}")
     for i, r in enumerate(results, 1):
         print(f"[{i}] {r.title}")
         print(f"    {r.url}")
-        print(f"    {r.snippet[:120].rstrip()}¡­" if len(r.snippet) > 120 else f"    {r.snippet}")
+        print(f"    {r.snippet[:120].rstrip()}â€¦" if len(r.snippet) > 120 else f"    {r.snippet}")
         print()
 
 
-# ©¤©¤ tests ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€ tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_ddg_available():
     b = DDGBackend()
@@ -40,7 +40,7 @@ def test_ddg_available():
 def test_ddg_basic_search():
     b = DDGBackend()
     results = b.search("Python programming language", max_results=3, language="auto", categories="general")
-    _print_results(results, "DDGBackend ¡¤ 'Python programming language'")
+    _print_results(results, "DDGBackend Â· 'Python programming language'")
     assert len(results) > 0, "Expected at least 1 result"
     for r in results:
         assert isinstance(r, SearchResult)
@@ -51,15 +51,15 @@ def test_ddg_basic_search():
 
 def test_ddg_chinese_query():
     b = DDGBackend()
-    results = b.search("Python ½Ì³Ì ÈëÃÅ", max_results=3, language="auto", categories="general")
-    _print_results(results, "DDGBackend ¡¤ 'Python ½Ì³Ì ÈëÃÅ'")
+    results = b.search("Python æ•™ç¨‹ å…¥é—¨", max_results=3, language="auto", categories="general")
+    _print_results(results, "DDGBackend Â· 'Python æ•™ç¨‹ å…¥é—¨'")
     assert len(results) > 0, "Expected at least 1 result"
 
 
 def test_ddg_max_results():
     b = DDGBackend()
     results = b.search("machine learning", max_results=5, language="auto", categories="general")
-    _print_results(results, "DDGBackend ¡¤ max_results=5")
+    _print_results(results, "DDGBackend Â· max_results=5")
     assert len(results) <= 5
 
 
@@ -68,11 +68,11 @@ def test_engine_uses_ddg():
     name = engine.active_backend_name
     print(f"\n  SearchEngine active backend: {name!r}")
     results = engine.search("ReAct agent LLM", max_results=3)
-    _print_results(results, f"SearchEngine ({name}) ¡¤ 'ReAct agent LLM'")
+    _print_results(results, f"SearchEngine ({name}) Â· 'ReAct agent LLM'")
     assert len(results) > 0, "SearchEngine returned no results"
 
 
-# ©¤©¤ entrypoint ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€ entrypoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 if __name__ == "__main__":
     tests = [

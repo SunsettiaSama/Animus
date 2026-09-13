@@ -423,6 +423,8 @@ class OpenAILLM(BaseLLM):
             base_url=cfg.base_url,
             max_tokens=cfg.max_tokens,
             temperature=cfg.temperature,
+            frequency_penalty=cfg.frequency_penalty,
+            presence_penalty=cfg.presence_penalty,
         )
         self._system_message = SystemMessage(content=cfg.system_prompt) if cfg.system_prompt else None
 

@@ -188,7 +188,7 @@ class TestCycleDetection:
 
     def test_cycle_detected_via_validator(self):
         doc = PlanParser.parse(_PLAN_MD)
-        # Introduce a cycle: run_tests â†?add_deps â†?init_repo â†?run_tests
+        # Introduce a cycle: run_tests éˆ«?add_deps éˆ«?init_repo éˆ«?run_tests
         doc.get_task("init_repo").depends_on = ["run_tests"]
         errors = PlanValidator().validate(doc)
         assert any("cycle" in e.lower() for e in errors)

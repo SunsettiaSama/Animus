@@ -77,7 +77,14 @@ sys.path.insert(0, str(SRC))
 # ── 真实模块导入（stubs 已就位）──────────────────────────────────────────────────
 
 from config.agent.memory.memory_config import LongTermMemoryConfig
-from agent.soul.memory.long_term.store import LongTermStore, MemoryEntry, MEMORIES_FILE
+
+try:
+    from agent.soul.memory.long_term.store import LongTermStore, MemoryEntry, MEMORIES_FILE
+except ModuleNotFoundError:
+    # agent.soul.memory.long_term 已在记忆模块重构中移除（现行为 event/social 记忆图）
+    import pytest
+
+    pytest.skip("agent.soul.memory.long_term 已移除，测试保留待删除", allow_module_level=True)
 
 
 # ── 辅助工厂 ──────────────────────────────────────────────────────────────────

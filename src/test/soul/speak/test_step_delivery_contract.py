@@ -30,7 +30,7 @@ def test_origin_user_forces_user_utterance_mode():
         user_text="听得到吗",
     )
     assert "mode=user_utterance" not in snap.interaction_channel
-    assert "对方刚发来的文字往来" in snap.interaction_channel
+    assert "本拍是对方刚发来的文字" in snap.interaction_channel
     assert snap.user_activity == "正在与你文字往来"
     assert snap.silence_log_text == ""
 
@@ -60,7 +60,7 @@ def test_user_request_binds_unique_delivery_step():
     )
     # 无 active plot_arc 时仍可绑定已有 due 节奏卡（有 plot_unit_id）
     assert req.executable_unit_id == "exec-due"
-    assert "user_utterance" in req.narrative.interaction_channel or "对方刚发来的文字往来" in req.narrative.interaction_channel
+    assert "user_utterance" in req.narrative.interaction_channel or "本拍是对方刚发来的文字" in req.narrative.interaction_channel
 
 
 def test_reserve_then_consume_delivery_step():

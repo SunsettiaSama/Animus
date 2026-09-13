@@ -1,16 +1,16 @@
 """
-ReAct Parser Robustness ²âÊÔ
+ReAct Parser Robustness æµ‹è¯•
 ============================
-¸²¸ÇÈı²ã¶µµ×»úÖÆµÄ¸÷¸ö×é¼ş£º
-  - parser.py: ParseQuality, diagnose(), ¿íËÉÍÆ¶Ï
+è¦†ç›–ä¸‰å±‚å…œåº•æœºåˆ¶çš„å„ä¸ªç»„ä»¶ï¼š
+  - parser.py: ParseQuality, diagnose(), å®½æ¾æ¨æ–­
   - repair.py: build_repair_prompt(), repair()
-  - executor.py: difflib ¹¤¾ßÃûÄ£ºıÆ¥Åä
-  - tao.py stream(): Èı²ã±£»¤Á´ĞĞÎª£¨Ä£Äâ¼¯³É£©
+  - executor.py: difflib å·¥å…·åæ¨¡ç³ŠåŒ¹é…
+  - tao.py stream(): ä¸‰å±‚ä¿æŠ¤é“¾è¡Œä¸ºï¼ˆæ¨¡æ‹Ÿé›†æˆï¼‰
 
-ÔËĞĞ·½Ê½£º
+è¿è¡Œæ–¹å¼ï¼š
   cd E:/ReAct
   python -m pytest src/test/test_parser_robustness.py -v
-  # »òÖ±½Ó£º
+  # æˆ–ç›´æ¥ï¼š
   python src/test/test_parser_robustness.py
 """
 
@@ -23,11 +23,11 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
-# ©¤©¤ sys.path + react package stub ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€ sys.path + react package stub â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 # Stub `react` as an empty package with the real __path__ so that submodules
 # can be loaded individually without executing react/__init__.py (which would
-# trigger the full TaoLoop ¡ú LangChain import chain).
+# trigger the full TaoLoop â†’ LangChain import chain).
 
 SRC = Path(__file__).resolve().parent.parent.parent
 REACT_DIR = SRC / "agent" / "react"
@@ -62,7 +62,7 @@ _pkg_stub("agent.react.prompt", REACT_DIR / "prompt")
 # Stub `react.action` package similarly
 _pkg_stub("agent.react.action", REACT_DIR / "action")
 
-# ©¤©¤ langchain_core stubs ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€ langchain_core stubs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 _lc_core      = _pkg_stub("langchain_core")
 _lc_tools_mod = _mod_stub("langchain_core.tools")
@@ -81,7 +81,7 @@ _lc_tools_mod.BaseTool = _BaseTool
 for _cls_name in ("BaseMessage", "SystemMessage", "HumanMessage", "AIMessage"):
     setattr(_lc_msgs_mod, _cls_name, type(_cls_name, (), {"__init__": lambda self, content="", **kw: setattr(self, "content", content)}))
 
-# BaseOutputParser ¡ª real base class for ReActOutputParser
+# BaseOutputParser â€” real base class for ReActOutputParser
 class _BaseOutputParser:
     def __class_getitem__(cls, item):  # make it subscriptable: BaseOutputParser[ParseResult]
         return cls
@@ -96,7 +96,7 @@ _lc_core.output_parsers = _lc_parse_mod
 _lc_core.tools = _lc_tools_mod
 _lc_core.messages = _lc_msgs_mod
 
-# ©¤©¤ pydantic stub ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€ pydantic stub â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 _pydantic = _pkg_stub("pydantic")
 _pydantic.BaseModel  = type("BaseModel", (), {
@@ -107,7 +107,7 @@ _pydantic.ValidationError = Exception
 _pydantic.Field = lambda *a, **kw: None
 _pydantic.ConfigDict = lambda **kw: dict(kw)
 
-# ©¤©¤ Other optional stubs ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€ Other optional stubs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 for _name in [
     "langchain_community", "langchain_community.embeddings",
@@ -116,7 +116,7 @@ for _name in [
 ]:
     sys.modules.setdefault(_name, _mod_stub(_name))
 
-# ©¤©¤ Now import the modules under test ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+# â”€â”€ Now import the modules under test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 from agent.react.prompt.parser import (   # noqa: E402
     ParseQuality,
@@ -129,9 +129,9 @@ from agent.react.prompt.repair import build_repair_prompt, repair  # noqa: E402
 from agent.react.action.executor import ActionExecutor              # noqa: E402
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 1. ParseQuality enum
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TestParseQualityEnum:
     def test_values(self):
@@ -140,9 +140,9 @@ class TestParseQualityEnum:
         assert ParseQuality.FAILED.value  == "failed"
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
-# 2. CLEAN quality ¡ª standard labels
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# 2. CLEAN quality â€” standard labels
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TestParserClean:
     def test_standard_tool_call(self):
@@ -180,9 +180,9 @@ class TestParserClean:
 
     def test_cjk_separator(self):
         raw = (
-            "Thought£º¿´¿´ÌìÆø\n"
-            "Action£ºweb_search\n"
-            'Action Input£º{"query": "½ñÈÕÌìÆø"}'
+            "Thoughtï¼šçœ‹çœ‹å¤©æ°”\n"
+            "Actionï¼šweb_search\n"
+            'Action Inputï¼š{"query": "ä»Šæ—¥å¤©æ°”"}'
         )
         r = parse_llm_output(raw)
         assert r.quality == ParseQuality.CLEAN
@@ -199,9 +199,9 @@ class TestParserClean:
         assert r.action_input["answer"] == "hello"
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
-# 3. LENIENT quality ¡ª Layer 1b heuristic inference
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# 3. LENIENT quality â€” Layer 1b heuristic inference
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TestParserLenient:
     TOOLS = frozenset({"web_search", "knowledge_save", "tool_search"})
@@ -226,7 +226,7 @@ class TestParserLenient:
         assert r.action == "tool_search"
 
     def test_cjk_verb(self):
-        raw = "µ÷ÓÃ web_search À´²éÑ¯Ïà¹ØĞÅÏ¢¡£"
+        raw = "è°ƒç”¨ web_search æ¥æŸ¥è¯¢ç›¸å…³ä¿¡æ¯ã€‚"
         r = parse_llm_output(raw, tool_names=self.TOOLS)
         assert r.quality == ParseQuality.LENIENT
         assert r.action == "web_search"
@@ -245,12 +245,12 @@ class TestParserLenient:
     def test_no_tool_names_disables_lenient(self):
         raw = "I'll use web_search to search."
         r = parse_llm_output(raw, tool_names=None)
-        assert r.is_finish   # no tool_names ¡ú lenient disabled ¡ú implicit finish
+        assert r.is_finish   # no tool_names â†’ lenient disabled â†’ implicit finish
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 4. FAILED / implicit-finish degradation
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TestParserFailed:
     def test_plain_prose_is_implicit_finish(self):
@@ -267,9 +267,9 @@ class TestParserFailed:
         assert r.is_finish
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 5. diagnose()
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TestDiagnose:
     def test_returns_string(self):
@@ -293,7 +293,7 @@ class TestDiagnose:
         assert "correct" in msg
 
     def test_missing_action_input_described(self):
-        # Valid action but no Action Input ¡ú empty dict
+        # Valid action but no Action Input â†’ empty dict
         raw = "Thought: hmm\nAction: web_search"
         r = parse_llm_output(raw)
         msg = diagnose(r)
@@ -301,9 +301,9 @@ class TestDiagnose:
         assert "Action Input" in msg or "correct" in msg
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 6. build_repair_prompt()
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TestBuildRepairPrompt:
     def test_contains_raw_text(self):
@@ -326,12 +326,12 @@ class TestBuildRepairPrompt:
     def test_bilingual(self):
         p = build_repair_prompt("x", "diag", ["tool_a"])
         assert "Rewrite" in p       # English
-        assert "ÖØĞ´" in p           # Chinese
+        assert "é‡å†™" in p           # Chinese
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 7. repair()
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TestRepairFunction:
     TOOLS = ["web_search", "knowledge_save"]
@@ -376,7 +376,7 @@ class TestRepairFunction:
         assert raised, "repair() should propagate LLM exceptions"
 
     def test_repair_output_that_becomes_finish_is_accepted(self):
-        # repair LLM returns a finish-style output ¡ª still useful
+        # repair LLM returns a finish-style output â€” still useful
         fixed = (
             "Thought: I know.\n"
             "Action: finish\n"
@@ -386,9 +386,9 @@ class TestRepairFunction:
         assert result == fixed
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 8. _infer_action() helper
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TestInferAction:
     TOOLS = frozenset({"web_search", "knowledge_save", "tool_search"})
@@ -403,7 +403,7 @@ class TestInferAction:
         assert _infer_action("Calling tool_search now.", self.TOOLS) == "tool_search"
 
     def test_cjk_verb(self):
-        assert _infer_action("µ÷ÓÃ web_search À´²éÑ¯", self.TOOLS) == "web_search"
+        assert _infer_action("è°ƒç”¨ web_search æ¥æŸ¥è¯¢", self.TOOLS) == "web_search"
 
     def test_first_line_bare_name(self):
         assert _infer_action("web_search\n{}", self.TOOLS) == "web_search"
@@ -418,9 +418,9 @@ class TestInferAction:
         assert _infer_action("USING web_search for this", self.TOOLS) == "web_search"
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
-# 9. ActionExecutor ¡ª fuzzy tool name matching
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# 9. ActionExecutor â€” fuzzy tool name matching
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 # Minimal BaseAction stand-in (no pydantic, no langchain needed for executor)
 class _FakeAction:
@@ -453,12 +453,12 @@ class TestExecutorFuzzyMatch:
     def test_completely_unknown_name_returns_error(self):
         ex, _ = self._make_executor_with_instance("web_search")
         result = ex.run(json.dumps({"action": "fly_to_moon", "args": {}}))
-        assert "Î´Öª¹¤¾ß" in result
+        assert "æœªçŸ¥å·¥å…·" in result
 
     def test_short_name_below_cutoff_returns_error(self):
         ex, _ = self._make_executor_with_instance("web_search")
         result = ex.run(json.dumps({"action": "xyz", "args": {}}))
-        assert "Î´Öª¹¤¾ß" in result
+        assert "æœªçŸ¥å·¥å…·" in result
 
     def test_fuzzy_works_for_registry_class(self):
         ex = ActionExecutor()
@@ -487,9 +487,9 @@ class TestExecutorFuzzyMatch:
         assert "tool_b" in available
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 10. Three-layer chain: direct simulation
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class TestThreeLayerChain:
     """
@@ -509,9 +509,9 @@ class TestThreeLayerChain:
     ) -> dict:
         """
         Execute the three-layer chain and return a status dict.
-        repair_response=None ¡ú repair LLM raises RuntimeError (simulate failure)
-        repair_response="__skip__" ¡ú repair not set up (used when layer2 won't trigger)
-        retry_response ¡ú text that would come from the retry LLM call
+        repair_response=None â†’ repair LLM raises RuntimeError (simulate failure)
+        repair_response="__skip__" â†’ repair not set up (used when layer2 won't trigger)
+        retry_response â†’ text that would come from the retry LLM call
         """
         tool_names = self.TOOLS
         result = parse_llm_output(raw, tool_names=tool_names)
@@ -527,7 +527,7 @@ class TestThreeLayerChain:
         ):
             triggered_l2 = True
             if repair_response is None:
-                pass  # simulate LLM failure ¡ú no repair
+                pass  # simulate LLM failure â†’ no repair
             elif repair_response != "__skip__":
                 if repair_response.strip():
                     reparse = parse_llm_output(repair_response.strip(), tool_names=tool_names)
@@ -567,7 +567,7 @@ class TestThreeLayerChain:
         assert not out["l0"]
 
     def test_implicit_finish_no_l2_triggered(self):
-        # action="" ¡ú implicit finish (FAILED+is_finish=True) ¡ú Layer 2 guard
+        # action="" â†’ implicit finish (FAILED+is_finish=True) â†’ Layer 2 guard
         # requires `not result.is_finish`, so L2 should NOT fire.
         raw = "I have no idea what to do."
         out = self._run_chain(raw)
@@ -617,7 +617,7 @@ class TestThreeLayerChain:
         tool_names = self.TOOLS
         triggered_l0 = False
 
-        # L2 "fails" ¡ú no improvement
+        # L2 "fails" â†’ no improvement
         # L0
         if fake_result.quality == ParseQuality.FAILED and not fake_result.is_finish:
             for _ in range(1):
@@ -661,9 +661,9 @@ class TestThreeLayerChain:
         assert fake_result.quality == ParseQuality.CLEAN
 
 
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Entry point for direct execution
-# ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 if __name__ == "__main__":
     import traceback

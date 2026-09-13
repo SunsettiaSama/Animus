@@ -1,5 +1,7 @@
 ﻿from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 from datetime import datetime
@@ -8,6 +10,8 @@ from zoneinfo import ZoneInfo
 from agent.soul.heartbeat.bridge import EmotionalSignal, MemoryHeartbeatResult
 
 from .discharge import ImpulseDischarge
+
+logger = logging.getLogger(__name__)
 from .gateway_result import GatewayResult
 from .gateway import PresenceGateway
 from .narrative import compose_self_narrative
@@ -327,10 +331,16 @@ class PresenceService:
                 last_distilled_unit_id=portrait_state.last_distilled_unit_id,
             )
             if batch:
-                session.state.recent_portrait = self._unit_distill_writer.distill_batch(
-                    batch,
-                    max_chars=UNIT_DISTILL_MAX_CHARS,
-                )
+                try:
+                    session.state.recent_portrait = self._unit_distill_writer.distill_batch(
+                        batch,
+                        max_chars=UNIT_DISTILL_MAX_CHARS,
+                    )
+                except ValueError as err:
+                    # 蒸馏输出不合规不再打断 ingest：保旧画像，批次水位不动，下批换料重试
+                    logger.warning(
+                        "[presence] unit distill skipped: %s", err,
+                    )
 
         self._persist(session_id)
 

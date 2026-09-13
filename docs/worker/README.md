@@ -5,10 +5,11 @@ Worker，并维护任务状态、跨轮画像和 DAG Flow。它不负责 Soul/Sp
 
 ## 与 agent 的边界
 
-- `agent/soul/speak`：主对话。WebUI `/ws/speak/run` 默认进入这里，不走 TaoLoop。
+- `agent/inbound`：会话首轮 Speak/Worker 分类。WebUI `/ws/agent/run` 在这里判定。
+- `agent/soul/speak`：主对话。分类为 speak 后进入这里，不走 TaoLoop。
 - `agent/react`：CLI 与 legacy `/api/react/*`、`/ws/react/run` 的 ReAct 实现。
 - `worker/react`：确认后的 Worker、Worker SubAgent、Worker Flow 节点使用的 ReAct 实现。
-- `worker/work`：从 Speak 接管任务的确认与生命周期门面。
+- `worker/work`：执行确认与生命周期门面，不再用正则 matcher 做主判定。
 - `worker/state`：Worker 专属 AgentState，不是 Soul persona，也不是 ReAct
   `MemoryProcessor`。
 - `worker/flow`：Worker 的 base/cluster Flow 轨道。
@@ -16,12 +17,11 @@ Worker，并维护任务状态、跨轮画像和 DAG Flow。它不负责 Soul/Sp
 ## WorkerWorkService 确认链
 
 ```text
-/ws/speak/run user_message
-  -> WorkIntentMatcher.build_signal()
+/ws/agent/run 首轮 user_message
+  -> agent.inbound.InboundRouter.handle
+  -> WorkIntentSignal(reason=agent_inbound_*)
   -> WorkerWorkService.submit_intent()
-       detected
-       -> declined -> work_fallback_to_speak
-       -> pending_confirmation -> work_confirmation_required
+       pending_confirmation -> work_confirmation_required
   -> work_confirmation_response
        reject/timeout -> declined -> fallback Speak
        approve -> starting -> daemon worker thread -> running
@@ -33,7 +33,8 @@ Worker，并维护任务状态、跨轮画像和 DAG Flow。它不负责 Soul/Sp
 
 `WorkerWorkService` 维护 `work_id -> WorkRecord`、合法状态迁移、60 秒默认确认超时、会话
 event sink、进度快照和 abort。未经 `pending_confirmation -> starting` 转换不会启动 Worker。
-短描述或闲聊式输入可被轻量判定直接拒绝并回落 Speak。
+`reason` 以 `agent_inbound` 开头的信号跳过短文本/闲聊二次分类，只做执行确认。
+非 inbound 信号仍可被轻量判定直接拒绝并回落 Speak。
 
 这层确认决定“是否把整项工作交给 Worker”，是任务级 confirmation。它不同于 TaoLoop
 RiskGate 的工具级 approval：后者只在已运行的 ReAct 中审批某个工具调用。

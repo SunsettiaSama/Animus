@@ -1,7 +1,7 @@
 # agent/adapters
 
 该目录连接 Agent/Soul 领域对象与 WebUI、会话队列、通知和 Tao/Soul 边界。不要把它概括为
-所有 WebUI 都进入 ConvLoop：当前主 WebUI 对话走 Soul/Speak，ReAct 路由是 legacy。
+所有 WebUI 都进入 ConvLoop：当前主 WebUI 对话走 `/ws/agent/run` → `agent.inbound` → Soul/Speak 或 Worker，ReAct 路由是 legacy。
 
 ## 主要入口
 
@@ -18,17 +18,18 @@
 
 ## WebUI 主对话
 
-`src/webui/routers/speak.py` 的 `/ws/speak/run` 直接调用 `SoulService.speak_*` /
-`SpeakService`。普通输入不会调用 `do_react_init()`、`SessionManager`、`ConvLoop` 或
-`TaoLoop`。
-
-路由在 Speak 前调用 `WorkerWorkService.maybe_signal()`：
+`src/webui/routers/agent.py` 的 `/ws/agent/run` 调用 `agent.inbound.InboundRouter`，
+再进入 `SoulService.speak_run_turn` 或 `WorkerWorkService.submit_intent`。
+`/ws/speak/run` 只调用 Speak，不分类。普通输入不会调用 `do_react_init()`、
+`SessionManager`、`ConvLoop` 或 `TaoLoop`。
 
 ```text
-无任务意图 -> Speak
-疑似任务 -> work_confirmation_required
-  拒绝/超时 -> work_fallback_to_speak -> Speak
-  同意 -> WorkerAdapter -> worker.runner -> worker.react.TaoLoop
+首轮 user_message
+  -> InboundRouter.handle
+       speak -> Speak
+       work  -> work_confirmation_required
+         拒绝/超时 -> work_fallback_to_speak -> Speak
+         同意 -> WorkerAdapter -> worker.runner -> worker.react.TaoLoop
 ```
 
 这是任务级 work confirmation。legacy `/ws/react/run` 的 `approval_response` 则是

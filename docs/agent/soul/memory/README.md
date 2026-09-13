@@ -1,6 +1,6 @@
 # agent/soul/memory
 
-Memory 是事件与社交两张逻辑网络共享的记忆图，支持 MySQL 和本地 JSON 两种持久化后端；向量检索是可选增强。
+Memory 是事件与社交两张逻辑网络共享的记忆图，支持 MySQL 和本地 JSON 两种持久化后端；向量检索是可选增强。另有一条与双网完全隔离的增量式 stack 旁路基座（`bypass/`），对外与主图讲同一套检索协议（`ports.MemoryBasePort`：`ingest / recall / search`），可整座替换用于对比实验（见 `src/evals/memory_humaneness/`）。
 
 ## 结构
 
@@ -14,11 +14,13 @@ src/agent/soul/memory/
 │   └── networks/store/
 │       ├── mysql/
 │       └── json/
+├── bypass/                     增量式 stack 旁路基座（与 event/social 隔离）
 ├── io/session/                 Speak 会话、画像、压缩块
 ├── io/life/                    Life 体验擢升
 ├── emergence/                  扩散激活与点查询
 ├── rumination/
 ├── sleep/
+├── ports/                      store / 向量 / 检索协议（含 MemoryBasePort）
 └── retriever.py
 ```
 

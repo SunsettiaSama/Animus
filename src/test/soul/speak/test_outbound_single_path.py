@@ -7,7 +7,6 @@ from agent.soul.speak.responders.request_driven.character.contracts import (
     CharacterReplyRequest,
     CharacterReplyResult,
 )
-from agent.soul.speak.responders.request_driven.character.decision import TurnDecision
 from agent.soul.speak.responders.request_driven.composer.projectors.dynamic_layer import (
     DynamicLayerMaterials,
     DynamicLayerSchedule,
@@ -22,20 +21,10 @@ from agent.soul.speak.session.queue.user import UserInputItem
 from test.soul.speak.test_director_single_character_request import _make_speak_service
 
 
-def test_will_speak_does_not_merge_flush_into_answer(monkeypatch):
+def test_hot_reply_answer_not_polluted(monkeypatch):
+    """热路径直达角色生成：决策层已删，正文不得再被决策 flush 文本污染。"""
     service = _make_speak_service()
     sid = "live:flush"
-    decision = TurnDecision(
-        doing="看他",
-        mood="松",
-        action="speak",
-        reason="他先开口了",
-        flush_body="把竹篾搁在膝上",
-    )
-    monkeypatch.setattr(
-        "agent.soul.speak.responders.request_driven.character.decision.decide_hot_turn",
-        lambda *a, **k: decision,
-    )
     paced = build_delivery_plan(
         segments=[ReplySegment(text="干活归干活", wait_ms=0, continuity="finish")],
         continuity="finish",
@@ -79,7 +68,6 @@ def test_will_speak_does_not_merge_flush_into_answer(monkeypatch):
     service._character_runtime = _Runtime()
     service._compose_gateway = _Gw()
     service._compose_manager_materials = {}
-    monkeypatch.setattr(service, "_character_decision_llm", lambda: None)
     monkeypatch.setattr(
         service,
         "_director_dynamic_schedule",

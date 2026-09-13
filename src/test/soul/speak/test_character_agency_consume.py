@@ -109,7 +109,7 @@ def test_character_gets_full_interaction_record():
     assert "在干啥呢，借我瞅瞅" in extra
     assert "咦——这绳头" in extra
     assert "对话轨迹" not in extra
-    assert "顺着上一句往下说" in extra
+    assert "据此自然延续" in extra
 
 
 def test_injected_materials_are_fully_consumed():

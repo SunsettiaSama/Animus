@@ -1,4 +1,4 @@
-"""Unit tests for Speak→Worker intent matcher and state machine."""
+"""Unit tests for Agent inbound → Worker state machine."""
 from __future__ import annotations
 
 import sys
@@ -8,31 +8,21 @@ _SRC = Path(__file__).resolve().parents[2]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from worker.work.matcher import WorkIntentMatcher
 from worker.work.service import WorkerWorkService
-from worker.work.types import ALLOWED_TRANSITIONS, WorkStatus
+from worker.work.types import ALLOWED_TRANSITIONS, WorkIntentSignal, WorkStatus
 
 
-def test_matcher_requires_you_and_verb():
-    m = WorkIntentMatcher()
-    assert m.match_text("今天聊聊这个设计").matched is False
-    hit = m.match_text("你帮我整理一下 webui")
-    assert hit.matched is True
-    assert "你" in hit.matched_terms
-    assert "帮" in hit.matched_terms or "整理" in hit.matched_terms
-
-
-def test_matcher_build_signal():
-    m = WorkIntentMatcher()
-    sig = m.build_signal(
-        "你帮我改一下路由",
+def _signal(question: str = "你帮我整理一下 webui 模块") -> WorkIntentSignal:
+    return WorkIntentSignal(
+        work_id="work-1",
         session_id="s1",
         channel_id="c1",
         gen_id="g1",
+        question=question,
+        matched_terms=["llm"],
+        reason="agent_inbound_route",
+        confidence=0.9,
     )
-    assert sig is not None
-    assert sig.session_id == "s1"
-    assert sig.question.startswith("你帮我")
 
 
 def test_allowed_transitions_minimal():
@@ -48,13 +38,7 @@ def test_service_ask_confirmation_and_decline_fallback():
     svc = WorkerWorkService(llm_cfg_path="config/llm_core/config.yaml", confirmation_timeout_sec=30)
     svc.set_default_sink(events.append)
 
-    sig = svc.maybe_signal(
-        "你帮我整理一下 webui 模块",
-        session_id="sess-a",
-        channel_id="chan-a",
-        gen_id="gen-a",
-    )
-    assert sig is not None
+    sig = _signal()
     decision = svc.submit_intent(sig)
     assert decision.decision == "needs_work"
     assert decision.requires_user_confirmation is True
@@ -74,13 +58,16 @@ def test_service_auto_decline_short():
     events: list[dict] = []
     svc = WorkerWorkService(llm_cfg_path="config/llm_core/config.yaml")
     svc.set_default_sink(events.append)
-    sig = svc.maybe_signal(
-        "你写",
+    sig = WorkIntentSignal(
+        work_id="regex-work",
         session_id="s",
         channel_id="c",
         gen_id="g",
+        question="你写",
+        matched_terms=["你", "写"],
+        reason="you_and_task_verb",
+        confidence=0.65,
     )
-    assert sig is not None
     decision = svc.submit_intent(sig)
     assert decision.decision == "insufficient"
     assert decision.fallback_to_speak is True

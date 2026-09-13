@@ -7,6 +7,7 @@ from .types import (
 
 __all__ = [
     "DEFAULT_SPEAK_RESPONDER",
+    "DirectPipelineRunner",
     "RhythmPipelineRunner",
     "SpeakResponderName",
     "SpeakResponderRouter",
@@ -20,6 +21,10 @@ def __getattr__(name: str):
         from .rhythm import RhythmPipelineRunner
 
         return RhythmPipelineRunner
+    if name == "DirectPipelineRunner":
+        from .direct import DirectPipelineRunner
+
+        return DirectPipelineRunner
     if name == "SpeakResponderRouter":
         from .router import SpeakResponderRouter
 

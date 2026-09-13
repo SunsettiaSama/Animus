@@ -1,8 +1,8 @@
 """
-SkillRunner â€?smoke-gate BenchmarkRunner that validates skill action schemas
+SkillRunner éˆ¥?smoke-gate BenchmarkRunner that validates skill action schemas
 and verifies each skill can be instantiated without errors.
 
-Gate: smoke â€?no LLM required, no network. Tests Pydantic validation only.
+Gate: smoke éˆ¥?no LLM required, no network. Tests Pydantic validation only.
 """
 from __future__ import annotations
 
@@ -154,7 +154,7 @@ class SkillRunner:
     """
     BenchmarkRunner that validates skill action class schemas.
 
-    Gate: smoke â€?only tests importability, instantiation, and Pydantic validation.
+    Gate: smoke éˆ¥?only tests importability, instantiation, and Pydantic validation.
     No LLM or network required.
     """
 

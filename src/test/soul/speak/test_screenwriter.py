@@ -307,10 +307,10 @@ def test_role_layers_render_silence_and_narrative():
     )
     text = layers.render_system_extra()
     assert "对方刚发来的即时往来" not in text
-    assert "此刻情景如下" in text
+    assert "此刻情景（客观材料）" in text
     assert "舞台信息" in text
     assert "临场事件纪要" not in text
-    assert "短消息" in text
+    assert "沉默" in text
 
 
 def test_fallback_delivery_plan_for_silence_nonempty():

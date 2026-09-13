@@ -7,6 +7,18 @@ from typing import Any
 _USER_PREFIXES = ("用户：", "用户:", "U:", "u:", "对方：", "对方:")
 _AGENT_MARKERS = ("｜角色：", "|角色：", "角色：", "A:", "a:")
 
+# 用户存在软约束：编剧不导演用户，但故事线要合理容纳交互（含「暂时不回」的停顿）。
+# 各书写席位（大纲/unit/场记/演出表）共用。
+USER_PRESENCE_RULE = (
+    "用户是屏幕外的真实一方：不描写用户的动作、行踪与心情，不替用户说话；"
+    "用户那边发生了什么只以交互记录为准，没发生的不要编。\n"
+    "但用户与角色的往来要被故事线合理容纳：用户随时可能发来消息；"
+    "角色可能立刻回、可能拖一拖、也可能正烦闷先搁着不回——"
+    "这些都是正常的一拍，不是剧情中断。\n"
+    "安排剧情时给交互留出余地：任何一步都容得下「消息来了但角色暂时没接」，"
+    "后续步骤不因用户暂时沉默而卡死或倒退。\n"
+)
+
 
 def _user_ingress_lines(
     last_user_text: str,
@@ -66,6 +78,16 @@ class WritingMaterials:
     memory_texts: tuple[str, ...] = ()
     share_texts: tuple[str, ...] = ()
     director_memory_texts: tuple[str, ...] = ()
+
+    # 1 小时内即将到点的手账地标（角色自己预约的叙事时刻）
+    landmark_briefs: tuple[str, ...] = ()
+
+    def render_landmarks(self) -> str:
+        if not self.landmark_briefs:
+            return ""
+        return "即将到点的手账地标：\n" + "\n".join(
+            f"- {t}" for t in self.landmark_briefs[:4]
+        )
 
     # 抽词器（约 k=10）
     scene_seeds: tuple[str, ...] = ()
@@ -274,6 +296,9 @@ def build_writing_materials(
         share_texts=share_texts,
         director_memory_texts=dir_texts,
         scene_seeds=tuple(str(x).strip() for x in (seeds or ()) if str(x).strip())[:10],
+        landmark_briefs=tuple(
+            str(x).strip() for x in (meta.get("landmark_briefs") or ()) if str(x).strip()
+        )[:4],
         character_feedback=tuple(str(x) for x in (fb or ()) if str(x).strip()),
         raw_meta=meta,
     )

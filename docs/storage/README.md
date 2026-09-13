@@ -83,7 +83,8 @@ TemporalClock
 ### Soul / Speak
 
 ```text
-WebUI /ws/speak/run
+WebUI /ws/agent/run
+  ├─ agent.inbound  （.react/inbound/*）
   └─ SoulService.speak_run_turn
        ├─ Speak 会话状态（主要为进程内状态）
        ├─ Life 体验与画像

@@ -106,11 +106,13 @@ class InteractionUnit:
     """角色议程中的一步（给角色看；与用户无关）。
 
     覆盖接下来 k 拍轮询（约 k/2 次可见开口）。动宾短句，对应故事线中的可执行节点。
+    estimate_sec：编剧估的现实耗时（秒），供导演按真实节奏预约开口，防瞎排。
     """
 
     intent: str
     evidence: str = ""
     span_polls: int = DEFAULT_UNIT_SPAN_POLLS
+    estimate_sec: float = 0.0
     status: InteractionUnitStatus = "pending"
     polls_consumed: int = 0
     unit_id: str = ""
@@ -142,6 +144,7 @@ class InteractionUnit:
             "intent": self.intent,
             "evidence": self.evidence,
             "span_polls": int(self.span_polls),
+            "estimate_sec": float(self.estimate_sec or 0.0),
             "expected_speak_turns": self.expected_speak_turns,
             "status": self.status,
             "polls_consumed": int(self.polls_consumed),
@@ -161,6 +164,7 @@ class InteractionUnit:
             intent=intent,
             evidence=str(data.get("evidence") or "").strip(),
             span_polls=int(data.get("span_polls") or DEFAULT_UNIT_SPAN_POLLS),
+            estimate_sec=float(data.get("estimate_sec") or 0.0),
             status=str(data.get("status") or "pending"),  # type: ignore[arg-type]
             polls_consumed=int(data.get("polls_consumed") or 0),
             activated_at_poll=int(data.get("activated_at_poll") or 0),
@@ -278,24 +282,38 @@ class PlotArc:
         )
 
     def render_for_inject(self, *, max_pending: int = 4) -> str:
-        """面向角色 agent：冷静客观的故事线与步骤（不含导演节奏用语）。"""
+        """面向角色 agent：冷静客观的故事线与步骤（不含导演节奏用语）。
+
+        带进度坐标：当前第几步/共几步、接下来几步的编号与详情，
+        让角色知道自己身处故事线何处，而不是悬空演一拍。
+        """
         if not self.ready:
             return ""
-        lines = ["[故事线]"]
+        done_count = len(self.unit_history)
+        total = self.total_unit_count()
+        lines = [f"[故事线｜第 {min(done_count + 1, max(total, 1))}/{total} 步]"]
         if self.summary.strip():
             lines.append(f"本场故事线：{self.summary.strip()}")
         active = self.active_unit()
         if active is not None and active.intent.strip():
-            lines.append(f"当前步骤：{active.intent.strip()}")
+            lines.append(f"当前步骤（第 {done_count + 1} 步）：{self._render_step(active)}")
         pending = [
             u for u in self.units
             if u.status == "pending" and u.intent.strip()
         ][: max(0, int(max_pending))]
         if pending:
-            lines.append("后续步骤：")
-            for u in pending:
-                lines.append(f"- {u.intent.strip()}")
+            lines.append("接下来几步：")
+            for offset, u in enumerate(pending):
+                step_no = done_count + (2 if active is not None else 1) + offset
+                lines.append(f"- 第 {step_no} 步：{self._render_step(u)}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _render_step(unit: "InteractionUnit") -> str:
+        text = unit.intent.strip()
+        if unit.estimate_sec > 0:
+            text = f"{text}（约 {unit.estimate_sec:.0f} 秒）"
+        return text
 
     def render_for_screenwriter(self) -> str:
         lines = [

@@ -378,7 +378,7 @@
         <!-- Backend selector (always visible) -->
         <div class="form-group">
           <label>Backend <span style="font-weight:400;color:var(--text3)">切换后点击 Save &amp; Apply 生效</span></label>
-          <select id="s-backend" onchange="import('/static/js/settings/tabs/llm.js').then(m => m.onBackendChange())">
+          <select id="s-backend" onchange="import('/static/js2/ui/settings_ui/tabs/llm.js').then(m => m.onBackendChange())">
             <option value="openai">OpenAI / Compatible API</option>
             <option value="transformers">Transformers（本地 CPU/GPU）</option>
             <option value="vllm">vLLM（官方 vllm serve）</option>
@@ -514,6 +514,17 @@
             </div>
             <label class="switch"><input type="checkbox" id="s-vllm-enforce-eager"><span class="slider"></span></label>
           </div>
+        </div>
+
+        <!-- 次语言模型（aux）：soul 子模块专用 openai 兼容 API 模型；未启用槽位回退主模型 -->
+        <div id="llm-aux-section">
+          <div class="section-divider">次语言模型（Aux）</div>
+          <p style="font-size:12px;color:var(--text3);margin:4px 0 10px">
+            为各模块槽位指定独立的 openai 兼容 API 小模型（画像蒸馏、记忆反刍等次级任务）；
+            未启用的槽位回退主模型。保存后热生效，无需重启。本地大模型请配置上方主模型。
+          </p>
+          <div id="llm-aux-rows"></div>
+          <div id="llm-aux-msg" style="font-size:12px;color:var(--text3);min-height:16px;margin-top:6px"></div>
         </div>
 
         <!-- Common section: always shown -->
@@ -868,6 +879,9 @@
         </div>
 
         <div class="section-divider">LLM Aux 名</div>
+        <p style="font-size:11px;color:var(--text3);margin:0 0 8px">
+          模块 → 槽位名的映射；槽位对应的模型在「设置 → 模型 → 次语言模型（Aux）」中配置，未配置的槽位回退主模型。
+        </p>
         <div class="form-row">
           <div class="form-group"><label>life</label><input id="s-soul-aux-life" type="text" /></div>
           <div class="form-group"><label>persona</label><input id="s-soul-aux-persona" type="text" /></div>
@@ -902,10 +916,13 @@
         <div class="form-group"><label>Qdrant path</label><input id="s-soul-infra-qdrant" type="text" /></div>
         <div class="form-row">
           <div class="form-group"><label>Collection</label><input id="s-soul-infra-collection" type="text" /></div>
-          <div class="form-group"><label>Embedding model</label><input id="s-soul-infra-model" type="text" /></div>
+          <div class="form-group"><label>Embedding model（全局源）</label><input id="s-soul-infra-model" type="text" /></div>
           <div class="form-group"><label>Device</label><input id="s-soul-infra-device" type="text" placeholder="auto" /></div>
         </div>
-        <p style="font-size:11px;color:var(--text3);margin-top:8px">保存后需 Settings → Persona → 重新初始化 Soul 方可加载新配置。</p>
+        <p style="font-size:11px;color:var(--text3);margin-top:8px">
+          Embedding model / Device 读写全局唯一来源 config/embedding/model.yaml（保存即写入，重启后生效——向量维度变化时 Qdrant collection 会重建）；
+          Qdrant path / Collection 保存到 config/soul/memory/infra.yaml，需 Settings → Persona → 重新初始化 Soul 方可加载。
+        </p>
 
       </div>
 
@@ -2144,7 +2161,7 @@
     <div id="pi-result" class="pi-result hidden"></div>
   </div>
 
-  <script type="module" src="/static/js/app.js"></script>
+  <script type="module" src="/static/js2/app.js"></script>
 </body>
 </html>
 

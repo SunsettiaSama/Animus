@@ -11,7 +11,7 @@ from agent.soul.memory.emergence.types import HotEmergenceResult, PointEmergence
 
 @dataclass
 class Emergence:
-    """????????????????????"""
+    """涌现门面：热扩散激活与会话触发的统一入口。"""
 
     spread: SpreadActivationService
     speak: SpeakEmergence

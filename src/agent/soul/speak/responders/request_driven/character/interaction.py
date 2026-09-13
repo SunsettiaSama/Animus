@@ -1,15 +1,33 @@
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..protocol.blocks import strip_model_think, strip_role_tag_debris
+
 _CACHE_KEY = "character_interaction_record"
 _MAX_RECENT = 12
+# 旧版沉默占位行：只用于识别并清洗历史数据，新账本不再写入
 _USER_SILENCE_MARK = "对方：【......（没有说话）】"
 _AGENT_SILENCE_MARK = "你：【......（没有说话）】"
+_SILENCE_MARKS = (_USER_SILENCE_MARK, _AGENT_SILENCE_MARK)
 _USER_PREFIXES = ("用户：", "用户:", "U:", "u:", "对方：", "对方:")
 _AGENT_MARKERS = ("｜角色：", "|角色：", "角色：", "A:", "a:")
+
+
+def _is_silence_mark(line: str) -> bool:
+    return str(line or "").strip() in _SILENCE_MARKS
+
+
+def _fmt_duration(sec: float) -> str:
+    sec = max(0.0, float(sec))
+    if sec < 90:
+        return f"约 {sec:.0f} 秒"
+    if sec < 3600:
+        return f"约 {sec / 60:.0f} 分钟"
+    return f"约 {sec / 3600:.1f} 小时"
 
 
 def _user_side_only(raw: str) -> str:
@@ -49,6 +67,12 @@ class InteractionRecord:
     recent_turns: tuple[str, ...] = ()
     silence_log: tuple[str, ...] = ()
     pending_user: bool = False
+    # 沉默合并态：一段连续沉默只算一条，span 是从第一拍起到现在的时长
+    agent_silence_sec: float = 0.0
+    agent_silence_count: int = 0
+    user_silence_sec: float = 0.0
+    user_silence_count: int = 0
+    exchange_rounds: int = 0
     source: str = "character"
 
     def as_dict(self) -> dict[str, Any]:
@@ -61,8 +85,28 @@ class InteractionRecord:
             "recent_turns": list(self.recent_turns),
             "silence_log": list(self.silence_log),
             "pending_user": self.pending_user,
+            "agent_silence_sec": self.agent_silence_sec,
+            "agent_silence_count": self.agent_silence_count,
+            "user_silence_sec": self.user_silence_sec,
+            "user_silence_count": self.user_silence_count,
+            "exchange_rounds": self.exchange_rounds,
             "source": self.source,
         }
+
+    def silence_summary_lines(self) -> list[str]:
+        """沉默合并摘要：双方各至多一条，明确沉默了多久。"""
+        out: list[str] = []
+        if self.agent_silence_count > 0:
+            n = self.agent_silence_count
+            tail = f"（连续 {n} 次没有接话）" if n > 1 else "（没有接话）"
+            out.append(
+                f"你已沉默{_fmt_duration(self.agent_silence_sec)}{tail}。"
+            )
+        if self.user_silence_count > 0:
+            out.append(
+                f"对方已{_fmt_duration(self.user_silence_sec)}没有说话。"
+            )
+        return out
 
     def render_priority_block(self, *, now: float | None = None) -> str:
         """高优先级交互块（供编剧 WritingMaterials / 导演证据复用）。"""
@@ -82,6 +126,9 @@ class InteractionRecord:
             parts.append(
                 f"对方从屏幕外发来：「{self.last_user_text.strip()[:300]}」"
             )
+        silence_lines = self.silence_summary_lines()
+        if silence_lines:
+            parts.extend(silence_lines)
         if self.recent_turns:
             user_only: list[str] = []
             for raw in self.recent_turns[-8:]:
@@ -103,6 +150,8 @@ class InteractionRecord:
         current = time.time() if now is None else float(now)
         body: list[str] = []
         timing: list[str] = []
+        if self.exchange_rounds > 0:
+            body.append(f"你们已经往来了 {self.exchange_rounds} 轮。")
         if self.last_user_speak_at > 0:
             timing.append(
                 f"对方上次说话是 {current - float(self.last_user_speak_at):.1f} 秒前"
@@ -125,6 +174,9 @@ class InteractionRecord:
             body.append(
                 f"你最近一句是：「{self.last_agent_text.strip()[:300]}」"
             )
+        silence_lines = self.silence_summary_lines()
+        if silence_lines:
+            body.extend(silence_lines)
         if self.recent_turns:
             body.append(
                 "已经发生的对白如下：\n"
@@ -179,6 +231,9 @@ class InteractionRecord:
             )
         if timing:
             parts.append("；".join(timing) + "。")
+        silence_lines = self.silence_summary_lines()
+        if silence_lines:
+            parts.extend(silence_lines)
         return "\n".join(parts)
 
 
@@ -194,6 +249,36 @@ def _cache(state: Any) -> dict[str, Any]:
 
 def _write_cache(state: Any, data: dict[str, Any]) -> None:
     state.director_cache[_CACHE_KEY] = dict(data)
+
+
+def _bump_silence(state: Any, key: str, *, now: float) -> None:
+    """连续沉默合并：同一侧只记一段，span 从第一拍起算，count 记拍数。"""
+    data = _cache(state)
+    entry = data.get(key)
+    if isinstance(entry, dict) and float(entry.get("since") or 0.0) > 0:
+        entry["count"] = int(entry.get("count") or 1) + 1
+    else:
+        entry = {"since": float(now), "count": 1}
+    data[key] = entry
+    data["revised_at"] = now
+    _write_cache(state, data)
+
+
+def _clear_silence(state: Any, key: str) -> None:
+    data = _cache(state)
+    if key in data:
+        data.pop(key, None)
+        _write_cache(state, data)
+
+
+def _silence_span(data: dict[str, Any], key: str, now: float) -> tuple[float, int]:
+    entry = data.get(key)
+    if not isinstance(entry, dict):
+        return 0.0, 0
+    since = float(entry.get("since") or 0.0)
+    if since <= 0:
+        return 0.0, 0
+    return max(0.0, float(now) - since), int(entry.get("count") or 1)
 
 
 def note_pending_user(
@@ -220,7 +305,7 @@ def note_pending_user(
         for x in (data.get("recent_turns") or [])
         if str(x).strip()
     ]
-    # 用户开口：清掉末尾连续静默条，写入原话
+    # 用户开口：清掉末尾连续静默条（旧数据），写入原话
     while turns and turns[-1] == _USER_SILENCE_MARK:
         turns.pop()
     line = f"对方：{text[:300]}"
@@ -228,30 +313,22 @@ def note_pending_user(
         turns.append(line)
     data["recent_turns"] = turns[-_MAX_RECENT:]
     _write_cache(state, data)
+    # 用户开口即结束用户侧沉默段
+    _clear_silence(state, "user_silence")
     # 与会话状态对齐，便于其它席位读到同一原话
     state.last_real_user_text = text
     state.last_user_speak_at = now
 
 
 def note_user_silence_on_wake(state: Any) -> bool:
-    """角色被唤醒且用户未说话：写入一条对方没有说话（不叠两条）。"""
+    """角色被唤醒且用户未说话：并入用户侧沉默段（合并为一条，计时长），不叠行。"""
     data = _cache(state)
-    turns = [
-        str(x).strip()
-        for x in (data.get("recent_turns") or [])
-        if str(x).strip()
-    ]
-    if turns and turns[-1] == _USER_SILENCE_MARK:
-        return False
-    # 若刚有用户原话待承接，不写静默
+    # 若刚有用户原话待承接，不记沉默
     if bool(data.get("pending_user")) and str(data.get("last_user_text") or "").strip():
         last = str(data.get("last_user_text") or "").strip()
         if last and not last.startswith("（系统："):
             return False
-    turns.append(_USER_SILENCE_MARK)
-    data["recent_turns"] = turns[-_MAX_RECENT:]
-    data["revised_at"] = time.time()
-    _write_cache(state, data)
+    _bump_silence(state, "user_silence", now=time.time())
     return True
 
 
@@ -261,23 +338,25 @@ def note_character_think_silence(
     reason: str = "",
     speak_at: float | None = None,
 ) -> None:
-    """角色本轮决策沉默：没有说话入账本，与对方没有说话交替。"""
+    """角色本轮决策沉默：并入角色侧沉默段（合并为一条，计时长）。
+
+    沉默不是开口：不改写 last_agent_text / last_agent_speak_at，
+    「你最近一句」保留上一次真实发言。
+    """
     del reason
     now = time.time() if speak_at is None else float(speak_at)
     data = _cache(state)
+    # 清洗旧数据里的占位行
     turns = [
         str(x).strip()
         for x in (data.get("recent_turns") or [])
-        if str(x).strip()
+        if str(x).strip() and not _is_silence_mark(str(x))
     ]
-    if not turns or turns[-1] != _AGENT_SILENCE_MARK:
-        turns.append(_AGENT_SILENCE_MARK)
     data["recent_turns"] = turns[-_MAX_RECENT:]
-    data["last_agent_text"] = _AGENT_SILENCE_MARK
-    data["last_agent_speak_at"] = now
+    _write_cache(state, data)
+    _bump_silence(state, "agent_silence", now=now)
+    data = _cache(state)
     data["pending_user"] = False
-    data["revised_at"] = now
-    state.last_agent_speak_at = now
     _write_cache(state, data)
 
 
@@ -305,6 +384,15 @@ def note_character_heard_user(
     _write_cache(state, data)
 
 
+def _split_agent_messages(agent_text: str) -> list[str]:
+    """角色的多条 speak 拆成独立消息入账本：按空行分段，段内不截断语义。"""
+    raw = str(agent_text or "").strip()
+    if not raw:
+        return []
+    pieces = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
+    return pieces or ([raw] if raw else [])
+
+
 def note_character_exchange(
     state: Any,
     *,
@@ -312,22 +400,30 @@ def note_character_exchange(
     agent_text: str = "",
     speak_at: float | None = None,
 ) -> None:
-    """角色可见开口后：把本轮对白写入角色侧账本。"""
+    """角色可见开口后：把本轮对白写入角色侧账本。
+
+    多条 speak 逐条入账（不 join、不截断整体），保住消息边界，
+    角色下一拍才能准确记得自己说过哪几句。
+    """
     now = time.time() if speak_at is None else float(speak_at)
     data = _cache(state)
     user = str(user_text or "").strip()
     if user.startswith("（系统：") or user.startswith("(系统："):
         user = ""
     agent = str(agent_text or "").strip()
+    # 推理模型（MiniMax-M3 等）的 <think> 串与协议标签残片不得入账本：
+    # 账本会回灌进之后每一轮的角色上下文，污染自我认知。
+    agent = strip_role_tag_debris(strip_model_think(agent))
     if agent:
         data["last_agent_text"] = agent
         data["last_agent_speak_at"] = now
         state.last_agent_speak_at = now
     data["pending_user"] = False
+    # 旧占位行清洗：真实对白只留原话
     turns = [
         str(x).strip()
         for x in (data.get("recent_turns") or [])
-        if str(x).strip()
+        if str(x).strip() and not _is_silence_mark(str(x))
     ]
     if user:
         data["last_user_text"] = user
@@ -339,12 +435,18 @@ def note_character_exchange(
         if not turns or turns[-1] != u_line:
             turns.append(u_line)
     if agent:
-        a_line = f"你：{agent[:300]}"
-        if not turns or turns[-1] != a_line:
-            turns.append(a_line)
+        for piece in _split_agent_messages(agent):
+            a_line = f"你：{piece[:300]}"
+            if not turns or turns[-1] != a_line:
+                turns.append(a_line)
     data["recent_turns"] = turns[-_MAX_RECENT:]
     data["revised_at"] = now
     _write_cache(state, data)
+    # 真实开口即结束对应侧的沉默段
+    if agent:
+        _clear_silence(state, "agent_silence")
+    if user:
+        _clear_silence(state, "user_silence")
 
 
 def export_interaction_record(
@@ -382,7 +484,7 @@ def export_interaction_record(
     ledger_turns = tuple(
         str(x).strip()
         for x in (data.get("recent_turns") or [])
-        if str(x).strip()
+        if str(x).strip() and not _is_silence_mark(str(x))
     )
     dialogue_history = str(data.get("dialogue_history") or "").strip()
     snapshot_turns: tuple[str, ...] = ()
@@ -393,21 +495,22 @@ def export_interaction_record(
         snapshot_turns = tuple(
             str(x).strip()
             for x in (getattr(dialogue, "recent_turns", ()) or ())
-            if str(x).strip()
+            if str(x).strip() and not _is_silence_mark(str(x))
         )
 
-    # 角色账本与 distiller 合并：普通行去重；没有说话允许交替重复出现
+    # 角色账本与 distiller 合并：只留真实对白；沉默改为合并摘要，不再逐条交替
     merged: list[str] = []
     seen: set[str] = set()
     for item in list(snapshot_turns) + list(ledger_turns):
-        if item in (_USER_SILENCE_MARK, _AGENT_SILENCE_MARK):
-            merged.append(item)
-            continue
         if item in seen:
             continue
         seen.add(item)
         merged.append(item)
     recent = tuple(merged[-_MAX_RECENT:])
+
+    agent_silence_sec, agent_silence_count = _silence_span(data, "agent_silence", current)
+    user_silence_sec, user_silence_count = _silence_span(data, "user_silence", current)
+    exchange_rounds = int(getattr(state, "interaction_exchange_count", 0) or 0)
 
     silence = tuple(getattr(getattr(state, "silence_log", None), "entries", ()) or ())
 
@@ -420,6 +523,11 @@ def export_interaction_record(
         recent_turns=recent,
         silence_log=tuple(str(x) for x in silence if str(x).strip()),
         pending_user=pending,
+        agent_silence_sec=agent_silence_sec,
+        agent_silence_count=agent_silence_count,
+        user_silence_sec=user_silence_sec,
+        user_silence_count=user_silence_count,
+        exchange_rounds=exchange_rounds,
         source="character",
     )
 
@@ -436,7 +544,11 @@ def sync_dialogue_history_into_ledger(
     if hist:
         data["dialogue_history"] = hist[:2000]
     if recent_turns is not None:
-        turns = [str(x).strip() for x in recent_turns if str(x).strip()]
+        turns = [
+            str(x).strip()
+            for x in recent_turns
+            if str(x).strip() and not _is_silence_mark(str(x))
+        ]
         if turns:
             data["recent_turns"] = turns[-_MAX_RECENT:]
     data["revised_at"] = time.time()

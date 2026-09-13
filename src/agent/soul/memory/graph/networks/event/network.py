@@ -157,7 +157,7 @@ class EventMemoryNetwork:
         if unit_ids and self._enqueue_recall is not None:
             self._enqueue_recall(lambda: record_recall_batch(self._nodes, unit_ids))
         entries = [s.render_line() for s in scored]
-        return MemoryBlock(label="????", entries=entries)
+        return MemoryBlock(label="事件记忆", entries=entries)
 
     def forget_scan(self, threshold: float | None, dry_run: bool) -> list[str]:
         resolved = threshold if threshold is not None else self._cfg.forget_threshold

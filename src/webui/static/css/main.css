@@ -3985,6 +3985,18 @@
 .work-mon-empty { color: var(--text3); text-align: center; padding: 24px 8px; }
 
 .msg.work-msg { padding: 8px 16px; }
+.msg.route-msg { padding: 6px 16px; }
+.route-card {
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    background: var(--bg2);
+    color: var(--text2);
+    max-width: 520px;
+}
+.route-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.route-card-meta { font-size: 11px; color: var(--text3); margin-top: 2px; }
+.route-card-actions { display: flex; gap: 8px; margin-top: 8px; }
 .work-card {
   border: 1px solid var(--border);
   border-radius: 12px;

@@ -44,6 +44,7 @@ class AppState:
 
     # ── Worker work bridge (Speak → WorkerWorkService) ───────────────────────
     work_service: Any = None          # WorkerWorkService | None
+    inbound_router: Any = None        # InboundRouter | None
     worker_state_service: Any = None  # AgentStateService | None
     worker_state_dir: str = ""
 

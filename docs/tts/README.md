@@ -63,11 +63,11 @@ STT：
 
 ## 与 Speak、workspace 的边界
 
-Soul Speak 的入口是 `src/webui/routers/speak.py` 中的 `WS /ws/speak/run`。它负责文本会话、Soul 编排和文本流事件，不调用 `TTSEngine` 或 `STTEngine`。需要语音交互的客户端应自行串联：
+浏览器主对话入口是 `src/webui/routers/agent.py` 的 `WS /ws/agent/run`；纯 Speak 通道仍是 `src/webui/routers/speak.py` 的 `WS /ws/speak/run`。二者负责文本会话和文本流事件，不调用 `TTSEngine` 或 `STTEngine`。需要语音交互的客户端应自行串联：
 
 ```text
 音频 → /api/stt/transcribe 或 /ws/stt → 文本
-文本 → /ws/speak/run → 回复文本
+文本 → /ws/agent/run → 回复文本
 回复文本 → /api/tts/synthesize 或 /ws/tts → 音频
 ```
 

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class InboundComposeGateway:
-    """Presence ???SpeakStatusStore + ?? compose ????"""
+    """Presence 入站 → ``SpeakStatusStore`` + 触发 compose 预组装（``SoulService.on_presence_status_update`` 接线）。"""
 
     def __init__(self, compose_runner: SpeakComposeRunner) -> None:
         self._runner = compose_runner

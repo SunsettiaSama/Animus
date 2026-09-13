@@ -36,7 +36,11 @@ from .interaction_mode import (
     silence_user_activity_placeholder,
 )
 from .agent import ScreenwriterAgent, ScreenwriterAgentResult
-from .materials import WritingMaterials, build_writing_materials
+from .materials import (
+    USER_PRESENCE_RULE,
+    WritingMaterials,
+    build_writing_materials,
+)
 from .scene_seed import DEFAULT_SCENE_SEED_K, build_init_scene_seeds, is_usable_scene_seed
 
 logger = logging.getLogger(__name__)
@@ -100,12 +104,17 @@ class Screenwriter:
     # 文风：正向场记指引（写什么、怎么写）
     _CRAFT = (
         "用户在屏幕外看戏，角色在场面里做事。各自写各自的事。\n"
+        + USER_PRESENCE_RULE
+        + "材料里若有 1 小时内即将到点的手账地标，优先把那一刻写进故事线，"
+        "让它当场上实时发生，而不是背景板。\n"
         "开场分三次交稿。第一次写大纲。第二次按大纲写开场旁白。第三次按大纲写初始剧情 unit。"
         "第一次先完成；第二次和第三次并行，都挂在同一份大纲下。\n"
         "三份稿子的写法不同：\n"
         "第一，plot_arc.summary 给角色看。写一条完整故事线（起因→经过→转折或发现→收束可能）。"
         "客观、冷静、真实。一段连贯叙述，含始末与中间节点，能撑住大约十个执行步骤。"
         "不要缩成待办列表，不要写成「你看见……」这类旁白，不要写角色台词。\n"
+        "unit 的 estimate_sec 写这一步现实耗时的秒数（发条短消息 5–15，一眼 3–8，"
+        "整理/检查 30–60，读/比对/翻找 60–120）；导演按它排现实时间轴、预约开口。\n"
         "第二，opening 给用户看。写眼前能看到的东西，比如「你看见她……」。"
         "「你」表示观看位置；角色的动作写她或他。旁白是开场镜头，不是整场故事线。\n"
         "第三，plot_arc.units.intent 给角色执行。用动宾短句，顺序覆盖故事线各段。\n"
@@ -136,7 +145,7 @@ class Screenwriter:
         "输出 JSON："
         '{"action":"advance",'
         '"plot_arc":{"summary":"…","evidence":"…",'
-        '"units":[{"intent":"…","evidence":"…","span_polls":2}]},'
+        '"units":[{"intent":"…","evidence":"…","span_polls":2,"estimate_sec":40}]},'
         '"plot_flow":{"chronicle":"…","interaction_process":"…","focus_now":"…","next_push":"…","beat":"…","beat_kind":"open",'
         '"inject_memory":true,"memory_unit_ids":["…"],'
         '"inject_share":true,"share_indices":[0]},'
@@ -185,7 +194,7 @@ class Screenwriter:
         "输出 JSON："
         '{"action":"advance",'
         '"plot_arc":{"summary":"…","evidence":"…",'
-        '"units":[{"intent":"…","evidence":"…","span_polls":2}]},'
+        '"units":[{"intent":"…","evidence":"…","span_polls":2,"estimate_sec":40}]},'
         '"plot_flow":{"chronicle":"…","interaction_process":"…","focus_now":"…","next_push":"…","beat":"…","beat_kind":"push",'
         '"inject_memory":false,"memory_unit_ids":[],'
         '"inject_share":false,"share_indices":[]},'
@@ -229,6 +238,8 @@ class Screenwriter:
         self._scene_seed_k = max(1, int(scene_seed_k))
         self._target_units = max(4, int(target_units))
         self._on_opening_ready = on_opening_ready
+        # 剧情写透监听（story_pool 持久化）：_apply_write 成功后回调 session_id
+        self._story_change_listener = None
         self._agent = agent or ScreenwriterAgent(
             llm=llm,
             target_units=self._target_units,
@@ -236,6 +247,10 @@ class Screenwriter:
 
     def bind_opening_ready(self, on_opening_ready: Callable[[str, str], None] | None) -> None:
         self._on_opening_ready = on_opening_ready
+
+    def set_story_change_listener(self, listener) -> None:
+        """注册剧情写透回调 listener(session_id)；异常由监听方自行吞掉。"""
+        self._story_change_listener = listener
 
     def bind_story(
         self,
@@ -265,10 +280,12 @@ class Screenwriter:
         turn_index: int = 0,
         materials: dict[str, Any] | None = None,
         background_agent: bool = False,
+        upgrade_agent: bool = True,
     ) -> DirectorOutput:
         """会话开场：先写大纲，再并行写开场旁白与初始剧情 unit。
 
         background_agent=True：先启发快落盘，再后台跑 Agent 覆写（不堵热路径）。
+        upgrade_agent=False：纯启发骨架，不安排后台覆写（预热池骨架候选专用）。
         opening 仅此时生成；随后由 SpeakService 投递给用户，不进角色上下文。
         """
         grounded = self._ground_text(session_id, user_text=user_text)
@@ -400,6 +417,7 @@ class Screenwriter:
         )
         if (
             background_agent
+            and upgrade_agent
             and self._llm is not None
             and self._llm.available
             and str(payload.get("reason") or "") == "heuristic_init"
@@ -1391,6 +1409,12 @@ class Screenwriter:
         state.notes.append(f"screenwriter:{payload.get('action')}:{payload.get('reason')}")
         if mode:
             state.notes.append(f"screenwriter:interaction_mode={mode}")
+        listener = self._story_change_listener
+        if listener is not None and str(session_id or "").strip():
+            try:
+                listener(str(session_id))
+            except Exception:
+                pass  # 写透失败不回滚剧情写入
         return payload
 
     def _select_material_schedule(

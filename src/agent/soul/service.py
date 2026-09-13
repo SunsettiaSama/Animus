@@ -70,18 +70,18 @@ class _MemoryNarrativeContextSupplier:
 
 
 class SoulService:
-    """Soul ??????????????????????API ?????????start/stop ?????????
+    """Soul 顶层门面：组装 Persona / Memory / Life / Speak 各域处理器，统一对外 API 与 start/stop 生命周期。
 
-    ????????
+    对外语义
     --------
-    - ``dispatch(SoulRequest)``?????????????heartbeat / ??????? / ????? query_*??
-    - ``query_*`` / ``search_memory`` / ``record_*``??HTTP ????`???????????? dispatch
+    - ``dispatch(SoulRequest)``：统一请求入口，按域分发到 heartbeat / 各域 handler / 只读 query_* 通道。
+    - ``query_*`` / ``search_memory`` / ``record_*``：HTTP API 快捷方法，内部同样走 dispatch。
 
-    ????????
+    生命周期
     --------
-    - ``stopped``????????????
-    - ``idle`` / ``running``????? API action???? ``access.READ_API_ACTIONS``???? dispatch
-    - ``running``??????????? action ?? dispatch
+    - ``stopped``：已停止，不可再启动。
+    - ``idle`` / ``running``：允许只读 API action（白名单 ``access.READ_API_ACTIONS``）直接 dispatch。
+    - ``running``：全部 action 均可 dispatch。
     """
 
     def __init__(
@@ -235,7 +235,7 @@ class SoulService:
         *,
         final: bool = True,
     ) -> dict[str, Any]:
-        """Speak ?????????? DELIVER????"""
+        """Speak 出站：直接投递文本（DELIVER 通道）。"""
         return self.speak_outbound.deliver_text(session_id, text, final=final)
 
     def start_dialogue_session(
@@ -262,7 +262,7 @@ class SoulService:
         }
 
     def hydrate_speak_channel(self, session_id: str) -> str:
-        """??????????????????????????? Speak ???????"""
+        """按 channel 找到绑定的交互者并同步给 Speak 会话（未绑定返回空串）。"""
         sid = session_id.strip()
         if not sid:
             return ""
@@ -275,7 +275,7 @@ class SoulService:
         return bound
 
     def align_speak_visitor(self, session_id: str, channel_id: str) -> str:
-        """WS ?????????? ? interactor???????????? Speak session??"""
+        """WS 会话与 channel 对齐交互者：把绑定关系同步进 Speak session。"""
         sid = session_id.strip()
         cid = channel_id.strip() or sid
         if not sid:
@@ -320,7 +320,7 @@ class SoulService:
         account_id: str,
         channel_id: str,
     ) -> dict[str, Any]:
-        """WebUI ?????????? ? interactor??????? Speak ??????"""
+        """WebUI 访客账号绑定到 channel：写 session 绑定并预热 Speak 画像上下文。"""
         self._require_running()
         accounts = self._ensure_account_service()
         account = accounts.get(account_id)
@@ -357,7 +357,7 @@ class SoulService:
         *,
         proactive_intent_id: str = "",
     ) -> dict[str, Any]:
-        """??? proactive outbound?????????????Speak lifecycle ???????"""
+        """主动开口（proactive outbound）：经 Life speak 通道投递，遵循 Speak lifecycle 约束。"""
         self._require_running()
         from agent.soul.life.io.speak import ProactiveOutboundInbound
 
@@ -385,7 +385,7 @@ class SoulService:
         activated_memory_ids: list[str] | None = None,
         proactive_intent_id: str = "",
     ) -> dict[str, Any]:
-        """???????speak ????????????? presence ?? life/memory ????"""
+        """记录一轮对话（speak 出口统一入口）：同步 presence 并写入 life/memory 体验。"""
         return self.dispatch(SoulRequest(
             domain=SoulDomain.speak,
             action=SpeakAction.RECORD_DIALOGUE,
@@ -406,7 +406,7 @@ class SoulService:
         ))
 
     def close_dialogue_interaction(self, session_id: str = "tao") -> dict[str, Any]:
-        """??????life ? presence ?? experience stack ?????"""
+        """会话收尾：驱动 life 与 presence 把本轮对话沉淀为 experience。"""
         self._require_running()
         from agent.soul.life.io.speak import DialogueSessionCloseInbound
 
@@ -425,7 +425,7 @@ class SoulService:
         }
 
     def finalize_speak_session(self, session_id: str = "tao") -> dict[str, Any]:
-        """Speak ?? rotate??reset_context + close + generation rotate + start??"""
+        """Speak 会话 rotate（=reset_context + close + generation rotate + start）。"""
         self._require_running()
         speak = self._ensure_speak_service()
         result = speak.session_manager.holder.finalize_session(
@@ -453,19 +453,15 @@ class SoulService:
         stream: bool = False,
         mode: str = "inbound",
         pipeline: str | None = None,
-    ) -> dict[str, Any]:
-        """Speak ??????????????? ?? LLM ?? ??????? ?? ?????"""
-        return self.dispatch(SoulRequest(
-            domain=SoulDomain.speak,
-            action=SpeakAction.RUN_TURN,
-            payload={
-                "session_id": session_id,
-                "text": user_text,
-                "stream": stream,
-                "mode": mode,
-                "pipeline": pipeline,
-            },
-        ))
+    ):
+        """Speak 回合兼容入口：统一转到 L0 speak_run_turn。"""
+        return self.speak_run_turn(
+            session_id,
+            user_text,
+            stream=stream,
+            mode=mode,
+            responder=pipeline,
+        )
 
     def speak_run_turn(
         self,
@@ -542,7 +538,7 @@ class SoulService:
         draft: str = "",
     ) -> dict[str, object]:
         if self._state != "running":
-            raise RuntimeError(f"SoulService ????????state={self._state!r}??")
+            raise RuntimeError(f"SoulService 未运行（state={self._state!r}）。")
         return self._ensure_speak_service().on_typing_pulse(
             session_id,
             typing=typing,
@@ -559,7 +555,7 @@ class SoulService:
 
     def speak_director_snapshot(self, session_id: str) -> dict[str, object]:
         if self._state != "running":
-            raise RuntimeError(f"SoulService ????????state={self._state!r}??")
+            raise RuntimeError(f"SoulService 未运行（state={self._state!r}）。")
         return self._ensure_speak_service().director_snapshot(session_id)
 
     def speak_set_typing_idle_ms(self, session_id: str, *, ms: int = 3000) -> int:
@@ -578,7 +574,7 @@ class SoulService:
         flush_if_idle: bool = True,
     ) -> dict[str, object]:
         if self._state != "running":
-            raise RuntimeError(f"SoulService ????????state={self._state!r}??")
+            raise RuntimeError(f"SoulService 未运行（state={self._state!r}）。")
         return self._ensure_speak_service().enqueue_proactive_brew(
             session_id,
             text,
@@ -593,7 +589,7 @@ class SoulService:
         turn_index: int | None = None,
     ) -> dict[str, object]:
         if self._state != "running" or self._speak_service is None:
-            raise RuntimeError(f"Soul Speak ????????state={self._state!r}??")
+            raise RuntimeError(f"Soul Speak 未初始化（state={self._state!r}）。")
         return self._speak_service.session_trace_cache(
             session_id,
             turn_index=turn_index,
@@ -604,7 +600,7 @@ class SoulService:
         return self._speak_service is not None
 
     def reset_presence_affect(self, session_id: str = "tao") -> None:
-        """???? Presence ???????????????????"""
+        """清空 Presence 快变情绪（affect），回到基线状态。"""
         self.presence.reset_affect(session_id)
 
     def speak_generate(
@@ -616,7 +612,7 @@ class SoulService:
         context: str = "",
         stream: bool = False,
     ) -> dict[str, Any]:
-        """Speak LLM ????????????? compose ???? system/context????"""
+        """Speak LLM 直生成（不经 compose 编排，可注入 system/context 覆盖）。"""
         action = SpeakAction.GENERATE_STREAM if stream else SpeakAction.GENERATE
         return self.dispatch(SoulRequest(
             domain=SoulDomain.speak,
@@ -679,7 +675,7 @@ class SoulService:
         return text[:120]
 
     def set_embedding_port(self, port: EmbeddingPort | None) -> None:
-        """????? embedding ????"""
+        """注入外部 embedding 端口。"""
         self._embedding_port = port
 
     def resolve_embedding_port(self) -> EmbeddingPort | None:
@@ -696,18 +692,18 @@ class SoulService:
         self,
         handler: Any,
     ) -> None:
-        """??? speak ????????presence ???? speak ?????????"""
+        """注册 speak 出站后的 presence 回写钩子：speak 完成后同步 presence。"""
         self.speak_outbound.register_after_presence(handler)
 
     def register_agent_initiated_handler(self, handler: Any) -> None:
-        """Agent ????????????????WebUI SSE ?????"""
+        """Agent 主动发起事件的回调注册（供 WebUI SSE 订阅）。"""
         self._agent_initiated_handlers.append(handler)
 
     def set_story_world_context_supplier(
         self,
         supplier: StoryWorldContextSupplier | None,
     ) -> None:
-        """??????????????????? life ?????????????????????"""
+        """注入故事世界上下文供给器：life 写体验时用它补充场景/世界观背景。"""
         self._story_world_context_supplier = supplier
         self._ensure_life_handler()
         self.life.api.set_story_world_context_supplier(supplier)
@@ -716,7 +712,7 @@ class SoulService:
         self,
         supplier: ExternalOpportunitySupplier | None,
     ) -> None:
-        """????????????????? heartbeat ???????h??"""
+        """注入外部机会供给器：心跳扫描时判断是否值得发起主动交互。"""
         self._external_opportunity_supplier = supplier
 
     def ingest_presence_event(
@@ -726,7 +722,7 @@ class SoulService:
         line_open: bool = False,
         proactive_intent_id: str = "",
     ) -> PresenceIngestResult:
-        """??????????? presence.interface????"""
+        """处理一条 presence 边界事件（presence.interface 协议）。"""
         self._require_running()
         result = self.presence.interface.boundary(
             event,
@@ -756,7 +752,7 @@ class SoulService:
         speak_if_ready: bool = True,
         wait: bool = False,
     ) -> dict[str, Any]:
-        """Presence ?????????/???/speak????life??presence ????? LifeExperienceStack ?????"""
+        """Presence 周期：边界事件/期望扫描/speak 触发，可选 life 叙事；presence 叙事入 LifeExperienceStack。"""
         self._require_running()
 
         def _cycle() -> dict[str, Any]:
@@ -800,7 +796,7 @@ class SoulService:
         return {"accepted": True, "session_id": session_id}
 
     def presence_self_narrative(self, session_id: str = "tao") -> str:
-        """???????????????? PresenceService ??????????"""
+        """当前 Presence 自我叙事（由 PresenceService 组装）。"""
         self._ensure_presence_service()
         return self.presence.compose_self_narrative(session_id)
 
@@ -811,7 +807,7 @@ class SoulService:
         source: str = "initiate_conversation",
         wait_reply: bool = True,
     ) -> dict[str, Any]:
-        """?????????????? + ??????????????? speak ????????"""
+        """主动发起一次对话：宣泄冲动 + 期望检查，达到条件时触发 speak 主动开口。"""
         self._require_running()
 
         def _run() -> dict[str, Any]:
@@ -840,7 +836,7 @@ class SoulService:
         return self._workers.presence.submit(_run).result()
 
     def ingest_presence_incident(self, incident: LifeIncident) -> IncidentIngestResult:
-        """Life ??? ?? experience unit??presence ????? stack ???????????"""
+        """Life 事件转 experience unit：presence 知晓后写入 experience stack。"""
         self._require_running()
         self._ensure_experience_pipeline()
         return self.experience.ingest_incident(incident, salience=incident.salience)
@@ -925,7 +921,7 @@ class SoulService:
 
         cue = ActivationCue(
             session_id="__warm__",
-            user_text="???? ??? ???? ??? ????",
+            user_text="最近怎么样 想起以前的事 前几天做过什么 心情还好吗",
             interactor_id="",
         )
         result = self.memory.api.expand_hot_activation(cue)
@@ -936,7 +932,7 @@ class SoulService:
         if self._state == "running":
             return
         if self._state == "stopped":
-            raise RuntimeError("SoulService ?? stop?????????????? start")
+            raise RuntimeError("SoulService 已 stop，不可重新启动；请新建实例后再 start")
 
         self._ensure_memory_handler()
         self.memory.api.init_infra(on_ready=self._on_memory_infra_ready)
@@ -973,7 +969,7 @@ class SoulService:
         logger.info("[SoulService] stopped")
 
     def bind_heartbeat(self, heartbeat) -> None:
-        """?????????? HeartbeatModule??????? Soul ?? start() ??????"""
+        """绑定外部 HeartbeatModule（可选）：Soul 尚未 start() 时也可先接线。"""
         self._heartbeat = heartbeat
         self._orchestrator = heartbeat.orchestrator
         heartbeat.set_soul_service(self)
@@ -1018,7 +1014,7 @@ class SoulService:
         }
 
     def bind_scheduler_engine(self, engine) -> None:
-        """?? runtime ??????????? checklist ?????????????????? Soul ???? tick????"""
+        """接入 runtime 调度引擎：供 checklist 编排使用；未接时由 Soul 自身 tick 驱动。"""
         self._scheduler_engine = engine
         if self._heartbeat is not None:
             self._heartbeat.set_scheduler_engine(engine)
@@ -1067,7 +1063,7 @@ class SoulService:
 
     def dispatch(self, request: SoulRequest) -> Any:
         if self._state == "stopped":
-            raise RuntimeError(f"SoulService ??????state={self._state!r}??")
+            raise RuntimeError(f"SoulService 已停止（state={self._state!r}）。")
         return self.dispatch_api(request)
 
     def dispatch_api(self, request: SoulRequest) -> Any:
@@ -1085,7 +1081,7 @@ class SoulService:
     def run_wander(
         self, drift_intensity_floor: float | None = None
     ) -> tuple[MemoryHeartbeatResult, list[dict]]:
-        """???? wander??memory tick ?? presence rumination/affect ?? life??"""
+        """跑一次 wander：memory tick 驱动 presence rumination/affect 与 life 体验。"""
         from agent.soul.heartbeat.bridge import PersonaSnapshot
 
         self._require_running()
@@ -1129,7 +1125,7 @@ class SoulService:
         return result, story_beats
 
     def run_memory_sleep(self, *, dry_run: bool = False) -> dict:
-        """????????????????????????????????????????"""
+        """手动触发一次记忆睡眠整理（遗忘扫描 + 聚类重建 + 反刍喂料 + 缓冲衰减）。"""
         from agent.soul.heartbeat.evolution import new_heartbeat_tick_id
 
         self._require_running()
@@ -1189,7 +1185,7 @@ class SoulService:
         }
 
     def run_expectation_scan(self, session_id: str = "tao") -> dict[str, Any]:
-        """??????spresence ????????Soul ???????? speak??"""
+        """跑一次期望扫描（spresence 饱和检查）：达标时由 Soul 触发主动 speak。"""
         self._require_running()
         return self._workers.presence.submit(
             lambda: self._run_expectation_scan_on_presence(session_id, speak_if_ready=True)
@@ -1218,7 +1214,7 @@ class SoulService:
         return detail
 
     def run_presence_wake(self, session_id: str = "tao", *, force: bool = False) -> dict[str, Any]:
-        """???Presence FSM ????????????????????????"""
+        """手动唤醒 Presence FSM（可强制）：注入唤醒上下文并返回迁移叙事。"""
         self._require_running()
         ctx = self._build_wake_context()
         result = self.presence.wake_up(session_id, context=ctx, force=force)
@@ -1231,7 +1227,7 @@ class SoulService:
         }
 
     def run_presence_sleep(self, session_id: str = "tao") -> dict[str, Any]:
-        """????????????????? asleep??????????????????????"""
+        """进入睡眠：Presence 迁移到 asleep，并联动一次记忆睡眠整理。"""
         self._require_running()
         result = self.presence.sleep(session_id)
         memory_sleep = self.run_memory_sleep()
@@ -1261,10 +1257,10 @@ class SoulService:
             summary_parts.append(background)
         traits = profile.get("traits") or profile.get("core_traits") or []
         if traits:
-            summary_parts.append("?????" + "??".join(str(t) for t in traits[:5]))
+            summary_parts.append("核心特质：" + "、".join(str(t) for t in traits[:5]))
         style = str(profile.get("style", "")).strip()
         if style:
-            summary_parts.append(f"???{style}")
+            summary_parts.append(f"行为风格：{style}")
         return WakeContext(
             agent_name=str(profile.get("name", "")),
             persona_summary="\n".join(summary_parts),
@@ -1273,7 +1269,7 @@ class SoulService:
         )
 
     def execute_plan_landmark(self) -> dict[str, Any]:
-        """?? life-worker ???????????????compose + add????"""
+        """由 life-worker 规划一条里程碑：先查窗口配额，再 compose + 计划写入。"""
         from datetime import datetime, timezone
 
         from agent.soul.heartbeat.checklist.landmark_schedule import (
@@ -1321,10 +1317,10 @@ class SoulService:
             "subjective_event": planned_event or {},
         }
 
-    # ???? ??????????HTTP / ???????????????????????????????????????????????????????????????????????????????????????
+    # ── 对外查询 API：HTTP / WebUI 只读通道；以下方法均为 dispatch 的快捷封装 ─────────────────────────────────────
 
     def query_persona(self, *, session_id: str = "tao") -> dict[str, Any]:
-        """??? Persona ???? + Presence ????????????????????????????"""
+        """查询 Persona 快照 + Presence 状态与自我叙事（供 WebUI 诊断面板）。"""
         snap = self.get_persona_snapshot(session_id=session_id)
         self._ensure_presence_service()
         snap["presence"] = self.presence.snapshot(session_id).state.to_dict()
@@ -1333,9 +1329,9 @@ class SoulService:
         return snap
 
     def get_persona_snapshot(self, *, session_id: str = "tao") -> dict[str, Any]:
-        """Persona ?????profile / self_concept / persona_distill ??????
+        """Persona 只读快照（profile / self_concept / persona_distill 等切片）。
 
-        Speak ?????? ``persona_distill.slices.dialogue``?????????????????
+        Speak 常用 ``persona_distill.slices.dialogue`` 对话切片，其余域请勿整包引用。
         """
         _ = session_id
         return self.dispatch(SoulRequest(
@@ -1344,7 +1340,7 @@ class SoulService:
         ))
 
     def reload_persona_profile(self) -> dict[str, Any]:
-        """????? persona_dir ??? profile / built_profile / self_concept??"""
+        """从磁盘 persona_dir 重读 profile / built_profile / self_concept。"""
         result = self.dispatch(SoulRequest(
             domain=SoulDomain.persona,
             action=PersonaAction.RELOAD_PROFILE,
@@ -1358,7 +1354,7 @@ class SoulService:
         *,
         preserve_self_concept: bool = False,
     ) -> dict[str, Any]:
-        """LLM ??Z?? raw profile ???????????????? self_concept??"""
+        """LLM 基于 raw profile 重建画像与自我概念（可选保留 self_concept）。"""
         return self.dispatch(SoulRequest(
             domain=SoulDomain.persona,
             action=PersonaAction.REBUILD_PROFILE,
@@ -1366,7 +1362,7 @@ class SoulService:
         ))
 
     def search_memory(self, mode: str = "hybrid", **kwargs: Any) -> dict[str, Any]:
-        """??????????? dispatch SEARCH????"""
+        """记忆检索快捷入口（走 dispatch SEARCH）。"""
         return self.dispatch(SoulRequest(
             domain=SoulDomain.memory,
             action=MemoryAction.SEARCH,
@@ -1380,7 +1376,7 @@ class SoulService:
         top_k: int | None = None,
         emotional_context: str = "",
     ) -> dict[str, Any]:
-        """???? recall???? dispatch RECALL????"""
+        """事件记忆 recall（走 dispatch RECALL）。"""
         payload: dict[str, Any] = {"query": query, "emotional_context": emotional_context}
         if top_k is not None:
             payload["top_k"] = top_k
@@ -1391,7 +1387,7 @@ class SoulService:
         ))
 
     def query_life_chronicle(self, *, days: int = 7, tail: int = 50) -> list[dict[str, Any]]:
-        """Life ???? Chronicle ???????? dispatch RECENT_CHRONICLE????"""
+        """Life 近期 Chronicle 查询（走 dispatch RECENT_CHRONICLE）。"""
         return self.dispatch(SoulRequest(
             domain=SoulDomain.life,
             action=LifeAction.RECENT_CHRONICLE,
@@ -1399,7 +1395,7 @@ class SoulService:
         ))
 
     def query_life_hot(self, *, hours: int | None = None) -> list[dict[str, Any]]:
-        """Life ??????????? dispatch HOT_STORAGE????"""
+        """Life 热存储查询（走 dispatch HOT_STORAGE）。"""
         payload: dict[str, Any] = {}
         if hours is not None:
             payload["hours"] = hours
@@ -1411,14 +1407,14 @@ class SoulService:
 
     def _require_api_access(self, request: SoulRequest) -> None:
         if self._state == "stopped":
-            raise RuntimeError(f"SoulService ??????state={self._state!r}??")
+            raise RuntimeError(f"SoulService 已停止（state={self._state!r}）。")
         if is_read_api_action(request.domain, request.action):
             return
         self._require_running()
 
     def _require_running(self) -> None:
         if self._state != "running":
-            raise RuntimeError(f"SoulService ????????state={self._state!r}???????? start()")
+            raise RuntimeError(f"SoulService 未运行（state={self._state!r}），请先调用 start()")
 
     def _ensure_persona_handler(self) -> PersonaHandler:
         if self._persona_handler is None:
@@ -1583,6 +1579,7 @@ class SoulService:
                         getattr(self._cfg, "speak_director_memory_intervene_max", 1)
                     ),
                 ),
+                story_pool_dir=StorageConfig().story_pool_dir,
             )
             from agent.soul.memory.io.session import CompressionBlockInbound, DialogueCompressionBlock
 
@@ -1796,6 +1793,11 @@ class SoulService:
             if embedder is not None:
                 self._speak_service.attach_compose_embedder(embedder)
 
+            def _landmark_briefs_for_speak():
+                return self.life.api.upcoming_landmarks(within_sec=3600.0)
+
+            self._speak_service.attach_landmark_port(_landmark_briefs_for_speak)
+
             def _portrait_query_for_speak(request: InteractorPortraitRequest) -> None:
                 self.memory.api.session_io.submit_dialogue_turn(
                     DialogueTurnInbound(
@@ -1903,7 +1905,7 @@ class SoulService:
         narrative = self.presence_self_narrative(sid)
         reason = discharge.reason
         if narrative and narrative not in reason:
-            reason = f"{reason}\n\n???????\n{narrative}" if reason else narrative
+            reason = f"{reason}\n\n当前自我叙事：\n{narrative}" if reason else narrative
         return SpeakRequest(
             session_id=sid,
             reason=reason,
@@ -1925,7 +1927,7 @@ class SoulService:
         narrative = self.presence_self_narrative(session_id)
         reason = payload.reason
         if narrative and narrative not in reason:
-            reason = f"{reason}\n\n???????\n{narrative}" if reason else narrative
+            reason = f"{reason}\n\n当前自我叙事：\n{narrative}" if reason else narrative
         return SpeakRequest(
             session_id=session_id,
             reason=reason,
@@ -2012,7 +2014,7 @@ class SoulService:
         limit: int = 2,
         intents: list | None = None,
     ) -> dict[str, Any]:
-        """??????????? presence ???? 1?C2 ??????????????? speak ????????"""
+        """把 presence 侧的 1–2 条分享意图顺延到活跃 speak 会话（延迟而非丢弃）。"""
         presence_sid = presence_session_id.strip() or "tao"
         speak_sid = self._find_active_speak_session_id(presence_sid) or presence_sid
         resolved = intents
@@ -2118,7 +2120,7 @@ class SoulService:
         )
 
     def _record_persona_cluster_signals(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
-        """Memory.persona_clusters ????? ?? PersonaService.record_cluster_signals??"""
+        """Memory.persona_clusters 主题信号 → 转发给 PersonaService.record_cluster_signals。"""
         if not candidates:
             return {"ok": True, "applied": 0, "signal_ids": []}
         return self._workers.persona.submit(

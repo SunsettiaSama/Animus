@@ -14,6 +14,9 @@ class LLMConfig:
     top_p: float = 1.0
     top_k: int = 0
     repetition_penalty: float = 1.0
+    # openai 兼容后端采样参数（deepseek 等支持）；用于抑制复读与堆砌
+    frequency_penalty: float = 0.0
+    presence_penalty: float = 0.0
     device: str = "auto"
     system_prompt: str = ""
     backend: str = "openai"    # "openai" | "vllm" | "transformers"
@@ -35,6 +38,8 @@ class LLMConfig:
             top_p=float(data.get("top_p", 1.0)),
             top_k=int(data.get("top_k", 0)),
             repetition_penalty=float(data.get("repetition_penalty", 1.0)),
+            frequency_penalty=float(data.get("frequency_penalty", 0.0)),
+            presence_penalty=float(data.get("presence_penalty", 0.0)),
             device=data.get("device", "auto"),
             system_prompt=data.get("system_prompt", ""),
             backend=data.get("backend", "openai"),
@@ -52,6 +57,8 @@ class LLMConfig:
             "top_p":              self.top_p,
             "top_k":              self.top_k,
             "repetition_penalty": self.repetition_penalty,
+            "frequency_penalty":  self.frequency_penalty,
+            "presence_penalty":   self.presence_penalty,
             "device":             self.device,
             "system_prompt":      self.system_prompt,
             "backend":             self.backend,

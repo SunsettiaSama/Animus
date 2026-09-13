@@ -225,6 +225,16 @@ class WorkerWorkService:
             return decision
 
     def _lightweight_decide(self, signal: WorkIntentSignal) -> WorkDecision:
+        if signal.reason.startswith("agent_inbound"):
+            return WorkDecision(
+                work_id=signal.work_id,
+                decision="needs_work",
+                reason="Agent 入站路由判定为任务，需确认是否执行",
+                reason_code="agent_inbound_route",
+                fallback_to_speak=True,
+                suggested_action="run_single_task",
+                requires_user_confirmation=True,
+            )
         q = signal.question.strip()
         if len(q) < self._auto_decline_min_chars:
             return WorkDecision(

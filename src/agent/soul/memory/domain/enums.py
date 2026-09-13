@@ -18,6 +18,7 @@ class MemoryTier(str, Enum):
 class MemoryNetwork(str, Enum):
     social = "social"
     event = "event"
+    stack = "stack"
 
 
 class SocialNodeRole(str, Enum):

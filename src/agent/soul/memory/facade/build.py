@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent.soul.memory.graph.base_node import BaseNode
@@ -207,6 +208,15 @@ def build_memory_service(
         vectors=vectors,
     )
     session_channel = SessionMemoryChannel(buffer=session_buffer)
+    stack = None
+    if getattr(cfg, "stack_enabled", True):
+        from agent.soul.memory.bypass import DEFAULT_STACK_FILENAME, StackMemoryService
+
+        stack = StackMemoryService(
+            Path(json_root) / DEFAULT_STACK_FILENAME,
+            max_entries=int(getattr(cfg, "stack_max_entries", 2000)),
+            half_life_days=float(getattr(cfg, "stack_half_life_days", 7.0)),
+        )
     svc = MemoryService(
         social,
         event,
@@ -222,6 +232,7 @@ def build_memory_service(
         session_channel=session_channel,
         session_channels=session_channels,
         llm=llm,
+        stack=stack,
     )
     svc_holder.append(svc)
     spread.schedule_cluster_rebuild()

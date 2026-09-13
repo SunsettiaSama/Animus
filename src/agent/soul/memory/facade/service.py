@@ -4,8 +4,8 @@ import threading
 from typing import TYPE_CHECKING, Callable
 
 from agent.soul.life.experience.domain.unit import ExperienceUnit
-from agent.soul.memory.domain import ActivationCue, EvolutionSource
-from agent.soul.memory.graph.base_node import BaseNode
+from agent.soul.memory.domain import ActivationCue, EvolutionSource, Valence
+from agent.soul.memory.graph.base_node import BaseNode, node_now
 from agent.soul.memory.emergence import Emergence
 from agent.soul.memory.emergence.dispatcher import EmergenceQueryDispatcher
 from agent.soul.memory.emergence.types import PointEmergenceResult
@@ -64,6 +64,7 @@ class MemoryService:
         life_io: LifeMemoryIO | None = None,
         session_channels=None,
         llm: BaseLLM | None = None,
+        stack=None,
     ) -> None:
         self._social = social
         self._event = event
@@ -124,6 +125,7 @@ class MemoryService:
             )
         self._io = MemoryIO(session=self._session_io, life=self._life_io)
         self._session_channels = session_channels
+        self._stack = stack
         self._agent_persona_provider: Callable[[], str] | None = None
         self._bind_enqueue()
 
@@ -187,6 +189,50 @@ class MemoryService:
     def get_unit(self, unit_id: str) -> BaseNode | None:
         return self._nodes.get(unit_id)
 
+    def ingest_fact(
+        self,
+        text: str,
+        *,
+        focus: str = "",
+        emotion: str = "",
+        emotion_intensity: float = 0.0,
+        valence: str | Valence = Valence.neutral,
+        interactor_id: str = "",
+        days_ago: float | None = None,
+        meta: dict | None = None,
+    ) -> BaseNode:
+        """公开写入缝：不经 LLM 路由与睡眠过滤，直接落一条 FactualMemory。
+
+        供工具调用、旁路注入与 benchmark 预载记忆使用；
+        常规 Life 体验仍应走 ``life_port``（含路由/过滤/反刍观察）。
+        ``days_ago`` 将 created_at/last_accessed 回填到过去（评测与回填场景用）。
+        """
+        from datetime import timedelta
+
+        from agent.soul.memory.domain.enums import MemoryTier
+        from agent.soul.memory.graph.networks.event.node import FactualMemory
+
+        body = str(text or "").strip()
+        if not body:
+            raise ValueError("ingest_fact 需要非空 text")
+        v = Valence(valence) if isinstance(valence, str) else valence
+        node = FactualMemory(
+            focus=(focus or body[:24]).strip(),
+            fact=body,
+            emotion=emotion.strip(),
+            emotion_intensity=float(emotion_intensity),
+            valence=v,
+            interactor_id=interactor_id.strip(),
+            tier=MemoryTier.short_term,
+        )
+        if meta:
+            node.meta.update(meta)
+        if days_ago is not None and days_ago > 0:
+            when = node_now() - timedelta(days=float(days_ago))
+            node.created_at = when
+            node.last_accessed = when
+        return self._event.write_node(node)
+
     @property
     def io(self) -> MemoryIO:
         return self._io
@@ -209,6 +255,11 @@ class MemoryService:
     @property
     def session_io(self) -> SessionSpeakIO:
         return self._session_io
+
+    @property
+    def stack(self):
+        """增量式 stack 旁路基座（与 event/social 隔离；MemoryBasePort 协议）。"""
+        return self._stack
 
     def evolve_core(
         self,

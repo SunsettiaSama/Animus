@@ -5,7 +5,7 @@ from agent.soul.memory.emergence.spread import SpreadActivationService
 
 
 class SpeakEmergence:
-    """??/???????????"""
+    """会话期涌现入口：point query / hot spread 触发。"""
 
     def __init__(
         self,

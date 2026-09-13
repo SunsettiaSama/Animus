@@ -10,11 +10,13 @@ class SpeakResponderRouter:
         legacy_qa: SpeakResponderRunner,
         request_driven: SpeakResponderRunner,
         rhythm: SpeakResponderRunner,
+        direct: SpeakResponderRunner,
     ) -> None:
         self._runners: dict[SpeakResponderName, SpeakResponderRunner] = {
             "legacy_qa": legacy_qa,
             "request_driven": request_driven,
             "rhythm": rhythm,
+            "direct": direct,
         }
 
     def run(self, item):

@@ -38,16 +38,18 @@ def test_close_dialogue_ingests_memory_and_anchor_chronicle(tmp_path):
         StaticStatePatch(
             perception="用户问了天气",
             thinking="我在组织回答",
-            affect="有点开�?,
+            affect="有点开心",
         ),
     )
     stack.dialogue.record_dialogue_turn(
         presence,
         session_id="tao",
-        user_text="今天天气怎样�?,
-        agent_text="今天晴，适合出门�?,
+        user_text="今天天气怎样？",
+        agent_text="今天晴，适合出门。",
         salience=0.5,
-        salience_note="?????????",
+        salience_note="轻松的日常寒暄",
+        promote_to_memory=True,
+        annotation_decided=True,
     )
 
     unit = stack.dialogue.close_dialogue(presence, "tao")

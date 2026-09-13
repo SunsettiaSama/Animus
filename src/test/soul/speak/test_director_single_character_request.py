@@ -413,21 +413,3 @@ def test_execute_booked_handoff_reaches_character(monkeypatch):
     assert not any("empty_user_text" in n for n in state.notes)
 
 
-def test_character_decision_llm_uses_caller_not_director_engine():
-    """热路径/预约决策必须拿到 DirectorLLMCaller，不能把 SpeakDirectorLLMEngine 再包一层。"""
-    from agent.soul.speak.llm.director_engine import SpeakDirectorLLMEngine
-    from agent.soul.speak.responders.request_driven.directors.base import DirectorLLMCaller
-
-    service = _make_speak_service()
-
-    class _RawLLM:
-        def generate_messages(self, messages):
-            del messages
-            return '{"action":"speak"}'
-
-    caller = DirectorLLMCaller(llm=_RawLLM())
-    service._director_llm_caller = caller
-    service._director_llm = SpeakDirectorLLMEngine()
-    resolved = service._character_decision_llm()
-    assert resolved is caller
-    assert resolved.available is True

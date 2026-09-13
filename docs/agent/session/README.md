@@ -34,7 +34,8 @@ ConvLoop/TaoLoop。abort 会设置 TaoLoop stop event；未完成轮次随后 ro
 
 ## 不属于该模块的会话
 
-- `/ws/speak/run` 使用 `SpeakSessionManager` / `SpeakSessionService` 和 Speak 自己的输入、
-  推送、typing、interrupt、生命周期队列，不注册到这里；
+- `/ws/agent/run` 与 `/ws/speak/run` 使用 `SpeakSessionManager` / `SpeakSessionService`
+  和 Speak 自己的输入、推送、typing、interrupt、生命周期队列，不注册到这里；
+  首轮 Speak/Worker 分类在 `agent.inbound`，也不在本模块；
 - `WorkerWorkService` 按 `work_id` 管理确认、运行、监控和终态，不是 `AgentSession`；
 - Scheduler 使用自己的 task store/clock，Soul heartbeat 也不提交 `TaoRequest`。

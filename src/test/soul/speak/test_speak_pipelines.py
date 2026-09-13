@@ -22,6 +22,10 @@ def test_normalize_speak_responder_accepts_rhythm():
     assert normalize_speak_responder("rhythm") == "rhythm"
 
 
+def test_normalize_speak_responder_accepts_direct():
+    assert normalize_speak_responder("direct") == "direct"
+
+
 def test_normalize_speak_responder_rejects_unknown_value():
     with pytest.raises(ValueError, match="unknown speak responder"):
         normalize_speak_responder("classic")
@@ -42,12 +46,14 @@ def test_responder_router_dispatches_by_user_input_item_responder():
         legacy_qa=_Runner("legacy"),
         request_driven=_Runner("request"),
         rhythm=_Runner("rhythm"),
+        direct=_Runner("direct"),
     )
 
     assert router.run(UserInputItem("s1", "hello", responder="legacy_qa")) == "legacy_qa"
     assert router.run(UserInputItem("s1", "hello", responder="request_driven")) == "request_driven"
     assert router.run(UserInputItem("s1", "hello", responder="rhythm")) == "rhythm"
-    assert called == ["legacy", "request", "rhythm"]
+    assert router.run(UserInputItem("s1", "hello", responder="direct")) == "direct"
+    assert called == ["legacy", "request", "rhythm", "direct"]
 
 
 def test_session_queue_preserves_responder_for_pending_user_input():

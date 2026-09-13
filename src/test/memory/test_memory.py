@@ -111,6 +111,24 @@ from agent.react.context.processor import MemoryProcessor
 # ��������
 # ������������������������������������������������������������������������������������������
 
+try:
+    import agent.soul.memory.long_term  # noqa: F401
+
+    _LONG_TERM_AVAILABLE = True
+except ModuleNotFoundError:
+    # long_term 子系统已在记忆模块重构中移除；相关用例保留并跳过
+    _LONG_TERM_AVAILABLE = False
+
+
+def _needs_long_term(fn):
+    import pytest
+
+    return pytest.mark.skipif(
+        not _LONG_TERM_AVAILABLE,
+        reason="agent.soul.memory.long_term 已在重构中移除",
+    )(fn)
+
+
 def make_step(n: int) -> Step:
     """���ɱ��Ϊ n �����ⲽ�衣"""
     return Step(
@@ -121,10 +139,32 @@ def make_step(n: int) -> Step:
     )
 
 
-) -> MemoryConfig:
-    """���ö��� + ���ڼ�������á�distill_on_write Ĭ�Ϲرգ�ʹ���ڲ����� LLM��"""
+def make_memory_config(distill_on_write: bool = False) -> MemoryConfig:
+    """配置对象 + 若干记忆步骤。distill_on_write 默认关闭，使用内置模拟 LLM。"""
     return MemoryConfig(
         medium_term=MediumTermMemoryConfig(enabled=True, distill_on_write=distill_on_write),
+        long_term=LongTermMemoryConfig(enabled=False),
+    )
+
+
+def make_short_only_cfg(max_turns: int = 5) -> MemoryConfig:
+    """仅短期记忆：短期窗口 max_turns，medium / long 关闭。"""
+    from config.agent.memory.short_term_config import ShortTermMemoryConfig
+
+    return MemoryConfig(
+        short_term=ShortTermMemoryConfig(enabled=True, max_turns=max_turns),
+        medium_term=MediumTermMemoryConfig(enabled=False),
+        long_term=LongTermMemoryConfig(enabled=False),
+    )
+
+
+def make_short_medium_cfg(max_turns: int = 2) -> MemoryConfig:
+    """短期 + 中期：medium 开启、写入蒸馏关闭（蒸馏由 mock LLM 显式触发）。"""
+    from config.agent.memory.short_term_config import ShortTermMemoryConfig
+
+    return MemoryConfig(
+        short_term=ShortTermMemoryConfig(enabled=True, max_turns=max_turns),
+        medium_term=MediumTermMemoryConfig(enabled=True, distill_on_write=False),
         long_term=LongTermMemoryConfig(enabled=False),
     )
 
@@ -157,6 +197,7 @@ def make_mock_medium(distillate: str = "") -> MagicMock:
 # MemoryProcessor �� ������
 # ������������������������������������������������������������������������������������������
 
+@_needs_long_term
 def test_processor_short_only_recall_empty():
     """δ�����κβ���ʱ recall Ӧ���ؿս����"""
     proc = MemoryProcessor(MemoryConfig(medium_term=MediumTermMemoryConfig(enabled=False), long_term=LongTermMemoryConfig(enabled=False)))
@@ -167,6 +208,7 @@ def test_processor_short_only_recall_empty():
     print("[OK] test_processor_short_only_recall_empty")
 
 
+@_needs_long_term
 def test_processor_short_only_add_and_recall():
     """���Ӳ���� recall Ӧ��ӳ��ǰ���ڴ��ڡ�"""
     proc = MemoryProcessor(make_short_only_cfg(max_turns=5))
@@ -182,6 +224,7 @@ def test_processor_short_only_add_and_recall():
     print("[OK] test_processor_short_only_add_and_recall")
 
 
+@_needs_long_term
 def test_processor_short_only_window_slides():
     """���ڴ���������ɲ��軬����recall ֻ�������� max_turns ����"""
     proc = MemoryProcessor(make_short_only_cfg(max_turns=3))
@@ -206,6 +249,7 @@ def test_processor_commit_and_clear_no_crash():
     print("[OK] test_processor_commit_and_clear_no_crash")
 
 
+@_needs_long_term
 def test_processor_trace_accumulates():
     """trace ����Ӧ�������������Ӳ��裨���ܶ��ڴ���Ӱ�죩��"""
     proc = MemoryProcessor(make_short_only_cfg(max_turns=2))
@@ -224,6 +268,7 @@ def test_processor_trace_accumulates():
 # MemoryProcessor �� ���� + ���� (mock LLM)
 # ������������������������������������������������������������������������������������������
 
+@_needs_long_term
 def test_processor_medium_absorbs_evicted():
     """���ڴ��ڻ����������ڼ䲻���� LLM��commit ǰ medium.append �������á�"""
     mock_llm = make_mock_llm()
@@ -245,6 +290,7 @@ def test_processor_medium_absorbs_evicted():
     print("[OK] test_processor_medium_absorbs_evicted")
 
 
+@_needs_long_term
 def test_processor_medium_distills_when_triggered():
     """commit ʱ medium.append ������һ�Σ�mock render ����ժҪ��recall �п�ȡ����"""
     mock_medium = make_mock_medium("[distilled summary]")
@@ -267,6 +313,7 @@ def test_processor_medium_distills_when_triggered():
     print("[OK] test_processor_medium_distills_when_triggered")
 
 
+@_needs_long_term
 def test_processor_commit_flushes_medium():
     """commit Ӧ���� medium.append ������ Q&A д�����ڼ��䡣"""
     mock_medium = make_mock_medium()
@@ -290,6 +337,7 @@ def test_processor_commit_flushes_medium():
 # MemoryProcessor �� �� mock LongTermMemory
 # ������������������������������������������������������������������������������������������
 
+@_needs_long_term
 def test_processor_recall_includes_long_term():
     """recall �����Ӧ���� LongTermMemory.smart_recall �ķ���ֵ��"""
     mock_llm = make_mock_llm()
@@ -311,6 +359,7 @@ def test_processor_recall_includes_long_term():
     print("[OK] test_processor_recall_includes_long_term")
 
 
+@_needs_long_term
 def test_processor_commit_writes_long_term():
     """commit Ӧ�� LongTermMemory.add д�� answer��distill_enabled=False Ĭ����Ϊ����
     question �� metadata ��ʽ���룬������ save��"""
@@ -335,6 +384,7 @@ def test_processor_commit_writes_long_term():
     print("[OK] test_processor_commit_writes_long_term")
 
 
+@_needs_long_term
 def test_processor_is_session_start_flag():
     """��һ�� recall Ӧ�� is_session_start=True ���� smart_recall��֮��Ϊ False��"""
     mock_lt = make_mock_long_term()
@@ -357,6 +407,7 @@ def test_processor_is_session_start_flag():
     print("[OK] test_processor_is_session_start_flag")
 
 
+@_needs_long_term
 def test_processor_clear_resets_session_flag():
     """clear() �� is_session_start Ӧ����Ϊ True��"""
     mock_lt = make_mock_long_term()
@@ -379,6 +430,7 @@ def test_processor_clear_resets_session_flag():
 # �������ԣ�ģ����� Agent ��������
 # ������������������������������������������������������������������������������������������
 
+@_needs_long_term
 def test_full_interaction_scenario():
     """
     ģ��һ�� Agent ���������Ự��
@@ -458,6 +510,7 @@ def _inject_entries(store, texts: list[str]) -> None:
         store._entries.append(MemoryEntry(id=str(i), text=text, created_at=ts))
 
 
+@_needs_long_term
 def test_recall_timeline_order():
     """recall_timeline Ӧ�����루ʱ�䣩˳�򷵻أ��������� n ���ơ�"""
     store = _make_long_term_store()
@@ -471,6 +524,7 @@ def test_recall_timeline_order():
     print("[OK] test_recall_timeline_order")
 
 
+@_needs_long_term
 def test_recall_timeline_empty_store():
     """�� store �� recall_timeline Ӧ���ؿ��б�����������"""
     store = _make_long_term_store()
@@ -478,6 +532,7 @@ def test_recall_timeline_empty_store():
     print("[OK] test_recall_timeline_empty_store")
 
 
+@_needs_long_term
 def test_recall_timeline_n_larger_than_entries():
     """n > ��Ŀ����ʱӦ����ȫ����Ŀ��"""
     store = _make_long_term_store()
@@ -487,6 +542,7 @@ def test_recall_timeline_n_larger_than_entries():
     print("[OK] test_recall_timeline_n_larger_than_entries")
 
 
+@_needs_long_term
 def test_recall_timeline_has_created_at():
     """ÿ������� created_at ӦΪ�ǿ� ISO �ַ�����"""
     store = _make_long_term_store()
@@ -512,6 +568,7 @@ def _make_long_term_memory():
     return LongTermMemory(store=store, cfg=cfg), store
 
 
+@_needs_long_term
 def test_long_term_memory_recall_timeline_format():
     """recall_timeline ���ص��ַ���Ӧ�� [DATE] ǰ׺��ԭʼ�ı���"""
     mem, store = _make_long_term_memory()
@@ -525,6 +582,7 @@ def test_long_term_memory_recall_timeline_format():
     print("[OK] test_long_term_memory_recall_timeline_format")
 
 
+@_needs_long_term
 def test_long_term_memory_recall_timeline_empty():
     """�ռ��� recall_timeline Ӧ���ؿ��ַ�����"""
     mem, _ = _make_long_term_memory()
@@ -536,6 +594,7 @@ def test_long_term_memory_recall_timeline_empty():
 # triggers.py �� ģʽ��ⵥԪ����
 # ������������������������������������������������������������������������������������������
 
+@_needs_long_term
 def test_detect_mode_timeline_keywords():
     """��ʱ̬�ؼ��ʵĲ�ѯӦ���� TIMELINE ģʽ��"""
     from config.agent.memory.retrieve_config import RetrieveConfig
@@ -551,6 +610,7 @@ def test_detect_mode_timeline_keywords():
     print("[OK] test_detect_mode_timeline_keywords")
 
 
+@_needs_long_term
 def test_detect_mode_heavy_keywords():
     """����ʷ����ؼ��ʵĲ�ѯӦ���� HEAVY ģʽ�����ȼ����� TIMELINE����"""
     from config.agent.memory.retrieve_config import RetrieveConfig
@@ -566,6 +626,7 @@ def test_detect_mode_heavy_keywords():
     print("[OK] test_detect_mode_heavy_keywords")
 
 
+@_needs_long_term
 def test_detect_mode_profile_on_session_start():
     """�Ự����ʱӦ���� PROFILE ģʽ�����۲�ѯ������Ρ�"""
     from config.agent.memory.retrieve_config import RetrieveConfig
@@ -578,6 +639,7 @@ def test_detect_mode_profile_on_session_start():
     print("[OK] test_detect_mode_profile_on_session_start")
 
 
+@_needs_long_term
 def test_detect_mode_light_default():
     """��ͨ��ѯ������ʷ/ʱ̬�ؼ���ʱӦ���� LIGHT ģʽ��"""
     from config.agent.memory.retrieve_config import RetrieveConfig

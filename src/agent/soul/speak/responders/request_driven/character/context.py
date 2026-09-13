@@ -12,11 +12,8 @@ from .contracts import (
 from .interaction import export_interaction_record
 
 
-REMOTE_TEXT_CHANNEL = (
-    "这个端口是你对外发消息的渠道。对方在远程通过文字跟你通信，不在你身边。"
-    "你发的是短消息，一条一条发。"
-    "手头动作已经在导演材料里写好了，消息里不用再写动作。"
-)
+# 通道事实描述（非指令）：通道协议与行为规则已上移至 blocks/system/role.py。
+REMOTE_TEXT_CHANNEL = "当前通道：远程文字往来，对方不在身边。"
 
 
 def _lookup_executable_unit(state: Any, unit_id: str):

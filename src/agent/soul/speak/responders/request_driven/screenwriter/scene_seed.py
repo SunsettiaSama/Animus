@@ -135,9 +135,14 @@ def sample_nearest_to_vector(
     seed_vector: list[float] | None = None,
     rng: random.Random | None = None,
 ) -> tuple[list[str], list[float]]:
-    """对候选词 embedding，取与种子向量最近的 k 个。
+    """对候选词 embedding，以与种子向量的余弦为权重随机抽 k 个（无放回）。
 
-    返回 (近邻词, 使用的种子向量)。无 embedder 时退化为随机抽 k 词，种子向量为空。
+    返回 (近邻词, 使用的种子向量)。无 embedder 时退化为均匀随机抽 k 词。
+
+    注意不能直接取 cosine top-k：高维下距离集中，随机种子几乎不改变排名，
+    每次初始化会得到同一批词（大纲随之同质化）。因此按 softmax(cos/τ)
+    加权抽样——与种子方向强相关的词大概率入选，其余在近邻间保持随机，
+    每轮初始化给出不同组合。
     """
     uniq = _uniq_preserve(candidates)
     if not uniq:
@@ -164,7 +169,30 @@ def sample_nearest_to_vector(
         w_vec = [float(x) for x in embedder.embed(word)]
         scored.append((_cosine(seed, w_vec), word))
     scored.sort(key=lambda item: item[0], reverse=True)
-    return [w for _, w in scored[:top_k]], seed
+
+    tau = 0.08
+    items = [w for _, w in scored]
+    weights = [math.exp((s - scored[0][0]) / tau) for s, _ in scored]
+
+    picked: list[str] = []
+    for _ in range(top_k):
+        total = sum(weights)
+        if total <= 0:
+            picked.extend(items[: top_k - len(picked)])
+            break
+        r = picker.random() * total
+        acc = 0.0
+        for idx, wgt in enumerate(weights):
+            acc += wgt
+            if r <= acc:
+                picked.append(items.pop(idx))
+                weights.pop(idx)
+                break
+        else:  # 浮点兜底
+            if items:
+                picked.append(items.pop(0))
+                weights.pop(0)
+    return picked, seed
 
 
 def sample_nearest_words(
@@ -186,6 +214,61 @@ def sample_nearest_words(
     return words
 
 
+_VOCAB_WORD_CACHE: dict[int, list[str]] = {}
+
+
+def extract_vocab_scene_words(embedder: _Embedder, *, limit: int = 2048) -> list[str]:
+    """本地 embedding 模型的 tokenizer 词表 → 可用场景词（按词表索引序）。
+
+    词表是全量词空间，不是语料近邻：从这里均匀随机抽词才不会被
+    embedding 聚类绑死在同一片语义邻域里。
+    """
+    key = id(embedder)
+    cached = _VOCAB_WORD_CACHE.get(key)
+    if cached is not None:
+        return cached
+    vocab = None
+    try:
+        client = getattr(embedder, "client", None)
+        tokenizer = getattr(client, "tokenizer", None)
+        get_vocab = getattr(tokenizer, "get_vocab", None)
+        if callable(get_vocab):
+            vocab = get_vocab()
+    except Exception:
+        vocab = None
+    words: list[str] = []
+    if isinstance(vocab, dict) and vocab:
+        for tok in sorted(vocab, key=lambda t: int(vocab.get(t, 0))):
+            word = str(tok).replace("##", "").strip()
+            if not re.fullmatch(r"[\u4e00-\u9fff]{2,8}", word):
+                continue
+            if not is_usable_scene_seed(word):
+                continue
+            words.append(word)
+            if len(words) >= limit:
+                break
+    if words:
+        _VOCAB_WORD_CACHE[key] = words
+    return words
+
+
+def sample_random_vocab_words(
+    embedder: _Embedder,
+    *,
+    k: int = DEFAULT_SCENE_SEED_K,
+    rng: random.Random | None = None,
+) -> list[str]:
+    """从 embedding 词表里均匀随机抽 k 个索引词（无放回）。
+
+    效果目标：每次初始化拿到互不相关的词组合，给大纲真正的随机性。
+    """
+    words = extract_vocab_scene_words(embedder)
+    if not words:
+        return []
+    picker = rng if rng is not None else random.Random()
+    return picker.sample(words, min(max(1, int(k)), len(words)))
+
+
 def build_init_scene_seeds(
     *,
     grounded: str,
@@ -195,12 +278,20 @@ def build_init_scene_seeds(
     k: int = DEFAULT_SCENE_SEED_K,
     rng: random.Random | None = None,
 ) -> list[str]:
-    """初始化场景种子词池：锚定抽词 → 随机向量 → embedding 近邻 k（默认 10）。
+    """初始化场景种子词池：词表均匀随机抽 k（默认 10，可到 20）。
 
-    叙事侧从该词池中任选若干词组装新故事；随机向量相当于随机数种子。
-    user_text 不参与定向检索（避免把用户说法当成种子方向）。
+    弃用 embedding 近邻抽样——同语料候选在向量空间是聚类的，
+    近邻/softmax 抽出来的词几乎一致，大纲随之同质化。
+    有本地模型时从 tokenizer 词表均匀随机抽索引词；没有则退化为
+    锚定语料候选词的均匀随机。
+    user_text 不参与抽样（避免把用户说法当成种子方向）。
     """
     del user_text
+    picker = rng if rng is not None else random.Random()
+    if embedder is not None:
+        words = sample_random_vocab_words(embedder, k=k, rng=picker)
+        if words:
+            return words
     corpus_parts = [grounded]
     if materials:
         for key in ("persona_brief", "persona", "interactor_portrait", "dynamic_memory_texts"):
@@ -215,10 +306,6 @@ def build_init_scene_seeds(
                 corpus_parts.append(text[:800])
     corpus = "\n".join(p for p in corpus_parts if str(p).strip())
     candidates = extract_candidate_words(corpus, limit=96)
-    words, _ = sample_nearest_to_vector(
-        embedder,
-        candidates=candidates,
-        k=k,
-        rng=rng,
-    )
-    return words
+    if not candidates:
+        return []
+    return picker.sample(candidates, min(max(1, int(k)), len(candidates)))

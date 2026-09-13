@@ -107,6 +107,7 @@ class DeliveryExecutor:
                     meta=render_meta(
                         "typing",
                         wait_ms=wait_ms,
+                        order=index,
                         extra={
                             "delivery_segment": True,
                             "segment_index": index,
@@ -126,6 +127,7 @@ class DeliveryExecutor:
                 meta=render_meta(
                     "speak",
                     wait_ms=wait_ms,
+                    order=index,
                     extra={
                         "delivery_segment": True,
                         "segment_index": index,
@@ -148,6 +150,7 @@ class DeliveryExecutor:
                 meta=render_meta(
                     "finish",
                     wait_ms=wait_ms,
+                    order=index,
                     extra={
                         "delivery_segment": True,
                         "segment_index": index,
