@@ -17,7 +17,13 @@ import weakref
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from agent.soul.life.story import BeatLedger, CallableBeatSource, StoryOutbox, StoryScheduler
+from agent.soul.life.story import (
+    BeatLedger,
+    CallableBeatSource,
+    StoryCardStore,
+    StoryOutbox,
+    StoryScheduler,
+)
 from agent.soul.storybus import (
     BeatAck,
     BeatAckStatus,
@@ -119,17 +125,24 @@ class InProcessStoryBus:
 
 
 class SpeakBeatInboxBridge:
-    """过渡桥：beat → 现有主动出站路径（enqueue_agent_outbound）。
+    """speak 侧收件口：角色先决策（开口/挂起/沉默），再走表演路径。
 
-    过渡语义（2c 角色收拢前的诚实标注）：
-    - 投递成功即回 performed（演出确认细化到 delivery/ack 链路属 2c）；
-    - speak 未就绪 / 投递失败回 suppressed（life 可改期）；
+    语义（R7）：
+    - 决策经 ``BeatOpeningPolicy``（角色开口决策的确定性规则版）；
+    - perform_now → enqueue_agent_outbound → performed/suppressed；
+    - hold（speak 未就绪 / 用户在忙）→ suppressed（life 可改期重投）；
+    - silence（角色选择沉默）→ silenced（不是失败）；
     - ProgressSync 暂不消费（前端帧扩展属 Phase 3 / 2d）。
     """
 
-    def __init__(self, soul: Any, bus: InProcessStoryBus) -> None:
+    def __init__(self, soul: Any, bus: InProcessStoryBus, *, policy=None) -> None:
+        from agent.soul.speak.responders.request_driven.character.beat_policy import (
+            BeatOpeningPolicy,
+        )
+
         self._soul = weakref.ref(soul)
         self._bus = bus
+        self._policy = policy or BeatOpeningPolicy()
 
     def _speak(self):
         soul = self._soul()
@@ -145,27 +158,42 @@ class SpeakBeatInboxBridge:
         speak = self._speak()
         channels = beat.channels or ("main",)
         for channel in channels:
-            status = BeatAckStatus.suppressed
-            if speak is not None:
-                payload = {
-                    "session_id": f"live:{channel}",
-                    "channel_id": channel,
-                    "message": beat.narrative,
-                    "source": "story",
-                    "agent_initiated": True,
-                    "wait_reply": False,
-                    "task_name": "剧情推进",
-                    "create_window": True,
-                    "beat_id": beat.beat_id,
-                    "card_id": beat.card_id,
-                }
-                try:
-                    result = speak.enqueue_agent_outbound(payload)
-                    delivered = bool(result.get("delivered") or result.get("ok"))
-                    status = BeatAckStatus.performed if delivered else BeatAckStatus.suppressed
-                except Exception:  # noqa: BLE001
-                    logger.exception("[story.inbox] enqueue failed: %s", beat.beat_id)
+            decision = self._policy.decide(beat, speak_ready=speak is not None)
+            status: BeatAckStatus
+            if decision.perform_now:
+                status = self._perform(speak, beat, channel)
+            elif decision.action == "silence":
+                status = BeatAckStatus.silenced
+            else:
+                status = BeatAckStatus.suppressed
+            logger.info(
+                "[story.inbox] beat %s channel %s -> %s (%s)",
+                beat.beat_id, channel, status.value, decision.reason,
+            )
             self._bus.send_ack(BeatAck(beat.beat_id, channel=channel, status=status))
+
+    def _perform(self, speak: Any, beat: LifeStoryBeat, channel: str) -> BeatAckStatus:
+        if speak is None:
+            return BeatAckStatus.suppressed
+        payload = {
+            "session_id": f"live:{channel}",
+            "channel_id": channel,
+            "message": beat.narrative,
+            "source": "story",
+            "agent_initiated": True,
+            "wait_reply": False,
+            "task_name": "剧情推进",
+            "create_window": True,
+            "beat_id": beat.beat_id,
+            "card_id": beat.card_id,
+        }
+        try:
+            result = speak.enqueue_agent_outbound(payload)
+            delivered = bool(result.get("delivered") or result.get("ok"))
+            return BeatAckStatus.performed if delivered else BeatAckStatus.suppressed
+        except Exception:  # noqa: BLE001
+            logger.exception("[story.inbox] enqueue failed: %s", beat.beat_id)
+            return BeatAckStatus.suppressed
 
     def receive_progress(self, sync: StoryProgressSync) -> None:
         logger.debug("[story.inbox] progress (Phase 2d/3 接前端帧): %s", sync.card_id)
@@ -174,10 +202,17 @@ class SpeakBeatInboxBridge:
 class StoryRuntime:
     """life 侧剧情运行件组合：总线 + 出站口 + 账本 + 排程器。"""
 
-    def __init__(self, soul: Any, *, source: CallableBeatSource | None = None) -> None:
+    def __init__(self, soul: Any, *, source: CallableBeatSource | None = None, policy=None) -> None:
+        from collections import deque
+
+        from agent.soul.speak.responders.request_driven.character.beat_policy import (
+            BeatOpeningPolicy,
+        )
+
         self.bus = InProcessStoryBus()
         self.ledger = BeatLedger(on_advance=self._on_advance)
         self.outbox = StoryOutbox(self.bus.deliver_beat)
+        self.cards = StoryCardStore(self.bus.sync_progress)
         self._recorder = self._recording_outbox()
         self.scheduler = StoryScheduler(
             self._recorder, source or CallableBeatSource()
@@ -188,6 +223,9 @@ class StoryRuntime:
         )
         self._soul = weakref.ref(soul)
         self._inbox_bound = False
+        self._policy = policy or BeatOpeningPolicy()
+        self._recent_signals = deque(maxlen=20)
+        self._director_dirty = False
 
     def _recording_outbox(self):
         """包装 outbox：先记账后投递——同步回执（suppressed 等）才能落到账上。"""
@@ -221,7 +259,7 @@ class StoryRuntime:
         soul = self._soul()
         if soul is None:
             return
-        bridge = SpeakBeatInboxBridge(soul, self.bus)
+        bridge = SpeakBeatInboxBridge(soul, self.bus, policy=self._policy)
         self.bus.bind_inbox(on_beat=bridge.receive_beat, on_progress=bridge.receive_progress)
         self._inbox_bound = True
 
@@ -234,8 +272,28 @@ class StoryRuntime:
         return result
 
     def _receive_signal(self, signal: StorySignal) -> None:
-        # 2c/2d：导演在此做缓存失效判定（R9）；现阶段仅记账
-        logger.debug("[story.runtime] signal %s salience=%.2f", signal.channel, signal.salience_hint)
+        """用户轮信号 → 导演侧消费（2c）：
+        - 环形留存近期信号（导演重估的输入）；
+        - 高显著度（>=0.7）置失效标志——预跑缓存/剧情走向需重估（R9）。"""
+        self._recent_signals.append(signal)
+        if self._policy.salience_warrants_rewrite(signal.salience_hint):
+            self._director_dirty = True
+            logger.info(
+                "[story.runtime] high-salience signal (%.2f) → director dirty",
+                signal.salience_hint,
+            )
+
+    @property
+    def director_dirty(self) -> bool:
+        """剧情走向可能已被用户显著改变（导演应重估；读后清除）。"""
+        return self._director_dirty
+
+    def clear_director_dirty(self) -> None:
+        self._director_dirty = False
+
+    @property
+    def recent_signals(self) -> tuple[StorySignal, ...]:
+        return tuple(self._recent_signals)
 
     def _on_advance(self, beat: LifeStoryBeat, status: BeatAckStatus) -> None:
         # 2b 完整版：performed → 推进 landmark/chronicle；expired → 归档"错过的剧情"
@@ -325,3 +383,29 @@ def emit_story_beats(soul: Any, drafts: list[BeatDraft]) -> int:
     if not drafts:
         return 0
     return ensure_story_runtime(soul).emit_drafts(drafts)
+
+
+def send_story_signal(
+    soul: Any,
+    *,
+    session_id: str,
+    turn_digest: str,
+    salience_hint: float = 0.3,
+) -> None:
+    """用户轮信号（speak → life）：导演侧做剧情重估/缓存失效判定（R9）。
+
+    挂在轮末记账之后（soul_dialogue.record_pending_turn）；soul 缺席时静默跳过。
+    """
+    if soul is None:
+        return
+    from agent.soul.memory.timeline import channel_of
+
+    digest = str(turn_digest or "").strip()[:120]
+    if not digest:
+        return
+    ensure_story_runtime(soul).bus.send_signal(StorySignal(
+        session_id=str(session_id or ""),
+        channel=channel_of(session_id),
+        turn_digest=digest,
+        salience_hint=float(salience_hint),
+    ))

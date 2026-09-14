@@ -39,6 +39,15 @@ def record_pending_turn(
         user_text=pending.question,
         agent_text=pending.answer,
     )
+    # 用户轮信号 → life 导演侧（剧情重估/缓存失效判定，协议 v1.2 StorySignal）
+    if soul is not None:
+        from agent.soul.wiring.story import send_story_signal
+
+        send_story_signal(
+            soul,
+            session_id=session_id,
+            turn_digest=pending.question,
+        )
 
 
 def commit_turn_and_post_process(
