@@ -333,7 +333,7 @@ BeatAck:                  # speak/角色 → life（按渠道分别回）
 | R4 session 在场化（不触发编剧初始化） | ✓ | 同步门控已拆（`5d0b30f` 后批次）：`start_dialogue_session` 只恢复生命线；重连补推移除；实测 WS 连接 0.02s |
 | R5 轮次记账 + timeline 流水 | ✓ | `record_dialogue_turn` 挂 journal（写失败不打断） |
 | R5 beat 演出轮 provenance 记账 | ◐ | enqueue 路径未带 beat_id 记账；provenance 目前止于账本 |
-| R6.1 导演/编剧常驻、删会话门控 | ✓ | life/story 常驻链（story-tick checklist）；会话同步门控已拆——编剧经 arm_enter_greeting 后台懒启（在场表演），实测热路径 0.02s、编剧 LLM 在轮后完成不阻塞。speak 内部旧机器的物理移除归 Phase 4 搬目录 |
+| R6.1 导演/编剧常驻、删会话门控 | ✓ | life/story 常驻链（story-tick checklist）；会话门控已拆。**旧编剧机器已本体级断供**（Screenwriter.init_presence 总阀，story_autonomy 开关默认开，ANIMUS_STORY_AUTONOMY=0 应急回滚） |
 | R6.2 landmark→beat 剧情驱动 | ✓ | plan/trigger/surprise 三源挂钩，detail 带 story_beats 计数 |
 | R6.4 协议 v1.2 四消息 | ✓ | storybus 契约 + 进程内总线（幂等/保鲜/五态回执） |
 | R6.5 不在场留存（保鲜期内 held） | ✓ | 账本 held 态 + sweep 过期归档 |
@@ -356,6 +356,18 @@ WS `session_open` → 真实对话轮（outline/speak/agent_typing/finish →
 turn_finish 回答正常），连接耗时 0.02s（门控拆除生效）；编剧 LLM 在轮次
 完成后才后台跑完（`screenwriter_outline` 日志，热路径无阻塞）；该轮已落
 `/api/memory/timeline`（时间轴记账闭环）。
+
+**回归与实测补充**（2026-09-14 晚）：
+- 回归用例 `test_proactivity_regression.py`（6 项）：时间帧单开口不变量
+  （FrameGate 同帧第二拍拒绝/跨渠道独立/下一帧恢复）、帧内收敛（任何批次
+  后无 pending 悬案）、主动会话 payload 契约、预约改期（held→下一拍重投→
+  performed，旧条目终态归档）、断供开关默认值与应急通道；
+- 真实链路实测（8310，本体阀版）：**旧编剧产出全日志 0 条**
+  （screenwriter_outline/opening/units/pool-full 均无）；静默在场 90s 无
+  server_initiated 轮；用户即时回应正常带人格（时间轴落
+  "在呢，刚把屏幕点亮。怎么了，是不是跑图跑累了？"）；
+- **已知取舍**：开场旁白（enter opening）随编剧断供不再生成——开场问候
+  待角色侧 greeting 路径或 life beat 承接（列入剩余清单 3）。
 
 **剩余工作清单（按依赖序）**：
 1. R6.3：speak"决定说什么"路径退役（导演/编剧调用链改挂 life 常驻件）→ 随之删

@@ -69,3 +69,27 @@ class BeatOpeningPolicy:
     def salience_warrants_rewrite(self, salience_hint: float) -> bool:
         """用户轮显著度是否高到需要导演重估剧情（缓存失效判定输入）。"""
         return float(salience_hint) >= self._high_salience_signal
+
+
+class FrameGate:
+    """时间帧单开口闸（speak 底层约定：一个时间帧至多开口一次）。
+
+    - 同渠道同帧窗口内首次开口放行，其后一律拒绝（改期语义：suppressed）；
+    - 帧内无论开口、沉默还是改期，**都在当前帧完成裁决**——不留跨帧悬案；
+    - 窗口默认 5s（对齐 poll 阶梯首档），可注入时钟做确定性测试。
+    """
+
+    def __init__(self, *, window_sec: float = 5.0, clock=None) -> None:
+        import time as _time
+
+        self._window = max(0.1, float(window_sec))
+        self._clock = clock or _time.monotonic
+        self._last_open: dict[str, float] = {}
+
+    def try_open(self, channel: str) -> bool:
+        now = self._clock()
+        last = self._last_open.get(channel)
+        if last is not None and (now - last) < self._window:
+            return False
+        self._last_open[channel] = now
+        return True

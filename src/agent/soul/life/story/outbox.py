@@ -107,6 +107,11 @@ class BeatLedger:
         """被抑制/沉默挂起的 beat（silenced|suppressed）——改期重投的候选。"""
         return [b for bid, b in self._beats.items() if self._state.get(bid) == "held"]
 
+    def retire(self, beat_id: str, status: BeatAckStatus = BeatAckStatus.declined) -> None:
+        """外部终结核（改期重投前归档旧条目，让位新 beat）。"""
+        if self._state.get(beat_id) in ("pending", "held"):
+            self._transition(beat_id, status)
+
     def sweep_expired(self) -> list[LifeStoryBeat]:
         """保鲜期到点未终态的 beat（pending 与 held）标记 expired。"""
         expired: list[LifeStoryBeat] = []

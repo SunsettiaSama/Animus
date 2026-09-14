@@ -135,14 +135,16 @@ class SpeakBeatInboxBridge:
     - ProgressSync 暂不消费（前端帧扩展属 Phase 3 / 2d）。
     """
 
-    def __init__(self, soul: Any, bus: InProcessStoryBus, *, policy=None) -> None:
+    def __init__(self, soul: Any, bus: InProcessStoryBus, *, policy=None, frame_gate=None) -> None:
         from agent.soul.speak.responders.request_driven.character.beat_policy import (
             BeatOpeningPolicy,
+            FrameGate,
         )
 
         self._soul = weakref.ref(soul)
         self._bus = bus
         self._policy = policy or BeatOpeningPolicy()
+        self._gate = frame_gate or FrameGate()
 
     def _speak(self):
         soul = self._soul()
@@ -160,7 +162,11 @@ class SpeakBeatInboxBridge:
         for channel in channels:
             decision = self._policy.decide(beat, speak_ready=speak is not None)
             status: BeatAckStatus
-            if decision.perform_now:
+            if decision.perform_now and not self._gate.try_open(channel):
+                # 时间帧单开口约定：本帧已开口 → 帧内裁决为改期（不留悬案）
+                status = BeatAckStatus.suppressed
+                decision = type(decision)("hold", "frame_busy")
+            elif decision.perform_now:
                 status = self._perform(speak, beat, channel)
             elif decision.action == "silence":
                 status = BeatAckStatus.silenced
@@ -244,6 +250,7 @@ class StoryRuntime:
 
         from agent.soul.speak.responders.request_driven.character.beat_policy import (
             BeatOpeningPolicy,
+            FrameGate,
         )
 
         self.bus = InProcessStoryBus()
@@ -261,6 +268,7 @@ class StoryRuntime:
         self._soul = weakref.ref(soul)
         self._inbox_bound = False
         self._policy = policy or BeatOpeningPolicy()
+        self._gate = FrameGate()
         self._recent_signals = deque(maxlen=20)
         self._director_dirty = False
 
@@ -296,7 +304,9 @@ class StoryRuntime:
         soul = self._soul()
         if soul is None:
             return
-        self._bridge = SpeakBeatInboxBridge(soul, self.bus, policy=self._policy)
+        self._bridge = SpeakBeatInboxBridge(
+            soul, self.bus, policy=self._policy, frame_gate=self._gate
+        )
         self.bus.bind_inbox(
             on_beat=self._bridge.receive_beat,
             on_progress=self._bridge.receive_progress,
@@ -319,11 +329,39 @@ class StoryRuntime:
 
     def tick(self) -> dict:
         self.ensure_inbox()
+        # 预约改期（R7.2）：只重投"本拍之前"已挂起的 beat——同拍内刚被抑制的
+        # 留到下一拍，避免自追自尾；直接调用 redeliver_held() 不受此限。
+        pre_held = {b.beat_id for b in self.ledger.held()}
         result = self.scheduler.tick()
+        result["redelivered"] = self.redeliver_held(only_ids=pre_held)
         expired = self.ledger.sweep_expired()
         if expired:
             result["expired_archived"] = len(expired)
         return result
+
+    def redeliver_held(self, only_ids: set[str] | None = None) -> int:
+        """改期重投 held beat：speak 未就绪/帧忙/用户忙 suppressed、silenced 的
+        剧情在下一拍重新起搏（保鲜期外自然过期归档，不会无限重投）。"""
+        self.ensure_inbox()
+        moved = 0
+        for beat in list(self.ledger.held()):
+            if only_ids is not None and beat.beat_id not in only_ids:
+                continue
+            if beat.is_expired():
+                continue
+            self.ledger.retire(beat.beat_id, BeatAckStatus.declined)
+            draft = BeatDraft(
+                narrative=beat.narrative,
+                channels=beat.channels,
+                card_id=beat.card_id,
+                kind=beat.kind,
+                hint=beat.hint,
+                provenance=beat.provenance,
+                cached=beat.cached,
+            )
+            if self._recorder.emit(draft) is not None:
+                moved += 1
+        return moved
 
     def _receive_signal(self, signal: StorySignal) -> None:
         """用户轮信号 → 导演侧消费（2c）：

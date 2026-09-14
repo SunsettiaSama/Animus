@@ -470,6 +470,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         近因守卫：冷却窗口内已 init 过的会话不再全量重跑（页面刷新、
         重复连接只会补投开场白），否则每次刷新都重写一遍大纲。
         """
+        from .story_autonomy import story_autonomy_enabled
+
+        if story_autonomy_enabled():
+            # R6.3 总闸：剧情/大纲/unit 生成归 life/story（storybus beat）。
+            # 本方法是旧编剧的唯一样张入口——调度路径、轮次路径的
+            # ensure_narrative_fn 回调、重连补推全部经此断供。
+            return
         from .responders.request_driven.orchestrator.state.core.speak_dormant import (
             clear_narrative_for_reinit,
             needs_narrative_reinit,
@@ -526,6 +533,10 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             pass
 
     def _story_pool_refill_async(self, session_id: str, *, user_text: str = "") -> None:
+        from .story_autonomy import story_autonomy_enabled
+
+        if story_autonomy_enabled():
+            return  # R6.3 断供：剧情供给归 life/story（storybus），旧预热池不再回填
         if self._story_prewarmer is None:
             return
         try:
@@ -685,8 +696,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
 
     def _schedule_screenwriter_init(self, session_id: str) -> None:
         """后台跑编剧开场：前端先收占位 outline，完成后再升级推送。"""
+        from .story_autonomy import story_autonomy_enabled
+
         sid = session_id.strip()
         if not sid or self._state_store is None:
+            return
+        if story_autonomy_enabled():
+            # R6.3 断供：剧情/大纲生成归 life/story；编剧不再写弧。
+            # 开场白属在场表演，由角色侧 greeting 路径与 life beat 承接。
             return
         state = self._state_store.session(sid)
         if bool(state.director_cache.get("screenwriter_init_scheduled")):
@@ -1527,6 +1544,24 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         """
         sid = session_id.strip()
         if not sid or not handoff:
+            return
+        from .story_autonomy import story_autonomy_enabled
+
+        if story_autonomy_enabled():
+            # R6.3 断供：idle 主动开口的"决定说什么"归 life/story beat +
+            # 角色开口决策（BeatOpeningPolicy）；旧导演交接不再生成。
+            self._record_agent_delivery_trace(
+                sid,
+                trigger_id=str(handoff.get("trigger_id") or ""),
+                status="dropped_story_autonomy",
+            )
+            self._abort_proactive_handoff(
+                sid,
+                None,
+                executable_unit_id=str(handoff.get("executable_unit_id") or "").strip(),
+                reason="story_autonomy_retired",
+                rearm=True,
+            )
             return
         self._record_agent_delivery_trace(
             sid,
