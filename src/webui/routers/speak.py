@@ -301,6 +301,14 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
     if delivery_mode not in ("stream", "simulated"):
         delivery_mode = "stream"
     pipeline = str(first.get("pipeline", "request_driven")).strip() or "request_driven"
+    # 接口收敛（single-stream 需求 R3 / 开放问题 2）：对话对外唯一 pipeline。
+    if pipeline != "request_driven":
+        await websocket.send_json({
+            "type": "error",
+            "message": f"unsupported pipeline: {pipeline!r} (only request_driven)",
+        })
+        await websocket.close()
+        return
     if not gen_id:
         await websocket.send_json({"type": "error", "message": "missing gen_id"})
         await websocket.close()

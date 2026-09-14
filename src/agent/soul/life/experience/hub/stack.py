@@ -156,6 +156,17 @@ class LifeExperienceStack:
             impression_why=impression_why,
             annotation_decided=annotation_decided,
         )
+        # 时间轴读模型：append-only 轮次流水（写失败不打断记账，见 timeline 模块）
+        from agent.soul.memory.timeline import default_journal
+
+        default_journal().append_turn(
+            session_id=session_id,
+            user_text=user_text,
+            agent_text=agent_text,
+            salience=salience,
+            emotion_label=emotion_label,
+            proactive_intent_id=proactive_intent_id,
+        )
 
     def close_dialogue(self, session_id: str = "tao") -> ExperienceUnit | None:
         return self.dialogue.close_dialogue(self._require_presence(), session_id)

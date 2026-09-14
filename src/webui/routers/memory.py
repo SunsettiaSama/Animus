@@ -149,3 +149,20 @@ def consolidate_medium_term():
     if did:
         return {"status": "ok", "message": "Consolidation completed."}
     return {"status": "ok", "message": "Nothing to consolidate."}
+
+
+@router.get("/api/memory/timeline")
+def get_memory_timeline(channel: str = "", limit: int = 50, before: str = ""):
+    """记忆时间轴 v1：append-only 对话轮流水，新在前分页。
+
+    "看过去" = 记忆检索（single-stream 需求 R2）；读模型见
+    agent/soul/memory/timeline.py。
+    """
+    from agent.soul.memory.timeline import read_timeline
+
+    items, next_before = read_timeline(
+        channel=channel or "main",
+        limit=limit,
+        before=before.strip(),
+    )
+    return {"channel": channel or "main", "items": items, "next_before": next_before}
