@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>栖灵 Animus · 启动站</title>
-  <link rel="stylesheet" href="/static/hub/hub.css" />
+  <link rel="stylesheet" href="/static/hub/hub.css?v=2" />
 </head>
 <body>
 
@@ -24,7 +24,11 @@
 
   <!-- ═══ 启动阶段 ═══ -->
   <section class="hub-section">
-    <div class="hub-section-title">启动状态 <span id="hub-refreshed" class="hub-refreshed"></span></div>
+    <div class="hub-section-title">
+      启动状态
+      <span id="hub-refreshed" class="hub-refreshed"></span>
+      <span id="hub-phase-summary" class="hub-phase-summary"></span>
+    </div>
     <div class="hub-phases" id="hub-phases">
       <span class="hub-muted">正在获取状态…</span>
     </div>
@@ -41,13 +45,14 @@
     <div class="hub-section-title">从这里进入</div>
     <div class="hub-cards">
 
-      <a class="hub-card" id="card-chat" href="/console">
+      <a class="hub-card is-primary" id="card-chat" href="/console">
         <div class="hc-icon">💬</div>
         <div class="hc-main">
           <div class="hc-title">Web 对话</div>
           <div class="hc-desc">控制室：对话、人格、记忆、调度与监控</div>
         </div>
         <span class="hc-badge" id="badge-chat">…</span>
+        <span class="hc-arrow">→</span>
       </a>
 
       <div class="hub-card is-disabled" id="card-desktop-pet" title="Phase 2 上线：由启动站拉起/停止">
@@ -87,6 +92,4 @@
 
 </div>
 
-<script src="/static/hub/hub.js"></script>
-</body>
-</html>
+<script src="/static/hub/hub.js?v=2"></script>

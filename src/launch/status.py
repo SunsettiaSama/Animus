@@ -29,7 +29,8 @@ def snapshot(state: Any) -> dict[str, Any]:
         _phase(phases.ENV, phases.OK,
                f"Python {env['version']} · {env['platform']}"),
         _phase(phases.CONFIG,
-               phases.OK if config["ok"] else phases.FAIL, config["detail"]),
+               phases.OK if config["ok"] else phases.FAIL,
+               config["detail"] or "run.yaml · llm_core"),
     ]
 
     if not llm["handle_ready"]:
@@ -49,8 +50,14 @@ def snapshot(state: Any) -> dict[str, Any]:
         soul_state = phases.FAIL
     else:
         soul_state = phases.PENDING
-    phase_list.append(_phase(phases.SOUL, soul_state,
-                             soul["init_error"] or f"soul={soul['state'] or '未启动'}"))
+    # 阶段卡只放短句；完整 init_error 经 payload 的 soul.init_error 供悬停提示
+    if soul["init_error"]:
+        soul_detail = "启动失败 · 见下方指引"
+    elif soul["running"]:
+        soul_detail = "soul=running"
+    else:
+        soul_detail = f"soul={soul['state'] or '未启动'}"
+    phase_list.append(_phase(phases.SOUL, soul_state, soul_detail))
 
     # serve：本快照能被请求到即说明宿主在役
     phase_list.append(_phase(phases.SERVE, phases.OK, "WebUI 在役"))

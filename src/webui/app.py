@@ -29,7 +29,7 @@ app = FastAPI(title="ReAct Agent")
 @app.middleware("http")
 async def _no_cache_js(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(("/static/js/", "/static/js2/")) or request.url.path.startswith("/static/css/"):
+    if request.url.path.startswith(("/static/js/", "/static/js2/", "/static/hub/")) or request.url.path.startswith("/static/css/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"

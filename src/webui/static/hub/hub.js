@@ -12,21 +12,37 @@
   const POLL_SLOW_MS = 8000;   // 全绿后的巡检间隔
   let timer = null;
 
+  const PHASE_STATE_WORDS = {
+    ok: '就绪', warn: '注意', fail: '失败', pending: '等待中',
+  };
+
   // ── 渲染 ────────────────────────────────────────────────────────────────
 
-  function renderPhases(phases) {
+  function renderPhases(data) {
     const box = document.getElementById('hub-phases');
     box.innerHTML = '';
-    for (const p of phases) {
+    const fullSoulError = (data.soul && data.soul.init_error) || '';
+    for (const p of data.phases) {
       const el = document.createElement('div');
       el.className = 'phase';
       el.dataset.state = p.state;
+      // Soul 阶段的悬停提示给完整错误原文（显示行保持短句）
+      const tip = (p.id === 'soul' && fullSoulError) ? fullSoulError : (p.detail || '');
       el.innerHTML =
         `<div class="p-head"><span class="p-dot"></span>` +
-        `<span class="p-label">${escapeHtml(p.label)}</span></div>` +
-        `<div class="p-detail" title="${escapeHtml(p.detail || '')}">` +
+        `<span class="p-label">${escapeHtml(p.label)}</span>` +
+        `<span class="p-state">${PHASE_STATE_WORDS[p.state] || ''}</span></div>` +
+        `<div class="p-detail" title="${escapeHtml(tip)}">` +
         `${escapeHtml(p.detail || '')}</div>`;
       box.appendChild(el);
+    }
+
+    const summary = document.getElementById('hub-phase-summary');
+    if (summary) {
+      const okCount = data.phases.filter(p => p.state === 'ok').length;
+      const total = data.phases.length;
+      summary.textContent = `${okCount}/${total} 就绪`;
+      summary.dataset.tone = okCount === total ? 'ok' : 'warn';
     }
   }
 
@@ -42,6 +58,7 @@
     for (const c of checks) {
       const li = document.createElement('li');
       li.innerHTML =
+        `<span class="c-dot"></span>` +
         `<span class="c-label">${escapeHtml(c.label)}</span>` +
         `<span class="c-hint">${escapeHtml(c.hint || '')}</span>`;
       list.appendChild(li);
@@ -54,12 +71,10 @@
     if (data.soul_ready) {
       badge.textContent = '就绪';
       badge.dataset.state = 'ok';
-    } else if (data.soul && data.soul.running) {
-      badge.textContent = '初始化中';
-      badge.dataset.state = 'warn';
     } else {
-      badge.textContent = '等待 Soul';
-      badge.dataset.state = 'fail';
+      // 冷启动是过程不是故障：统一用琥珀色，不制造红色焦虑
+      badge.textContent = data.soul && data.soul.running ? '初始化中' : '等待 Soul';
+      badge.dataset.state = 'warn';
     }
   }
 
@@ -86,7 +101,7 @@
       const res = await fetch('/api/launch/status', { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      renderPhases(data.phases || []);
+      renderPhases(data);
       renderChecks(data.checks || []);
       renderChatBadge(data);
       markRefreshed();
