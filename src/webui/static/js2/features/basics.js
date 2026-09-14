@@ -150,25 +150,22 @@ export const soulMod = {
   renderReadinessPanel,
 };
 
-// ── React basics（清除等遗留操作；不再是会话路径） ────────────────────────────
+// ── React basics（已退役：single-stream R3，legacy 路由已从后端移除） ────────
+// 保留模块接口供设置页调用，操作转为提示——Soul 随服务启动自动初始化，
+// 记忆/人格清理由 soul 侧生命周期管理。
 
 export const reactMod = {
-  init(payload) {
-    // legacy init 语义保留给设置页「Reinit」按钮。
-    return http.post(API.react.reinit, payload).then(data => {
-      if (data && typeof data === 'object' && data.error) throw new Error(data.error);
-      _toast('ReAct initializing…');
-      return data;
-    }).catch(err => {
-      _toast(err.message || 'Cannot reinitialize while streaming');
-      throw err;
-    });
+  init(_payload) {
+    _toast('Legacy ReAct 初始化已退役：Soul 随服务启动自动初始化');
+    return Promise.resolve({ ok: true, skipped: 'legacy-retired' });
   },
   clearMemory() {
-    return http.post(API.react.memoryClear).then(() => _toast('Memory cleared'));
+    _toast('Legacy 记忆清除已退役：记忆由 soul 记忆系统管理');
+    return Promise.resolve({ ok: true, skipped: 'legacy-retired' });
   },
   clearPersona() {
-    return http.post(API.react.personaClear).then(() => _toast('Persona cleared'));
+    _toast('Legacy 人格清除已退役：人格由 soul 人格演化管理');
+    return Promise.resolve({ ok: true, skipped: 'legacy-retired' });
   },
 };
 

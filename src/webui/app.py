@@ -15,7 +15,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from agent.adapters.fastapi_react import create_react_router
 from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe, soul, speak, accounts, agent, launch
 from routers.infra import router as infra_router
 from state import get_state
@@ -43,7 +42,6 @@ app.mount(
 
 for _r in [
     llm.router,
-    create_react_router(get_state),
     memory.router,
     persona.router,
     scheduler.router,

@@ -1,8 +1,7 @@
 # 单窗口永续对话 + 剧情自主（记忆即历史 · life 出剧情 · 角色自管开口 · speak 只扮演）— 需求文档
 
-- 状态：**待确认 v4**（2026-09-14；v1 单窗口/单接口/记忆即历史 → v2 导演编剧迁
-  life + 协议 → v3 角色自管开口 + 卡片双段 + 预跑缓存 → v4 缺口修补 + **抽象层级
-  定稿**。确认后按第 11 节执行）
+- 状态：**已实施（部分）v5**（2026-09-14；v1 单窗口 → v2 导演编剧迁 life → v3 角色自管
+  开口/卡片双段/预跑 → v4 缺口修补+分层定稿 → v5 实施与验收记录，见第 13 节）
 - 关联：`launch-hub-requirements.md`、`docs/agent/soul/README.md`、`docs/product/README.md`
 
 ---
@@ -315,3 +314,46 @@ BeatAck:                  # speak/角色 → life（按渠道分别回）
     单元级 timeline（语义层）后续另立。
 14. 同 channel 多连接：维持现状单流（`try_start_streaming` 拒第二个），多窗口同
     步广播后续另立。
+
+---
+
+## 13. 实施状态与验收记录（2026-09-14，分支 `feat/single-stream-story`）
+
+图例：✓ 已落地并验证 · ◐ 部分落地 · ✗ 未落地（诚实记账，非完成度装饰）
+
+| 需求 | 状态 | 证据 / 缺口说明 |
+|---|---|---|
+| R1 移除会话列表/新对话/排序 | ✓ | 侧栏改回忆面板（`b5cb3fd`）；新对话按钮与排序条移除 |
+| R1 history_store 停写转录 | ✓ | `saveConversation` 停 POST（保留 proactive 副作用）；delete/clear 存根 |
+| R1 刷新恢复"近期尾巴"短窗缓存 | ✗ | 未做独立短窗；现状 onRebuild 读旧存档（停写后渐陈旧）。**下一批** |
+| R2 timeline API + 回忆面板 | ✓ | `GET /api/memory/timeline` + `memory_recall.js`（分页/高显著标记） |
+| R2 回忆关键词搜索 | ✗ | 仅时间轴分页；搜索待做 |
+| R3 唯一 WS 接口 + pipeline 收敛 | ✓ | chat 路由退役（`88d18c0`）、react 路由退役（本批）、pipeline 仅 request_driven |
+| R3 create_ui / notify SSE 裁撤 | ◐ | **保留**：js2 proactive 仍依赖 SSE notify；并入前端主动性改造批 |
+| R4 session 在场化（不触发编剧初始化） | ✗ | `start_dialogue_session` 仍调 `ensure_screenwriter_init`——受 R6.1 牵连（见下） |
+| R5 轮次记账 + timeline 流水 | ✓ | `record_dialogue_turn` 挂 journal（写失败不打断） |
+| R5 beat 演出轮 provenance 记账 | ◐ | enqueue 路径未带 beat_id 记账；provenance 目前止于账本 |
+| R6.1 导演/编剧常驻、删会话门控 | ◐ | **双轨现状**：life/story 常驻链已通（story-tick checklist + landmark→beat，`d953b47`/`3d63c8d`）；但 speak 内部旧导演/编剧机器仍在会话内运行，`ensure_screenwriter_init` 门控未删——删它需先完成 speak"决定说什么"路径退役（R6.3），是剩余工作的主战场 |
+| R6.2 landmark→beat 剧情驱动 | ✓ | plan/trigger/surprise 三源挂钩，detail 带 story_beats 计数 |
+| R6.4 协议 v1.2 四消息 | ✓ | storybus 契约 + 进程内总线（幂等/保鲜/五态回执） |
+| R6.5 不在场留存（保鲜期内 held） | ✓ | 账本 held 态 + sweep 过期归档 |
+| R7 角色自管开口（决策层） | ◐ | `BeatOpeningPolicy` 确定性规则版全量接入（perform/hold/silence）；CharacterRuntime 人格化收拢、预约梯子迁移未做 |
+| R7 StorySignal → 导演失效 | ✓ | 轮末自动发信号；salience≥0.7 置 director_dirty（`0460e97`） |
+| R8 卡片双段 + ProgressSync + WS 帧 + 前端就地刷新 | ✓ | StoryCardStore（大纲冻结）+ `story_card`/`story_progress` 帧 + marker 原位更新（`033622f`/`b5cb3fd`） |
+| R9 演绎预跑缓存 | ✗ | director_dirty 失效钩子就位；prewarmer 未上移 life、无前瞻预跑 |
+| R10 重启恢复 | ◐ | storybus 按设计无恢复职责 ✓；held beat 重启重投未实现（进程内态，重启即失） |
+| §9 测试策略 | ◐ | 契约/决策/帧 26 项单测 ✓；桌宠客户端帧兼容回归未正式化 |
+| Phase 4 history 只读化 | ✓ | POST/DELETE 移除，GET 留档（405 断言验证） |
+| Phase 4 物理搬目录 | ✗ | directors/screenwriter/story_pool 仍在 speak/request_driven 下——先完成 R6.3 再搬，否则是搬空壳 |
+
+**验收运行**（2026-09-14）：契约单测 26/26 绿；webui 全装配 TestClient 冒烟
+（`/`、`/console`、timeline、history 只读 405、react 路由清零）；E2E 链路模拟
+（landmark fill → beat → 角色决策 → performed 回执 → 开卡推进）通过。
+
+**剩余工作清单（按依赖序）**：
+1. R6.3：speak"决定说什么"路径退役（导演/编剧调用链改挂 life 常驻件）→ 随之删
+   `ensure_screenwriter_init` 门控（补齐 R4/R6.1）；
+2. R9：prewarmer 上移 `life/story/pool/`，按网格前瞻预跑（director_dirty 已是失效入口）；
+3. R7 深水区：预约梯子/沉默阶梯收拢进 CharacterRuntime，人格化 BeatOpeningPolicy；
+4. R1 短窗缓存（刷新恢复尾巴）+ R2 关键词搜索；
+5. Phase 4 收官：物理搬目录 + react 相关 js2 设置页入口清理 + 桌宠帧兼容回归正式化。
