@@ -14,13 +14,17 @@ import logging
 import threading
 import time
 import weakref
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from agent.soul.life.story import BeatLedger, CallableBeatSource, StoryOutbox, StoryScheduler
 from agent.soul.storybus import (
     BeatAck,
     BeatAckStatus,
+    BeatDraft,
+    BeatProvenance,
     LifeStoryBeat,
+    PerformanceHint,
     StoryProgressSync,
     StorySignal,
 )
@@ -174,8 +178,9 @@ class StoryRuntime:
         self.bus = InProcessStoryBus()
         self.ledger = BeatLedger(on_advance=self._on_advance)
         self.outbox = StoryOutbox(self.bus.deliver_beat)
+        self._recorder = self._recording_outbox()
         self.scheduler = StoryScheduler(
-            self._recording_outbox(), source or CallableBeatSource()
+            self._recorder, source or CallableBeatSource()
         )
         self.bus.bind_life_side(
             ack_receiver=self.ledger.receive_ack,
@@ -185,17 +190,29 @@ class StoryRuntime:
         self._inbox_bound = False
 
     def _recording_outbox(self):
-        """包装 outbox：投递成功的 beat 同时记入账本待回执。"""
+        """包装 outbox：先记账后投递——同步回执（suppressed 等）才能落到账上。"""
         outer = self
 
         class _Recording:
             def emit(self, draft):
-                beat = outer.outbox.emit(draft)
-                if beat is not None:
-                    outer.ledger.record(beat)
+                beat = outer.outbox.build(draft)
+                if beat is None:
+                    return None
+                outer.ledger.record(beat)
+                if not outer.outbox.deliver(beat):
+                    return None
                 return beat
 
         return _Recording()
+
+    def emit_drafts(self, drafts) -> int:
+        """剧情事件直发口（landmark/surprise 等即时剧情入口）。"""
+        self.ensure_inbox()
+        emitted = 0
+        for draft in drafts:
+            if self._recorder.emit(draft) is not None:
+                emitted += 1
+        return emitted
 
     def ensure_inbox(self) -> None:
         """speak 收件桥懒绑定（speak 服务可能晚于剧情运行件就绪）。"""
@@ -237,3 +254,74 @@ def ensure_story_runtime(soul: Any) -> StoryRuntime:
             rt = StoryRuntime(soul)
             _runtimes[soul] = rt
         return rt
+
+
+# ── landmark → beat 桥（R6.2 剧情驱动的第一供給源） ─────────────────────────
+# 默认投递渠道与保鲜期（需求开放问题 7/8 的默认值）；渠道配置化属 2c。
+
+_DEFAULT_CHANNELS = ("main",)
+_FRESH_SEC = 6 * 3600
+
+
+def _default_hint(share_desire: float = 0.5) -> PerformanceHint:
+    return PerformanceHint(
+        urgency="normal",
+        share_desire=share_desire,
+        valid_until=datetime.fromtimestamp(time.time() + _FRESH_SEC, tz=timezone.utc).isoformat(),
+    )
+
+
+def beats_from_landmark_fills(fills: list[dict]) -> list[BeatDraft]:
+    """landmark 触发填补项（life.api.fill_due_landmarks 的返回）→ beat 草稿。"""
+    drafts: list[BeatDraft] = []
+    for item in fills:
+        narrative = str(item.get("hint") or item.get("narrative") or "").strip()
+        if not narrative:
+            continue
+        drafts.append(BeatDraft(
+            narrative=narrative,
+            channels=_DEFAULT_CHANNELS,
+            kind="landmark_progress",
+            hint=_default_hint(share_desire=float(item.get("salience", 0.6))),
+            provenance=BeatProvenance(
+                landmark_id=str(item.get("landmark_id") or item.get("landmark_agenda_id") or ""),
+                agenda_id=str(item.get("landmark_agenda_id") or ""),
+            ),
+        ))
+    return drafts
+
+
+def beat_from_subjective_event(event: dict, *, source_tick: str = "") -> BeatDraft | None:
+    """plan_landmark 的主观事件（subjective_event.hint）→ beat 草稿。"""
+    narrative = str(event.get("hint") or "").strip()
+    if not narrative:
+        return None
+    return BeatDraft(
+        narrative=narrative,
+        channels=_DEFAULT_CHANNELS,
+        kind="landmark_progress",
+        hint=_default_hint(share_desire=0.6),
+        provenance=BeatProvenance(source_tick=source_tick),
+    )
+
+
+def beat_from_surprise(detail: dict) -> BeatDraft | None:
+    """surprise tick（life 惊奇事件）→ beat 草稿。"""
+    if not detail.get("triggered"):
+        return None
+    narrative = str(detail.get("narrative") or "").strip()
+    if not narrative:
+        return None
+    return BeatDraft(
+        narrative=narrative,
+        channels=_DEFAULT_CHANNELS,
+        kind="incident",
+        hint=_default_hint(share_desire=min(0.95, 0.5 + float(detail.get("salience", 0.5)) * 0.4)),
+    )
+
+
+def emit_story_beats(soul: Any, drafts: list[BeatDraft]) -> int:
+    """统一剧情发射口（orchestrator 的 landmark/surprise 处理器调用）。"""
+    if not drafts:
+        return 0
+    return ensure_story_runtime(soul).emit_drafts(drafts)

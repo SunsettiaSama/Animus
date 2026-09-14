@@ -38,17 +38,30 @@ class StoryOutbox:
         self._deliver = deliver
         self._seen: set[str] = set()
 
-    def emit(self, draft: BeatDraft) -> LifeStoryBeat | None:
+    def build(self, draft: BeatDraft) -> LifeStoryBeat | None:
+        """两相投递之构造相：补幂等键与时间戳，做去重/保鲜预检，不投递。"""
         beat = draft.with_beat_id(f"beat-{uuid.uuid4().hex[:16]}")
         if beat.beat_id in self._seen:
             return None
         if beat.is_expired():
             logger.debug("[story.outbox] beat expired before delivery: %s", beat.beat_id)
             return None
-        ok = self._deliver(beat)
+        return beat
+
+    def deliver(self, beat: LifeStoryBeat) -> bool:
+        """两相投递之投递相（调用方应先 build 并自行记账）。"""
+        if beat.beat_id in self._seen or beat.is_expired():
+            return False
+        ok = bool(self._deliver(beat))
         if ok:
             self._seen.add(beat.beat_id)
-        return beat if ok else None
+        return ok
+
+    def emit(self, draft: BeatDraft) -> LifeStoryBeat | None:
+        beat = self.build(draft)
+        if beat is None:
+            return None
+        return beat if self.deliver(beat) else None
 
     # ── LifeStoryOutboxPort ────────────────────────────────────────────────
     def deliver_beat(self, beat: LifeStoryBeat) -> bool:
@@ -89,6 +102,10 @@ class BeatLedger:
 
     def pending(self) -> list[LifeStoryBeat]:
         return [b for bid, b in self._beats.items() if self._state.get(bid) == "pending"]
+
+    def held(self) -> list[LifeStoryBeat]:
+        """被抑制/沉默挂起的 beat（silenced|suppressed）——改期重投的候选。"""
+        return [b for bid, b in self._beats.items() if self._state.get(bid) == "held"]
 
     def sweep_expired(self) -> list[LifeStoryBeat]:
         """保鲜期到点未终态的 beat（pending 与 held）标记 expired。"""

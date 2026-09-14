@@ -247,6 +247,16 @@ class HeartbeatOrchestrator:
                 "capture_outbound": capture_report.outbound_count,
                 "incident_fsm_updates": capture_report.incident_count,
             }
+        # 剧情链路（R6.2）：规划出的主观事件 → beat → speak 扮演
+        from agent.soul.wiring.story import beat_from_subjective_event, emit_story_beats
+
+        draft = beat_from_subjective_event(
+            dict(detail.get("subjective_event", {})), source_tick=item.id
+        ) if detail.get("planned") else None
+        detail = {
+            **detail,
+            "story_beats": emit_story_beats(self._soul, [draft] if draft else []),
+        }
         return ChecklistRunResult(
             item.id,
             item.domain,
@@ -301,6 +311,10 @@ class HeartbeatOrchestrator:
             self._soul,
             self._beats_from_dicts(fills),
         )
+        # 剧情链路（R6.2）：到点填补的 landmark → beat → speak 扮演
+        from agent.soul.wiring.story import beats_from_landmark_fills, emit_story_beats
+
+        story_beats = emit_story_beats(self._soul, beats_from_landmark_fills(fills))
         return ChecklistRunResult(
             item.id,
             item.domain,
@@ -311,6 +325,7 @@ class HeartbeatOrchestrator:
                 "capture_events": len(capture_report.events),
                 "capture_outbound": capture_report.outbound_count,
                 "incident_fsm_updates": capture_report.incident_count,
+                "story_beats": story_beats,
             },
         )
 
@@ -334,6 +349,14 @@ class HeartbeatOrchestrator:
                 "capture_outbound": capture_report.outbound_count,
                 "incident_fsm_updates": capture_report.incident_count,
             }
+        # 剧情链路（R6.2）：惊奇事件 → beat → speak 扮演
+        from agent.soul.wiring.story import beat_from_surprise, emit_story_beats
+
+        draft = beat_from_surprise(detail) if detail.get("triggered") else None
+        detail = {
+            **detail,
+            "story_beats": emit_story_beats(self._soul, [draft] if draft else []),
+        }
         return ChecklistRunResult(
             item.id,
             item.domain,
