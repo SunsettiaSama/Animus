@@ -44,6 +44,19 @@ function _routeSpeakEvent(ev) {
   const { kind, text, renderMeta: meta } = ev;
   const upgrade = _isOutlineUpgrade(kind, meta);
 
+  // 剧情卡片帧（single-stream §8）：卡片建立落一条剧情线；进度段由
+  // 专属卡片组件渲染（Phase 3），在此静默容错不打扰对话流。
+  if (kind === 'story_card') {
+    const outline = String(meta?.outline || '').trim();
+    if (outline) {
+      chat.appendThreadMarker(`📖 ${outline}`, new Date().toISOString(), {
+        story: true, card_id: meta?.card_id || '',
+      });
+    }
+    return;
+  }
+  if (kind === 'story_progress') return;
+
   if (_streamCtrl && !_streamCtrl._finalized) {
     _streamCtrl.onEvent(kind, text, meta);
     return;

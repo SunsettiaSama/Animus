@@ -16,6 +16,9 @@ SpeakStreamKind = Literal[
     "agent_typing",
     "finish",
     "error",
+    # 剧情卡片帧（single-stream 需求 §8）：卡片建立/进度刷新，meta 承载双段
+    "story_card",
+    "story_progress",
 ]
 
 

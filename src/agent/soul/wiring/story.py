@@ -196,7 +196,44 @@ class SpeakBeatInboxBridge:
             return BeatAckStatus.suppressed
 
     def receive_progress(self, sync: StoryProgressSync) -> None:
-        logger.debug("[story.inbox] progress (Phase 2d/3 接前端帧): %s", sync.card_id)
+        """进度段 → WS story_progress 帧（无在场连接时丢弃——可丢语义）。"""
+        self._emit_story_frame("story_progress", {
+            "card_id": sync.card_id,
+            "current": sync.current,
+            "upcoming": list(sync.upcoming),
+            "updated_at": sync.updated_at,
+        })
+
+    def emit_card(self, card: Any) -> None:
+        """卡片建立 → WS story_card 帧（大纲段 + 初始进度）。"""
+        self._emit_story_frame("story_card", {
+            "card_id": card.card_id,
+            "outline": card.outline,
+            "current": card.current,
+            "upcoming": list(card.upcoming),
+            "updated_at": card.updated_at,
+        })
+
+    def _emit_story_frame(self, kind: str, payload: dict) -> None:
+        soul = self._soul()
+        if soul is None:
+            return
+        try:
+            port = soul.speak_outbound.stream_port
+        except Exception:  # noqa: BLE001 — speak 未就绪
+            return
+        if port is None:
+            return
+        from agent.soul.speak.io.outbound.stream.events import SpeakStreamEvent
+
+        for channel in ("main",):
+            try:
+                port.emit(
+                    f"live:{channel}",
+                    SpeakStreamEvent(kind=kind, text="", final=True, meta=dict(payload)),
+                )
+            except Exception:  # noqa: BLE001 — 帧失败不反噬剧情
+                logger.exception("[story.inbox] frame emit failed: %s", kind)
 
 
 class StoryRuntime:
@@ -259,9 +296,26 @@ class StoryRuntime:
         soul = self._soul()
         if soul is None:
             return
-        bridge = SpeakBeatInboxBridge(soul, self.bus, policy=self._policy)
-        self.bus.bind_inbox(on_beat=bridge.receive_beat, on_progress=bridge.receive_progress)
+        self._bridge = SpeakBeatInboxBridge(soul, self.bus, policy=self._policy)
+        self.bus.bind_inbox(
+            on_beat=self._bridge.receive_beat,
+            on_progress=self._bridge.receive_progress,
+        )
         self._inbox_bound = True
+
+    def open_card(self, outline: str, *, card_id: str | None = None):
+        """开卡 + 下发 story_card 帧（大纲段冻结，进度段从空开始）。"""
+        self.ensure_inbox()
+        card = self.cards.open(outline, card_id=card_id)
+        bridge = getattr(self, "_bridge", None)
+        if bridge is not None:
+            bridge.emit_card(card)
+        return card
+
+    def advance_card(self, card_id: str, *, current: str, upcoming=()):
+        """推进进度段：StoryProgressSync → bus → story_progress 帧。"""
+        self.ensure_inbox()
+        return self.cards.advance(card_id, current=current, upcoming=upcoming)
 
     def tick(self) -> dict:
         self.ensure_inbox()
