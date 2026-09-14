@@ -209,6 +209,13 @@ class HeartbeatOrchestrator:
             ))
             return ChecklistRunResult(item.id, item.domain, item.action, True)
 
+        if item.domain == "story" and item.action == "story.tick":
+            # 剧情排程（R6.1 常驻化）：与前端在否无关；组装在 wiring 层，SoulService 零改动
+            from agent.soul.wiring.story import ensure_story_runtime
+
+            detail = ensure_story_runtime(self._soul).tick()
+            return ChecklistRunResult(item.id, item.domain, item.action, True, detail=detail)
+
         channel = SoulChannel(item.channel)
         domain = SoulDomain(item.domain)
         payload = dict(item.payload)

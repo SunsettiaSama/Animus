@@ -55,6 +55,13 @@ def default_checklist(cfg: SoulConfig | None = None) -> list[ChecklistItem]:
             interval_sec=c.heartbeat_scan_interval_sec,
         ),
         ChecklistItem(
+            id="story-tick",
+            domain="story",
+            action="story.tick",
+            trigger=ChecklistTrigger.interval,
+            interval_sec=300.0,
+        ),
+        ChecklistItem(
             id="memory-wander",
             domain="memory",
             action=MemoryAction.WANDER,
