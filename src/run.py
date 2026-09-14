@@ -269,7 +269,7 @@ def main() -> None:
             "  python src/run.py --mode cli           # interactive CLI\n"
             "  python src/run.py --check              # check service status only\n"
             "  python src/run.py --no-searxng         # skip Docker/SearXNG\n"
-            "  python src/run.py --mode webui --host 0.0.0.0 --port 8300\n"
+            "  python src/run.py --mode webui --host 127.0.0.1 --port 8300\n"
         ),
     )
     parser.add_argument(

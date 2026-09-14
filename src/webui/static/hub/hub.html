@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>栖灵 Animus · 启动站</title>
+  <link rel="stylesheet" href="/static/hub/hub.css" />
+</head>
+<body>
+
+<div class="hub">
+
+  <!-- ═══ 页眉 ═══ -->
+  <header class="hub-header">
+    <div class="hub-logo">
+      <div class="logo-mark">⚡</div>
+      <div>
+        <h1>栖灵 Animus</h1>
+        <p>会成长、会记得、会主动出现的智能体</p>
+      </div>
+    </div>
+    <div class="hub-form-badge" title="产品形态 A：前端与后端均运行在本机">本地部署</div>
+  </header>
+
+  <!-- ═══ 启动阶段 ═══ -->
+  <section class="hub-section">
+    <div class="hub-section-title">启动状态 <span id="hub-refreshed" class="hub-refreshed"></span></div>
+    <div class="hub-phases" id="hub-phases">
+      <span class="hub-muted">正在获取状态…</span>
+    </div>
+  </section>
+
+  <!-- ═══ 引导（未就绪项） ═══ -->
+  <section class="hub-section hidden" id="hub-checks-section">
+    <div class="hub-section-title hub-warn-title">需要处理</div>
+    <ul class="hub-checks" id="hub-checks"></ul>
+  </section>
+
+  <!-- ═══ 入口 ═══ -->
+  <section class="hub-section">
+    <div class="hub-section-title">从这里进入</div>
+    <div class="hub-cards">
+
+      <a class="hub-card" id="card-chat" href="/console">
+        <div class="hc-icon">💬</div>
+        <div class="hc-main">
+          <div class="hc-title">Web 对话</div>
+          <div class="hc-desc">控制室：对话、人格、记忆、调度与监控</div>
+        </div>
+        <span class="hc-badge" id="badge-chat">…</span>
+      </a>
+
+      <div class="hub-card is-disabled" id="card-desktop-pet" title="Phase 2 上线：由启动站拉起/停止">
+        <div class="hc-icon">🐾</div>
+        <div class="hc-main">
+          <div class="hc-title">桌宠</div>
+          <div class="hc-desc">把她放生到桌面：沉默、主动与气泡对话</div>
+        </div>
+        <span class="hc-badge">即将上线</span>
+      </div>
+
+      <div class="hub-card is-disabled" id="card-pygame-town" title="Phase 2 上线：由启动站拉起/停止">
+        <div class="hc-icon">🏡</div>
+        <div class="hc-main">
+          <div class="hc-title">小镇沙盒</div>
+          <div class="hc-desc">多 agent 社交与剧情验证的模拟世界</div>
+        </div>
+        <span class="hc-badge">即将上线</span>
+      </div>
+
+      <div class="hub-card is-disabled" id="card-metroidvania" title="Phase 2 上线：启动站内直接游玩">
+        <div class="hc-icon">⚔️</div>
+        <div class="hc-main">
+          <div class="hc-title">星陨之痕</div>
+          <div class="hc-desc">类银河恶魔城双章节 Demo（纯本地 HTML5）</div>
+        </div>
+        <span class="hc-badge">即将上线</span>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══ 页脚 ═══ -->
+  <footer class="hub-footer">
+    产品形态 A · 本地部署：前端与后端均运行在本机 · 数据不出机器 · 127.0.0.1:8300
+  </footer>
+
+</div>
+
+<script src="/static/hub/hub.js"></script>
+</body>
+</html>

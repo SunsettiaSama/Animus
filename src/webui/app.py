@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from agent.adapters.fastapi_react import create_react_router
 from agent.adapters.fastapi_chat import create_chat_router
-from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe, soul, speak, accounts, agent
+from routers import llm, memory, persona, scheduler, knowledge, voice, history, plan, benchmark, probe, soul, speak, accounts, agent, launch
 from routers.infra import router as infra_router
 from state import get_state
 
@@ -60,6 +60,7 @@ for _r in [
     agent.router,
     speak.router,
     accounts.router,
+    launch.router,
 ]:
     app.include_router(_r)
 
@@ -344,7 +345,16 @@ def _shutdown():
 
 
 @app.get("/", response_class=HTMLResponse)
-def index():
+def hub():
+    """启动站（进站前）：独立轻页面，不过账号门。见 docs/product/launch-hub-requirements.md §3.2。"""
+    html_path = os.path.join(_HERE, "static", "hub", "hub.html")
+    with open(html_path, encoding="utf-8") as f:
+        return f.read()
+
+
+@app.get("/console", response_class=HTMLResponse)
+def console():
+    """控制室 SPA（进站后）：账号门 → landing/workspace/…，内部逻辑不变。"""
     html_path = os.path.join(_HERE, "index.html")
     with open(html_path, encoding="utf-8") as f:
         return f.read()
