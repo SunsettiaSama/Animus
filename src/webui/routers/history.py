@@ -1,3 +1,9 @@
+"""history 路由 — 只读存档（single-stream Phase 4）。
+
+轮次历史已退役（需求 R1）：转录不再写入/删除，记忆系统是唯一的历史
+（/api/memory/timeline）。本路由仅保留 GET 供旧存档浏览与诊断；
+写端点已移除，js2 侧 history_store 已停写。
+"""
 from __future__ import annotations
 
 import json
@@ -5,32 +11,18 @@ import os
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
 from state import get_state
-from webui.history_files import resolve_history_path, write_history_path
+from webui.history_files import resolve_history_path
 
 router = APIRouter()
-
-
-class SaveConvRequest(BaseModel):
-    id: str
-    title: str
-    mode: str = "conversation"
-    messages: list = []
-    work_items: list = []
-    session_id: str = ""
-    channel_id: str = ""
-    agent_initiated: bool = False
-    proactive_unread: bool = False
-    created_at: str = ""
-    updated_at: str = ""
 
 
 @router.get("/api/history")
 def list_history():
     state = get_state()
-    os.makedirs(state.history_dir, exist_ok=True)
+    if not os.path.isdir(state.history_dir):
+        return {"conversations": []}
     convs = []
     for fn in sorted(os.listdir(state.history_dir), reverse=True):
         if not fn.endswith(".json"):
@@ -60,45 +52,3 @@ def get_history_item(conv_id: str):
         return JSONResponse(status_code=404, content={"error": "Not found"})
     with open(path, encoding="utf-8") as f:
         return json.load(f)
-
-
-@router.post("/api/history")
-def save_history_item(req: SaveConvRequest):
-    state = get_state()
-    os.makedirs(state.history_dir, exist_ok=True)
-    path = write_history_path(state.history_dir, req.id)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(req.dict(), f, ensure_ascii=False, indent=2)
-    return {"status": "ok"}
-
-
-@router.post("/api/history/{conv_id}")
-def save_history_item_by_id(req: SaveConvRequest, conv_id: str):
-    state = get_state()
-    os.makedirs(state.history_dir, exist_ok=True)
-    path = write_history_path(state.history_dir, conv_id)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(req.dict(), f, ensure_ascii=False, indent=2)
-    return {"status": "ok"}
-
-
-@router.delete("/api/history/{conv_id}")
-def delete_history_item(conv_id: str):
-    state = get_state()
-    path = resolve_history_path(state.history_dir, conv_id)
-    if path:
-        os.remove(path)
-    return {"status": "ok"}
-
-
-@router.delete("/api/history")
-def clear_all_history():
-    state = get_state()
-    if not os.path.exists(state.history_dir):
-        return {"status": "ok", "deleted": 0}
-    count = 0
-    for fn in os.listdir(state.history_dir):
-        if fn.endswith(".json"):
-            os.remove(os.path.join(state.history_dir, fn))
-            count += 1
-    return {"status": "ok", "deleted": count}

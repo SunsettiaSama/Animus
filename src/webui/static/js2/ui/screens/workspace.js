@@ -16,6 +16,7 @@ import {
 } from '../../protocol/speak_fields.js';
 import * as chat from '../chat/index.js';
 import * as speakAdmin from '../../features/speak_admin.js';
+import * as memoryRecall from '../../features/memory_recall.js';
 
 const $id = id => document.getElementById(id);
 
@@ -23,6 +24,23 @@ const $id = id => document.getElementById(id);
 
 let _streamCtrl = null;
 let _fallbackCtrl = null;
+
+// ── 剧情卡片（single-stream R8）：card_id → 剧情 DOM，进度段就地刷新 ─────────
+const _storyCards = new Map();
+
+function _updateStoryCard(meta = {}) {
+  const el = _storyCards.get(String(meta.card_id || ''));
+  if (!el) return;
+  let prog = el.querySelector('.thread-marker-progress');
+  if (!prog) {
+    prog = document.createElement('div');
+    prog.className = 'thread-marker-progress';
+    const body = el.querySelector('.thread-marker-body');
+    (body || el).appendChild(prog);
+  }
+  const upcoming = Array.isArray(meta.upcoming) ? meta.upcoming.join(' → ') : '';
+  prog.textContent = `${String(meta.current || '')}${upcoming ? `　｜　接下来：${upcoming}` : ''}`;
+}
 
 function _isOutlineUpgrade(kind, meta = {}) {
   return (
@@ -42,20 +60,23 @@ function _ensureFallbackCtrl() {
 
 function _routeSpeakEvent(ev) {
   const { kind, text, renderMeta: meta } = ev;
-  const upgrade = _isOutlineUpgrade(kind, meta);
-
-  // 剧情卡片帧（single-stream §8）：卡片建立落一条剧情线；进度段由
-  // 专属卡片组件渲染（Phase 3），在此静默容错不打扰对话流。
+  const upgrade = _isOutlineUpgrade(kind, meta);  // 剧情卡片帧（single-stream §8）：卡片建立落一条剧情线；进度段由
+  // 专属卡片组件渲染（Phase 3 完整前端改造），在此静默容错不打扰对话流。
   if (kind === 'story_card') {
     const outline = String(meta?.outline || '').trim();
+    const cardId = String(meta?.card_id || '');
     if (outline) {
-      chat.appendThreadMarker(`📖 ${outline}`, new Date().toISOString(), {
-        story: true, card_id: meta?.card_id || '',
+      const el = chat.appendThreadMarker(`📖 ${outline}`, new Date().toISOString(), {
+        story: true, card_id: cardId,
       });
+      if (el && cardId) _storyCards.set(cardId, el);
     }
     return;
   }
-  if (kind === 'story_progress') return;
+  if (kind === 'story_progress') {
+    _updateStoryCard(meta);
+    return;
+  }
 
   if (_streamCtrl && !_streamCtrl._finalized) {
     _streamCtrl.onEvent(kind, text, meta);
@@ -542,18 +563,9 @@ function bindMonitorPanel() {
 }
 
 function bindSidebar() {
-  const sortEl = $id('sidebar-sort-mode');
-  if (sortEl) {
-    sortEl.value = historyStore.getSortMode();
-    sortEl.addEventListener('change', () => {
-      historyStore.setSortMode(sortEl.value);
-      bus.emit(EVENTS.historyChanged, { conversations: historyStore.conversations() });
-    });
-  }
+  // 单窗口（single-stream R1）：无新对话、无会话排序——侧栏即回忆面板。
+  memoryRecall.mountSidebar();
 
-  $id('btn-new-chat')?.addEventListener('click', () => {
-    conversation.startNew().catch(err => showToastErr(err, '新对话失败'));
-  });
   $id('btn-sidebar-open')?.addEventListener('click', () => toggleSidebar(true));
   $id('btn-sidebar-toggle')?.addEventListener('click', () => toggleSidebar());
 

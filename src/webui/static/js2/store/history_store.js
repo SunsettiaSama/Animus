@@ -140,13 +140,9 @@ export async function loadConversation(convId, { onBeforeSwitch } = {}) {
  *          agentInitiated?:boolean, forcePersist?:boolean}} [extra]
  */
 export async function saveConversation(extra = {}) {
-  const messages = chatStore.getMessages();
-  if (!messages.length) return;
-  sessionStore.ensureActiveConversation();
-  const st = sessionStore.state();
-  const title = chatStore.defaultTitle({ currentTitle: st.convTitle });
-  sessionStore.update({ convTitle: title });
-
+  // single-stream R1：轮次历史退役——转录不再落盘，记忆系统是唯一的历史
+  // （看过去 = /api/memory/timeline 回忆面板）。保留 proactive 未读的
+  // 会话侧副作用，调用方（work 联动等）无需改动。
   if (extra.clearProactiveUnread === true) {
     sessionStore.update({ proactiveUnread: false, proactiveUrge: false }, { silent: true });
     bus.emit(EVENTS.proactiveUnread, { unread: false, urge: false });
@@ -154,45 +150,16 @@ export async function saveConversation(extra = {}) {
     sessionStore.update({ proactiveUnread: true, proactiveUrge: true }, { silent: true });
     bus.emit(EVENTS.proactiveUnread, { unread: true, urge: true });
   }
-
-  const now = new Date().toISOString();
-  const agentInitiated = Boolean(
-    extra.agentInitiated ?? st.proactiveUrge ?? messages.some(m => m.agent_initiated),
-  );
-  const proactiveUnread = Boolean(sessionStore.state().proactiveUnread);
-
-  await http.post(API.history.item(st.convId), {
-    id: st.convId,
-    title,
-    mode: 'conversation',
-    messages,
-    work_items: workStore.summariesForHistory(),
-    session_id: st.sessionId ?? '',
-    channel_id: st.channelId,
-    agent_initiated: agentInitiated,
-    proactive_unread: proactiveUnread,
-    created_at: st.convCreatedAt || now,
-    updated_at: now,
-  });
-  await refreshList();
+  return { ok: true, skipped: 'single-stream' };
 }
 
-export async function deleteConversation(convId) {
-  await http.del(API.history.item(convId));
-  if (sessionStore.state().convId === convId) {
-    sessionStore.update({ convId: null, sessionId: null, convTitle: '新对话' });
-    chatStore.setMessages([]);
-    workStore.clear();
-  }
-  await refreshList();
+export async function deleteConversation(_convId) {
+  // single-stream：旧转录只读存档，不再提供删除（后端 history 路由已只读化）
+  return { ok: false, skipped: 'single-stream' };
 }
 
 export async function clearAllHistory() {
-  await http.del(API.history.list);
-  sessionStore.update({ convId: null, sessionId: null, convTitle: '新对话' });
-  chatStore.setMessages([]);
-  workStore.clear();
-  await refreshList();
+  return { ok: false, skipped: 'single-stream' };
 }
 
 /**

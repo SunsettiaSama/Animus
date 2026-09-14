@@ -63,6 +63,7 @@ const memory = Object.freeze({
   get:         '/api/memory',
   save:        '/api/memory/save',
   consolidate: '/api/memory/consolidate',
+  timeline:    '/api/memory/timeline',   // 回忆面板：记忆时间轴（single-stream R2）
 });
 
 const accounts = Object.freeze({
