@@ -290,7 +290,6 @@ async def _ws_agent_session(websocket: WebSocket, state) -> None:
             await asyncio.to_thread(soul.arm_enter_greeting, session_id)
         else:
             await asyncio.to_thread(soul.speak_bootstrap_proactive_loop, session_id)
-            await asyncio.to_thread(soul.ensure_screenwriter_init, session_id)
 
         while True:
             msg = await inbound_q.get()

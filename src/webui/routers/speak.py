@@ -449,8 +449,6 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
         else:
             # 热生命线重连：仍要挂回 poll 扫描，否则主动性静默丢失
             await asyncio.to_thread(soul.speak_bootstrap_proactive_loop, session_id)
-            # 大纲开头若上次因无 live 未投，重连后补推（后台，不堵收消息）
-            await asyncio.to_thread(soul.ensure_screenwriter_init, session_id)
 
         while True:
             msg = await inbound_q.get()

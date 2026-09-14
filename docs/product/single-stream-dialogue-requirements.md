@@ -330,10 +330,10 @@ BeatAck:                  # speak/角色 → life（按渠道分别回）
 | R2 回忆关键词搜索 | ✗ | 仅时间轴分页；搜索待做 |
 | R3 唯一 WS 接口 + pipeline 收敛 | ✓ | chat 路由退役（`88d18c0`）、react 路由退役（本批）、pipeline 仅 request_driven |
 | R3 create_ui / notify SSE 裁撤 | ◐ | **保留**：js2 proactive 仍依赖 SSE notify；并入前端主动性改造批 |
-| R4 session 在场化（不触发编剧初始化） | ✗ | `start_dialogue_session` 仍调 `ensure_screenwriter_init`——受 R6.1 牵连（见下） |
+| R4 session 在场化（不触发编剧初始化） | ✓ | 同步门控已拆（`5d0b30f` 后批次）：`start_dialogue_session` 只恢复生命线；重连补推移除；实测 WS 连接 0.02s |
 | R5 轮次记账 + timeline 流水 | ✓ | `record_dialogue_turn` 挂 journal（写失败不打断） |
 | R5 beat 演出轮 provenance 记账 | ◐ | enqueue 路径未带 beat_id 记账；provenance 目前止于账本 |
-| R6.1 导演/编剧常驻、删会话门控 | ◐ | **双轨现状**：life/story 常驻链已通（story-tick checklist + landmark→beat，`d953b47`/`3d63c8d`）；但 speak 内部旧导演/编剧机器仍在会话内运行，`ensure_screenwriter_init` 门控未删——删它需先完成 speak"决定说什么"路径退役（R6.3），是剩余工作的主战场 |
+| R6.1 导演/编剧常驻、删会话门控 | ✓ | life/story 常驻链（story-tick checklist）；会话同步门控已拆——编剧经 arm_enter_greeting 后台懒启（在场表演），实测热路径 0.02s、编剧 LLM 在轮后完成不阻塞。speak 内部旧机器的物理移除归 Phase 4 搬目录 |
 | R6.2 landmark→beat 剧情驱动 | ✓ | plan/trigger/surprise 三源挂钩，detail 带 story_beats 计数 |
 | R6.4 协议 v1.2 四消息 | ✓ | storybus 契约 + 进程内总线（幂等/保鲜/五态回执） |
 | R6.5 不在场留存（保鲜期内 held） | ✓ | 账本 held 态 + sweep 过期归档 |
@@ -349,6 +349,13 @@ BeatAck:                  # speak/角色 → life（按渠道分别回）
 **验收运行**（2026-09-14）：契约单测 26/26 绿；webui 全装配 TestClient 冒烟
 （`/`、`/console`、timeline、history 只读 405、react 路由清零）；E2E 链路模拟
 （landmark fill → beat → 角色决策 → performed 回执 → 开卡推进）通过。
+
+**真实服务实测**（2026-09-14，`python src/run.py --port 8310`，LLM=MiniMax-M3
+远程）：五阶段全绿、无浏览器连接时 `speak_initialized=True`（常驻成立）；
+WS `session_open` → 真实对话轮（outline/speak/agent_typing/finish →
+turn_finish 回答正常），连接耗时 0.02s（门控拆除生效）；编剧 LLM 在轮次
+完成后才后台跑完（`screenwriter_outline` 日志，热路径无阻塞）；该轮已落
+`/api/memory/timeline`（时间轴记账闭环）。
 
 **剩余工作清单（按依赖序）**：
 1. R6.3：speak"决定说什么"路径退役（导演/编剧调用链改挂 life 常驻件）→ 随之删

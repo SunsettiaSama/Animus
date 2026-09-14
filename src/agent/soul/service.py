@@ -244,11 +244,15 @@ class SoulService:
         *,
         trigger: str = "user_message",
     ) -> dict[str, Any]:
-        """打开或恢复同一条 Speak 生命线；仅 Registry 的物理 idle 可轮转。"""
+        """打开或恢复同一条 Speak 生命线；仅 Registry 的物理 idle 可轮转。
+
+        single-stream R4/R6.1：会话打开 = 在场周期，只恢复表演通道；
+        不再同步触发编剧初始化（旧门控退役）。叙事冷启经 arm_enter_greeting
+        的后台懒启（_schedule_screenwriter_init），剧情发起归 life/story。
+        """
         self._require_running()
         speak = self._ensure_speak_service()
         opened = speak.session_manager.open(session_id, trigger=trigger)
-        speak.ensure_screenwriter_init(session_id)
         # Registry.open 已决定本次是否为新 generation；这里仅恢复生命线扫描。
         speak.bootstrap_proactive_loop(session_id)
         return {
