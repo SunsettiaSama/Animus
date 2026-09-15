@@ -7,7 +7,7 @@
 主题二 · 主动会话工作流在线：
   life beat → 角色决策 → enqueue_agent_outbound 主动出站（payload 契约）。
 
-附带 · 旧链路断供开关（R6.3）：story_autonomy 默认开启。
+附带 · 旧链路退役（v7）：断供开关已拆除，performance 旁路管线接管。
 
 跑法：cd src && python -m pytest test/soul/storybus/test_proactivity_regression.py -q
 """
@@ -20,8 +20,8 @@ SRC = Path(__file__).resolve().parents[3]
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from agent.soul.speak.responders.request_driven.character.beat_policy import FrameGate  # noqa: E402
-from agent.soul.speak.story_autonomy import story_autonomy_enabled  # noqa: E402
+from agent.soul.speak.performance.policy import FrameGate  # noqa: E402
+from agent.soul.speak.performance import BeatOpeningPolicy as _BeatOpeningPolicy  # noqa: E402
 from agent.soul.storybus import BeatDraft, PerformanceHint  # noqa: E402
 from agent.soul.wiring.story import ensure_story_runtime  # noqa: E402
 
@@ -159,15 +159,12 @@ def test_held_beat_rescheduled_next_tick_performs():
 
 # ── 断供开关（R6.3） ────────────────────────────────────────────────────────
 
-def test_story_autonomy_flag_default_on(monkeypatch=None):
-    assert story_autonomy_enabled() is True
-    import os
-    old = os.environ.get("ANIMUS_STORY_AUTONOMY")
-    try:
-        os.environ["ANIMUS_STORY_AUTONOMY"] = "0"
-        assert story_autonomy_enabled() is False   # 应急回滚通道可用
-    finally:
-        if old is None:
-            os.environ.pop("ANIMUS_STORY_AUTONOMY", None)
-        else:
-            os.environ["ANIMUS_STORY_AUTONOMY"] = old
+def test_old_story_links_retired():
+    """旧链路退役（v7 批次）：断供开关拆除，旁路管线为唯一剧情表演通路。"""
+    import importlib.util
+
+    assert importlib.util.find_spec("agent.soul.speak.story_autonomy") is None
+    from agent.soul.speak.performance import BeatPerformer
+
+    assert _BeatOpeningPolicy is not None
+    assert BeatPerformer is not None

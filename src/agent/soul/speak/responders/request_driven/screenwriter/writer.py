@@ -287,17 +287,15 @@ class Screenwriter:
         background_agent=True：先启发快落盘，再后台跑 Agent 覆写（不堵热路径）。
         upgrade_agent=False：纯启发骨架，不安排后台覆写（预热池骨架候选专用）。
         opening 仅此时生成；随后由 SpeakService 投递给用户，不进角色上下文。
+
+        旧剧情链路已退役（v7 拆除开关，原 R6.3 总阀常闭）：剧情/大纲/unit/
+        opening 生成归 life/story（storybus beat）。本方法永久返回空输出，
+        调用方按"无叙事"路径降级；本体随 Phase 4 物理搬迁移除。
         """
-        from agent.soul.speak.story_autonomy import story_autonomy_enabled
+        from ..directors.base import DirectorOutput
 
-        if story_autonomy_enabled():
-            # R6.3 总阀（本体级）：剧情/大纲/unit/opening 生成归 life/story
-            # （storybus beat）。service 调度、导演协调器直调、预热池三条
-            # 来源全部经此断供；返回空输出，调用方按"无叙事"路径降级。
-            from ..directors.base import DirectorOutput
-
-            return DirectorOutput(director="screenwriter_init",
-                                  reason="story_autonomy_retired")
+        return DirectorOutput(director="screenwriter_init",
+                              reason="story_retired")
         grounded = self._ground_text(session_id, user_text=user_text)
         mode = resolve_interaction_mode(
             user_text,

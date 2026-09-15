@@ -26,7 +26,7 @@ from .consume import resolve_injected_memory_ids, resolve_injected_share
 from .context import context_cards_from_narrative
 from .contracts import CharacterReplyRequest, CharacterReplyResult
 from .host import CharacterAgentHost
-from .memory_buffer import CharacterMemoryBuffer
+from ....performance.buffer import CharacterMemoryBuffer
 
 HelpFn = Callable[[str, tuple[str, ...], str], tuple[str, ...]]
 PaceFn = Callable[[Any, str], DeliveryPlan]

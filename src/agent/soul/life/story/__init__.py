@@ -2,13 +2,15 @@
 
 分层契约：依赖 storybus 契约与 life 内部件；**禁止 import speak / webui**。
 物理迁移（directors/screenwriter/pool 自 speak/request_driven 搬入）按需求
-Phase 4 执行；本包先行承接 outbox / 账本 / 排程器。
+Phase 4 执行；本包先行承接 outbox / 账本 / 排程器 / 编剧 / 预跑池。
 """
 from __future__ import annotations
 
 from .cards import StoryCardStore
 from .outbox import BeatLedger, StoryOutbox
+from .pool import EvolutionPool, PoolEntry
 from .scheduler import BeatSource, CallableBeatSource, StoryAction, StoryScheduler
+from .writer import LandmarkScreenwriter
 
 __all__ = [
     "BeatLedger",
@@ -18,4 +20,7 @@ __all__ = [
     "StoryAction",
     "StoryScheduler",
     "StoryCardStore",
+    "EvolutionPool",
+    "PoolEntry",
+    "LandmarkScreenwriter",
 ]

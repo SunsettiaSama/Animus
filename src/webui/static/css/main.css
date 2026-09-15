@@ -4329,3 +4329,110 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
+
+/* ── Timeline（single-stream：流按时间轴排布）────────────────────────────── */
+
+.timeline-day-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 2px;
+  user-select: none;
+}
+
+.timeline-day-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border1, rgba(128, 128, 128, 0.25));
+}
+
+.timeline-day-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text3, rgba(160, 160, 160, 0.9));
+  white-space: nowrap;
+}
+
+/* 剧情事件条：时间轴一等公民（beat 演出），非对话气泡 */
+.timeline-story {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 86%;
+  margin: 2px auto 2px 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border1, rgba(128, 128, 128, 0.25));
+  border-left: 3px solid #8f7ae8;
+  border-radius: 10px;
+  background: rgba(143, 122, 232, 0.07);
+}
+
+.timeline-story-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 38px;
+}
+
+.timeline-story-dot {
+  font-size: 13px;
+  color: #8f7ae8;
+  line-height: 1;
+}
+
+.timeline-story-time {
+  font-size: 10px;
+  color: var(--text3, rgba(160, 160, 160, 0.9));
+  white-space: nowrap;
+}
+
+.timeline-story-body {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text2, rgba(220, 220, 220, 0.92));
+  word-break: break-word;
+}
+
+.timeline-story-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 16px;
+  color: #b7a9f2;
+  background: rgba(143, 122, 232, 0.16);
+  vertical-align: 1px;
+}
+
+.timeline-story-hot {
+  margin-right: 4px;
+  color: #e8b34a;
+  font-size: 11px;
+}
+
+/* 回忆面板里的剧情条目 */
+.recall-story {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #b7a9f2;
+}
+
+.codex-workspace .timeline-day-line {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.codex-workspace .timeline-day-label {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.codex-workspace .timeline-story {
+  border-color: rgba(255, 255, 255, 0.08);
+  border-left-color: #8f7ae8;
+  background: rgba(143, 122, 232, 0.1);
+}
+
+.codex-workspace .timeline-story-text {
+  color: rgba(235, 233, 245, 0.92);
+}

@@ -21,7 +21,16 @@ SRC = Path(__file__).resolve().parent.parent.parent
 REACT_DIR = SRC / "agent" / "react"
 
 
+_SAVED_MODULES: dict = {}
+
+
+def _save_before(name: str) -> None:
+    if name not in _SAVED_MODULES:
+        _SAVED_MODULES[name] = sys.modules.get(name)
+
+
 def _pkg_stub(dotted_name: str, path: Path | None = None) -> types.ModuleType:
+    _save_before(dotted_name)
     m = types.ModuleType(dotted_name)
     m.__package__ = dotted_name
     m.__spec__ = importlib.machinery.ModuleSpec(
@@ -35,6 +44,7 @@ def _pkg_stub(dotted_name: str, path: Path | None = None) -> types.ModuleType:
 
 
 def _mod_stub(dotted_name: str) -> types.ModuleType:
+    _save_before(dotted_name)
     m = types.ModuleType(dotted_name)
     m.__spec__ = importlib.machinery.ModuleSpec(dotted_name, loader=None)
     sys.modules[dotted_name] = m
@@ -135,3 +145,11 @@ if __name__ == "__main__":
     test_empty_results()
     test_tool_metadata()
     print("  All passed.")
+
+
+# 模块体结束：恢复被桩覆盖的真实模块（避免污染同会话后续测试）
+for _k, _v in _SAVED_MODULES.items():
+    if _v is not None:
+        sys.modules[_k] = _v
+    else:
+        sys.modules.pop(_k, None)

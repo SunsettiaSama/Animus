@@ -1,4 +1,4 @@
-"""character.beat_policy — 角色 beat 开口决策（R7 / 2c 过渡层）。
+"""performance.policy — 角色 beat 开口决策（R7；自 request_driven/character 迁入）。
 
 职责边界：beat 到达后，"现在开口 / 挂起改期 / 沉默不表"由**角色**自决，
 life 的 performance_hint 只是建议性输入（不是指令）。

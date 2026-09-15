@@ -17,7 +17,7 @@ from .interaction import (
     note_pending_user,
     sync_dialogue_history_into_ledger,
 )
-from .memory_buffer import CharacterMemoryBuffer
+from ....performance.buffer import CharacterMemoryBuffer  # 旁路管线（performance）新家
 from .runtime import CharacterRuntime
 from .units import CharacterContextUnit, CharacterHelpObservationUnit
 

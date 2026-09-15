@@ -102,7 +102,11 @@ class LifeStoryBeat:
 
 @dataclass(frozen=True)
 class BeatDraft:
-    """导演/编剧产出的待投递稿（outbox 负责补 id/时间并投递）。"""
+    """导演/编剧产出的待投递稿（outbox 负责补 id/时间并投递）。
+
+    ``beat_id`` 可选：同一事件经多条路径生产（如到点触发与提前演化）时，
+    给出确定性幂等键可让总线天然去重；留空则由 outbox 生成随机键。
+    """
 
     narrative: str
     channels: tuple[str, ...] = ()
@@ -111,10 +115,11 @@ class BeatDraft:
     hint: PerformanceHint = field(default_factory=PerformanceHint)
     provenance: BeatProvenance = field(default_factory=BeatProvenance)
     cached: bool = False
+    beat_id: str = ""
 
     def with_beat_id(self, beat_id: str) -> LifeStoryBeat:
         return LifeStoryBeat(
-            beat_id=beat_id,
+            beat_id=self.beat_id or beat_id,
             narrative=self.narrative,
             channels=self.channels,
             card_id=self.card_id,

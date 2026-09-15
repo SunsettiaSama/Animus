@@ -48,6 +48,14 @@ def record_pending_turn(
             session_id=session_id,
             turn_digest=pending.question,
         )
+        # 时间轴窗口刷新（上下文唯一历史语义，v7）：轮末把最近 k 条
+        # （轮次 + 剧情事件混排）重新注入 compose buffer，与轮次无关。
+        try:
+            _speak = soul._ensure_speak_service()
+            if _speak is not None:
+                _speak.inject_timeline_window(session_id)
+        except Exception:  # noqa: BLE001 — 注入失败不打断记账
+            pass
 
 
 def commit_turn_and_post_process(

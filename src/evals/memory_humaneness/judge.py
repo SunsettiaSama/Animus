@@ -115,23 +115,25 @@ def _extract_json(raw: str) -> dict:
     return json.loads(m.group())
 
 
-def _salvage_verdict(text: str) -> dict | None:
+def _salvage_verdict(text: str, dims: dict[str, str] | None = None) -> dict | None:
     """JSON 损坏时的抢救：逐维正则提取分数。
 
     覆盖"JSON 结构完整但 evidence 内嵌未转义引号导致 loads 失败"的常见损坏；
     要求 overall 在场且至少 4/5 维可提取，避免把碎片当评分。
+    ``dims`` 缺省为 L3 五维；轨迹评委传自己的维度表。
     """
+    dimensions = dims or JUDGE_DIMENSIONS
     scores: dict[str, float] = {}
-    for dim in JUDGE_DIMENSIONS:
+    for dim in dimensions:
         m = re.search(rf'"{dim}"\s*:\s*([0-9](?:\.[0-9]+)?)', text)
         if m:
             scores[dim] = float(m.group(1))
-    if "overall" not in scores or len(scores) < 4:
+    if "overall" not in scores or len(scores) < max(4, len(dimensions) - 1):
         return None
     ev = re.search(r'"evidence"\s*:\s*"(.*)"', text, re.DOTALL)
     ra = re.search(r'"rationale"\s*:\s*"(.*)"', text, re.DOTALL)
     return {
-        "scores": {k: scores.get(k, 3.0) for k in JUDGE_DIMENSIONS},
+        "scores": {k: scores.get(k, 3.0) for k in dimensions},
         "evidence": (ev.group(1)[:200] if ev else "").rstrip('"'),
         "rationale": (ra.group(1)[:300] if ra else "").rstrip('"'),
     }

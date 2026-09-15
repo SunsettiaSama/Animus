@@ -17,6 +17,7 @@
  *   onTyping(active)                            顶栏打字态
  *   onLifecycle(busy)                           发送按钮等 busy 视觉
  *   onClearMessages()                           清空消息区 + 空态
+ *   onTimelineRestore(entries)                  按时间轴回填近期尾巴（timeline 流水）
  *   onRebuild(messages, workItems)              按历史重建消息区
  *   onCloseMonitor() / onPersistWork()          work 面板与持久化钩子
  * }
@@ -423,9 +424,28 @@ export async function startNew() {
   const interactorId = _currentInteractorId();
   await historyStore.beginNewConversation({ interactorId });
   _call('onClearMessages');
+  await _restoreTimelineTail();
   _navigateWorkspace();
   bus.emit(EVENTS.planInitSubpanel, {});
   await connect();
+}
+
+/**
+ * 刷新恢复"近期尾巴"（R1 + 时间轴呈现）：转录已停写，timeline 流水是
+ * 唯一历史——boot/新窗后按时间轴回填近 30 条（轮次 + 剧情事件混排）。
+ * 失败静默：空窗可正常聊天，不阻塞连接。
+ */
+async function _restoreTimelineTail() {
+  try {
+    const st = sessionStore.state();
+    const channel = String(st?.channelId || 'main').replace(/^live:/, '') || 'main';
+    const qs = new URLSearchParams({ channel, limit: '30' });
+    const data = await http.get(`${API.memory.timeline}?${qs.toString()}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (items.length) _call('onTimelineRestore', items.reverse()); // 旧 → 新
+  } catch (err) {
+    console.warn('[conversation] timeline tail restore skipped', err?.message ?? String(err));
+  }
 }
 
 export async function openConversation(convId) {

@@ -1,3 +1,4 @@
+"""performance.buffer — 角色记忆缓冲（自 request_driven/character 迁入）。"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -247,14 +247,43 @@ class SoulService:
         """打开或恢复同一条 Speak 生命线；仅 Registry 的物理 idle 可轮转。
 
         single-stream R4/R6.1：会话打开 = 在场周期，只恢复表演通道；
-        不再同步触发编剧初始化（旧门控退役）。叙事冷启经 arm_enter_greeting
-        的后台懒启（_schedule_screenwriter_init），剧情发起归 life/story。
+        旧编剧初始化链路已退役（v7），叙事冷启由 life/story 演化与
+        角色 greeting 承接，剧情发起归 life/story。
         """
         self._require_running()
         speak = self._ensure_speak_service()
         opened = speak.session_manager.open(session_id, trigger=trigger)
         # Registry.open 已决定本次是否为新 generation；这里仅恢复生命线扫描。
         speak.bootstrap_proactive_loop(session_id)
+        speak.mark_speak_wake(session_id)  # 握手门：进房即唤醒
+        # 时间轴窗口注入（上下文唯一历史语义）：进房即刷新最近 k 条；
+        # life 无在途事件时，附带 presence 待分享（近期期望分享的内容）。
+        extra_lines: list[str] = []
+        try:
+            from agent.soul.wiring.story import ensure_story_runtime
+
+            runtime = ensure_story_runtime(self)
+            story_busy = bool(
+                runtime.ledger.pending()
+                or runtime.ledger.held()
+                or runtime.pool.pending_landmark_ids()
+            )
+        except Exception:  # noqa: BLE001 — 剧情态不可得视为无事件
+            story_busy = False
+        if not story_busy:
+            try:
+                intents = self.presence.pop_top_share_intents(session_id, limit=2)
+                extra_lines = [
+                    f"她最近想分享：{(getattr(i, 'content', '') or getattr(i, 'topic', '')).strip()[:120]}"
+                    for i in intents
+                    if (getattr(i, 'content', '') or getattr(i, 'topic', '')).strip()
+                ]
+            except Exception:  # noqa: BLE001 — presence 缺席不阻塞注入
+                extra_lines = []
+        try:
+            speak.inject_timeline_window(session_id, extra_lines=extra_lines)
+        except Exception:  # noqa: BLE001 — 注入失败不阻塞会话打开
+            pass
         return {
             "ok": True,
             "session_id": opened.session_id,
@@ -480,7 +509,9 @@ class SoulService:
         """Speak 回合：转发 SpeakService.run_turn（L0 入口，勿直接 dispatch）。"""
         if self._state != "running":
             raise RuntimeError(f"SoulService 未运行：state={self._state!r}")
-        return self._ensure_speak_service().run_turn(
+        _speak = self._ensure_speak_service()
+        _speak.mark_speak_wake(session_id)  # 握手门：用户发言即唤醒
+        return _speak.run_turn(
             session_id,
             user_text,
             stream=stream,
@@ -543,7 +574,9 @@ class SoulService:
     ) -> dict[str, object]:
         if self._state != "running":
             raise RuntimeError(f"SoulService 未运行（state={self._state!r}）。")
-        return self._ensure_speak_service().on_typing_pulse(
+        _speak = self._ensure_speak_service()
+        _speak.mark_speak_wake(session_id)  # 握手门：输入脉冲即唤醒
+        return _speak.on_typing_pulse(
             session_id,
             typing=typing,
             draft=draft,
@@ -1143,6 +1176,20 @@ class SoulService:
         self._require_running()
         return self._workers.life.submit(
             lambda: self.life.api.fill_due_landmarks()
+        ).result()
+
+    def run_evolve_upcoming_landmarks(self, within_sec: float = 3600.0) -> list[dict]:
+        """预约轴提前演化（T-1h）：重 LLM，offload 到 life worker。"""
+        self._require_running()
+        return self._workers.life.submit(
+            lambda: self.life.api.evolve_upcoming_landmarks(within_sec=within_sec)
+        ).result()
+
+    def run_tellable_landmarks(self) -> list[dict]:
+        """已演化未开口地标（echo 重出稿素材）：纯读手账，零 LLM。"""
+        self._require_running()
+        return self._workers.life.submit(
+            lambda: self.life.api.done_landmarks_for_tell()
         ).result()
 
     def run_surprise_tick(self, elapsed_sec: float) -> dict:

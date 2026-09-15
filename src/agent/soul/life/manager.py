@@ -292,6 +292,63 @@ class LifeManager:
                 filled.append(item)
         return filled
 
+    def evolve_upcoming_landmarks(self, *, within_sec: float = 3600.0) -> list[dict]:
+        """预约轴提前演化（T-1h，导演编剧在 landmark 进行时规划生活）：
+
+        把窗口内尚未到点的预约地标提前走完 ``fill_landmark`` 全流程
+        （story arc 演绎 + 体验内化 + 手账落账）——情节先"发生"，开口
+        （表演）仍按预约时刻由预跑池到点投递，用户侧零 LLM 等待。
+        """
+        out: list[dict] = []
+        for lm in self._virtual.upcoming_landmarks(within_sec=within_sec):
+            item = self._virtual.fill_landmark(lm.id)
+            if item is None:
+                continue
+            out.append({
+                "landmark_id": lm.id,
+                "scheduled_at": lm.scheduled_at,
+                "intention": lm.intention,
+                "context": lm.context,
+                **item,
+            })
+        return out
+
+    def done_landmarks_for_tell(
+        self,
+        *,
+        past_sec: float = 6 * 3600,
+        future_sec: float = 3600.0,
+    ) -> list[dict]:
+        """已演化、剧情时间在窗内（近 past_sec ~ 未来 future_sec）的地标。
+
+        供预跑池的 echo 路径零成本重出稿：重启丢池、导演失效重估、或
+        到点触发路径先填充了情节但 beat 未开口时，从这里拿持久化的
+        ``narrative`` 直接补稿（是否已开口由调用方查流水/池去重）。
+        """
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        out: list[dict] = []
+        for lm in self._virtual.journal.all_landmarks():
+            if lm.status.value != "done" or not lm.narrative.strip():
+                continue
+            try:
+                at = datetime.fromisoformat(lm.scheduled_at)
+            except (TypeError, ValueError):
+                continue
+            if at.tzinfo is None:
+                at = at.replace(tzinfo=timezone.utc)
+            delta = (at - now).total_seconds()
+            if -float(past_sec) <= delta <= float(future_sec):
+                out.append({
+                    "landmark_id": lm.id,
+                    "scheduled_at": lm.scheduled_at,
+                    "intention": lm.intention,
+                    "context": lm.context,
+                    "narrative": lm.narrative,
+                })
+        return out
+
     def build_life_context(self, days: int = 1) -> LifeContextInput:
         return build_life_context_from_chronicle(
             self._anchor.chronicle,

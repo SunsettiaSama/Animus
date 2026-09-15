@@ -321,6 +321,8 @@ def evaluate_multihop_case(base, case: MultihopCase, *, top_k: int = 5) -> dict:
     """
     block = base.recall(case.question, top_k=top_k)
     lines = list(block.entries or [])
+    hint_shown = any(l.strip().startswith("【记忆提示】") for l in lines)
+    lines = [l for l in lines if not l.strip().startswith("【记忆提示】")]  # 提示行不参与命中/干扰计数
 
     hop_hits: list[int] = []  # 每跳首个命中名次（0 = 未命中）
     for h in case.hops:
@@ -340,6 +342,7 @@ def evaluate_multihop_case(base, case: MultihopCase, *, top_k: int = 5) -> dict:
         "pattern": case.pattern,
         "base": getattr(base, "kind", "?"),
         "n_lines": len(lines),
+        "hint_shown": hint_shown,
         "hop_ranks": hop_hits,
         "joint_hit": joint,
         "distractor_slots": distractor_slots,

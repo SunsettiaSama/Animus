@@ -5,6 +5,10 @@
 
 import { esc, ts, fmtThreadStamp, scrollBottom, msgsEl, renderMarkdown } from './markdown.js';
 import { setTitleBarTyping } from './typing.js';
+import { ensureDayDivider, resetTimeline, appendStoryEvent } from './timeline.js';
+
+// 剧情事件条（时间轴一等公民）从本模块转发，与气泡同一插入面。
+export { appendStoryEvent };
 
 // ── Agent avatar (unified, configurable) ────────────────────────────────────
 
@@ -23,6 +27,7 @@ export function agentAvatar() {
 export function clearMsgs() {
   const el = msgsEl();
   if (el) el.innerHTML = '';
+  resetTimeline();
 }
 
 export function showEmptyState(mode = 'chat') {
@@ -42,6 +47,7 @@ export function showEmptyState(mode = 'chat') {
 export function appendUserMsg(text, meta = {}) {
   const el = msgsEl();
   if (!el) return;
+  ensureDayDivider(meta.created_at);
   el.querySelector('.empty-state')?.remove();
   const div = document.createElement('div');
   div.className = 'message user';
@@ -61,6 +67,7 @@ export function appendUserMsg(text, meta = {}) {
 export function appendThreadMarker(title, createdAt, meta = {}) {
   const el = msgsEl();
   if (!el) return null;
+  ensureDayDivider(createdAt);
   el.querySelector('.empty-state')?.remove();
   const div = document.createElement('div');
   div.className = 'thread-marker';
@@ -104,6 +111,7 @@ export function appendAssistantMsg(idOrOpts) {
     : { id: idOrOpts };
   const el = msgsEl();
   if (!el) return null;
+  ensureDayDivider(opts.created_at);
   el.querySelector('.empty-state')?.remove();
 
   const div = document.createElement('div');

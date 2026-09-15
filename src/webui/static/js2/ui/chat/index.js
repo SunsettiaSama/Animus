@@ -13,6 +13,7 @@ export {
 export {
   setAgentAvatar, agentAvatar, clearMsgs, showEmptyState,
   appendUserMsg, appendThreadMarker, appendProactiveBanner, appendAssistantMsg,
+  appendStoryEvent,
 } from './bubbles.js';
 
 export {

@@ -106,6 +106,11 @@ logger = logging.getLogger(__name__)
 _OPENING_PLACEHOLDER = "（场面铺开中）"
 # init 冷却：窗口内重复触发（页面刷新/双入口）不再全量重写大纲
 _SCREENWRITER_INIT_COOLDOWN_SEC = 600.0
+# 时间轴窗口上下文（v7）：上下文唯一历史 = 沿时间轴最近 K 条（混排），与轮次无关
+_TIMELINE_WINDOW_K = 20
+_TIMELINE_WINDOW_PAGE = "timeline-window"
+# life→speak 握手门·硬条件（v7，硬编码可调）：30 分钟无唤醒即睡眠
+_SPEAK_SLEEP_AFTER_SEC = 30 * 60
 # 开场白投递 memo：记在 service 上而非 state——轮转/重置清掉 state 后，
 # 同一份开场白也不得对用户推第二遍
 _OPENING_MEMO_CAP = 64
@@ -229,6 +234,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         )
         self._typing_idle_ms_default = typing_idle_ms
         self._delivery_mode = "stream"
+        # life→speak 握手门状态：最后唤醒（会话 + monotonic 时刻）
+        self._wake_session = ""
+        self._wake_monotonic = 0.0
         self._director_llm = director_llm_engine or SpeakDirectorLLMEngine()
         self._state_store = StateStore()
         self._rhythm_store = RhythmStateStore()
@@ -462,60 +470,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         return str(active.result.scene_id or "").strip()
 
     def ensure_screenwriter_init(self, session_id: str) -> None:
-        """会话打开：编剧写弧 + 场记 + opening。
+        """旧剧情链路已退役（v7 批次拆除）：剧情/大纲/unit 生成归 life/story
+        （storybus beat + speak/performance 旁路管线），本方法仅为旧编排器
+        ``ensure_narrative_fn`` 签名保留，任何路径都不再触发旧编剧。
 
-        可同步调用；arm_enter_greeting 走后台线程，避免卡住 WS/热路径。
-        冷启动顺序：活体快照（重启续写）→ 预热池候选 → 正常编剧初始化；
-        走池/快照后异步回填候选，维持池水位。
-        近因守卫：冷却窗口内已 init 过的会话不再全量重跑（页面刷新、
-        重复连接只会补投开场白），否则每次刷新都重写一遍大纲。
+        旧实现（编剧写弧/场记/开场白/预热池回填）随 Phase 4 物理搬迁一并
+        移除；开场白由角色 greeting 路径与 life beat 承接（剩余清单 1）。
         """
-        from .story_autonomy import story_autonomy_enabled
-
-        if story_autonomy_enabled():
-            # R6.3 总闸：剧情/大纲/unit 生成归 life/story（storybus beat）。
-            # 本方法是旧编剧的唯一样张入口——调度路径、轮次路径的
-            # ensure_narrative_fn 回调、重连补推全部经此断供。
-            return
-        from .responders.request_driven.orchestrator.state.core.speak_dormant import (
-            clear_narrative_for_reinit,
-            needs_narrative_reinit,
-        )
-
-        sid = session_id.strip()
-        if not sid or self._state_store is None or getattr(self, "_screenwriter", None) is None:
-            return
-        state = self._state_store.session(sid)
-        if needs_narrative_reinit(state):
-            clear_narrative_for_reinit(state)
-            # 休眠重初始化：旧开场候选随剧情一并失效（活体快照同样清除）
-            self._story_pool_invalidate(sid)
-        if state.presence_card.ready and state.plot_arc.ready:
-            state.director_cache["screenwriter_inited_at"] = time.time()
-            self._maybe_deliver_narrative_opening(sid)
-            return
-
-        inited_at = float(state.director_cache.get("screenwriter_inited_at") or 0.0)
-        if inited_at > 0 and (time.time() - inited_at) < _SCREENWRITER_INIT_COOLDOWN_SEC:
-            # 冷却窗口内已 init 过（即使卡被外部清掉也不立刻重写）
-            self._maybe_deliver_narrative_opening(sid)
-            return
-
-        if self._try_restore_from_story_pool(state, sid):
-            state.director_cache["screenwriter_inited_at"] = time.time()
-            self._maybe_deliver_narrative_opening(sid)
-            return
-
-        self._screenwriter.init_presence(
-            state,
-            session_id=sid,
-            turn_index=0,
-            background_agent=True,
-        )
-        state.director_cache["screenwriter_inited_at"] = time.time()
-        self._maybe_deliver_narrative_opening(sid)
-        # 未命中池：本轮真实初始化落定后，异步补一批候选供水次冷启动
-        self._story_pool_refill_async(sid, user_text=str(state.last_real_user_text or ""))
+        return
 
     # ── 剧情预热池接线（story_pool 层的薄适配） ─────────────────────────────
 
@@ -533,53 +495,15 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             pass
 
     def _story_pool_refill_async(self, session_id: str, *, user_text: str = "") -> None:
-        from .story_autonomy import story_autonomy_enabled
-
-        if story_autonomy_enabled():
-            return  # R6.3 断供：剧情供给归 life/story（storybus），旧预热池不再回填
-        if self._story_prewarmer is None:
-            return
-        try:
-            self._story_prewarmer.prewarm_async(
-                pool_key=self._story_pool_key(session_id),
-                user_text=user_text,
-            )
-        except Exception:
-            pass
+        """旧链路已退役（v7）：预热池不再回填，方法仅为死代码引用占位
+        （``_try_restore_from_story_pool`` 随 ensure_screenwriter_init 退役
+        后不可达；物理删除归 Phase 4）。"""
+        return
 
     def _try_restore_from_story_pool(self, state, session_id: str) -> bool:
-        """池候选或活体快照命中时注入 state；返回是否命中。"""
-        if self._story_pool is None:
-            return False
-        key = self._story_pool_key(session_id)
-
-        # 1) 活体快照：重启续写（TTL 对齐休眠语义，过期视为需重init）
-        live = None
-        try:
-            live = self._story_pool.load_live(key)
-        except Exception:
-            live = None
-        if live:
-            try:
-                self._apply_story_snapshot(state, live)
-                return True
-            except Exception:
-                pass
-
-        # 2) 候选池：全新开场的预载大纲（consume=一次性入场材料）
-        try:
-            entry = self._story_pool.take_freshest(key, consume=True)
-        except Exception:
-            entry = None
-        if entry is None:
-            return False
-        try:
-            self._apply_story_entry(state, entry)
-        except Exception:
-            return False
-        # 消费后异步补水，维持池水位
-        self._story_pool_refill_async(session_id)
-        return True
+        """旧链路已退役（v7）：唯一调用方 ensure_screenwriter_init 已 no-op，
+        本方法不可达，保留仅为 Phase 4 物理搬迁前的引用完整。"""
+        return False
 
     def _apply_story_entry(self, state, entry) -> None:
         from .responders.request_driven.orchestrator.state.core.interaction_plan import (
@@ -693,39 +617,6 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             )
         except Exception:
             pass
-
-    def _schedule_screenwriter_init(self, session_id: str) -> None:
-        """后台跑编剧开场：前端先收占位 outline，完成后再升级推送。"""
-        from .story_autonomy import story_autonomy_enabled
-
-        sid = session_id.strip()
-        if not sid or self._state_store is None:
-            return
-        if story_autonomy_enabled():
-            # R6.3 断供：剧情/大纲生成归 life/story；编剧不再写弧。
-            # 开场白属在场表演，由角色侧 greeting 路径与 life beat 承接。
-            return
-        state = self._state_store.session(sid)
-        if bool(state.director_cache.get("screenwriter_init_scheduled")):
-            return
-        state.director_cache["screenwriter_init_scheduled"] = True
-        # 前端先渲染占位，不等编剧
-        self._deliver_narrative_outline(
-            sid,
-            text=_OPENING_PLACEHOLDER,
-            placeholder=True,
-        )
-
-        def _run() -> None:
-            self.ensure_screenwriter_init(sid)
-            # 真正 opening 只由 on_ready 推，这里不再二次投递
-            state.director_cache.pop("screenwriter_init_scheduled", None)
-
-        threading.Thread(
-            target=_run,
-            daemon=True,
-            name=f"screenwriter-init-{sid[:16]}",
-        ).start()
 
     def _deliver_narrative_outline(
         self,
@@ -1535,106 +1426,24 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         session_id: str,
         handoff: dict[str, Any],
     ) -> None:
-        """导演主动开口：请求角色生成；不得占用用户角色 turn_busy。
-
-        权限边界：
-        - 导演无权阻塞角色用户接口；用户 turn / 用户队列优先。
-        - 用户已入站或用户角色正在开口时，本拍主动 handoff 直接丢弃（不 defer 挡路）。
-        - 仅在「非用户占用」的出站推送中才短暂 defer，等推送结束后再取。
-        """
+        """旧导演主动开口链路已退役（v7）：idle 主动开口的"决定说什么"
+        归 life/story beat + speak/performance 旁路管线。本钩子仅为旧
+        OrchestratorThread 签名保留，收到的 handoff 一律丢弃归档。"""
         sid = session_id.strip()
         if not sid or not handoff:
-            return
-        from .story_autonomy import story_autonomy_enabled
-
-        if story_autonomy_enabled():
-            # R6.3 断供：idle 主动开口的"决定说什么"归 life/story beat +
-            # 角色开口决策（BeatOpeningPolicy）；旧导演交接不再生成。
-            self._record_agent_delivery_trace(
-                sid,
-                trigger_id=str(handoff.get("trigger_id") or ""),
-                status="dropped_story_autonomy",
-            )
-            self._abort_proactive_handoff(
-                sid,
-                None,
-                executable_unit_id=str(handoff.get("executable_unit_id") or "").strip(),
-                reason="story_autonomy_retired",
-                rearm=True,
-            )
             return
         self._record_agent_delivery_trace(
             sid,
             trigger_id=str(handoff.get("trigger_id") or ""),
-            status="generating",
+            status="dropped_story_retired",
         )
-        state = self._state_store.session(sid)
-        if self._director_must_yield_to_user(sid):
-            # 用户优先：不把 handoff 塞回 pending，避免再次挡角色
-            self._abort_proactive_handoff(
-                sid,
-                None,
-                executable_unit_id=str(handoff.get("executable_unit_id") or "").strip(),
-                reason="dropped_user_priority",
-                rearm=False,
-            )
-            get_prompt_trace().emit_event(
-                sid,
-                label="character_handoff_dropped_user_priority",
-                turn_index=int(handoff.get("turn_index") or 0),
-                payload=dict(handoff),
-            )
-            return
-        if self._session_manager.is_pushing(sid):
-            # 非用户打断的出站：可 defer；用户打断则上面已 yield
-            state.pending_character_handoff = dict(handoff)
-            get_prompt_trace().emit_event(
-                sid,
-                label="character_handoff_deferred_pushing",
-                turn_index=int(handoff.get("turn_index") or 0),
-                payload=dict(handoff),
-            )
-            return
-        with self._character_handoff_guard:
-            if sid in self._character_handoff_inflight:
-                state.pending_character_handoff = dict(handoff)
-                return
-            self._character_handoff_inflight.add(sid)
-
-        def _run() -> None:
-            try:
-                self._execute_character_handoff(sid, dict(handoff))
-            finally:
-                with self._character_handoff_guard:
-                    self._character_handoff_inflight.discard(sid)
-                exec_id = str(handoff.get("executable_unit_id") or "").strip()
-                if exec_id:
-                    leftover = self._state_store.session(sid).character_rhythm_schedule
-                    still_reserved = any(
-                        e.unit_id == exec_id and e.status == "reserved"
-                        for e in leftover.executable_units
-                    )
-                    if still_reserved:
-                        self._abort_proactive_handoff(
-                            sid,
-                            None,
-                            executable_unit_id=exec_id,
-                            reason="handoff_thread_leftover_reserved",
-                        )
-                if (
-                    self._orchestrator_thread is not None
-                    and self._director_coordinator is not None
-                    and self._director_coordinator.peek_character_handoff(sid) is not None
-                    and not self._director_must_yield_to_user(sid)
-                    and not self._session_manager.is_pushing(sid)
-                ):
-                    self._orchestrator_thread._maybe_notify_character_handoff(sid)
-
-        threading.Thread(
-            target=_run,
-            name=f"speak-character-handoff-{sid[:16]}",
-            daemon=True,
-        ).start()
+        self._abort_proactive_handoff(
+            sid,
+            None,
+            executable_unit_id=str(handoff.get("executable_unit_id") or "").strip(),
+            reason="story_retired",
+            rearm=True,
+        )
 
     def _director_must_yield_to_user(self, session_id: str) -> bool:
         """用户入站 / 用户角色 turn 优先于导演主动开口。"""
@@ -2364,13 +2173,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         )
 
     def arm_enter_greeting(self, session_id: str) -> None:
-        """进房：先挂 poll/节奏（立刻），编剧开场后台跑（不堵事件循环）。"""
+        """进房：挂 poll/节奏（立刻）；开场白由角色 greeting 与 life beat
+        承接（旧编剧调度已随链路退役拆除，v7 批次）。"""
         sid = session_id.strip()
         # 先挂生命线，避免等编剧 Agent 多步 LLM 把整条 Speak 热路径冻住
         self.bootstrap_proactive_loop(sid)
         self._session_manager.social.enter_greeting.arm_session(sid)
         self._schedule_compose_prepare(sid, mode="proactive")
-        self._schedule_screenwriter_init(sid)
 
     def bootstrap_proactive_loop(self, session_id: str) -> None:
         """恢复生命线扫描；每个 generation 只预置一次节奏开口阶梯。"""
@@ -2505,6 +2314,65 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             "unit_count": len(gen.units),
             "ring": self._page_temp.snapshot(sid),
         }
+
+    def inject_timeline_window(
+        self,
+        session_id: str,
+        *,
+        k: int = _TIMELINE_WINDOW_K,
+        extra_lines: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """时间轴窗口注入（上下文唯一历史语义，v7）：
+
+        沿时间轴取最近 k 条（轮次 + 剧情事件混排）注入 compose buffer
+        ——**与轮次机制无关**。页 key 固定 ``timeline-window``：重复注入
+        同代替换不累积；流水缺失/为空时注入空窗（等价清窗）。
+        ``extra_lines``：presence 待分享等附加行（追加在窗口尾部）。
+        """
+        sid = str(session_id or "").strip()
+        if not sid:
+            return {"ok": False, "reason": "missing_session_id"}
+        from agent.soul.memory.timeline import (
+            channel_of,
+            default_journal,
+            format_window_lines,
+        )
+
+        try:
+            entries = default_journal().recent_window(channel_of(sid), k=k)
+        except Exception:  # noqa: BLE001 — 流水缺失不阻塞注入
+            entries = []
+        lines = format_window_lines(entries) + [str(x) for x in (extra_lines or []) if str(x).strip()]
+        return self.enter_page_context(
+            sid,
+            page_key=_TIMELINE_WINDOW_PAGE,
+            lines=lines,
+        )
+
+    # ── life→speak 握手门（v7：先确认再通信，两个硬条件） ──────────────────
+
+    def mark_speak_wake(self, session_id: str = "") -> None:
+        """唤醒：用户活动（进房/发言/输入脉冲）刷新最后唤醒时刻。"""
+        self._wake_session = str(session_id or "").strip()
+        self._wake_monotonic = time.monotonic()
+
+    def story_gate_open(self) -> bool:
+        """life 是否可与 speak 通信（两个硬条件，全满足才开门）：
+
+        ① speak 服务已打开，且有正在激活的 speak 会话；
+        ② ``_SPEAK_SLEEP_AFTER_SEC``（30 分钟，硬编码）内有唤醒，否则睡眠。
+        关门时 life 不等待：beat 入账本 held，唤醒后由改期重投机制续投。
+        """
+        sid = self._wake_session
+        if not sid:
+            return False
+        try:
+            active = self._session_manager.has_active_dialogue(sid)
+        except Exception:  # noqa: BLE001 — 会话态不可得视为未激活
+            active = False
+        if not active:
+            return False
+        return (time.monotonic() - self._wake_monotonic) < _SPEAK_SLEEP_AFTER_SEC
 
     def _messages_to_page_lines(self, messages: list[dict[str, Any]]) -> list[str]:
         lines: list[str] = []

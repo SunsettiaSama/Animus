@@ -181,6 +181,10 @@ const view = {
     _syncProactiveUrgeDot();
   },
 
+  onTimelineRestore(entries) {
+    _restoreTimelineTail(entries);
+  },
+
   onRebuild(messages, workItems) {
     rebuildFromHistory(messages, workItems);
   },
@@ -263,6 +267,32 @@ function _renderRouteCard(msg) {
 }
 
 // ── 历史重建 ────────────────────────────────────────────────────────────────
+
+/**
+ * 时间轴尾巴回填（boot/新窗后）：timeline 流水条目按时间升序渲染——
+ * story 条目是时间轴一等公民（剧情事件条），轮次走纯文本气泡
+ * （流水无 speak_events，回放不可用）。
+ */
+function _restoreTimelineTail(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  if (!list.length) return;
+  for (const entry of list) {
+    const kind = String(entry.kind);
+    if (kind === 'story' || kind === 'story_intent') {
+      chat.appendStoryEvent(entry);
+      continue;
+    }
+    const userText = String(entry.user_text || '');
+    const agentText = String(entry.agent_text || '');
+    if (!userText && !agentText) continue;
+    if (userText) chat.appendUserMsg(userText, { created_at: entry.at });
+    if (agentText) {
+      const ctrl = chat.appendAssistantMsg({ created_at: entry.at });
+      ctrl.append(agentText);
+      ctrl.finalize();
+    }
+  }
+}
 
 export function rebuildFromHistory(messages, workItems) {
   chat.clearMsgs();

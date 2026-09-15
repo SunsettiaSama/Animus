@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from agent.soul.speak.io.outbound.websocket import WebSocketSpeakStreamPort
 from state import get_state
+from webui.speak_pipeline_gate import pipeline_reject_reason
 
 from agent.soul.speak.responders.request_driven.orchestrator.prompt_trace import get_prompt_trace
 
@@ -301,12 +302,11 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
     if delivery_mode not in ("stream", "simulated"):
         delivery_mode = "stream"
     pipeline = str(first.get("pipeline", "request_driven")).strip() or "request_driven"
-    # 接口收敛（single-stream 需求 R3 / 开放问题 2）：对话对外唯一 pipeline。
-    if pipeline != "request_driven":
-        await websocket.send_json({
-            "type": "error",
-            "message": f"unsupported pipeline: {pipeline!r} (only request_driven)",
-        })
+    # 接口收敛（single-stream 需求 R3 / 开放问题 2）：对话对外唯一 pipeline，
+    # 与 /ws/agent/run 共用收敛门（webui/speak_pipeline_gate.py）。
+    reject = pipeline_reject_reason(pipeline)
+    if reject:
+        await websocket.send_json({"type": "error", "message": reject})
         await websocket.close()
         return
     if not gen_id:
@@ -470,7 +470,14 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
 
             msg_pipeline = str(msg.get("pipeline", "")).strip()
             if msg_pipeline:
-                pipeline = msg_pipeline
+                # 会话中途收到 pipeline 字段：同一收敛门复检。合法才生效；
+                # 非法拒字段不掉线（正常前端仅 session_open 携带 pipeline，
+                # 此门防非约定客户端绕过收敛）。
+                reject = pipeline_reject_reason(msg_pipeline)
+                if reject:
+                    await _send_json({"type": "error", "message": reject})
+                else:
+                    pipeline = msg_pipeline
 
             if msg_type == "typing_pulse":
                 typing = bool(msg.get("typing", False))

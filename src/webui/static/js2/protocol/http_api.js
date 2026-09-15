@@ -8,10 +8,10 @@
 // ── WebSocket paths ──────────────────────────────────────────────────────────
 
 export const WS_PATHS = Object.freeze({
-  agentRun: '/ws/agent/run',
-  speakRun: '/ws/speak/run',   // legacy：纯 Speak 直连（正常前端不使用）
-  reactRun: '/ws/react/run',   // legacy
-  chatRun:  '/ws/chat/run',
+  agentRun: '/ws/agent/run',   // 单窗口前端实连口：Agent 顶层（Speak/Worker 首轮分类）
+  speakRun: '/ws/speak/run',   // speak 唯一对外直连口（桌宠等直连客户端）；与 agentRun 同 pipeline 收敛门
+  reactRun: '/ws/react/run',   // retired（5d0b30f）
+  chatRun:  '/ws/chat/run',    // retired（88d18c0）
   tts:      '/ws/tts',
   stt:      '/ws/stt',
 });

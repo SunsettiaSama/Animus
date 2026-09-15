@@ -14,16 +14,21 @@ import logging
 import threading
 import time
 import weakref
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from agent.soul.life.story import (
     BeatLedger,
     CallableBeatSource,
+    EvolutionPool,
+    LandmarkScreenwriter,
+    PoolEntry,
     StoryCardStore,
     StoryOutbox,
     StoryScheduler,
 )
+from agent.soul.life.story.writer import hhmm
 from agent.soul.storybus import (
     BeatAck,
     BeatAckStatus,
@@ -125,26 +130,25 @@ class InProcessStoryBus:
 
 
 class SpeakBeatInboxBridge:
-    """speak 侧收件口：角色先决策（开口/挂起/沉默），再走表演路径。
+    """speak 侧收件口：旁路表演管线（performance.BeatPerformer）的投递适配。
 
-    语义（R7）：
-    - 决策经 ``BeatOpeningPolicy``（角色开口决策的确定性规则版）；
-    - perform_now → enqueue_agent_outbound → performed/suppressed；
-    - hold（speak 未就绪 / 用户在忙）→ suppressed（life 可改期重投）；
-    - silence（角色选择沉默）→ silenced（不是失败）；
-    - ProgressSync 暂不消费（前端帧扩展属 Phase 3 / 2d）。
+    开口决策、时间帧单开口闸与表演已收拢进 speak/performance 管线（R7）；
+    本桥只负责解析 speak 服务、提供表演端口（enqueue_agent_outbound →
+    outbound bus，纯运输不涉旧剧情机器）与 ProgressSync/卡片帧下发。
     """
 
     def __init__(self, soul: Any, bus: InProcessStoryBus, *, policy=None, frame_gate=None) -> None:
-        from agent.soul.speak.responders.request_driven.character.beat_policy import (
-            BeatOpeningPolicy,
-            FrameGate,
-        )
+        from agent.soul.speak.performance import BeatPerformer
 
         self._soul = weakref.ref(soul)
         self._bus = bus
-        self._policy = policy or BeatOpeningPolicy()
-        self._gate = frame_gate or FrameGate()
+        self._performer = BeatPerformer(
+            speak_provider=self._speak,
+            perform=self._perform,
+            send_ack=bus.send_ack,
+            policy=policy,
+            gate=frame_gate,
+        )
 
     def _speak(self):
         soul = self._soul()
@@ -157,26 +161,7 @@ class SpeakBeatInboxBridge:
         return svc
 
     def receive_beat(self, beat: LifeStoryBeat) -> None:
-        speak = self._speak()
-        channels = beat.channels or ("main",)
-        for channel in channels:
-            decision = self._policy.decide(beat, speak_ready=speak is not None)
-            status: BeatAckStatus
-            if decision.perform_now and not self._gate.try_open(channel):
-                # 时间帧单开口约定：本帧已开口 → 帧内裁决为改期（不留悬案）
-                status = BeatAckStatus.suppressed
-                decision = type(decision)("hold", "frame_busy")
-            elif decision.perform_now:
-                status = self._perform(speak, beat, channel)
-            elif decision.action == "silence":
-                status = BeatAckStatus.silenced
-            else:
-                status = BeatAckStatus.suppressed
-            logger.info(
-                "[story.inbox] beat %s channel %s -> %s (%s)",
-                beat.beat_id, channel, status.value, decision.reason,
-            )
-            self._bus.send_ack(BeatAck(beat.beat_id, channel=channel, status=status))
+        self._performer.receive_beat(beat)
 
     def _perform(self, speak: Any, beat: LifeStoryBeat, channel: str) -> BeatAckStatus:
         if speak is None:
@@ -243,12 +228,19 @@ class SpeakBeatInboxBridge:
 
 
 class StoryRuntime:
-    """life 侧剧情运行件组合：总线 + 出站口 + 账本 + 排程器。"""
+    """life 侧剧情运行件组合：总线 + 出站口 + 账本 + 排程器 + 演化预跑。"""
 
-    def __init__(self, soul: Any, *, source: CallableBeatSource | None = None, policy=None) -> None:
+    def __init__(
+        self,
+        soul: Any,
+        *,
+        source: CallableBeatSource | None = None,
+        policy=None,
+        journal: Any | None = None,
+    ) -> None:
         from collections import deque
 
-        from agent.soul.speak.responders.request_driven.character.beat_policy import (
+        from agent.soul.speak.performance.policy import (
             BeatOpeningPolicy,
             FrameGate,
         )
@@ -257,9 +249,17 @@ class StoryRuntime:
         self.ledger = BeatLedger(on_advance=self._on_advance)
         self.outbox = StoryOutbox(self.bus.deliver_beat)
         self.cards = StoryCardStore(self.bus.sync_progress)
+        if journal is None:
+            from agent.soul.memory.timeline import default_journal
+
+            journal = default_journal()
+        self._journal = journal
+        self.pool = EvolutionPool()
+        self.writer = LandmarkScreenwriter()
         self._recorder = self._recording_outbox()
         self.scheduler = StoryScheduler(
-            self._recorder, source or CallableBeatSource()
+            self._recorder,
+            source or CallableBeatSource(self._due_pool_beats),
         )
         self.bus.bind_life_side(
             ack_receiver=self.ledger.receive_ack,
@@ -271,6 +271,8 @@ class StoryRuntime:
         self._gate = FrameGate()
         self._recent_signals = deque(maxlen=20)
         self._director_dirty = False
+        self._evolve_inflight = False
+        self._intent_sent: set[str] = set()  # 已落 intent 的地标/beat 去重
 
     def _recording_outbox(self):
         """包装 outbox：先记账后投递——同步回执（suppressed 等）才能落到账上。"""
@@ -329,15 +331,159 @@ class StoryRuntime:
 
     def tick(self) -> dict:
         self.ensure_inbox()
+        result: dict[str, Any] = {}
+        # 导演失效重估（R9）：用户轮高显著信号后，未投递的预跑稿整池重算——
+        # 下一拍演化过场会从手账 narrative 零成本重出稿（echo 路径）。
+        if self._director_dirty:
+            dropped = self.pool.drop_pending()
+            self.clear_director_dirty()
+            if dropped:
+                result["invalidated"] = dropped
         # 预约改期（R7.2）：只重投"本拍之前"已挂起的 beat——同拍内刚被抑制的
         # 留到下一拍，避免自追自尾；直接调用 redeliver_held() 不受此限。
         pre_held = {b.beat_id for b in self.ledger.held()}
-        result = self.scheduler.tick()
+        result.update(self.scheduler.tick())
         result["redelivered"] = self.redeliver_held(only_ids=pre_held)
         expired = self.ledger.sweep_expired()
         if expired:
             result["expired_archived"] = len(expired)
+        result["pool_depth"] = len(self.pool.pending_landmark_ids())
+        # 预约轴提前演化（T-1h）：重活后台单飞，tick 本体保持零 LLM 等待
+        self._maybe_evolve()
         return result
+
+    # ── 预约轴提前演化（导演规划生活 + 编剧成稿 + 预跑池，R9 预约轴版） ──
+
+    def _due_pool_beats(self, now: float) -> list:
+        """StoryScheduler 的供给源：预跑池到点出货（零 LLM 等待）。"""
+        return [e.draft for e in self.pool.pop_due(now)]
+
+    def _maybe_evolve(self) -> None:
+        if self._evolve_inflight or not self.pool.has_capacity():
+            return
+        if self._soul() is None:
+            return
+        self._evolve_inflight = True
+        threading.Thread(
+            target=self._evolve_pass, name="story-evolution", daemon=True
+        ).start()
+
+    def _evolve_pass(self) -> None:
+        """后台演化过场：①窗口内预约地标提前 fill（重 LLM）；②已演化未
+        开口地标的 echo 补稿（重启丢池/失效重估/到点路径先填后漏，零 LLM）。"""
+        try:
+            soul = self._soul()
+            if soul is None:
+                return
+            try:
+                api = soul.life.api
+            except Exception:  # noqa: BLE001 — life 未就绪属正常冷启动
+                return
+            try:
+                fills = api.evolve_upcoming_landmarks(within_sec=_EVOLVE_WINDOW_SEC)
+            except Exception:  # noqa: BLE001
+                logger.exception("[story.evolution] landmark evolve failed")
+                fills = []
+            for fill in fills or []:
+                self._absorb(fill)
+            try:
+                tellable = api.done_landmarks_for_tell() or []
+            except Exception:  # noqa: BLE001
+                logger.exception("[story.evolution] tellable scan failed")
+                tellable = []
+            told = self._told_landmark_ids()
+            for lm in tellable:
+                lid = str(lm.get("landmark_id") or "").strip()
+                if not lid or self.pool.has(lid) or lid in told:
+                    continue
+                draft = self.writer.write_landmark_echo(lm)
+                if draft is not None:
+                    self._absorb(draft, meta=lm)
+        finally:
+            self._evolve_inflight = False
+
+    def _absorb(self, draft_or_fill: Any, *, meta: dict | None = None) -> bool:
+        """演化材料 → 开卡 → 预跑池入池 → 卡片预告同步。"""
+        if isinstance(draft_or_fill, dict) and meta is None:
+            meta = draft_or_fill
+            draft = self.writer.write_landmark_beat(
+                draft_or_fill,
+                prev=self._recent_story_context(
+                    exclude_landmark=str(meta.get("landmark_id") or "")
+                ),
+            )
+        else:
+            draft = draft_or_fill
+        if draft is None:
+            return False
+        meta = meta or {}
+        lid = str(meta.get("landmark_id") or "").strip()
+        if not lid or self.pool.has(lid) or lid in self._told_landmark_ids():
+            # 已演出过的地标不再开口（确定性 id 之外的语义防线）
+            return False
+        if not draft.channels:
+            draft = replace(draft, channels=_DEFAULT_CHANNELS)
+        card = self.open_card(self.writer.outline_for(meta))
+        draft = replace(draft, card_id=card.card_id)
+        scheduled_at = str(meta.get("scheduled_at") or "")
+        deliver_at = _scheduled_epoch(scheduled_at, fallback=time.time())
+        ok = self.pool.put(PoolEntry(
+            draft=draft,
+            landmark_id=lid,
+            card_id=card.card_id,
+            deliver_at=deliver_at,
+            intention=str(meta.get("intention") or ""),
+            scheduled_at=scheduled_at,
+            evolved_at=time.time(),
+        ))
+        if ok:
+            logger.info(
+                "[story.evolution] pooled landmark %s deliver_at=%s cached=True",
+                lid, scheduled_at or "-",
+            )
+            self._sync_card_upcoming(card.card_id)
+        return ok
+
+    def _sync_card_upcoming(self, card_id: str) -> None:
+        """进度段预告：当前=待演绎；upcoming=池内同卡未到点的后续稿。"""
+        card = self.cards.get(card_id)
+        now = time.time()
+        upcoming = [
+            f"「{hhmm(e.scheduled_at)}」{e.intention}".strip()
+            for e in self.pool.future_by_card(card_id, now)
+        ]
+        current = card.current if (card and card.current) else "已排入日程，到点开演"
+        try:
+            self.advance_card(card_id, current=current, upcoming=upcoming)
+        except Exception:  # noqa: BLE001 — 帧失败不反噬剧情
+            logger.exception("[story.evolution] card sync failed: %s", card_id)
+
+    def _recent_story_context(self, *, exclude_landmark: str = "") -> list[dict]:
+        """前情：最近 3 条已演出的 story 事件（编剧串联用）。
+
+        ``exclude_landmark``：正在写作的地标自身不进前情（避免自我串联）。
+        """
+        try:
+            entries = self._journal.read("main", limit=200) or []
+        except Exception:  # noqa: BLE001 — 流水缺失不阻塞演化
+            return []
+        story = [
+            e for e in entries
+            if str(e.get("kind")) == "story"
+            and str(e.get("landmark_id") or "") != exclude_landmark
+        ]
+        return story[:3]  # read() 新在前
+
+    def _told_landmark_ids(self) -> set[str]:
+        try:
+            entries = self._journal.read("main", limit=200) or []
+        except Exception:  # noqa: BLE001
+            return set()
+        return {
+            str(e.get("landmark_id"))
+            for e in entries
+            if str(e.get("kind")) == "story" and e.get("landmark_id")
+        }
 
     def redeliver_held(self, only_ids: set[str] | None = None) -> int:
         """改期重投 held beat：speak 未就绪/帧忙/用户忙 suppressed、silenced 的
@@ -388,8 +534,83 @@ class StoryRuntime:
         return tuple(self._recent_signals)
 
     def _on_advance(self, beat: LifeStoryBeat, status: BeatAckStatus) -> None:
-        # 2b 完整版：performed → 推进 landmark/chronicle；expired → 归档"错过的剧情"
+        """账本终态推进：performed → 落时间轴流水（R5 provenance 补账）+
+        卡片进度前进（R8 一致性约定：演过才推进）；suppressed/silenced →
+        剧情意向不置顶（落 intent 流水并刷新上下文，告知"她打算开始做什么"）。"""
         logger.info("[story.runtime] beat %s -> %s", beat.beat_id, status.value)
+        if status is BeatAckStatus.performed:
+            self._record_story_performed(beat)
+        elif status in (BeatAckStatus.suppressed, BeatAckStatus.silenced):
+            self._record_story_intent(beat)
+
+    def _record_story_performed(self, beat: LifeStoryBeat) -> None:
+        channel = beat.channels[0] if beat.channels else "main"
+        try:
+            self._journal.append_event(
+                session_id=f"live:{channel}",
+                text=beat.narrative,
+                kind="story",
+                beat_id=beat.beat_id,
+                card_id=beat.card_id,
+                landmark_id=beat.provenance.landmark_id,
+                occurred_at=beat.provenance.source_tick,
+                salience=float(beat.hint.share_desire),
+            )
+        except Exception:  # noqa: BLE001 — 流水是读模型，写失败不打断
+            logger.exception("[story.runtime] story event append failed")
+        if beat.card_id:
+            try:
+                upcoming = [
+                    f"「{hhmm(e.scheduled_at)}」{e.intention}".strip()
+                    for e in self.pool.future_by_card(beat.card_id, time.time())
+                ]
+                self.advance_card(
+                    beat.card_id, current=beat.narrative, upcoming=upcoming
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("[story.runtime] card advance failed")
+
+    def _record_story_intent(self, beat: LifeStoryBeat) -> None:
+        """剧情意向（不置顶）：beat 暂不开口 → intent 落流水 + 刷新上下文。
+
+        不打断当前对话、卡片不置顶——只是让角色"知道她打算开始做什么"，
+        开口时机仍由角色自决（R7）。按 landmark（无则 beat_id）去重，
+        改期重投不重复记。
+        """
+        key = beat.provenance.landmark_id or beat.beat_id
+        if key in self._intent_sent:
+            return
+        self._intent_sent.add(key)
+        channel = beat.channels[0] if beat.channels else "main"
+        brief = beat.narrative.strip()
+        if len(brief) > 60:
+            brief = brief[:60] + "…"
+        try:
+            self._journal.append_event(
+                session_id=f"live:{channel}",
+                text=f"她打算开始：{brief}",
+                kind="story_intent",
+                beat_id=beat.beat_id,
+                card_id=beat.card_id,
+                landmark_id=beat.provenance.landmark_id,
+                occurred_at=beat.provenance.source_tick,
+                salience=float(beat.hint.share_desire),
+            )
+        except Exception:  # noqa: BLE001 — 流水写失败不打断
+            logger.exception("[story.runtime] story intent append failed")
+        self._refresh_speak_window(channel)
+
+    def _refresh_speak_window(self, channel: str) -> None:
+        """唤醒中的 speak：立刻刷新时间轴窗口（睡眠时不刷，进房自然带上）。"""
+        soul = self._soul()
+        if soul is None:
+            return
+        try:
+            speak = soul._ensure_speak_service()
+            if speak is not None and speak.story_gate_open():
+                speak.inject_timeline_window(f"live:{channel}")
+        except Exception:  # noqa: BLE001 — 刷新失败不影响剧情链
+            pass
 
 
 _runtimes: "weakref.WeakKeyDictionary[Any, StoryRuntime]" = weakref.WeakKeyDictionary()
@@ -411,6 +632,17 @@ def ensure_story_runtime(soul: Any) -> StoryRuntime:
 
 _DEFAULT_CHANNELS = ("main",)
 _FRESH_SEC = 6 * 3600
+_EVOLVE_WINDOW_SEC = 3600.0     # 预约轴提前演化窗口（T-1h）
+
+
+def _scheduled_epoch(raw: str, *, fallback: float) -> float:
+    try:
+        dt = datetime.fromisoformat(str(raw or "").strip())
+    except (TypeError, ValueError):
+        return fallback
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
 
 
 def _default_hint(share_desire: float = 0.5) -> PerformanceHint:
@@ -422,21 +654,29 @@ def _default_hint(share_desire: float = 0.5) -> PerformanceHint:
 
 
 def beats_from_landmark_fills(fills: list[dict]) -> list[BeatDraft]:
-    """landmark 触发填补项（life.api.fill_due_landmarks 的返回）→ beat 草稿。"""
+    """landmark 触发填补项（life.api.fill_due_landmarks 的返回）→ beat 草稿。
+
+    带 landmark_id 的项用确定性幂等键（``beat-lm-<id>``）——与提前演化
+    （evolve → 预跑池）对同一地标的生产互斥，总线天然去重，不会开口两次。
+    """
     drafts: list[BeatDraft] = []
     for item in fills:
         narrative = str(item.get("hint") or item.get("narrative") or "").strip()
         if not narrative:
             continue
+        landmark_id = str(item.get("landmark_id") or "").strip()
+        agenda_id = str(item.get("landmark_agenda_id") or "").strip()
         drafts.append(BeatDraft(
             narrative=narrative,
             channels=_DEFAULT_CHANNELS,
             kind="landmark_progress",
             hint=_default_hint(share_desire=float(item.get("salience", 0.6))),
             provenance=BeatProvenance(
-                landmark_id=str(item.get("landmark_id") or item.get("landmark_agenda_id") or ""),
-                agenda_id=str(item.get("landmark_agenda_id") or ""),
+                landmark_id=landmark_id or agenda_id,   # 兼容：agenda-only 填充的溯源主键
+                agenda_id=agenda_id,
+                source_tick=str(item.get("scheduled_at") or ""),
             ),
+            beat_id=f"beat-lm-{landmark_id}" if landmark_id else "",
         ))
     return drafts
 

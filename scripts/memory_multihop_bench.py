@@ -58,6 +58,7 @@ def _base_factories(names: list[str]):
         NullMemoryBase,
         StackMemoryBase,
     )
+    from evals.memory_humaneness.ablation import ablation_factory
 
     table = {
         "graph": lambda: GraphMemoryBase.build(),
@@ -65,12 +66,22 @@ def _base_factories(names: list[str]):
         "compact": lambda: CompactMemoryBase(),
         "full": lambda: FullMemoryBase(),
         "none": lambda: NullMemoryBase(),
+        # 消融臂：graph 管线组件拆解（确定性，无 LLM；kg_semantic/kg_interfere 走本地 BGE）
+        "kg_semantic": ablation_factory("kg_semantic", use_bge=True),
+        "kg_bm25": ablation_factory("kg_bm25"),
+        "kg_spread": ablation_factory("kg_spread"),
+        "kg_interfere": ablation_factory("kg_interfere", use_bge=True),
+        "kg_drift": ablation_factory("kg_drift", use_bge=True),
+        "kg_drift": ablation_factory("kg_drift", use_bge=True),
     }
     factories = []
     for name in names:
         name = name.strip().lower()
         if name not in table:
-            raise SystemExit(f"unknown base kind: {name!r} (expect graph/stack/compact/full/none)")
+            raise SystemExit(
+                f"unknown base kind: {name!r} "
+                "(expect graph/stack/compact/full/none/kg_semantic/kg_bm25/kg_spread/kg_interfere)"
+            )
         factories.append((name, table[name]))
     return factories
 

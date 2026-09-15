@@ -1,8 +1,36 @@
-# evals/memory_humaneness — 记忆基座拟人化对比 benchmark
+# evals/memory_humaneness — 记忆基座评测（双管线）
 
-同一个虚拟伙伴（小澄），换不同的**记忆基座**回答同一批用例，分层测：
-**L2 检索质量**（确定性无 LLM）、**L3 单轮行为**（LLM 生成 + 专家评判）、
-**L4 多跳记忆链**（预载 10 条 × 多跳问句）。
+职能分离（分支 `eval/memory-pipeline-split`）：
+
+- **检索评测管线**（确定性、无 LLM、秒级）：L2 单跳检索质量 + L4 多跳检索链。
+  测"记忆取得对不对"——排名依据以这里为准。
+- **拟人度管线**（`dialogue/`，多轮对话模拟）：单一固定人格档案 × 记忆基座 ×
+  轨迹级多维评判（情感承接/拟人度/记忆运用自然度/主动性）。测"带着记忆聊得
+  像不像人"——记忆对错不在此管线评分范围。
+- L3 单轮行为基准与 L4 `--full` 全链模式保留为辅助行为刻画（历史资产）。
+
+## 拟人度管线（dialogue/）
+
+```bash
+python scripts/memory_dialogue_bench.py --limit 1 --judge heuristic   # 冒烟
+python scripts/memory_dialogue_bench.py --bases graph,stack,none --judge llm
+python scripts/memory_dialogue_bench.py --user llm --judge llm       # LLM 扮演用户
+```
+
+- **人格档案单一固定**（`persona.py`，小澄 v1）：变量只在记忆基座；
+- **剧本库**（30 场景 × 8 轮，`scenarios.py`）：预载共同过去 + 预设用户输入 +
+  回调锚点（第 i 轮应自然回访的早期事实）+ 情感弧；用户侧可换 LLM 扮演
+  （只见历史与用户简笔，不见 Agent 记忆块）；
+- **模拟器**逐轮：检索（滚动窗口 query）→ 人格+记忆 → 回复 → **本轮对话写回
+  基座**（encode→retrieve 闭环，多轮价值所在）；
+- **轨迹级评委**：整段对话 → 五维（`DIALOGUE_DIMENSIONS`），1~5；
+  解析链与检索管线评委一致（直解→正则→抢救→降级），报告含
+  `judge_fallbacks` 与评委来源占比（llm_expert 占比 = 数据可信度）；
+- transcript 先保存再解析；开跑前打印 LLM 调用预算。
+
+成本参考（scripted 用户 + LLM 评委）：场景数 × 基座数 × (轮数 + 1) 次调用；
+30 场景 × 5 基座 × 9 ≈ 1350 次。评委走独立的 `--judge-max-tokens`（默认 3072，
+轨迹分析 think 很长，1024 会截断）。
 
 ## 五档基座光谱
 

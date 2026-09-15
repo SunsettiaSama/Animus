@@ -43,8 +43,16 @@ function _itemEl(entry) {
   div.className = 'recall-item';
   const salience = Number(entry.salience ?? 0);
   const hot = salience >= 0.7 ? '<span class="recall-hot" title="高显著记忆">✦</span>' : '';
-  div.innerHTML = `
-    <div class="recall-time">${esc(_fmt(entry.at))}${hot}</div>
+  const timeHtml = `<div class="recall-time">${esc(_fmt(entry.at))}${hot}</div>`;
+  // 剧情事件/意向条目（beat 演出与改期落账，R5/R7）：单行呈现，非对话轮
+  const kind = String(entry.kind);
+  if (kind === 'story' || kind === 'story_intent') {
+    const mark = kind === 'story_intent' ? '▷' : '◐';
+    div.innerHTML = `${timeHtml}
+      <div class="recall-story">${mark} ${esc(String(entry.text || '').slice(0, 240))}</div>`;
+    return div;
+  }
+  div.innerHTML = `${timeHtml}
     <div class="recall-user">${esc(String(entry.user_text || '').slice(0, 200) || '（无声的一轮）')}</div>
     <div class="recall-agent">${esc(String(entry.agent_text || '').slice(0, 200))}</div>`;
   return div;

@@ -25,7 +25,6 @@ import * as basics from './features/basics.js';
 
 // screens / ui
 import * as workspaceView from './ui/screens/workspace.js';
-import * as historyList from './ui/screens/history_list.js';
 import * as landing from './ui/screens/landing.js';
 import * as accountGate from './ui/screens/account_gate.js';
 import * as cards from './ui/screens/workstation_cards.js';
@@ -42,7 +41,6 @@ function _bind() {
   on('btn-go-home', 'click', () => {
     goHome();
     cards.refreshAll();
-    bus.emit(EVENTS.historyChanged, { conversations: historyListSafeSnapshot() });
   });
   on('plan-btn-home', 'click', () => { goHome(); cards.refreshAll(); });
   on('bench-btn-home', 'click', () => { goHome(); cards.refreshAll(); });
@@ -140,8 +138,8 @@ function _bind() {
   window.onBotTransportChange = () => settings.onBotTransportChange?.();
   window.onChannelChange = () => settings.onChannelChange?.();
 
-  // Landing 快速入口 + soul 卡动作
-  landing.bindLanding({ onStartConversation: () => conversation.startNew() });
+  // Landing 快速入口（单窗口：无新对话 CTA） + soul 卡动作
+  landing.bindLanding();
   bus.on('workstation:soul_action', async ({ action }) => {
     if (action === 'settings') {
       settings.open('persona');
@@ -155,14 +153,6 @@ function _bind() {
       await cards.updatePersonaCard();
     }
   });
-}
-
-function historyListSafeSnapshot() {
-  try {
-    return conversation.historySnapshotForUi?.() ?? [];
-  } catch {
-    return [];
-  }
 }
 
 // ── Scheduler 表单辅助 ──────────────────────────────────────────────────────
@@ -267,11 +257,9 @@ async function boot() {
   bindNavigationRequests();
   _bind();
 
-  // 视图与列表装配
+  // 视图装配（单窗口：侧栏即回忆面板，无会话列表）
   workspaceView.initWorkspace();
   workspaceView.bindVoiceButtons(voice);
-  historyList.initHistoryLists(convId =>
-    import('./features/conversation.js').then(m => m.openConversation(convId)));
   conversation.setInteractorIdProvider(() => accounts.getCurrentInteractorId());
 
   // 人格头像

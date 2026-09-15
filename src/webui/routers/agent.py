@@ -10,6 +10,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 from agent.inbound import RouteContext, RouteKind
 from agent.soul.speak.io.outbound.websocket import WebSocketSpeakStreamPort
 from state import get_state
+from webui.speak_pipeline_gate import pipeline_reject_reason
 from webui.speak_typing_sim import SimulatedTypingStreamPort
 from worker.work.types import WorkIntentSignal
 
@@ -90,6 +91,13 @@ async def _ws_agent_session(websocket: WebSocket, state) -> None:
     if delivery_mode not in ("stream", "simulated"):
         delivery_mode = "stream"
     pipeline = str(first.get("pipeline", "request_driven")).strip() or "request_driven"
+    # 接口收敛（single-stream 需求 R3 / 开放问题 2）：前端实连口与
+    # /ws/speak/run 共用同一 pipeline 收敛门——唯一合法值 request_driven。
+    reject = pipeline_reject_reason(pipeline)
+    if reject:
+        await websocket.send_json({"type": "error", "message": reject})
+        await websocket.close()
+        return
 
     soul, err = _soul_or_400()
     if err is not None or soul is None or not soul.is_running:

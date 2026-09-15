@@ -12,7 +12,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from agent.soul.life.story import StoryCardStore  # noqa: E402
-from agent.soul.speak.responders.request_driven.character.beat_policy import (  # noqa: E402
+from agent.soul.speak.performance.policy import (  # noqa: E402
     HOLD,
     PERFORM_NOW,
     SILENCE,

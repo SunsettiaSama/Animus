@@ -21,6 +21,7 @@ import {
 import { ts, scrollBottom, msgsEl } from './markdown.js';
 import { agentAvatar } from './bubbles.js';
 import { setTitleBarTyping } from './typing.js';
+import { ensureDayDivider } from './timeline.js';
 
 const _SPEAK_FIELD_LABEL = Object.freeze({
   thought: 'think',
@@ -51,6 +52,7 @@ function _isHollowSpeakMsg(node) {
 export function appendSpeakStream(opts = {}) {
   const el = msgsEl();
   if (!el) return null;
+  ensureDayDivider(opts.created_at);
   el.querySelector('.empty-state')?.remove();
   while (_isHollowSpeakMsg(el.lastElementChild)) {
     el.lastElementChild.remove();
