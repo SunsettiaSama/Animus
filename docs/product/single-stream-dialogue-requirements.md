@@ -475,6 +475,26 @@ turn_finish 回答正常），连接耗时 0.02s（门控拆除生效）；编�
   随 Phase 4 物理搬迁移除；
 - 验证：storybus 54/54；soul+life 大套件失败集与 HEAD 对比逐项一致
   （零新增回归）。
+
+**合并前分层审查**（2026-09-15，§5.3 依赖规则全量 import 级审计 @合并后 main）：
+- **全项通过，无新增违禁**：storybus 零实现依赖（纯契约）✓；life/story 零
+  speak 依赖（writer/pool 仅 storybus+stdlib）✓；speak 零 life/story 依赖
+  （performance 旁路管线仅 storybus；speak→memory(record) 为规则明示允许）✓；
+  webui 零 life 内部依赖 ✓；旧位置 beat_policy/memory_buffer 已清空 ✓。
+- **既记偏离三处**（均有意为之，随 Phase 4 复核）：① wiring → memory.timeline
+  （journal 注入作为 R5 落账缝——wiring 是唯一双向点，注入接口收窄在
+  StoryRuntime 构造参数）；② heartbeat → wiring.story（story-tick 分发，
+  R6.1 起既记）；③ adapters.soul_dialogue → wiring.story（轮末信号 +
+  窗口刷新，adapters 层 acting as L3 胶水）。另 SoulService → presence
+  （待分享弹出）为既有实践，规则表未列，建议 Phase 4 补记。
+- 抽象层次结论：新链路四层落位干净——L0 storybus（+BeatDraft 可选
+  beat_id，加法演进）、L1 life/story（writer/pool）、L2 speak/performance
+  （旁路管线，决策/帧闸/表演端口注入式）、L3 wiring（演化循环+意向落账
+  +journal 注入）、L4 webui（pipeline 门 + 时间轴呈现）；旧 request_driven
+  机器供能全断、待 Phase 4 物理搬除。
+- 工作区收纳说明：本批全部改动随 `d811fe8` 入库（与 evals 工作同一提交，
+  提交信息未覆盖故事/表演/门面部分——历史如需拆分应趁未 push 处理）；
+  本地 main 领先 origin/main 14 提交，push 由人工确认执行。
 - 记账偏差（非缺口）：§5.4 懒挂替代启动序装配（见上表）；R8 前端帧经 kind
   透传实现（`workspace.js` 路由），`protocol/frames.js` 字面未扩展（其为出站
   构造器，不涉下行）；R1 刷新现状实为 `startNew` 清空消息区——比 v5 所记
