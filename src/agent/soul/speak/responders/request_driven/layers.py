@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from agent.soul.speak.responders.request_driven.composer.projectors.dynamic_layer import (
@@ -14,6 +15,56 @@ from agent.soul.speak.responders.request_driven.protocol.scrub import scrub_comp
 # 策略与材料分离：指令性文本已全部上移至 blocks/system/role.py 三段式 role。
 # 本文件 render_system_extra() 只产出材料与事实标注；policy-lint 会对
 # 指令模式（<speak>、"请勿" 等）在动态层出现时告警。
+
+# 评测消融开关（evals/speak_humaneness）：动态层卡片族过滤/改写。
+# ""             = 不过滤（生产行为不变）
+# "writer"       = 只保留剧情卡片（blank 导演/节奏族）
+# "director"     = 只保留导演/节奏卡片（blank 剧情族 + pass_info）
+# "dynsched"     = 节奏卡片出清 + 阈值策略接管注入（已被证伪的便宜版，留作对照）
+# "dynsched_llm" = 节奏卡片出清 + 导演 LLM 带语境逐轮判定记忆/分享注入（正经版）
+# "softplot"     = 节奏卡片出清 + 剧情卡软约束措辞 + "对方在剧情中的位置"
+# "charsilence"  = 角色自主臂：授予沉默权（只回「……」）+ 自预约下一拍（存入上下文回显）
+# 按调用即时读取，进程内生效。
+CARD_FAMILY_FILTER_ENV = "SPEAK_EVAL_CARD_FAMILY"
+
+_RHYTHM_BLANK_MODES = ("writer", "dynsched", "dynsched_llm", "softplot")
+
+_SOFT_PLOT_OUTLINE_HEADER = (
+    "参考剧情（软约束——她正处于此剧情中，供构思对用户的回复参考；"
+    "对方当前的发言优先于剧情推进）：\n"
+)
+_SOFT_PLOT_FLOW_HEADER = "此刻情景（软约束，参考，以对方的话为先）：\n"
+_USER_POSITION_NOTE = (
+    "对方在剧情中的位置：对方是此刻正与你实时对话的人。"
+    "剧情没有为对方的发言安排位置时，以对方的发言为准，剧情退为背景参考。"
+)
+_CHAR_AUTONOMY_NOTE = (
+    "本拍自主权（导演离席，由你自理）：\n"
+    "- 若确实无话可说，可以只回「……」表示沉默，不必硬找话说；\n"
+    "- 你可以为自己预约下一次想开口聊的事：单独一行以「预约：」开头写下，"
+    "下一拍会回显给你作提醒。"
+)
+
+
+def _card_family_filter() -> str:
+    return os.environ.get(CARD_FAMILY_FILTER_ENV, "").strip().lower()
+
+
+# ── 评测专用注入判定钩子（dynsched_llm）───────────────────────────────────────
+# 签名: (session_id, user_text, frame_text, memory_texts, share_texts)
+#       -> (memory_keep_indices, share_keep_indices)
+# 由 evals.speak_humaneness 在装配时注入；生产恒为 None（不判定、全保留）。
+_EVAL_UNIT_JUDGE = None
+
+
+def set_eval_unit_judge(judge) -> None:
+    global _EVAL_UNIT_JUDGE
+    _EVAL_UNIT_JUDGE = judge
+
+
+# ── 评测专用角色自预约存档（charsilence）──────────────────────────────────────
+# key=session_id，value=角色写下的预约行；由评测端口写入、render 回显，生产不读。
+EVAL_CHAR_BOOKINGS: dict[str, list[str]] = {}
 
 
 @dataclass(frozen=True)
@@ -80,6 +131,7 @@ class RolePromptLayers:
     dynamic: RoleDynamicLayer
     dialogue_frame: str = ""
     user_text: str = ""
+    session_id: str = ""
 
     def render_system_extra(self) -> str:
         """纯材料区：只含事实标注与材料正文，不含任何指令性文本。"""
@@ -94,16 +146,21 @@ class RolePromptLayers:
         elif self.dialogue_frame.strip():
             parts.append(self.dialogue_frame.strip())
         dyn_blocks: list[str] = []
+        soft = _card_family_filter() == "softplot"
         if self.dynamic.plot_outline_text.strip():
-            dyn_blocks.append(
-                "本场故事线（客观材料）：\n"
-                + self.dynamic.plot_outline_text.strip()
+            header = (
+                _SOFT_PLOT_OUTLINE_HEADER
+                if soft
+                else "本场故事线（客观材料）：\n"
             )
+            dyn_blocks.append(header + self.dynamic.plot_outline_text.strip())
         if self.dynamic.plot_flow_text.strip():
-            dyn_blocks.append(
-                "此刻情景（客观材料）：\n"
-                + self.dynamic.plot_flow_text.strip()
-            )
+            header = _SOFT_PLOT_FLOW_HEADER if soft else "此刻情景（客观材料）：\n"
+            dyn_blocks.append(header + self.dynamic.plot_flow_text.strip())
+        if soft and (
+            self.dynamic.plot_outline_text.strip() or self.dynamic.plot_flow_text.strip()
+        ):
+            dyn_blocks.append(_USER_POSITION_NOTE)
         stage = self.dynamic.user_stage_text()
         if stage:
             dyn_blocks.append("对方当前舞台信息：\n" + stage)
@@ -161,6 +218,14 @@ class RolePromptLayers:
                 "后台回传，作处境参考：\n"
                 + "\n".join(f"- {t}" for t in self.dynamic.help_observations)
             )
+        if _card_family_filter() == "charsilence":
+            parts.append(_CHAR_AUTONOMY_NOTE)
+            bookings = EVAL_CHAR_BOOKINGS.get(self.session_id) or []
+            if bookings:
+                parts.append(
+                    "你自己预约的下一拍：\n"
+                    + "\n".join(f"- {t}" for t in bookings[-2:])
+                )
         if dyn_blocks:
             parts.append("\n\n".join(dyn_blocks))
         return "\n\n".join(p for p in parts if p.strip())
@@ -219,10 +284,69 @@ def assemble_role_layers(
     director_stance: str = "",
     interaction_record_text: str = "",
 ) -> RolePromptLayers:
+    # 评测消融：卡片族过滤/改写（见 CARD_FAMILY_FILTER_ENV）。
+    family = _card_family_filter()
+
+    # 导演策略接管注入（dynsched）：先于节奏族出清计算，用原始 presence 信号做判定。
+    selected_memory = schedule.selected_memory_texts(materials)
+    selected_share = schedule.selected_share_texts(materials)
+    selected_pass_info = (
+        () if family == "director" else schedule.selected_pass_info_texts(materials)
+    )
+    if family == "dynsched":
+        # 评测结论：记忆可精准共情但混有干扰记忆 → 截断，只留最相关的前两条
+        selected_memory = selected_memory[:2]
+        # 是否分享交给导演态判定：开口欲不足时不注入待分享事项
+        desire = presence_speak_desire if presence_speak_desire is not None else -1
+        if desire < 60:
+            selected_share = ()
+    elif family == "dynsched_llm" and _EVAL_UNIT_JUDGE is not None and (
+        selected_memory or selected_share
+    ):
+        # 正经版导演调度：导演 LLM 带对话语境逐条判定注入（记忆防干扰、分享看时机）
+        frame_text = build_dialogue_frame(view)
+        keep_mem, keep_share = _EVAL_UNIT_JUDGE(
+            view.session_id,
+            user_text,
+            frame_text,
+            selected_memory,
+            selected_share,
+        )
+        selected_memory = tuple(
+            selected_memory[int(i)]
+            for i in keep_mem
+            if 0 <= int(i) < len(selected_memory)
+        )
+        selected_share = tuple(
+            selected_share[int(i)]
+            for i in keep_share
+            if 0 <= int(i) < len(selected_share)
+        )
+
+    if family in _RHYTHM_BLANK_MODES:  # 节奏卡片出清：blank 导演/节奏族
+        director_focus = ""
+        director_intent = ""
+        director_direction = ""
+        director_exit = ""
+        director_detail = ""
+        director_inner = ""
+        director_transition = ""
+        director_stance = ""
+        presence_mood = ""
+        presence_brief = ""
+        presence_speak_desire = None
+        presence_fate_tendency = ""
+        user_identity = ""
+        user_activity = ""
+    if family == "director":  # 只保留导演/节奏卡片：blank 剧情族
+        plot_outline_text = ""
+        plot_flow_text = ""
+        scene_event = ""
+
     dynamic = RoleDynamicLayer(
-        memory_texts=schedule.selected_memory_texts(materials),
-        share_texts=schedule.selected_share_texts(materials),
-        pass_info_texts=schedule.selected_pass_info_texts(materials),
+        memory_texts=selected_memory,
+        share_texts=selected_share,
+        pass_info_texts=selected_pass_info,
         presence_mood=presence_mood.strip(),
         presence_brief=presence_brief.strip(),
         presence_speak_desire=presence_speak_desire,
@@ -251,4 +375,5 @@ def assemble_role_layers(
         dynamic=dynamic,
         dialogue_frame=build_dialogue_frame(view),
         user_text=user_text.strip(),
+        session_id=getattr(view, "session_id", ""),
     )
