@@ -1,6 +1,6 @@
 import * as soulMod from '../../../features/basics.js';
 import { embeddingMod } from '../../../features/basics.js';
-import { syncSpeakResponderSetting } from '../../../features/speak_pipeline_stub.js';
+import { syncSpeakResponderSetting } from '../../../features/speak_pipeline.js';
 import { _v, _c, _si, _sc } from './_helpers.js';
 
 function _num(id, fallback = 0) {

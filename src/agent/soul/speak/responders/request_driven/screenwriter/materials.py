@@ -73,11 +73,14 @@ class WritingMaterials:
     scene_grounded: str = ""
     world_brief: str = ""
 
-    # 记忆池 / 分享队列
+    # 记忆池 / 分享队列 / 对方记忆 / life 事件
     memory_ids: tuple[str, ...] = ()
     memory_texts: tuple[str, ...] = ()
     share_texts: tuple[str, ...] = ()
     director_memory_texts: tuple[str, ...] = ()
+    user_memory_texts: tuple[str, ...] = ()
+    life_event_texts: tuple[str, ...] = ()
+    life_everyday: bool = False
 
     # 1 小时内即将到点的手账地标（角色自己预约的叙事时刻）
     landmark_briefs: tuple[str, ...] = ()
@@ -196,6 +199,21 @@ class WritingMaterials:
             blocks.append(
                 "记忆池=\n" + "\n".join(f"- {t[:160]}" for t in self.memory_texts[:6])
             )
+        if self.user_memory_texts:
+            blocks.append(
+                "对方记忆（关于对方的事，用于给对方在剧情中留位置）=\n"
+                + "\n".join(f"- {t[:160]}" for t in self.user_memory_texts[:3])
+            )
+        if self.life_event_texts:
+            blocks.append(
+                "角色亲历事件（life 手账，真实发生；故事线与 unit 应围绕其演化）=\n"
+                + "\n".join(f"- {t[:200]}" for t in self.life_event_texts[:4])
+            )
+        elif self.life_everyday:
+            blocks.append(
+                "角色当前没有进行中的重要事件——她只是在过日常，一天又一天的平常日子。"
+                "不要编造任务感或冒险感，写日常的场面即可。"
+            )
         if self.share_texts:
             blocks.append(
                 "分享队列=\n" + "\n".join(f"- {t[:160]}" for t in self.share_texts[:4])
@@ -243,6 +261,16 @@ def build_writing_materials(
     )
     mem_texts = tuple(
         str(x).strip() for x in (meta.get("dynamic_memory_texts") or []) if str(x).strip()
+    )
+    user_mem_texts = tuple(
+        str(x).strip()
+        for x in (meta.get("dynamic_user_memory_texts") or [])
+        if str(x).strip()
+    )
+    life_events = tuple(
+        str(x).strip()
+        for x in (meta.get("life_event_briefs") or [])
+        if str(x).strip()
     )
     share_texts = tuple(
         str(x).strip() for x in (meta.get("dynamic_share_texts") or []) if str(x).strip()
@@ -295,6 +323,9 @@ def build_writing_materials(
         memory_texts=mem_texts,
         share_texts=share_texts,
         director_memory_texts=dir_texts,
+        user_memory_texts=user_mem_texts,
+        life_event_texts=life_events,
+        life_everyday=bool(meta.get("life_everyday")) and not life_events,
         scene_seeds=tuple(str(x).strip() for x in (seeds or ()) if str(x).strip())[:10],
         landmark_briefs=tuple(
             str(x).strip() for x in (meta.get("landmark_briefs") or ()) if str(x).strip()

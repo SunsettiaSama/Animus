@@ -36,8 +36,9 @@ def _session_open(pipeline: str) -> dict:
     }
 
 
-def test_gate_helper_accepts_only_request_driven():
+def test_gate_helper_accepts_legal_pipelines_only():
     assert pipeline_reject_reason("request_driven") == ""
+    assert pipeline_reject_reason("direct") == ""
     assert "request_driven" in pipeline_reject_reason("react")
     assert "request_driven" in pipeline_reject_reason("")
 
@@ -58,7 +59,7 @@ def test_agent_run_legal_pipeline_passes_gate():
     # 合法 pipeline 越过收敛门，到达下一道必然的 Soul 检查——证明门未误伤。
     client = TestClient(_app())
     with client.websocket_connect("/ws/agent/run") as ws:
-        ws.send_json(_session_open("request_driven"))
+        ws.send_json(_session_open("direct"))
         msg = ws.receive_json()
         assert msg["type"] == "error"
         assert "unsupported pipeline" not in msg["message"]

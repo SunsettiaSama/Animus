@@ -1,10 +1,57 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from infra.llm import BaseLLM
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+
+# 推理模型（如 MiniMax-M3）会在 content 里先吐 <think>…</think> 再给正文；
+# speak 域的台词/解析一律不要思考过程，在引擎出口统一剥除。
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+
+
+def strip_think(text: str) -> str:
+    """剥除完整 <think> 块；未闭合的前置思考（截断）整段丢弃。"""
+    cleaned = _THINK_BLOCK_RE.sub("", text)
+    open_idx = cleaned.lower().find(_THINK_OPEN)
+    if open_idx != -1:
+        cleaned = cleaned[:open_idx]
+    return cleaned.strip()
+
+
+def _stream_no_think(chunks: Iterator[str]) -> Iterator[str]:
+    """流式剥 think：先缓冲到能判定是否有思考前缀，思考中不发射。"""
+    buf = ""
+    decided = False
+    for chunk in chunks:
+        buf += chunk
+        if not decided:
+            stripped_head = buf.lstrip()[: len(_THINK_OPEN)]
+            if stripped_head.lower() == _THINK_OPEN or _THINK_OPEN.startswith(
+                stripped_head.lower()
+            ):
+                close = buf.lower().find(_THINK_CLOSE)
+                if close == -1:
+                    continue  # 仍在思考，继续缓冲
+                buf = buf[close + len(_THINK_CLOSE):]
+                decided = True
+            elif len(buf.lstrip()) >= len(_THINK_OPEN):
+                decided = True
+            else:
+                continue  # 前缀太短，还判定不了
+        if decided:
+            out = strip_think(buf)
+            if out:
+                yield out
+            buf = ""
+    if buf:
+        out = strip_think(buf)
+        if out:
+            yield out
 
 
 @dataclass
@@ -52,7 +99,8 @@ class SpeakLLMEngine:
 
     def generate_messages(self, messages: list[BaseMessage]) -> SpeakLLMResult:
         raw = self._require_llm().generate_messages(messages).strip()
-        return SpeakLLMResult(text=raw, chunks=[raw])
+        text = strip_think(raw) or raw.strip()
+        return SpeakLLMResult(text=text, chunks=[text])
 
     def generate(
         self,
@@ -69,7 +117,9 @@ class SpeakLLMEngine:
         )
 
     def stream_messages(self, messages: list[BaseMessage]) -> Iterator[str]:
-        yield from self._require_llm().stream_generate_messages(messages)
+        yield from _stream_no_think(
+            self._require_llm().stream_generate_messages(messages)
+        )
 
     def stream(
         self,

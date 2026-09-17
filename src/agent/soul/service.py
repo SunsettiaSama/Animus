@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
@@ -105,6 +107,7 @@ class SoulService:
         self._storage_backend = storage_backend or self._db_cfg.resolved_storage_backend()
         self._json_root = json_root or self._db_cfg.storage.json_root
         self._state = "idle"
+        self._speak_wake_lock = threading.Lock()
         _storage = StorageConfig()
         self._life_dir = _storage.resolve_life_dir(life_dir)
         _persona_dir = _storage.resolve_persona_dir(persona_cfg.persona_dir)
@@ -251,7 +254,7 @@ class SoulService:
         角色 greeting 承接，剧情发起归 life/story。
         """
         self._require_running()
-        speak = self._ensure_speak_service()
+        speak = self.wake_speak()  # 接入即唤醒：进房是对 speak 的首次触达
         opened = speak.session_manager.open(session_id, trigger=trigger)
         # Registry.open 已决定本次是否为新 generation；这里仅恢复生命线扫描。
         speak.bootstrap_proactive_loop(session_id)
@@ -509,7 +512,7 @@ class SoulService:
         """Speak 回合：转发 SpeakService.run_turn（L0 入口，勿直接 dispatch）。"""
         if self._state != "running":
             raise RuntimeError(f"SoulService 未运行：state={self._state!r}")
-        _speak = self._ensure_speak_service()
+        _speak = self.wake_speak()  # 接入即唤醒：发言是对 speak 的首次触达
         _speak.mark_speak_wake(session_id)  # 握手门：用户发言即唤醒
         return _speak.run_turn(
             session_id,
@@ -979,7 +982,9 @@ class SoulService:
         self._sync_presence_expectation_from_persona()
         self._sync_agent_persona_context()
         self._workers.start_all()
-        self._ensure_speak_service().start()
+        # speak 默认沉睡：只构造（保持对象图/预热池可用），不启动线程；
+        # 前端接入（对话 WS / speak 入口）时经 wake_speak() 唤醒。
+        self._ensure_speak_service()
         self._ensure_account_service()
 
         self.life.api.load_profile()
@@ -989,6 +994,25 @@ class SoulService:
         self._state = "running"
         logger.info("[SoulService] started - life_dir=%s", self._life_dir)
 
+    def wake_speak(self) -> Any:
+        """唤醒 speak（幂等、线程安全）：构造并 start。
+
+        speak 默认沉睡——soul 启动时只构造不启线程；前端接入对话
+        （/ws/agent/run、/ws/speak/run 或任何 speak 入口）时调用本方法唤醒。
+        """
+        service = self._ensure_speak_service()
+        if not service.started:
+            with self._speak_wake_lock:
+                if not service.started:
+                    service.start()
+                    logger.info("[SoulService] speak awakened by inbound access")
+        return service
+
+    @property
+    def speak_awake(self) -> bool:
+        service = getattr(self, "_speak_service", None)
+        return bool(service is not None and service.started)
+
     def stop(self) -> None:
         if self._state == "idle":
             return
@@ -997,7 +1021,7 @@ class SoulService:
         self._stop_core_heartbeat()
         if self._heartbeat is not None:
             self._heartbeat.stop_evolution_worker()
-        if self._speak_service is not None:
+        if self._speak_service is not None and self._speak_service.started:
             self._speak_service.stop()
         self._workers.stop_all()
         self._orchestrator = None
@@ -1631,6 +1655,9 @@ class SoulService:
                     ),
                 ),
                 story_pool_dir=StorageConfig().story_pool_dir,
+                director_unit_gate=os.environ.get(
+                    "REACT_SPEAK_UNIT_GATE", ""
+                ).strip(),
             )
             from agent.soul.memory.io.session import CompressionBlockInbound, DialogueCompressionBlock
 
@@ -1840,6 +1867,15 @@ class SoulService:
                 return units_from_search_hits(hits, limit=cap)
 
             self._speak_service.attach_compose_memory_search(_compose_memory_search_for_speak)
+
+            def _screenwriter_memory_search_for_speak(mode: str, **kwargs):
+                """编剧自由查询口：直连 MemoryService.search（hybrid/recent 等），
+                不经过 compose staging，不重建检索基座。"""
+                return self.memory.api.search(mode, **kwargs)
+
+            self._speak_service.attach_screenwriter_memory_search(
+                _screenwriter_memory_search_for_speak
+            )
             embedder = self.resolve_embedding_port()
             if embedder is not None:
                 self._speak_service.attach_compose_embedder(embedder)
@@ -1848,6 +1884,16 @@ class SoulService:
                 return self.life.api.upcoming_landmarks(within_sec=3600.0)
 
             self._speak_service.attach_landmark_port(_landmark_briefs_for_speak)
+
+            def _life_events_for_speak():
+                """角色正在亲历的 landmark（life→speak 演化通道）；
+                空列表 = 无事件，编剧据材料里的 everyday 标记写日常感。"""
+                return self.life.api.current_landmark_briefs(
+                    past_sec=3600.0,
+                    future_sec=300.0,
+                )
+
+            self._speak_service.attach_life_event_port(_life_events_for_speak)
 
             def _portrait_query_for_speak(request: InteractorPortraitRequest) -> None:
                 self.memory.api.session_io.submit_dialogue_turn(

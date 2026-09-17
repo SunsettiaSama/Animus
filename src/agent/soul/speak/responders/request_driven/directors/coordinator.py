@@ -83,6 +83,7 @@ class DirectorCoordinator:
         is_pushing_fn: Callable[[str], bool] | None = None,
         ensure_narrative_fn: Callable[[str], None] | None = None,
         landmark_briefs_fn: Callable[[], tuple] | None = None,
+        life_event_state_fn: Callable[[], dict] | None = None,
     ) -> None:
         self._state_store = state_store
         self._snapshot_builder = snapshot_builder
@@ -108,6 +109,8 @@ class DirectorCoordinator:
         self._ensure_narrative_fn = ensure_narrative_fn
         # 1 小时内即将到点的手账地标简报（实时演绎用）
         self._landmark_briefs_fn = landmark_briefs_fn
+        # life 侧角色正在亲历的事件状态（events + everyday；编剧区分事件感/日常感）
+        self._life_event_state_fn = life_event_state_fn
 
     @property
     def screenwriter(self) -> Screenwriter:
@@ -131,6 +134,13 @@ class DirectorCoordinator:
         if self._landmark_briefs_fn is not None:
             try:
                 base["landmark_briefs"] = list(self._landmark_briefs_fn() or ())
+            except Exception:
+                pass
+        if self._life_event_state_fn is not None:
+            try:
+                life_state = self._life_event_state_fn() or {}
+                base["life_event_briefs"] = list(life_state.get("events") or ())
+                base["life_everyday"] = bool(life_state.get("everyday"))
             except Exception:
                 pass
         sid = str(getattr(snapshot, "session_id", "") or "").strip()

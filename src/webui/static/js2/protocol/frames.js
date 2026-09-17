@@ -50,6 +50,15 @@ export function userMessage(question, env) {
   };
 }
 
+/** 会话中途切换 pipeline（request_driven | direct）；服务端复检收敛门。 */
+export function setPipeline(pipeline, env) {
+  return {
+    type: 'pipeline',
+    ..._env(env),
+    pipeline: String(pipeline || ''),
+  };
+}
+
 export function typingPulse(typing, draft, env) {
   return {
     type: 'typing_pulse',

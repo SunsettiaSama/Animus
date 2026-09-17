@@ -1,10 +1,10 @@
 # speak 拟人度三维评测与八臂管线对比报告
 
-- 日期：2026-09-15
+- 日期：2026-09-15（R5 组合臂同日追加）
 - 评测代码：`src/evals/speak_humaneness/`（入口 `scripts/speak_humaneness_bench.py`）
-- 数据产物：`.react/benchmark/speak_humaneness/main-20260915/`（八臂统一）与 `main-20260915`（首轮双臂）
+- 数据产物：`.react/benchmark/speak_humaneness/main-ablation-20260915/`（十臂统一，80/80）与 `main-20260915`（首轮双臂）
 - 画像 ground truth：`.react/persona/built_profile.json`（莉奈娅，revision 2026-05-27）
-- 对话 case：`data/workbench/speak_turing/cases.jsonl` 中 8 条（casual_after_work / comfort_setback / first_snow_message / gentle_disagreement / photo_memory / playful_teasing / quiet_companionship / sarcasm_misread），每臂各跑一遍，64 份记录全部完成
+- 对话 case：`data/workbench/speak_turing/cases.jsonl` 中 8 条（casual_after_work / comfort_setback / first_snow_message / gentle_disagreement / photo_memory / playful_teasing / quiet_companionship / sarcasm_misread），每臂各跑一遍，80 份记录全部完成
 - LLM：全部 MiniMax-M3（被测角色 / 用户模拟器 / 评委同源，已知局限）
 
 ---
@@ -53,19 +53,23 @@
 | rd_dynsched_llm（导演 LLM 调度） | 同上 | 节奏卡出清（同 writer） | 导演 LLM 带对话近况逐条判定记忆/分享注入（"宁缺毋滥"倾向） |
 | direct（直通无卡） | 直通旁路（最新管线） | 无动态层卡片 | 无（角色直面用户消息） |
 | direct_silence（直通+沉默自约） | 直通旁路 | 无卡片 + 自主权块：可只回「……」沉默；可写"预约：…"自约下一拍（存入上下文、下一拍回显） | 无；预约与沉默由角色自行行使 |
+| rd_combo（软剧+导演v1组合） | 同上 | 软约束剧情（同 rd_softplot） | 导演 LLM v1 判定（只见对话近况，原"宁缺毋滥"prompt） |
+| rd_combo_v2（软剧+新导演v2组合） | 同上 | 软约束剧情（同 rd_softplot） | 新导演 v2：判定时喂入编剧线程产出的剧情材料做对齐；prompt 以"该 unit 对本轮交互的影响"为核心，逐类写明双向权衡（记忆：精准接话↔剧情沉浸下降；分享：新鲜感↔打断当前场景），不预设注入/拒绝立场 |
 
 ## 4. 结果总表（按综合分降序）
 
 | # | 臂 | 画像保真度 | 机会recall | precision | 风格分 | 矛盾率 | blind人率 | known人率 | 行为自然度 | **综合分** | 均长 | 沉默 | 预约 | p50(ms) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 直通无卡 | 0.683 | 0.559 | 0.958 | 3.0 | 0.000 | **0.50** | 0.25 | 0.910 | **0.692** | 77 | – | – | 5932 |
-| 2 | 软约束剧情 | **0.849** | 0.807 | 0.953 | **3.5** | 0.000 | 0.25 | 0.38 | 0.920 | **0.680** | 71 | – | – | 3232 |
-| 3 | 剧情卡独存 | 0.908 | **0.920** | 1.000 | 3.2 | 0.000 | 0.12 | **0.62** | 0.873 | 0.639 | 53 | – | – | 5294 |
-| 4 | 导演卡独存 | 0.647 | 0.614 | 0.988 | 2.8 | 0.029 | 0.38 | 0.50 | 0.914 | 0.636 | 76 | – | – | 3974 |
-| 5 | 三角色全量 | 0.777 | 0.722 | **1.000** | 3.8 | 0.000 | 0.12 | 0.38 | 0.904 | 0.603 | **104** | – | – | 5236 |
-| 6 | 直通+沉默自约 | 0.564 | 0.437 | 0.978 | 2.3 | 0.000 | 0.25 | 0.50 | **0.927** | 0.545 | 60 | 1 | 0 | 3447 |
-| 7 | 导演LLM调度 | 0.655 | 0.639 | 1.000 | 2.2 | 0.000 | 0.00 | 0.38 | 0.926 | 0.528 | 65 | – | – | 3000 |
-| 8 | 阈值版导演调度 | 0.515 | 0.417 | 0.988 | 2.4 | 0.021 | 0.00 | 0.38 | 0.910 | 0.433 | 65 | – | – | 3516 |
+| 1 | 软剧+导演v1组合 | 0.899 | 0.883 | 0.983 | 3.3 | 0.000 | 0.38 | **0.62** | 0.887 | **0.722** | 55 | – | – | 4598 |
+| 2 | 直通无卡 | 0.683 | 0.559 | 0.958 | 3.0 | 0.000 | **0.50** | 0.25 | 0.910 | 0.692 | 77 | – | – | 5932 |
+| 3 | 软约束剧情 | 0.849 | 0.807 | 0.953 | 3.5 | 0.000 | 0.25 | 0.38 | 0.920 | 0.680 | 71 | – | – | 3232 |
+| 4 | 剧情卡独存 | **0.908** | **0.920** | 1.000 | 3.2 | 0.000 | 0.12 | **0.62** | 0.873 | 0.639 | 53 | – | – | 5294 |
+| 5 | 导演卡独存 | 0.647 | 0.614 | 0.988 | 2.8 | 0.029 | 0.38 | 0.50 | 0.914 | 0.636 | 76 | – | – | 3974 |
+| 6 | 软剧+新导演v2组合 | 0.873 | 0.798 | 0.991 | **4.0** | 0.000 | 0.12 | 0.50 | 0.911 | 0.633 | 73 | – | – | 4649 |
+| 7 | 三角色全量 | 0.777 | 0.722 | **1.000** | 3.8 | 0.000 | 0.12 | 0.38 | 0.904 | 0.603 | **104** | – | – | 5236 |
+| 8 | 直通+沉默自约 | 0.564 | 0.437 | 0.978 | 2.3 | 0.000 | 0.25 | 0.50 | **0.927** | 0.545 | 60 | 1 | 0 | 3447 |
+| 9 | 导演LLM调度v1 | 0.655 | 0.639 | 1.000 | 2.2 | 0.000 | 0.00 | 0.38 | 0.926 | 0.528 | 65 | – | – | 3000 |
+| 10 | 阈值版导演调度 | 0.515 | 0.417 | 0.988 | 2.4 | 0.021 | 0.00 | 0.38 | 0.910 | 0.433 | 65 | – | – | 3516 |
 
 ### 逐 case 综合分矩阵
 
@@ -99,13 +103,19 @@
 - **导演 LLM 调度（0.528）**：比阈值版大幅回升（comfort_setback 画像 1.0 vs 0.06），行为自然度 0.926，但仍不敌编剧注入（recall 0.639 vs 0.920）。归因：① 导演判定只看对话近况，看不到剧情语境，决策信息少于编剧；② 判定 prompt 带"宁缺毋滥"保守倾向，把分享（人格主载体）大量拒掉（风格分 2.2 全场最低）。
 - **直通+沉默自约（0.545）**：机制打通（沉默 1 次、预约 0 次落盘可查），但 4~6 轮友好闲聊里角色几乎不使用沉默权——沉默的价值场景（长对话/无聊话题/重复追问/被冒犯）本 harness 未提供。综合分下滑主要来自个案噪声与自主权说明块的元指令开销；方向性收益存在（安静陪伴 0.75 优于软剧 0.63，first_snow 0.54 优于直通 0.39）。
 
+### R5：组合臂（软约束剧情 × 两版导演调度）
+- **软剧+导演v1组合 = 0.722，全场第一，首次超过直通（0.692）**。软框架与导演过滤产生了正向叠加：软框架保住"对方发言优先"（修复剧情卡独存的场景失败），导演过滤把回复瘦身到 55 字（与剧情卡独存同级精炼），同时人格载体保留度反而高于软剧单臂（画像 0.899 vs 0.849，blind 0.38 vs 0.25，known 0.62）。个案上 casual 0.99、sarcasm 0.91、playful 0.94；短板仍是安静陪伴（0.52）。
+- **软剧+新导演v2组合 = 0.633**，未超过 v1 组合。v2（剧情对齐 + 中性权衡 prompt）注入更慷慨：风格分 4.0 全场最高、precision 0.991、反讽修复 0.92 全族最佳，但回复变长（73 字）、盲测通过率回落（0.12），综合被拉回三角色全量的画像强/盲测弱区间。两版导演实际落在权衡谱两端：v1 偏"松弛"（当前综合权重 0.35×blind 奖励这一端），v2 偏"人格在线"。v1 组合的 casual 0.99 与 v2 的 0.64 这类大分差在 N=8 下需谨慎解读。
+- 两线程交互的实现说明：评测层在注入汇合点把编剧线程写入 state 的剧情材料（outline+flow）同步喂给 v2 判定器，模拟导演/编剧跨线程读取；生产化时对应"导演持有时间轴 + 读编剧剧情槽位"的架构。
+
 ## 6. 结论与架构建议
 
-1. **人格传达的信息源排序**：剧情卡片 ≫ 分享/记忆卡 > 导演卡。任何调度方案若削减前两者的注入量，画像保真度先受损。
-2. **剧情卡的正确形态是软约束 + 用户位置**（rd_softplot），低成本可直接进生产：layers 措辞改写 + 编剧生成端把"对方位置"写进剧情本身。
-3. **注入决策权**：现状"编剧写进 plot_flow"优于分权给只看对话的导演。若要走导演主导注入：导演必须同时持有剧情语境，或降级为"编剧提案 + 导演仅否决干扰项"的一票否决制。
-4. **沉默/自预约**：提示词层协议（一行"预约："）基本不会被模型主动使用；产品化应让角色输出接入 `character_rhythm_schedule` 的时间轴槽位（导演持有时间轴、角色可写入），而非靠提示词约定。验证需要压力场景 case 或静默窗口协议。
-5. **主动性（多对多/预约开口）在本 harness 中结构性缺席**：一问一答的 inbound 驱动下，导演主动开口被用户让位机制压制，idle 阶梯到不了点。补测方案：末轮后挂 60~120s 静默窗口，统计主动开口率/时点合理性/话题命中率。
+1. **当前最优形态是"软约束剧情 + 导演注入过滤"（rd_combo，0.722）**：软框架解决"用户在剧情中没有位置"，导演过滤解决"太满"，两者叠加同时保住人格传达（画像 0.899）与松弛感（55 字、blind 0.38）。rd 族由此首次超过直通臂。
+2. **人格传达的信息源排序**：剧情卡片 ≫ 分享/记忆卡 > 导演卡。任何调度方案若削减前两者的注入量，画像保真度先受损。
+3. **剧情卡的正确形态是软约束 + 用户位置**（rd_softplot 验证），编剧生成端应把"对方位置"写进剧情本身。
+4. **注入决策权的权衡谱**：v1（偏拒绝）→ 松弛、盲测友好；v2（剧情对齐+中性权衡）→ 人格/风格最强（4.0/5）但盲测回落。导演 prompt 的"影响描述"决定臂落在谱的哪一端，这本身就是产品可调的旋钮；若目标是综合均衡，v1 与 v2 之间存在中间档（如只对"与当前剧情无关的记忆"收紧、对分享放宽）。
+5. **沉默/自预约**：提示词层协议基本不会被模型主动使用；产品化应让角色输出接入 `character_rhythm_schedule` 的时间轴槽位（导演持时间轴、角色可写入）。验证需要压力场景 case 或静默窗口协议。
+6. **主动性（多对多/预约开口）在本 harness 中结构性缺席**：一问一答的 inbound 驱动下，导演主动开口被用户让位机制压制，idle 阶梯到不了点。补测方案：末轮后挂 60~120s 静默窗口，统计主动开口率/时点合理性/话题命中率。
 
 ## 7. 局限
 
@@ -114,7 +124,27 @@
 - photo_memory（哀伤话题）多次触发用户模拟器空输出（累计重试 5 次才全通过），是模拟器侧压力点。
 - 消融在提示词汇合点实现（env 门控），非服务架构级的真实管线分叉；`rd_dynsched_llm` 的导演判定是每轮一次独立 LLM 调用（缓存同候选），与生产内嵌导演 Agent 的行为可能有差。
 
-## 8. 复现
+## 8. 生产化落地（2026-09-17）
+
+评测结论已整合进 `agent.soul.speak`（request_driven）：
+
+- **剧情软约束 + 用户位置成为生产默认**（R3/R5 结论）：`layers.py` 剧情卡头改为"参考剧情（软约束）"，并固定注入"对方在剧情中的位置"注记；编剧 `_CRAFT` 增加对应书写守则（unit 不得越过对方发言推进）。
+- **导演注入门控 v1/v2 生产化**（`responders/request_driven/directors/unit_gate.py`）：编剧提案、导演复核——门控在编剧异步写线内运行（线程隔离，角色热路径零 LLM），判定失败保持编剧原提案。环境变量 `REACT_SPEAK_UNIT_GATE=v1|v2`（默认 off）选择版本；v2 喂入编剧剧情材料做对齐，prompt 为中性双向权衡（不预设立场）。
+- **编剧自由查询记忆**：`Screenwriter.memory_search` 端口直连 `MemoryService.search`（hybrid/recent），产出"对方记忆"材料块（`materials.py`），不重建检索基座；Soul 层经 `attach_screenwriter_memory_search` 挂载。
+- **ContextProvider 协议**（`orchestrator/context_provider.py`）：环境材料提供者抽象（`kind`/`snapshot`），编剧为默认 provider；游戏内容等可经 `SpeakService.register_context_provider` 封包接入，热路径（`_director_dynamic_schedule`）只认协议快照。
+- **前端管线切换**：收敛门放开为 `request_driven | direct`（`webui/speak_pipeline_gate.py`）；设置页 Speak Pipeline 下拉恢复可选，`/ws/agent/run` 支持会话中途 `pipeline` 帧（复检收敛门后生效）；前端 `features/speak_pipeline.js`（localStorage + `speak:pipeline` 事件）。
+
+新增单测：`src/test/soul/speak/test_unit_gate_and_providers.py`（门控过滤/缓存/故障回退、provider 优先级与接管、软约束头、编剧记忆富化与门控钩子）。speak 套件与改造前基线一致（29F/345P/17E → 29F/353P/17E，passed 增量全部来自新测试；仅 1 处旧头断言随软约束化更新）。
+
+### 追加（2026-09-17 第二批：沉睡/唤醒 + life 事件源 + E2E）
+
+- **speak 沉睡/唤醒**：`SoulService.start()` 只构造 speak 不启线程（默认沉睡）；`wake_speak()`（幂等、加锁）在对话 WS session_open（`/ws/agent/run`、`/ws/speak/run`）与 `speak_run_turn`/`start_dialogue_session` 接入点唤醒；`/api/speak/status` 新增 `speak_awake`。E2E 实测：webui 就绪后 `speak_awake=false`，WS 接入后转 true。
+- **编剧事件源（life→speak 演化通道）**：`LifeManager.current_landmark_briefs()`（phase=experiencing/due/just_done）→ `attach_life_event_port` → coordinator 材料 `life_event_briefs`/`life_everyday` → WritingMaterials 渲染"角色亲历事件"块；无事件时显式注入"只是在过日常，不要编造任务感"。编剧 `_CRAFT` 同步增加事件感/日常感守则；大纲/剧情卡片产出与预热池（story pool）不动。
+- **引擎 think 剥除**：MiniMax-M3 会在 content 前置 `<think>…</think>`，生产链路此前无防护（E2E 抓到 answer 混入英文思考）。`SpeakLLMEngine` 出口统一剥除（generate + 流式缓冲过滤）。
+- **E2E 验证**（`/ws/agent/run` 真机）：request_driven 与 direct 均可聊、人设在线、中途 `pipeline` 帧切换生效；遗留两点均为既有问题——request_driven 的 `turn_finish.answer` 常为空、回复经异步 speak_event 延迟一拍送达（与 2026-08 speak_turing live 空回复同模式）；guidance planner 偶发 JSON 解析异常（有降级路径）。
+- 本批单测：`test_speak_dormancy_and_life_events.py`（沉睡幂等、landmark phase 窗口、everyday 渲染、coordinator 注入）。speak 套件 29F/359P/17E（基线不变）。
+
+## 9. 复现
 
 ```bash
 python scripts/speak_humaneness_bench.py                                   # 主线 vs 直通（新目录）
@@ -125,6 +155,8 @@ python scripts/speak_humaneness_bench.py --responders rd_dynsched     --card-fam
 python scripts/speak_humaneness_bench.py --responders rd_dynsched_llm --card-family dynsched_llm --output-dir <dir>
 python scripts/speak_humaneness_bench.py --responders rd_softplot     --card-family softplot    --output-dir <dir>
 python scripts/speak_humaneness_bench.py --responders direct_silence  --card-family charsilence --output-dir <dir>
+python scripts/speak_humaneness_bench.py --responders rd_combo      --card-family combo     --output-dir <dir>
+python scripts/speak_humaneness_bench.py --responders rd_combo_v2   --card-family combo_v2  --output-dir <dir>
 
 python -m pytest src/test/evals/test_speak_humaneness.py -q              # 离线 11 项
 python -m pytest src/test/soul/speak/ -q --continue-on-collection-errors # 改动前后 29F/345P/17E 逐位一致（遗留坏测试，与本评测无关）

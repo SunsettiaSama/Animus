@@ -68,10 +68,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "dynsched_llm",
             "softplot",
             "charsilence",
+            "combo",
+            "combo_v2",
         ],
-        help="消融/设计臂过滤：director=只留导演卡，writer=只留剧情卡，"
-        "dynsched=阈值版调度(对照)，dynsched_llm=导演LLM语境判定，"
-        "softplot=剧情软约束+用户位置，charsilence=角色沉默权+自预约",
+        help="消融/设计臂过滤：combo=软剧情+导演调度v1，combo_v2=软剧情+新导演"
+        "（剧情对齐+中性权衡prompt），其余见 README",
     )
     parser.add_argument("--limit", type=int)
     parser.add_argument("--case-ids", default="", help="逗号分隔的 case_id 子集")

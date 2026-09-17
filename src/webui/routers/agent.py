@@ -104,6 +104,8 @@ async def _ws_agent_session(websocket: WebSocket, state) -> None:
         await websocket.send_json({"type": "error", "message": "Soul unavailable"})
         await websocket.close()
         return
+    # speak 默认沉睡：前端接入（session_open）即唤醒
+    await asyncio.to_thread(soul.wake_speak)
     if state.inbound_router is None:
         await websocket.send_json({"type": "error", "message": "inbound router unavailable"})
         await websocket.close()
@@ -320,6 +322,24 @@ async def _ws_agent_session(websocket: WebSocket, state) -> None:
                 ms = int(raw_ms) if str(raw_ms).isdigit() else 3000
                 idle_ms = await asyncio.to_thread(soul.speak_set_typing_idle_ms, session_id, ms=ms)
                 await _send_json({"type": "typing_idle_ms", "gen_id": gen_id, "typing_idle_ms": idle_ms})
+                continue
+
+            if msg_type == "pipeline":
+                # 会话中途切换 request_driven / direct：收敛门复检，非法值拒改不断连
+                requested = str(msg.get("pipeline", "")).strip()
+                reject = pipeline_reject_reason(requested)
+                if reject:
+                    await _send_json({"type": "error", "gen_id": gen_id, "message": reject})
+                    continue
+                pipeline = requested
+                await _send_json(
+                    {
+                        "type": "pipeline",
+                        "gen_id": gen_id,
+                        "session_id": session_id,
+                        "pipeline": pipeline,
+                    }
+                )
                 continue
 
             if msg_type == "ping":

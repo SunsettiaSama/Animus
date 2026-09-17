@@ -21,13 +21,24 @@ from agent.soul.speak.responders.request_driven.protocol.scrub import scrub_comp
 # "writer"       = 只保留剧情卡片（blank 导演/节奏族）
 # "director"     = 只保留导演/节奏卡片（blank 剧情族 + pass_info）
 # "dynsched"     = 节奏卡片出清 + 阈值策略接管注入（已被证伪的便宜版，留作对照）
-# "dynsched_llm" = 节奏卡片出清 + 导演 LLM 带语境逐轮判定记忆/分享注入（正经版）
-# "softplot"     = 节奏卡片出清 + 剧情卡软约束措辞 + "对方在剧情中的位置"
-# "charsilence"  = 角色自主臂：授予沉默权（只回「……」）+ 自预约下一拍（存入上下文回显）
+# "dynsched_llm" = 节奏卡出清 + 导演 LLM 判定注入（v1：只见对话近况）
+# "softplot"     = 节奏卡出清 + 剧情软约束措辞 + "对方在剧情中的位置"
+# "charsilence"  = 角色自主臂：沉默权（只回「……」）+ 自预约下一拍（存入上下文回显）
+# "combo"        = 软约束剧情 + 导演 LLM 调度（v1 判定）组合
+# "combo_v2"     = 软约束剧情 + 新导演判定（v2：喂入剧情材料对齐 + 中性权衡 prompt）
 # 按调用即时读取，进程内生效。
 CARD_FAMILY_FILTER_ENV = "SPEAK_EVAL_CARD_FAMILY"
 
-_RHYTHM_BLANK_MODES = ("writer", "dynsched", "dynsched_llm", "softplot")
+_RHYTHM_BLANK_MODES = (
+    "writer",
+    "dynsched",
+    "dynsched_llm",
+    "softplot",
+    "combo",
+    "combo_v2",
+)
+_JUDGE_HOOK_MODES = ("dynsched_llm", "combo", "combo_v2")
+_SOFT_HEADER_MODES = ("softplot", "combo", "combo_v2")
 
 _SOFT_PLOT_OUTLINE_HEADER = (
     "参考剧情（软约束——她正处于此剧情中，供构思对用户的回复参考；"
@@ -146,19 +157,19 @@ class RolePromptLayers:
         elif self.dialogue_frame.strip():
             parts.append(self.dialogue_frame.strip())
         dyn_blocks: list[str] = []
-        soft = _card_family_filter() == "softplot"
+        # 剧情卡以软约束呈现（拟人度评测 R3/R5 结论：硬性"客观材料"框架会让
+        # 角色越过对方发言推进剧情；软约束 + 显式用户位置显著修复场景失败）。
         if self.dynamic.plot_outline_text.strip():
-            header = (
-                _SOFT_PLOT_OUTLINE_HEADER
-                if soft
-                else "本场故事线（客观材料）：\n"
+            dyn_blocks.append(
+                _SOFT_PLOT_OUTLINE_HEADER + self.dynamic.plot_outline_text.strip()
             )
-            dyn_blocks.append(header + self.dynamic.plot_outline_text.strip())
         if self.dynamic.plot_flow_text.strip():
-            header = _SOFT_PLOT_FLOW_HEADER if soft else "此刻情景（客观材料）：\n"
-            dyn_blocks.append(header + self.dynamic.plot_flow_text.strip())
-        if soft and (
-            self.dynamic.plot_outline_text.strip() or self.dynamic.plot_flow_text.strip()
+            dyn_blocks.append(
+                _SOFT_PLOT_FLOW_HEADER + self.dynamic.plot_flow_text.strip()
+            )
+        if (
+            self.dynamic.plot_outline_text.strip()
+            or self.dynamic.plot_flow_text.strip()
         ):
             dyn_blocks.append(_USER_POSITION_NOTE)
         stage = self.dynamic.user_stage_text()
@@ -300,17 +311,24 @@ def assemble_role_layers(
         desire = presence_speak_desire if presence_speak_desire is not None else -1
         if desire < 60:
             selected_share = ()
-    elif family == "dynsched_llm" and _EVAL_UNIT_JUDGE is not None and (
+    elif family in _JUDGE_HOOK_MODES and _EVAL_UNIT_JUDGE is not None and (
         selected_memory or selected_share
     ):
-        # 正经版导演调度：导演 LLM 带对话语境逐条判定注入（记忆防干扰、分享看时机）
+        # 导演 LLM 判定注入。plot_context 为编剧线程产出的剧情材料，
+        # 同步喂给导演做剧情对齐（模拟导演/编剧两线程交互）；v1 判定器忽略它。
         frame_text = build_dialogue_frame(view)
+        plot_context = "\n".join(
+            part
+            for part in (plot_outline_text.strip(), plot_flow_text.strip())
+            if part
+        )
         keep_mem, keep_share = _EVAL_UNIT_JUDGE(
             view.session_id,
             user_text,
             frame_text,
             selected_memory,
             selected_share,
+            plot_context,
         )
         selected_memory = tuple(
             selected_memory[int(i)]

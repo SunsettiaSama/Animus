@@ -41,6 +41,14 @@ from .responders.rhythm import RhythmPipelineRunner
 from .responders.rhythm.state import RhythmStateStore
 from .responders.request_driven.orchestrator.queue import QueueDecisionRunner
 from .responders.request_driven.orchestrator.prompt_trace import get_prompt_trace
+from .responders.request_driven.directors.unit_gate import (
+    UnitGateDirector,
+    resolve_unit_gate_variant,
+)
+from .responders.request_driven.orchestrator.context_provider import (
+    ContextProvider,
+    ContextProviderRegistry,
+)
 from .session import SpeakFeelingChunk, SpeakSubjectiveChunk, SpeakTurnChunk
 from .session.lifecycle import SPEAK_SESSION_IDLE_SEC, SpeakSessionRegistry
 from .session.lifecycle import (
@@ -132,6 +140,9 @@ class SpeakTurnResult:
 
 
 class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
+    # 沉睡/唤醒：构造后 started=False（不跑任何线程），start() 唤醒、stop() 入睡。
+    _started = False
+    _life_event_port = None
     """Soul 对话编排：字块组装 → LLM → 流式推送 → 记账。
 
     出入站经 ``self.io``（``SpeakIOHub``）；会话真逻辑在 ``session_manager`` / ``session_registry``。
@@ -178,11 +189,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         compose_manager_config: ComposeManagerConfig | None = None,
         story_pool_dir: str | None = None,
         story_pool_depth: int = 3,
+        director_unit_gate: str = "",
     ) -> None:
         self._presence = presence
         self._persona = persona
         self._story_port = story_port
         self._world_id_fn = world_id_fn
+        self._director_unit_gate_variant = resolve_unit_gate_variant(director_unit_gate)
         self._compose_runner = SpeakComposeRunner()
         self._memory_turn_gap = memory_turn_gap
         self._portrait_wait_ms = max(0, portrait_wait_ms)
@@ -1013,6 +1026,39 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         """挂载手账地标口：返回 1 小时内即将到点的地标简报（供编剧接入大纲）。"""
         self._landmark_port = port
 
+    def attach_life_event_port(self, port: Callable[[], list[dict]] | None) -> None:
+        """挂载当前事件口：life 侧角色正在亲历的 landmark（phase: experiencing/
+        due/just_done）。供编剧把真实事件演化进剧情；空列表=角色只是日常。"""
+        self._life_event_port = port
+
+    def _life_event_state(self) -> dict[str, Any]:
+        port = getattr(self, "_life_event_port", None)
+        if port is None:
+            return {"events": (), "everyday": False}
+        phase_label = {
+            "experiencing": "正在经历",
+            "due": "到点将发生",
+            "just_done": "刚经历完",
+        }
+        try:
+            items = port() or []
+        except Exception:
+            return {"events": (), "everyday": True}
+        lines: list[str] = []
+        for item in items[:4]:
+            if not isinstance(item, dict):
+                continue
+            intention = str(item.get("intention") or "").strip()
+            if not intention:
+                continue
+            phase = phase_label.get(str(item.get("phase") or ""), "相关事件")
+            line = f"[{phase}] {intention}"
+            narrative = str(item.get("narrative") or "").strip()
+            if narrative:
+                line += f"——{narrative[:80]}"
+            lines.append(line)
+        return {"events": tuple(lines), "everyday": not lines}
+
     def _landmark_briefs(self) -> tuple[str, ...]:
         port = getattr(self, "_landmark_port", None)
         if port is None:
@@ -1212,12 +1258,41 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._compose_manager_materials[sid] = materials
 
     def _director_dynamic_schedule(self, session_id: str):
-        """从剧情流读取编剧写入的记忆/分享调度（导演不得代决）。"""
+        """读环境材料提供者的注入调度提案（默认编剧剧情流；导演门控已复核）。
+
+        经 ContextProviderRegistry 读取：编剧为默认 provider，游戏内容等
+        可注册接管（见 register_context_provider）。provider 不可用时回退
+        直接读剧情流，热路径行为与旧版一致。
+        """
         from agent.soul.speak.responders.request_driven.composer.projectors.dynamic_layer import (
             DynamicLayerSchedule,
         )
 
         sid = session_id.strip()
+        registry = getattr(self, "_context_providers", None)
+        if registry is not None:
+            schedule = registry.material_schedule(sid)
+            if schedule:
+                return DynamicLayerSchedule(
+                    inject_memory=bool(schedule.get("inject_memory")),
+                    memory_unit_ids=tuple(
+                        str(x)
+                        for x in (schedule.get("memory_unit_ids") or [])
+                        if str(x).strip()
+                    ),
+                    inject_share=bool(schedule.get("inject_share")),
+                    share_indices=tuple(
+                        int(x)
+                        for x in (schedule.get("share_indices") or [])
+                        if str(x).lstrip("-").isdigit()
+                    ),
+                    pass_info=bool(schedule.get("pass_info")),
+                    reason=str(
+                        schedule.get("material_reason")
+                        or f"context_provider:{schedule.get('provider_kind', 'unknown')}"
+                    ),
+                    source=str(schedule.get("provider_kind") or "screenwriter"),
+                )
         state = self._state_store.session(sid)
         flow = state.plot_flow
         if flow is None or not getattr(flow, "ready", False):
@@ -1283,9 +1358,25 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
                 name="speak-director",
                 auto_start=True,
             )
+        material_gate = None
+        self._unit_gate: UnitGateDirector | None = None
+        if (
+            self._director_unit_gate_variant in ("v1", "v2")
+            and self._director_llm_caller is not None
+        ):
+            self._unit_gate = UnitGateDirector(
+                self._director_llm_caller,
+                variant=self._director_unit_gate_variant,
+            )
+            material_gate = self._unit_gate.filter_schedule
         self._screenwriter = Screenwriter(
             llm=self._director_llm_caller,
             on_opening_ready=self._on_screenwriter_opening_ready,
+            material_gate=material_gate,
+        )
+        # 环境材料提供者注册表：编剧为默认 provider，游戏内容等可后续封包接入
+        self._context_providers = ContextProviderRegistry(
+            state_store=self._state_store,
         )
         # 剧情预热池：冷启动先查池，未命中走正常 init 并回填（story_pool 层）
         self._story_pool_dir = str(story_pool_dir or "").strip()
@@ -1324,6 +1415,7 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             is_pushing_fn=self._session_manager.is_pushing,
             ensure_narrative_fn=self.ensure_screenwriter_init,
             landmark_briefs_fn=self._landmark_briefs,
+            life_event_state_fn=self._life_event_state,
         )
         self._orchestrator_thread = OrchestratorThread(
             state_store=self._state_store,
@@ -2435,6 +2527,9 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         return self._queue_decision_runner
 
     def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
         self._compose_runner.start()
         self._queue_decision_runner.start()
         self._delivery_worker.start()
@@ -2442,7 +2537,15 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
             self._orchestrator_thread.start()
         self._session_manager.social.enter_greeting.start_worker()
 
+    @property
+    def started(self) -> bool:
+        """唤醒态：start() 后为 True（线程在跑）；构造未启动=沉睡。"""
+        return self._started
+
     def stop(self) -> None:
+        if not self._started:
+            return
+        self._started = False
         self._session_manager.queues.cancel_all_timers()
         self._session_manager.social.proactive_window.clear_all()
         # 清理可能由旧进程/测试留下的 timer；生产不启动 silence worker。
@@ -2639,6 +2742,32 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
 
     def attach_memory_pull_portrait(self, pull_portrait_fn) -> None:
         self._io.inbound.attach_memory_ports(pull_portrait_fn=pull_portrait_fn)
+
+    def attach_screenwriter_memory_search(self, search_fn) -> None:
+        """给编剧挂统一 memory 检索口（MemoryService.search 同签名），供其
+        自由查询对方画像/往来记忆；不重建任何检索基座。"""
+        writer = getattr(self, "_screenwriter", None)
+        if writer is not None:
+            writer._memory_search = search_fn
+
+    def register_context_provider(self, provider: ContextProvider, *, replace: bool = True) -> None:
+        """注册环境材料提供者（游戏内容、外部世界观等封包接入点）。
+
+        编剧是默认 provider（kind="screenwriter"）；后注册的同 kind 覆盖。
+        """
+        registry = getattr(self, "_context_providers", None)
+        if registry is None:
+            return
+        registry.register(provider, replace=replace)
+
+    def unregister_context_provider(self, kind: str) -> None:
+        registry = getattr(self, "_context_providers", None)
+        if registry is not None:
+            registry.unregister(kind)
+
+    def context_provider_kinds(self) -> tuple[str, ...]:
+        registry = getattr(self, "_context_providers", None)
+        return registry.kinds() if registry is not None else ()
 
     def bind_interactor(self, session_id: str, interactor_id: str) -> None:
         self.session_registry.bind_interactor(session_id, interactor_id)

@@ -245,7 +245,7 @@ def build_offline_runtime(
         base_responder, card_family = ARM_ALIASES.get(
             responder, (responder, "")
         )
-        if card_family == "dynsched_llm":
+        if card_family in ("dynsched_llm", "combo", "combo_v2"):
             from agent.soul.speak.responders.request_driven.layers import (
                 set_eval_unit_judge,
             )
@@ -280,7 +280,15 @@ def _message_text(message: Any) -> str:
 class _FakeUnitJudge:
     """离线假导演判定：第一条记忆保留、分享全拒。"""
 
-    def __call__(self, session_id, user_text, frame_text, memory_texts, share_texts):
-        _ = session_id, user_text, frame_text
+    def __call__(
+        self,
+        session_id,
+        user_text,
+        frame_text,
+        memory_texts,
+        share_texts,
+        plot_context="",
+    ):
+        _ = session_id, user_text, frame_text, plot_context
         keep_mem = (0,) if memory_texts else ()
         return keep_mem, ()

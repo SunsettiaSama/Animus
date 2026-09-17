@@ -292,6 +292,68 @@ class LifeManager:
                 filled.append(item)
         return filled
 
+    def current_landmark_briefs(
+        self,
+        *,
+        past_sec: float = 3600.0,
+        future_sec: float = 300.0,
+    ) -> list[dict]:
+        """角色当前正在亲历的 landmark（供 speak 编剧演化剧情，与日常感区分）。
+
+        phase 取值：
+        - ``experiencing``：status=processing（fill/story arc 进行中）；
+        - ``due``：pending 且已到点（即将进入）；
+        - ``just_done``：done 且预约时间落在 [now-past_sec, now+future_sec]
+          （刚经历完；无 completed_at，以 scheduled_at 作剧情时间代理）。
+        无命中返回空列表——调用方据此显式告知"只是日常"。
+        """
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(seconds=past_sec)
+        window_end = now + timedelta(seconds=future_sec)
+        out: list[dict] = []
+        try:
+            landmarks = self._virtual.journal.all_landmarks()
+        except Exception:
+            return []
+        for lm in landmarks:
+            status = lm.status.value
+            phase = ""
+            if status == "processing":
+                phase = "experiencing"
+            elif status == "pending":
+                try:
+                    at = datetime.fromisoformat(lm.scheduled_at)
+                except (TypeError, ValueError):
+                    continue
+                if at.tzinfo is None:
+                    at = at.replace(tzinfo=timezone.utc)
+                if window_start <= at <= window_end:
+                    phase = "due"
+            elif status == "done" and lm.narrative.strip():
+                try:
+                    at = datetime.fromisoformat(lm.scheduled_at)
+                except (TypeError, ValueError):
+                    continue
+                if at.tzinfo is None:
+                    at = at.replace(tzinfo=timezone.utc)
+                if window_start <= at <= window_end:
+                    phase = "just_done"
+            if not phase:
+                continue
+            out.append(
+                {
+                    "id": lm.id,
+                    "intention": lm.intention,
+                    "scheduled_at": lm.scheduled_at,
+                    "context": lm.context,
+                    "phase": phase,
+                    "narrative": lm.narrative.strip()[:160],
+                }
+            )
+        return out
+
     def evolve_upcoming_landmarks(self, *, within_sec: float = 3600.0) -> list[dict]:
         """预约轴提前演化（T-1h，导演编剧在 landmark 进行时规划生活）：
 

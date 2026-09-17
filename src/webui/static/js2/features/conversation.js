@@ -24,6 +24,7 @@
  */
 
 import { AgentChannel } from '../transport/agent_channel.js';
+import { getSpeakPipeline } from './speak_pipeline.js';
 import * as frames from '../protocol/frames.js';
 import { bus, EVENTS } from '../store/bus.js';
 import * as sessionStore from '../store/session_store.js';
@@ -93,18 +94,30 @@ function _closeChannel() {
   }
 }
 
+window.addEventListener('speak:pipeline', (event) => {
+  const pipeline = event?.detail?.pipeline;
+  const channel = _activeChannelRef?.channel;
+  if (pipeline && channel && typeof channel.setPipeline === 'function') {
+    channel.setPipeline(pipeline);
+  }
+});
+
 function _getDraft() {
   return document.getElementById('msg-input')?.value ?? '';
 }
+
+const _activeChannelRef = { channel: null };
 
 function _makeChannel(genId) {
   const st = sessionStore.state();
   const channel = new AgentChannel(genId, {
     sessionId: st.sessionId,
     channelId: st.channelId,
+    pipeline: getSpeakPipeline(),
     getDraft: _getDraft,
     typingIdleMs: 3000,
   });
+  _activeChannelRef.channel = channel;
   channel.setHandlers({
     onSessionReady: () => {
       bus.emit(EVENTS.speakReady, { sessionId: channel.sessionId });

@@ -10,6 +10,7 @@
 
 import { WS_PATHS } from '../protocol/http_api.js';
 import * as frames from '../protocol/frames.js';
+import { SPEAK_PIPELINES } from '../features/speak_pipeline.js';
 import {
   classifyAgentFrame,
   WORK_TERMINAL_STATUSES,
@@ -39,7 +40,9 @@ export class AgentChannel {
       sessionId: String(opts.sessionId ?? 'webui'),
       channelId: String(opts.channelId || opts.sessionId || 'webui'),
       deliveryMode: 'stream',
-      pipeline: frames.DEFAULT_PIPELINE,
+      pipeline: SPEAK_PIPELINES.includes(opts.pipeline)
+        ? opts.pipeline
+        : frames.DEFAULT_PIPELINE,
     };
 
     this._handlers = this._defaultHandlers();
@@ -118,6 +121,17 @@ export class AgentChannel {
     if (!payload || typeof payload !== 'object') return false;
     if (!this.isConnected()) return false;
     return this.sendFrame({ ...payload, ...frames.briefEnv(this._env) });
+  }
+
+  /** 会话中途切换 pipeline；服务端经收敛门复检后生效。 */
+  setPipeline(pipeline) {
+    const next = String(pipeline || '').trim();
+    if (!SPEAK_PIPELINES.includes(next)) {
+      return false;
+    }
+    this._env.pipeline = next;
+    this.sendFrame(frames.setPipeline(next, this._env));
+    return true;
   }
 
   setTypingIdleMs(ms) {

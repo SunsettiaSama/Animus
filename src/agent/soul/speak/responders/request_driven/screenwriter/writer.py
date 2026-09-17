@@ -127,6 +127,14 @@ class Screenwriter:
         "第一，交互怎么发生的——对方从屏幕外发来什么、落在角色正在做什么的当口、隔了多久；"
         "第二，这对角色后续故事线有什么影响——注意点、手头活计、下一步往哪偏。"
         "不要写角色说了什么，也不要转述角色台词。\n"
+        "剧情是角色在线的参考背景（软约束），服务于与对方的对话，而不是反过来。\n"
+        "interaction_process 与后续 unit 必须为对方留出位置：对方是剧情里真实在场的人，"
+        "对方的发言可以改变场面向何处去；unit 不得越过或无视对方的发言推进，"
+        "剧情未覆盖对方发言时以对方为准、剧情退为背景。\n"
+        "材料区会标明角色是否正在亲历事件：有「角色亲历事件」时，故事线与 unit "
+        "围绕该真实事件演化（她确实在做这件事，事件进展即剧情进展）；"
+        "标明「只是日常」时，不要编造任务感或冒险感，写日常的场面——"
+        "物件、光线、手上的小事，平常日子本身也是戏。\n"
         "材料不多时，故事线仍然写清始末；场记写角色安静在场、手上有未完成的事，从小处往前挪一步。\n"
         "种子词也取这些能入镜的物件和位置。\n"
     )
@@ -228,6 +236,8 @@ class Screenwriter:
         agent: ScreenwriterAgent | None = None,
         target_units: int = 10,
         on_opening_ready: Callable[[str, str], None] | None = None,
+        material_gate: Callable[..., dict[str, Any] | None] | None = None,
+        memory_search: Callable[..., list] | None = None,
     ) -> None:
         self._llm = llm
         self._story_port = story_port
@@ -236,6 +246,9 @@ class Screenwriter:
         self._resolve_scene_id_fn = resolve_scene_id_fn
         self._embedder = embedder
         self._scene_seed_k = max(1, int(scene_seed_k))
+        self._material_gate = material_gate
+        self._memory_search = memory_search
+        self._user_memory_cache: dict[str, tuple[str, ...]] = {}
         self._target_units = max(4, int(target_units))
         self._on_opening_ready = on_opening_ready
         # 剧情写透监听（story_pool 持久化）：_apply_write 成功后回调 session_id
@@ -1203,6 +1216,132 @@ class Screenwriter:
             fate_tendency=card.fate_tendency,
         ).render()
 
+    def _apply_material_gate(
+        self,
+        state,
+        materials: dict[str, Any] | None,
+        *,
+        session_id: str,
+    ) -> None:
+        """导演注入门控：对刚写入剧情流的材料调度提案做逐条复核。
+
+        只在编剧异步写线内调用（线程隔离）；判定失败保持编剧原提案。
+        """
+        if self._material_gate is None:
+            return
+        flow = getattr(state, "plot_flow", None)
+        if flow is None or not (
+            getattr(flow, "inject_memory", False) or getattr(flow, "inject_share", False)
+        ):
+            return
+        mat = materials if isinstance(materials, dict) else {}
+        mem_ids = list(getattr(flow, "memory_unit_ids", None) or [])
+        mem_texts = [str(x) for x in (mat.get("dynamic_memory_texts") or [])]
+        share_texts = [str(x) for x in (mat.get("dynamic_share_texts") or [])]
+        if not mem_texts and not share_texts:
+            return
+        user_text = str(
+            getattr(state, "last_real_user_text", "") or mat.get("last_user_text") or ""
+        ).strip()
+        frame_text = "\n".join(
+            str(x) for x in (mat.get("recent_turns") or [])[-4:]
+        ) or str(mat.get("dialogue_history") or "")[-400:]
+        plot_parts = []
+        arc = getattr(state, "plot_arc", None)
+        if arc is not None and getattr(arc, "ready", False):
+            plot_parts.append(str(getattr(arc, "summary", "") or ""))
+        plot_parts.append(str(getattr(flow, "chronicle", "") or ""))
+        try:
+            gated = self._material_gate(
+                session_id=session_id,
+                user_text=user_text,
+                frame_text=frame_text,
+                plot_context="\n".join(p for p in plot_parts if p.strip()),
+                memory_texts=mem_texts,
+                share_texts=share_texts,
+                memory_unit_ids=mem_ids,
+                share_indices=list(getattr(flow, "share_indices", None) or []),
+            )
+        except Exception as exc:  # noqa: BLE001 - 门控故障回退编剧提案
+            logger.warning(
+                "[screenwriter] material gate failed session=%s: %s", session_id, exc
+            )
+            return
+        if not isinstance(gated, dict):
+            return
+        flow.set_material_schedule(
+            inject_memory=bool(gated.get("inject_memory")),
+            memory_unit_ids=list(gated.get("memory_unit_ids") or []),
+            inject_share=bool(gated.get("inject_share")),
+            share_indices=list(gated.get("share_indices") or []),
+            pass_info=bool(getattr(flow, "pass_info", False)),
+            reason=str(gated.get("reason") or "unit_gate"),
+        )
+        state.notes.append(
+            "material_gate: applied mem=%d share=%d" % (
+                len(gated.get("memory_unit_ids") or []),
+                len(gated.get("share_indices") or []),
+            )
+        )
+
+    def _enrich_user_memory(
+        self,
+        session_id: str,
+        materials: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """给编剧补一块"对方记忆"：按对方最近发言查 memory（复用统一检索口）。
+
+        结果写入 materials["dynamic_user_memory_texts"]，由 WritingMaterials
+        渲染为"对方记忆"块；查询失败静默跳过（编剧仍可用记忆池）。
+        """
+        if self._memory_search is None or not isinstance(materials, dict):
+            return materials
+        if materials.get("dynamic_user_memory_texts"):
+            return materials
+        query = str(materials.get("last_user_text") or "").strip()
+        cache_key = f"{session_id}:{query}"
+        cached = self._user_memory_cache.get(cache_key)
+        if cached is not None:
+            materials["dynamic_user_memory_texts"] = list(cached)
+            return materials
+        texts: list[str] = []
+        try:
+            if query:
+                hits = self._memory_search("hybrid", query=query, top_k=3)
+            else:
+                hits = self._memory_search("recent", limit=3)
+            for hit in hits or []:
+                text = ""
+                if isinstance(hit, dict):
+                    # 与 composer.ports.adapters._text_from_search_hit 的键位对齐
+                    for key in (
+                        "text",
+                        "fact",
+                        "reconstructed_fact",
+                        "narrative",
+                        "content",
+                        "focus",
+                    ):
+                        text = str(hit.get(key) or "").strip()
+                        if text:
+                            break
+                elif hasattr(hit, "text"):
+                    text = str(getattr(hit, "text", "") or "").strip()
+                if text:
+                    texts.append(text[:160])
+        except Exception as exc:  # noqa: BLE001 - 检索失败不阻塞写作
+            logger.info(
+                "[screenwriter] user memory search failed session=%s: %s",
+                session_id,
+                exc,
+            )
+            return materials
+        self._user_memory_cache[cache_key] = tuple(texts)
+        if len(self._user_memory_cache) > 256:
+            self._user_memory_cache.pop(next(iter(self._user_memory_cache)))
+        materials["dynamic_user_memory_texts"] = texts
+        return materials
+
     def _apply_write(
         self,
         state,
@@ -1305,6 +1444,7 @@ class Screenwriter:
                 pass_info=bool(schedule.get("pass_info")),
                 reason=str(schedule.get("material_reason") or ""),
             )
+            self._apply_material_gate(state, materials, session_id=session_id)
             state.presence_card.speak_desire = speak_desire
             state.presence_card.fate_tendency = fate_tendency
             if mode and not state.narrative_card.interaction_mode.strip():
@@ -1336,6 +1476,7 @@ class Screenwriter:
                 poll_seq=seq,
                 turn_index=turn_index,
             )
+            self._apply_material_gate(state, materials, session_id=session_id)
             mood = str(side.get("mood") or "").strip() or (
                 state.presence_card.mood if state.presence_card.ready else "平静"
             )
@@ -1728,6 +1869,7 @@ class Screenwriter:
         """多步查阅书写材料后交稿；步骤痕迹写入 director_cache。"""
         if self._agent is None:
             return None
+        materials = self._enrich_user_memory(session_id, materials)
         clay = build_writing_materials(
             compose_meta=materials if isinstance(materials, dict) else {},
             fate_speak_desire=speak_desire,
@@ -1815,6 +1957,7 @@ class Screenwriter:
         require_plot_arc: bool = False,
     ) -> dict[str, Any] | None:
         assert self._llm is not None
+        materials = self._enrich_user_memory(session_id, materials)
         mode = interaction_mode or resolve_interaction_mode(
             user_text,
             silence_log_ready=bool(silence_log),

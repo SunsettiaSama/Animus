@@ -307,7 +307,9 @@ def test_role_layers_render_silence_and_narrative():
     )
     text = layers.render_system_extra()
     assert "对方刚发来的即时往来" not in text
-    assert "此刻情景（客观材料）" in text
+    # 剧情卡软约束化（拟人度评测 R3/R5 生产化）：头为软约束措辞 + 用户位置注记
+    assert "此刻情景（软约束，参考，以对方的话为先）" in text
+    assert "对方在剧情中的位置" in text
     assert "舞台信息" in text
     assert "临场事件纪要" not in text
     assert "沉默" in text

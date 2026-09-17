@@ -40,9 +40,11 @@ SUPPORTED_RESPONDERS = (
 # rd_dir_only     = 三角色管线，提示词里只有导演/节奏卡片（剧情卡片被滤掉）
 # rd_writer_only  = 三角色管线，提示词里只有编剧/剧情卡片（导演卡片被滤掉）
 # rd_dynsched     = 阈值版导演调度（已被证伪，留作对照）
-# rd_dynsched_llm = 正经版导演调度：节奏卡出清 + 导演 LLM 带语境逐轮判定记忆/分享注入
+# rd_dynsched_llm = 导演 LLM 调度 v1：节奏卡出清，判定只见对话近况（原"宁缺毋滥"prompt）
 # rd_softplot     = 软约束剧情：节奏卡出清 + 剧情卡软约束措辞 + "对方在剧情中的位置"
 # direct_silence  = 直通 + 角色自主：沉默权（只回「……」）+ 自预约下一拍存入上下文
+# rd_combo        = 软约束剧情 + 导演LLM调度（v1 判定）组合
+# rd_combo_v2     = 软约束剧情 + 新导演（v2：喂剧情材料对齐 + 中性权衡 prompt）组合
 ARM_ALIASES: dict[str, tuple[str, str]] = {
     "rd_dir_only": (RESPONDER_REQUEST_DRIVEN, "director"),
     "rd_writer_only": (RESPONDER_REQUEST_DRIVEN, "writer"),
@@ -50,6 +52,8 @@ ARM_ALIASES: dict[str, tuple[str, str]] = {
     "rd_dynsched_llm": (RESPONDER_REQUEST_DRIVEN, "dynsched_llm"),
     "rd_softplot": (RESPONDER_REQUEST_DRIVEN, "softplot"),
     "direct_silence": (RESPONDER_DIRECT, "charsilence"),
+    "rd_combo": (RESPONDER_REQUEST_DRIVEN, "combo"),
+    "rd_combo_v2": (RESPONDER_REQUEST_DRIVEN, "combo_v2"),
 }
 SUPPORTED_RUN_LABELS = tuple(SUPPORTED_RESPONDERS + tuple(ARM_ALIASES))
 
@@ -149,17 +153,20 @@ class LiveSpeakHumanenessRuntime:
 
         simulators: dict[str, DialogueSimulator] = {}
         ports: dict[str, PipelinedSpeakTurnPort] = {}
-        unit_judge = None
+        unit_judges: dict[str, LLMUnitJudge] = {}
         for responder in responders:
             base_responder, card_family = ARM_ALIASES.get(
                 responder, (responder, "")
             )
-            if card_family == "dynsched_llm":
-                if unit_judge is None:
-                    unit_judge = LLMUnitJudge(
-                        LLM(_role_config(base, temperature=0.2, max_tokens=1024))
+            if card_family in ("dynsched_llm", "combo", "combo_v2"):
+                variant = "v2" if card_family == "combo_v2" else "v1"
+                judge_key = f"{base_responder}:{variant}"
+                if judge_key not in unit_judges:
+                    unit_judges[judge_key] = LLMUnitJudge(
+                        LLM(_role_config(base, temperature=0.2, max_tokens=1024)),
+                        variant=variant,
                     )
-                layers_set_eval_unit_judge(unit_judge.judge)
+                layers_set_eval_unit_judge(unit_judges[judge_key].judge)
             port = PipelinedSpeakTurnPort(
                 service,
                 responder=base_responder,

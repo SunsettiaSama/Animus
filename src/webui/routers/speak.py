@@ -97,6 +97,8 @@ def get_speak_status():
         "status": "ready" if speak_ready else "idle",
         "ready": speak_ready,
         "soul_state": soul.state,
+        # speak 默认沉睡：接入（对话 WS）才唤醒；awake=False 不代表不可用
+        "speak_awake": bool(getattr(soul, "speak_awake", False)),
         "session_id": "",
     }
 
@@ -324,6 +326,9 @@ async def _ws_speak_run_session(websocket: WebSocket, state) -> None:
         await websocket.send_json({"type": "error", "message": "Soul ???"})
         await websocket.close()
         return
+
+    # speak 默认沉睡：前端接入（session_open）即唤醒
+    await asyncio.to_thread(soul.wake_speak)
 
     if not state.try_start_streaming(gen_id):
         await websocket.send_json({"type": "error", "message": "Already streaming."})
