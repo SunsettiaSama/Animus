@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Callable
 
@@ -32,7 +33,9 @@ from .journal.agenda import LandmarkAgenda, LandmarkAgendaStore, build_landmark_
 from .journal.contracts import LandmarkAgendaDraftResult, LandmarkAgendaPreviewResult
 from .journal.planner import JournalPlanner
 from .narrative import NarrativeEngine
-from .narrative.engine import NarrativeDraft
+from .narrative.engine import NarrativeDraft, looks_like_artifact
+
+logger = logging.getLogger(__name__)
 from agent.soul.life.experience.domain.virtual_codec import VirtualUnitContext, VirtualUnitTrigger
 from agent.soul.life.virtual.episode.builder import (
     attach_episode_memory_drafts,
@@ -584,18 +587,26 @@ class VirtualLayer:
         emotion_intensity = 0.35
         emotion_strength = "轻微波动"
         if self._narrative is not None:
-            draft = self._narrative.fabricate_with_emotion(
-                hint=plan_seed,
-                profile_narrative=self._profile_narrative,
-                continuity_memories=self._continuity_memories,
-                world_background=self._world_background,
-                objective_scene=objective_scene,
-                default_intensity=0.35,
-            )
-            narrative_hint = draft.narrative
-            emotion_text = draft.emotion_text
-            emotion_intensity = draft.emotion_intensity
-            emotion_strength = draft.emotion_strength
+            try:
+                draft = self._narrative.fabricate_with_emotion(
+                    hint=plan_seed,
+                    profile_narrative=self._profile_narrative,
+                    continuity_memories=self._continuity_memories,
+                    world_background=self._world_background,
+                    objective_scene=objective_scene,
+                    default_intensity=0.35,
+                )
+                if not looks_like_artifact(draft.narrative):
+                    narrative_hint = draft.narrative
+                    emotion_text = draft.emotion_text
+                    emotion_intensity = draft.emotion_intensity
+                    emotion_strength = draft.emotion_strength
+                # 叙事为结构化残渣（JSON/提示词回声）时保持可读的 plan_seed——
+                # 曾把 compose 槽位 JSON 当叙事写进时间轴，webui 回忆面板直接显示原始 JSON
+            except Exception:  # noqa: BLE001 — 主观化失败回落到预约种子
+                logger.exception(
+                    "[virtual] fabricate_with_emotion failed; fallback to plan_seed"
+                )
 
         unit = self.record_story_beat(
             narrative_hint=narrative_hint,

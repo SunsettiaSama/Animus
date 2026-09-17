@@ -29,6 +29,7 @@ from agent.soul.life.story import (
     StoryScheduler,
 )
 from agent.soul.life.story.writer import hhmm
+from agent.soul.life.virtual.narrative.engine import looks_like_artifact
 from agent.soul.storybus import (
     BeatAck,
     BeatAckStatus,
@@ -617,12 +618,45 @@ _runtimes: "weakref.WeakKeyDictionary[Any, StoryRuntime]" = weakref.WeakKeyDicti
 _runtimes_lock = threading.Lock()
 
 
+class _MemoryTimelineJournal:
+    """测试桩专用内存时间轴：只保数据不落盘，read 语义与 TurnJournal 对齐。
+
+    背景：ensure_story_runtime 此前对桩 soul 也落到全局 default_journal()
+    （真实 .react 时间轴），storybus 测试夹具（"第一拍""预约的内容"等）
+    曾因此污染 webui 回忆面板。
+    """
+
+    def __init__(self) -> None:
+        self._entries: list[dict] = []
+
+    def append_event(self, *, session_id: str, text: str, kind: str, **kwargs) -> None:
+        _ = session_id
+        self._entries.append({"text": text, "kind": kind, **kwargs})
+
+    def append_turn(self, *args, **kwargs) -> None:  # 兼容 TurnJournal 接口
+        _ = args, kwargs
+
+    def read(self, channel: str, *, limit: int = 50, before: str = "") -> list[dict]:
+        _ = channel, before
+        entries = [dict(e, at="") for e in self._entries]
+        return entries[-limit:][::-1]
+
+
+def _journal_for_soul(soul: Any):
+    """生产 SoulService 共享全局时间轴；其余（测试桩/演示 stub）用内存隔离。"""
+    if type(soul).__name__ == "SoulService":
+        from agent.soul.memory.timeline import default_journal
+
+        return default_journal()
+    return _MemoryTimelineJournal()
+
+
 def ensure_story_runtime(soul: Any) -> StoryRuntime:
     """按 soul 实例缓存剧情运行件；SoulService 零改动（组装在 wiring 层）。"""
     with _runtimes_lock:
         rt = _runtimes.get(soul)
         if rt is None:
-            rt = StoryRuntime(soul)
+            rt = StoryRuntime(soul, journal=_journal_for_soul(soul))
             _runtimes[soul] = rt
         return rt
 
@@ -684,7 +718,8 @@ def beats_from_landmark_fills(fills: list[dict]) -> list[BeatDraft]:
 def beat_from_subjective_event(event: dict, *, source_tick: str = "") -> BeatDraft | None:
     """plan_landmark 的主观事件（subjective_event.hint）→ beat 草稿。"""
     narrative = str(event.get("hint") or "").strip()
-    if not narrative:
+    if not narrative or looks_like_artifact(narrative):
+        # 结构化残渣（compose 槽位 JSON / 提示词回声）不得进时间轴
         return None
     return BeatDraft(
         narrative=narrative,

@@ -182,6 +182,38 @@ def _fallback_narrative_body(raw: str) -> str:
     return _strip_tagged_sections(raw)
 
 
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+
+
+def strip_think(text: str) -> str:
+    """剥推理模型混在 content 里的 <think> 块；未闭合的前置思考整段丢弃。"""
+    cleaned = _THINK_BLOCK_RE.sub("", text)
+    open_idx = cleaned.lower().find("<think>")
+    if open_idx != -1:
+        cleaned = cleaned[:open_idx]
+    return cleaned.strip()
+
+
+def looks_like_artifact(text: str) -> bool:
+    """识别"不该当叙事用"的结构化残渣：原始 JSON / 提示词回声。
+
+    实测泄漏样本：``{"intention":"rest","context":""}``（compose 槽位 JSON
+    被当叙事）与 ``", , , and tags. Key rules: - Second pers…"``（系统提示
+    词回声）。这类文本一旦落流水会原样出现在 webui 回忆面板。
+    """
+    body = text.strip()
+    if not body:
+        return False
+    if body[0] in "{[":
+        return True
+    if body.startswith(","):
+        return True
+    for marker in ("Key rules:", "输出 JSON", "NARRATIVE]") :
+        if marker in body:
+            return True
+    return False
+
+
 def _validate_no_meta(text: str) -> None:
     if re.search(r"(^|\n)\s*(触发|感知|内心|摘要)\s*[:：]", text):
         raise ValueError("虚拟叙事正文不应输出字段标签")
@@ -214,8 +246,9 @@ def _natural_narrative(raw: str) -> tuple[str, str]:
     perception = _compact(_clean_story_text(_extract_tag(raw, "PERCEPTION")), limit=80)
     if not narrative:
         narrative = _compact(_clean_story_text(_fallback_narrative_body(raw)), limit=240)
-    if not narrative:
-        raise ValueError("虚拟叙事缺少字段：NARRATIVE")
+    if not narrative or looks_like_artifact(narrative):
+        # 空正文/结构化残渣（JSON、提示词回声）都不许当叙事——宁可失败回退
+        raise ValueError("虚拟叙事缺少可用字段：NARRATIVE")
     _validate_no_meta(narrative)
     if perception:
         _validate_no_meta(perception)
@@ -258,16 +291,20 @@ class NarrativeEngine:
         self._llm = llm
 
     def _generate(self, human: str) -> str:
-        text = self._llm.generate_messages(
-            [SystemMessage(content=_SYSTEM), HumanMessage(content=human)]
-        ).strip()
+        text = strip_think(
+            self._llm.generate_messages(
+                [SystemMessage(content=_SYSTEM), HumanMessage(content=human)]
+            )
+        )
         _validate_no_meta(text)
         return _compact(text, limit=180)
 
     def _generate_with_emotion(self, human: str, *, default_intensity: float) -> NarrativeDraft:
-        raw = self._llm.generate_messages(
-            [SystemMessage(content=_EMOTION_SYSTEM), HumanMessage(content=human)]
-        ).strip()
+        raw = strip_think(
+            self._llm.generate_messages(
+                [SystemMessage(content=_EMOTION_SYSTEM), HumanMessage(content=human)]
+            )
+        )
         narrative, perception = _natural_narrative(raw)
         emotion_text = _compact(_extract_tag(raw, "EMOTION"), limit=60)
         if not emotion_text:
@@ -498,9 +535,11 @@ class NarrativeEngine:
             f"{_format_landmark_intents(recent_landmark_intents)}\n\n"
             f"构思下一个不同的内在体验时刻，输出 JSON：\n{_COMPOSE_SCHEMA}"
         )
-        raw = self._llm.generate_messages(
-            [SystemMessage(content=_PLAN_SYSTEM), HumanMessage(content=prompt)]
-        ).strip()
+        raw = strip_think(
+            self._llm.generate_messages(
+                [SystemMessage(content=_PLAN_SYSTEM), HumanMessage(content=prompt)]
+            )
+        )
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
             return None
