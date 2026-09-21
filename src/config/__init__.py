@@ -85,6 +85,10 @@ class AppPaths:
         return self.root / "config" / "infra" / "ntfy_config.yaml"
 
     @property
+    def retrieval_config_yaml(self) -> Path:
+        return self.root / "config" / "infra" / "retrieval.yaml"
+
+    @property
     def scheduler_config_yaml(self) -> Path:
         return self.root / "config" / "agent" / "scheduler.yaml"
 

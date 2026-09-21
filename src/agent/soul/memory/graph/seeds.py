@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 
 class SeedResolver:
+    ENTITY_SEED_SCORE = 0.95  # 实体词面命中 > 关键词 0.55（rewriter 捕获组产物）
+
     def __init__(
         self,
         nodes: GraphNodeStore,
@@ -37,6 +39,7 @@ class SeedResolver:
         *,
         networks: tuple[MemoryNetwork, ...],
         interactor_id: str = "",
+        entities: list[str] | tuple[str, ...] = (),
     ) -> dict[str, float]:
         seeds: dict[str, float] = {}
         combined = text.strip()
@@ -51,8 +54,9 @@ class SeedResolver:
                     for node_id, sim in hits:
                         seeds[node_id] = max(seeds.get(node_id, 0.0), sim)
 
+        entities = [e.strip() for e in entities if e and e.strip()]
         keywords = extract_keywords(combined)
-        if keywords:
+        if entities or keywords:
             for network in networks:
                 candidates = self._nodes.list_by_network(network, limit=max(80, self._seed_top_k * 6))
                 for node in candidates:
@@ -60,7 +64,12 @@ class SeedResolver:
                         if network == MemoryNetwork.social:
                             continue
                     hay = self._node_haystack(node).lower()
-                    if any(kw in hay for kw in keywords):
+                    if entities and any(e.lower() in hay for e in entities):
+                        seeds[node.id] = max(
+                            seeds.get(node.id, 0.0),
+                            self.ENTITY_SEED_SCORE,
+                        )
+                    elif any(kw in hay for kw in keywords):
                         seeds[node.id] = max(
                             seeds.get(node.id, 0.0),
                             self._keyword_weight,

@@ -32,6 +32,7 @@ class MemoryRetrievePolicy:
         top_k: int = 3,
         embedding_weight: float = 0.55,
         bm25_weight: float = 0.45,
+        query_rewriter=None,
     ) -> None:
         self._staging = staging
         self._bm25 = bm25 or Bm25Index()
@@ -42,6 +43,7 @@ class MemoryRetrievePolicy:
         self._top_k = max(1, top_k)
         self._embedding_weight = max(0.0, float(embedding_weight))
         self._bm25_weight = max(0.0, float(bm25_weight))
+        self._query_rewriter = query_rewriter
 
     def set_embedder(self, embedder: BufferEmbedderPort | None) -> None:
         self._embedder = embedder
@@ -68,6 +70,11 @@ class MemoryRetrievePolicy:
         query = _compose_query(primary_query, secondary_query)
         if not query.strip():
             return []
+        if self._query_rewriter is not None:
+            try:
+                query = self._query_rewriter.rewrite(query).query or query
+            except Exception:
+                pass
         if mode == "bm25":
             return self._retrieve_bm25(staged, query)
         if mode == "embedding":

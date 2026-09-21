@@ -52,11 +52,13 @@ class HumanenessHarness:
         *,
         recall_top_k: int = 5,
         transcript_path: str | Path | None = None,
+        query_rewriter=None,
     ) -> None:
         self._llm = llm
         self._judge = judge
         self._recall_top_k = recall_top_k
         self._transcript_path = Path(transcript_path) if transcript_path else None
+        self._query_rewriter = query_rewriter
         # LLM 调用计数（进度行按调用计价，不再只报组合数）
         self.gen_calls = 0
         self.judge_calls = 0
@@ -83,6 +85,8 @@ class HumanenessHarness:
         try:
             preload(base, case.memories)
             query = self._recall_query(case)
+            if self._query_rewriter is not None:
+                query = self._query_rewriter.rewrite(query).query
             block = base.recall(query, top_k=self._recall_top_k)
             memory_lines = list(block.entries or [])
             log.debug(

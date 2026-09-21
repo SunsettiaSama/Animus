@@ -974,10 +974,13 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
         self._compose_live_search_fn: (
             Callable[[str, str, int, MemoryHint], list[MemoryUnit]] | None
         ) = None
+        from infra.retrieval import get_default_rewriter
+
         manager = ComposeManager(
             cfg,
             memory_search=self._compose_memory_port,
             share_hint=self._compose_share_hint,
+            query_rewriter=get_default_rewriter(),
         )
         self._compose_gateway = ComposeManagerGateway(
             manager,

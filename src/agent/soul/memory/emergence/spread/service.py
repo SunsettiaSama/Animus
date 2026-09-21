@@ -48,8 +48,13 @@ class SpreadActivationService:
         speak_line_max_content: int = 320,
         enqueue: Callable[[Callable[[], None]], None] | None = None,
         query_submit: Callable[[Callable[[], None]], None] | None = None,
+        query_rewriter=None,
+        beam_walk_enabled: bool = False,
+        beam_walk_width: int = 3,
+        beam_walk_max_nodes: int = 10,
     ) -> None:
         self._nodes = nodes
+        self._edges = edges
         self._traversal = GraphTraversal(edges)
         self._query = query
         self._cluster_index = cluster_index
@@ -81,6 +86,11 @@ class SpreadActivationService:
         self._enqueue = enqueue
         self._query_submit = query_submit
         self._point_ready_handlers: list[Callable[[PointEmergenceResult], None]] = []
+        # 生产化接线：查询改写（entities→精确种子）+ 语义束搜索（图上流向控制）
+        self._query_rewriter = query_rewriter
+        self._beam_walk_enabled = bool(beam_walk_enabled)
+        self._beam_walk_width = max(1, int(beam_walk_width))
+        self._beam_walk_max_nodes = max(1, int(beam_walk_max_nodes))
 
     def _render_lines(self, scored: list[ScoredUnit]) -> list[str]:
         cap = self._speak_line_max_content
@@ -286,9 +296,14 @@ class SpreadActivationService:
         *,
         precise_relevance_threshold: float | None = None,
     ) -> PointEmergenceResult:
+        query_text, entities = self._rewritten_cue(cue)
         precise = self._hybrid_precise(
             cue,
             precise_relevance_threshold=precise_relevance_threshold,
+            query_text=query_text,
+        )
+        precise = self._beam_walk_merge(
+            cue, precise, query=query_text, entities=entities
         )
         precise_lines = self._render_lines(precise)
         precise_ids = [s.unit.id for s in precise]
@@ -310,8 +325,11 @@ class SpreadActivationService:
             self._notify_point_ready(final)
         return final
 
-    def _apply_associative(self, cue: ActivationCue, result: PointEmergenceResult) -> PointEmergenceResult:
-        associative = self._hybrid_associative(cue)
+    def _apply_associative(
+        self, cue: ActivationCue, result: PointEmergenceResult
+    ) -> PointEmergenceResult:
+        query_text, _entities = self._rewritten_cue(cue)
+        associative = self._hybrid_associative(cue, query_text=query_text)
         precise_scored = self._nodes.get_many(result.precise_unit_ids)
         precise = [ScoredUnit(u, final_score=1.0) for u in precise_scored]
         precise_ranked, associative_ranked = merge_hybrid_results(precise, associative)
@@ -364,7 +382,7 @@ class SpreadActivationService:
         return snapshot
 
     def _resolve_seeds(self, cue: ActivationCue, *, seed_top_k: int) -> dict[str, float]:
-        text = self._cue_text(cue)
+        text, entities = self._rewritten_cue(cue)
         if not text.strip():
             return {}
         resolver = SeedResolver(
@@ -379,6 +397,7 @@ class SpreadActivationService:
             text,
             networks=cue.networks,
             interactor_id=cue.interactor_id,
+            entities=entities,
         )
 
     def _spread_from_seeds(
@@ -407,8 +426,9 @@ class SpreadActivationService:
         cue: ActivationCue,
         *,
         precise_relevance_threshold: float | None = None,
+        query_text: str | None = None,
     ) -> list[ScoredUnit]:
-        text = self._cue_text(cue)
+        text = query_text if query_text is not None else self._cue_text(cue)
         if not text.strip():
             return []
         scored = self._query.hybrid(
@@ -427,8 +447,10 @@ class SpreadActivationService:
             return scored
         return [s for s in scored if s.relevance >= threshold]
 
-    def _hybrid_associative(self, cue: ActivationCue) -> list[ScoredUnit]:
-        text = self._cue_text(cue)
+    def _hybrid_associative(
+        self, cue: ActivationCue, *, query_text: str | None = None
+    ) -> list[ScoredUnit]:
+        text = query_text if query_text is not None else self._cue_text(cue)
         if not text.strip() or self._vectors is None:
             return []
         vector = self._vectors.embed_query(text)
@@ -449,3 +471,115 @@ class SpreadActivationService:
     @staticmethod
     def _cue_text(cue: ActivationCue) -> str:
         return " ".join(part for part in (cue.user_text, cue.agent_text) if part.strip())
+
+    def _rewritten_cue(self, cue: ActivationCue) -> tuple[str, list[str]]:
+        """cue 文本 → (改写后 query, entities)；未接 rewriter 时返回原文与空实体。"""
+        text = self._cue_text(cue)
+        if not text.strip() or self._query_rewriter is None:
+            return text, []
+        try:
+            rr = self._query_rewriter.rewrite(text)
+        except Exception:
+            return text, []
+        return (rr.query or text), list(rr.entities)
+
+    def _beam_walk_merge(
+        self,
+        cue: ActivationCue,
+        precise: list[ScoredUnit],
+        *,
+        query: str,
+        entities: list[str],
+    ) -> list[ScoredUnit]:
+        """precise 种子 + 实体种子 → 语义束搜索；新触达节点补进 precise 尾部。
+
+        消融结论（kg_walk 臂 +0.078 Hit@k）：改写价值在 entities→精确种子，
+        束搜索沿查询语义方向流动，补齐向量路漏掉的图邻域。
+        """
+        vectors = self._vectors
+        if not self._beam_walk_enabled or vectors is None or not hasattr(vectors, "iter_entries"):
+            return precise
+        try:
+            query_vector = vectors.embed_query(query)
+        except Exception:
+            return precise
+        if not query_vector:
+            return precise
+
+        seeds: dict[str, float] = {}
+        for scored in precise[: self._beam_walk_width]:
+            seeds[scored.unit.id] = max(0.1, scored.final_score)
+        if entities:
+            try:
+                seed_scores = self._resolve_seeds_with(cue, query, entities)
+            except Exception:
+                seed_scores = {}
+            for node_id, score in seed_scores.items():
+                seeds[node_id] = max(seeds.get(node_id, 0.0), min(score, 0.95))
+        if not seeds:
+            return precise
+
+        vec_map = {}
+        try:
+            for entry in vectors.iter_entries():
+                if entry.vector:
+                    vec_map[entry.node_id] = entry.vector
+        except Exception:
+            return precise
+        if not vec_map:
+            return precise
+
+        from infra.retrieval.walk import SemanticBeamWalker
+
+        walker = SemanticBeamWalker(
+            lambda node_id: [
+                (edge.to_id, edge.weight) for edge in self._edges.out_edges(node_id)
+            ],
+            lambda node_id: vec_map.get(node_id),
+            beam_width=self._beam_walk_width,
+            max_nodes=self._beam_walk_max_nodes,
+        )
+        hits = walker.walk(query_vector, seeds)
+        if not hits:
+            return precise
+
+        known = {s.unit.id for s in precise}
+        extras: list[str] = []
+        for hit in hits:
+            if hit.node_id not in known and hit.node_id in vec_map:
+                extras.append(hit.node_id)
+        if not extras:
+            return precise
+        extra_nodes = {n.id: n for n in self._nodes.get_many(extras) if n is not None}
+        budget = max(0, self._point_top_k - len(precise))
+        appended = 0
+        merged = list(precise)
+        for node_id in extras:
+            node = extra_nodes.get(node_id)
+            if node is None:
+                continue
+            merged.append(ScoredUnit(node, relevance=0.0, activation=0.0, final_score=0.25, source="beam_walk"))
+            appended += 1
+            if appended >= budget:
+                break
+        return merged
+
+    def _resolve_seeds_with(
+        self, cue: ActivationCue, text: str, entities: list[str]
+    ) -> dict[str, float]:
+        if not text.strip():
+            return {}
+        resolver = SeedResolver(
+            self._nodes,
+            self._vectors,
+            keyword_weight=self._keyword_weight,
+            seed_top_k=self._seed_top_k,
+            cluster_index=self._cluster_index,
+            cluster_core_top_k=self._cluster_core_top_k,
+        )
+        return resolver.resolve(
+            text,
+            networks=cue.networks,
+            interactor_id=cue.interactor_id,
+            entities=entities,
+        )

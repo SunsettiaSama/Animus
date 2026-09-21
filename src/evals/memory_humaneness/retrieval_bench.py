@@ -31,18 +31,49 @@ class CaseEval:
     first_hit_rank: int = 0  # 0 = 无命中
     seed_recall: float = 0.0
     false_positive: bool = False
+    # query rewriter 元数据（query_rewriter=None 时为空）
+    rewrite_template: str = ""
+    rewrite_entities: list[str] = field(default_factory=list)
+    rewrite_query: str = ""
 
 
 def _entry_hit(line: str, anchors: list[str]) -> bool:
     return any(a and a in line for a in anchors)
 
 
-def evaluate_case(base, case: HumanenessCase, *, top_k: int = 5) -> CaseEval:
+def _strip_hint_lines(lines: list[str]) -> list[str]:
+    """graceful_absence 的"无记忆提示"行不算检索结果（与 L3 行为评测同语义），
+    否则 hint 行会把负样本全部记成假阳性。"""
+    from .hint import is_hint_line
+
+    return [l for l in lines if not is_hint_line(l)]
+
+
+def evaluate_case(base, case: HumanenessCase, *, top_k: int = 5, query_rewriter=None) -> CaseEval:
     query = " ".join(
         [t.text for t in case.history] + [case.current_user]
     ).strip()
-    block = base.recall(query, top_k=top_k)
-    lines = list(block.entries or [])[:top_k]
+    rewrite_template, rewrite_entities, rewrite_query = "", [], ""
+    if query_rewriter is not None:
+        rr = query_rewriter.rewrite(query)
+        query = rr.query
+        rewrite_template = rr.template_id
+        rewrite_entities = list(rr.entities)
+        rewrite_query = rr.query
+
+    accepts_rewrite = getattr(base, "accepts_rewrite", False)
+    if accepts_rewrite and query_rewriter is not None:
+        block = base.recall(query, top_k=top_k, rewrite=rr)
+    else:
+        block = base.recall(query, top_k=top_k)
+    lines = _strip_hint_lines(list(block.entries or [])[:top_k])
+
+    def _meta() -> dict:
+        return dict(
+            rewrite_template=rewrite_template,
+            rewrite_entities=rewrite_entities,
+            rewrite_query=rewrite_query,
+        )
 
     if not case.memories:  # graceful_absence：负样本，期望空
         return CaseEval(
@@ -51,6 +82,7 @@ def evaluate_case(base, case: HumanenessCase, *, top_k: int = 5) -> CaseEval:
             expected_empty=True,
             lines=lines,
             false_positive=bool(lines),
+            **_meta(),
         )
 
     first_hit_rank = 0
@@ -75,20 +107,27 @@ def evaluate_case(base, case: HumanenessCase, *, top_k: int = 5) -> CaseEval:
         hit_at_k=first_hit_rank > 0,
         first_hit_rank=first_hit_rank,
         seed_recall=seed_recall,
+        **_meta(),
     )
 
 
-def evaluate_base(base_or_factory, cases: list[HumanenessCase], *, top_k: int = 5) -> dict:
+def evaluate_base(
+    base_or_factory, cases: list[HumanenessCase], *, top_k: int = 5, query_rewriter=None
+) -> dict:
     """``base_or_factory``：基座实例（复用）或工厂（每条用例全新实例，防止用例间污染）。
 
     工厂模式下每条用例先实例化 → 预载记忆 → 检索 → 销毁，与 L3 行为基准同协议。
+    ``query_rewriter``：可选 QueryRewriter，插在 query 构造与 recall 之间（默认
+    None = 原始拼接 query，行为与历史版本一致）。
     """
     per_case_fresh = callable(base_or_factory)
     evals: list[CaseEval] = []
     for case in cases:
         base = base_or_factory() if per_case_fresh else base_or_factory
         preload(base, case.memories)
-        evals.append(evaluate_case(base, case, top_k=top_k))
+        evals.append(
+            evaluate_case(base, case, top_k=top_k, query_rewriter=query_rewriter)
+        )
         if per_case_fresh:
             dispose = getattr(base, "dispose", None)
             if callable(dispose):

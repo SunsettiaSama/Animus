@@ -27,6 +27,7 @@ httpx
 html2text
 croniter
 python-docx
+jieba
 
 # Knowledge base
 pymysql

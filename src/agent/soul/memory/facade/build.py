@@ -94,6 +94,8 @@ def build_memory_service(
         cluster_core_top_k=cfg.cluster_core_top_k,
     )
     query_dispatcher = EmergenceQueryDispatcher(max_workers=cfg.emergence_query_workers)
+    from infra.retrieval import get_default_rewriter
+
     spread = SpreadActivationService(
         nodes,
         edges,
@@ -115,6 +117,10 @@ def build_memory_service(
         hybrid_w_activation=cfg.hybrid_w_activation,
         speak_line_max_content=cfg.speak_memory_line_max_content,
         query_submit=query_dispatcher.submit,
+        query_rewriter=get_default_rewriter(),
+        beam_walk_enabled=cfg.beam_walk_enabled,
+        beam_walk_width=cfg.beam_walk_width,
+        beam_walk_max_nodes=cfg.beam_walk_max_nodes,
     )
     svc_holder: list[MemoryService] = []
 

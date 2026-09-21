@@ -28,18 +28,20 @@ class ComposeManager:
         clock: ClockPort | None = None,
         rng: Random | None = None,
         embedder: BufferEmbedderPort | None = None,
+        query_rewriter=None,
     ) -> None:
         self._config = config or ComposeManagerConfig()
         seed = self._config.rng_seed
         self._rng = rng if rng is not None else Random(seed)
         clock = clock or MonotonicClock()
+        self._query_rewriter = query_rewriter
         self._staging = MemoryStagingBuffer(
             memory_search=memory_search,
             share_hint=share_hint,
             clock=clock,
             rng=self._rng,
             max_items=self._config.staging_max_items,
-            max_turn_age=self._config.staging_max_turn_age,
+            max_turn_age=self._config.staging_turn_age if hasattr(self._config, "staging_turn_age") else self._config.staging_max_turn_age,
             ttl_sec=self._config.staging_ttl_sec,
             related_ratio=self._config.stage_in_related_ratio,
             stage_in_limit=self._config.stage_in_limit,
@@ -51,6 +53,7 @@ class ComposeManager:
             normal_ratio=self._config.retrieve_normal_ratio,
             min_score=self._config.bm25_min_score,
             top_k=self._config.bm25_top_k,
+            query_rewriter=query_rewriter,
         )
         director_rng = Random(self._rng.random())
         self._director_retrieve = MemoryRetrievePolicy(
@@ -60,6 +63,7 @@ class ComposeManager:
             normal_ratio=self._config.retrieve_normal_ratio,
             min_score=self._config.bm25_min_score,
             top_k=max(1, self._config.director_bm25_top_k),
+            query_rewriter=query_rewriter,
         )
         self._trajectory = TrajectoryCompressor(chunk_size=self._config.compress_chunk_size)
         self._director_port = DirectorContextPort(self)
@@ -141,6 +145,7 @@ class ComposeManager:
             normal_ratio=1.0,
             min_score=self._config.bm25_min_score,
             top_k=max(1, int(top_k)),
+            query_rewriter=self._query_rewriter,
         )
         return policy.retrieve(
             sid,
