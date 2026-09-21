@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -138,6 +139,8 @@ class LiveSpeakHumanenessRuntime:
 
         persona = FilePersona(persona_dir)
         life = RecordingLifeOutbound()
+        # 门控类型与生产 SoulService 同一读法（REACT_SPEAK_UNIT_GATE）——
+        # 评测直构 SpeakService 时也保持与生产装配 1:1。
         service = SpeakService(
             persona=persona,
             presence=PresenceService(),
@@ -148,6 +151,7 @@ class LiveSpeakHumanenessRuntime:
             keyword_wait_ms=0,
             portrait_wait_ms=0,
             typing_idle_ms=50,
+            director_unit_gate=os.environ.get("REACT_SPEAK_UNIT_GATE", "").strip(),
         )
         service.start()
 

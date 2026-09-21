@@ -144,6 +144,14 @@
 - **E2E 验证**（`/ws/agent/run` 真机）：request_driven 与 direct 均可聊、人设在线、中途 `pipeline` 帧切换生效；遗留两点均为既有问题——request_driven 的 `turn_finish.answer` 常为空、回复经异步 speak_event 延迟一拍送达（与 2026-08 speak_turing live 空回复同模式）；guidance planner 偶发 JSON 解析异常（有降级路径）。
 - 本批单测：`test_speak_dormancy_and_life_events.py`（沉睡幂等、landmark phase 窗口、everyday 渲染、coordinator 注入）。speak 套件 29F/359P/17E（基线不变）。
 
+### 追加（2026-09-17 第三批：评测↔生产 1:1 对齐）
+
+- **REACT_SPEAK_RHYTHM_CARDS=off**（`layers.py`）：动态层不出导演/节奏卡（处境笔记、临场状态、舞台信息）——rd_combo 优胜形态的最后一块拼图；与评测消融臂共用同一份出清字段表。生产默认 on（行为不变）。
+- **判定 prompt 单源**：评测 `unit_judge.py` 的 v1/v2 system prompt 改为 import 生产 `directors/unit_gate.py`，评测与生产永不漂移。
+- **评测 runtime 接生产装配**：`LiveSpeakHumanenessRuntime` 直构 SpeakService 时同样读 `REACT_SPEAK_UNIT_GATE`——评测可用纯生产 env 复现生产管线。
+- **纯生产 env 验证**（8 case，无任何评测 hook）：`RHYTHM_CARDS=off + UNIT_GATE=v1` 达到画像 0.751 / precision 0.99 / 风格 3.5（人格在线 ✓），但综合 0.525 低于 rd_combo 的 0.722，差值主要来自 blind 0/8（vs 3/8）与均长 69 字（vs 55）。
+- **残余非 1:1 点（已定位）**：评测臂的门控在**每次角色生成的提示词组装点**同步过滤（热路径内 LLM）；生产门控挂在**编剧异步写线**（线程隔离要求），编剧当轮不落笔时该轮注入不经门控 → 回复更满、更易被盲测识破。彻底 1:1 需在编排 fast 通道做逐轮门控（待议：可在 orchestrator fast 事件中预判、角色回合读缓存判决）。另注：photo_memory/playful 单例画像 0.06 为评委方差（历史多次出现），N=8 下差值解读需谨慎。
+
 ## 9. 复现
 
 ```bash

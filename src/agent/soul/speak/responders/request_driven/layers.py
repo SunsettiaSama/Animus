@@ -17,17 +17,25 @@ from agent.soul.speak.responders.request_driven.protocol.scrub import scrub_comp
 # 指令模式（<speak>、"请勿" 等）在动态层出现时告警。
 
 # 评测消融开关（evals/speak_humaneness）：动态层卡片族过滤/改写。
-# ""             = 不过滤（生产行为不变）
+# ""             = 不过滤（生产行为，但仍受 REACT_SPEAK_RHYTHM_CARDS 影响）
 # "writer"       = 只保留剧情卡片（blank 导演/节奏族）
 # "director"     = 只保留导演/节奏卡片（blank 剧情族 + pass_info）
 # "dynsched"     = 节奏卡片出清 + 阈值策略接管注入（已被证伪的便宜版，留作对照）
 # "dynsched_llm" = 节奏卡出清 + 导演 LLM 判定注入（v1：只见对话近况）
-# "softplot"     = 节奏卡出清 + 剧情软约束措辞 + "对方在剧情中的位置"
+# "softplot"     = 节奏卡出清（软约束措辞已是生产默认）
 # "charsilence"  = 角色自主臂：沉默权（只回「……」）+ 自预约下一拍（存入上下文回显）
 # "combo"        = 软约束剧情 + 导演 LLM 调度（v1 判定）组合
 # "combo_v2"     = 软约束剧情 + 新导演判定（v2：喂入剧情材料对齐 + 中性权衡 prompt）
 # 按调用即时读取，进程内生效。
 CARD_FAMILY_FILTER_ENV = "SPEAK_EVAL_CARD_FAMILY"
+
+# 生产开关：REACT_SPEAK_RHYTHM_CARDS=off 时动态层不出导演/节奏卡
+# （rd_combo 优胜形态；与评测消融臂同一份出清字段表）。
+RHYTHM_CARDS_ENV = "REACT_SPEAK_RHYTHM_CARDS"
+
+
+def rhythm_cards_enabled() -> bool:
+    return os.environ.get(RHYTHM_CARDS_ENV, "").strip().lower() != "off"
 
 _RHYTHM_BLANK_MODES = (
     "writer",
@@ -38,7 +46,6 @@ _RHYTHM_BLANK_MODES = (
     "combo_v2",
 )
 _JUDGE_HOOK_MODES = ("dynsched_llm", "combo", "combo_v2")
-_SOFT_HEADER_MODES = ("softplot", "combo", "combo_v2")
 
 _SOFT_PLOT_OUTLINE_HEADER = (
     "参考剧情（软约束——她正处于此剧情中，供构思对用户的回复参考；"
@@ -341,7 +348,10 @@ def assemble_role_layers(
             if 0 <= int(i) < len(selected_share)
         )
 
-    if family in _RHYTHM_BLANK_MODES:  # 节奏卡片出清：blank 导演/节奏族
+    # 节奏卡片出清：评测消融臂（_RHYTHM_BLANK_MODES）或生产开关
+    # REACT_SPEAK_RHYTHM_CARDS=off（拟人度评测 R2~R5 结论：导演/节奏卡入
+    # 提示词会把回复撑满、盲测被识破；rd_combo 优胜形态即节奏卡出清）。
+    if family in _RHYTHM_BLANK_MODES or not rhythm_cards_enabled():
         director_focus = ""
         director_intent = ""
         director_direction = ""

@@ -218,6 +218,61 @@ def test_soft_plot_headers_are_default():
     assert "客观材料" not in rendered
 
 
+def test_rhythm_cards_env_blanks_rhythm_family(monkeypatch):
+    """REACT_SPEAK_RHYTHM_CARDS=off = rd_combo 优胜形态（生产开关）。"""
+    from types import SimpleNamespace
+
+    from agent.soul.speak.responders.request_driven.composer.projectors.dynamic_layer import (
+        DynamicLayerMaterials,
+        DynamicLayerSchedule,
+    )
+    from agent.soul.speak.responders.request_driven.layers import (
+        assemble_role_layers,
+        rhythm_cards_enabled,
+    )
+
+    view = SimpleNamespace(
+        session_id="s1", history_distilled=[], working_turns=[]
+    )
+    kwargs = dict(
+        user_text="在吗",
+        presence_mood="平静",
+        presence_speak_desire=70,
+        user_identity="访客",
+        director_focus="整理标本",
+        plot_flow_text="她在灯下整理标本。",
+    )
+
+    monkeypatch.delenv("REACT_SPEAK_RHYTHM_CARDS", raising=False)
+    assert rhythm_cards_enabled() is True
+    layers_on = assemble_role_layers(
+        view,
+        DynamicLayerMaterials(session_id="s1"),
+        DynamicLayerSchedule(reason="t"),
+        **kwargs,
+    )
+    assert layers_on.dynamic.presence_mood == "平静"
+    assert layers_on.dynamic.director_focus == "整理标本"
+    assert "整理标本" in layers_on.render_system_extra()
+
+    monkeypatch.setenv("REACT_SPEAK_RHYTHM_CARDS", "off")
+    assert rhythm_cards_enabled() is False
+    layers_off = assemble_role_layers(
+        view,
+        DynamicLayerMaterials(session_id="s1"),
+        DynamicLayerSchedule(reason="t"),
+        **kwargs,
+    )
+    assert layers_off.dynamic.presence_mood == ""
+    assert layers_off.dynamic.presence_speak_desire is None
+    assert layers_off.dynamic.user_identity == ""
+    rendered = layers_off.render_system_extra()
+    assert "你的临场状态" not in rendered
+    assert "本拍处境笔记" not in rendered
+    # 剧情族与软约束头不受影响
+    assert "参考剧情（软约束" in rendered or "此刻情景（软约束" in rendered
+
+
 def test_writer_user_memory_enrichment_and_gate_hook():
     from agent.soul.speak.responders.request_driven.screenwriter.writer import Screenwriter
 
