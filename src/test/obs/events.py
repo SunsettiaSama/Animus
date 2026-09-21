@@ -45,3 +45,16 @@ class ParseEvent:
     step_index: int
     event_type: str         # "retry_l2" | "repair_l3"
     diagnosis: str
+
+
+@dataclass
+class AuditEvent:
+    session_id: str
+    ts: float
+    model: str
+    scope: str              # "finish" | "step"
+    step_index: int
+    faithful: bool | None   # None = 不确定（解析失败/LLM 异常）
+    unsupported: list[str] = field(default_factory=list)
+    reason: str = ""
+    latency_ms: float = 0.0

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from infra.agent import BaseAgent, ObservationUnit, Timeline, Unit, UserUnit
+from infra.agent.auditor import AuditorConfig, OutputAuditor
 from infra.agent.parse import parse_tao_output
+from infra.agent.review import WhitelistCallReview
 
 
 @dataclass
@@ -46,6 +49,24 @@ class _FakeRunner:
             action = str(call.get("action") or "")
             out.append({"tool": action, "observation": f"ok:{action}"})
         return out
+
+
+class _AuditLLM:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def generate(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return '{"faithful": true, "unsupported": [], "reason": "ok"}'
+
+
+def _wait_for(condition, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.02)
+    return False
 
 
 def test_parse_finish_and_tool():
@@ -178,3 +199,121 @@ def test_reset_clears_session():
     assert agent.timeline.units == ()
     assert agent.steps_taken == 0
     assert agent.finished is False
+
+
+def test_review_blocks_batch_until_self_corrected():
+    llm = _ScriptedLLM(
+        [
+            '<T>搜</T><A>[{"action":"web_searc","args":{"q":"x"}}]</A>',
+            '<T>改用正确工具</T><A>[{"action":"web_search","args":{"q":"x"}}]</A>',
+            '<T>答</T><A>[{"action":"finish","args":{"answer":"完成"}}]</A>',
+        ]
+    )
+    runner = _FakeRunner()
+    review = WhitelistCallReview(frozenset({"web_search"}))
+    agent = BaseAgent(llm, runner, system="s", max_steps=5, call_review=review)
+    agent.add_user("问")
+
+    first = agent.step()
+    assert first.done is False
+    assert runner.calls == []  # 整批拦截：一步都没有执行
+    assert first.review is not None and not first.review.ok
+    assert first.observations[0].source == "review"
+    assert first.observations[0].tool == "review"
+    assert "web_search" in first.observations[0].observation
+
+    second = agent.step()
+    assert second.done is False
+    assert second.review is not None and second.review.ok
+    assert len(runner.calls) == 1  # 修正后放行
+    assert "ok:web_search" in second.observations[0].observation
+
+    third = agent.step()
+    assert third.done is True and third.answer == "完成"
+    kinds = [u.kind for u in agent.timeline.units]
+    assert kinds == [
+        "user",
+        "thought_action",
+        "observation",  # review 拦截
+        "thought_action",
+        "observation",  # 工具结果
+        "thought_action",
+    ]
+    review_units = [u for u in agent.timeline.units if isinstance(u, ObservationUnit) and u.source == "review"]
+    assert len(review_units) == 1
+
+
+def test_no_review_by_default_passthrough():
+    llm = _ScriptedLLM(
+        ['<T>a</T><A>[{"action":"anything_at_all","args":{}}]</A>']
+    )
+    runner = _FakeRunner()
+    agent = BaseAgent(llm, runner, max_steps=2)
+    agent.add_user("q")
+    result = agent.step()
+    assert result.done is False
+    assert result.review is None
+    assert len(runner.calls) == 1
+
+
+def test_auditor_fires_on_finish_only_by_default():
+    llm = _ScriptedLLM(
+        [
+            '<T>搜</T><A>[{"action":"web_search","args":{"q":"x"}}]</A>',
+            '<T>答</T><A>[{"action":"finish","args":{"answer":"完成"}}]</A>',
+        ]
+    )
+    audit_llm = _AuditLLM()
+    auditor = OutputAuditor(audit_llm, AuditorConfig(enabled=True))
+    agent = BaseAgent(llm, _FakeRunner(), max_steps=4, auditor=auditor)
+    try:
+        agent.add_user("问")
+        first = agent.step()
+        assert first.done is False
+        assert audit_llm.prompts == []  # 默认 scope=finish，非 finish 步不审
+
+        second = agent.step()
+        assert second.done is True
+        assert _wait_for(lambda: len(auditor.verdicts) == 1)
+        task, verdict = auditor.verdicts[0]
+        assert task.scope == "finish"
+        assert verdict.faithful is True
+        prompt = audit_llm.prompts[0]
+        assert "问" in prompt  # 上下文含用户输入
+        assert "ok:web_search" in prompt  # 上下文含工具观察
+        assert "答" in prompt  # 产出为模型原文
+    finally:
+        auditor.stop()
+
+
+def test_auditor_every_step_scope():
+    llm = _ScriptedLLM(
+        [
+            '<T>搜</T><A>[{"action":"web_search","args":{"q":"x"}}]</A>',
+            '<T>答</T><A>[{"action":"finish","args":{"answer":"完成"}}]</A>',
+        ]
+    )
+    audit_llm = _AuditLLM()
+    auditor = OutputAuditor(audit_llm, AuditorConfig(enabled=True, scope="every_step"))
+    agent = BaseAgent(llm, _FakeRunner(), max_steps=4, auditor=auditor)
+    try:
+        agent.add_user("问")
+        agent.step()
+        agent.step()
+        assert _wait_for(lambda: len(auditor.verdicts) == 2)
+        assert [t.scope for t, _ in auditor.verdicts] == ["step", "finish"]
+    finally:
+        auditor.stop()
+
+
+def test_disabled_auditor_is_inert_in_loop():
+    llm = _ScriptedLLM(
+        ['<T>x</T><A>[{"action":"finish","args":{"answer":"1"}}]</A>']
+    )
+    audit_llm = _AuditLLM()
+    auditor = OutputAuditor(audit_llm, AuditorConfig(enabled=False))
+    agent = BaseAgent(llm, _FakeRunner(), max_steps=2, auditor=auditor)
+    agent.run("q")
+    time.sleep(0.1)
+    assert audit_llm.prompts == []
+    assert auditor.status()["state"] == "stopped"

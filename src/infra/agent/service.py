@@ -6,8 +6,10 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
+from infra.agent.auditor import OutputAuditor
 from infra.agent.loop import BaseAgent
 from infra.agent.ports import ActionRunner
+from infra.agent.review import CallReview
 from infra.agent.timeline import Timeline
 from infra.agent.unit import Unit
 from infra.llm.llm import BaseLLM
@@ -31,6 +33,8 @@ class AgentService:
         system: str = "",
         max_steps: int = 8,
         timeline: Timeline | None = None,
+        call_review: CallReview | None = None,
+        auditor: OutputAuditor | None = None,
         name: str = "",
         owner: str = "agent",
         auto_start: bool = True,
@@ -41,6 +45,8 @@ class AgentService:
             system=system,
             max_steps=max_steps,
             timeline=timeline,
+            call_review=call_review,
+            auditor=auditor,
         )
         self._owner = owner.strip() or "agent"
         self._name = (name.strip() or f"agent-service-{id(self):x}")
