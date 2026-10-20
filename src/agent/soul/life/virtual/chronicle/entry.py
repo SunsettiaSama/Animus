@@ -22,6 +22,7 @@ class VirtualChronicleKind(str, Enum):
     surprise = "surprise"
     wander_beat = "wander_beat"
     collision = "collision"
+    game_event = "game_event"
 
 
 @dataclass

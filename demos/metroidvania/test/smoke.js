@@ -39,7 +39,7 @@ sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 
 for (const f of ['js/audio.js', 'js/input.js', 'js/levels.js', 'js/particles.js',
-                 'js/player.js', 'js/enemies.js', 'js/boss.js', 'js/game.js']) {
+                 'js/player.js', 'js/enemies.js', 'js/npc.js', 'js/boss.js', 'js/game.js']) {
   vm.runInContext(fs.readFileSync(f, 'utf8'), sandbox, { filename: f });
 }
 

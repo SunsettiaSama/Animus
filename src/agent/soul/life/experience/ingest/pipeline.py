@@ -16,6 +16,7 @@ from ..unit_layer.manage.log import ExperienceLog
 from ..unit_layer.manage.orchestrator import ExperienceOrchestrator
 from ..unit_layer.promote.ports import MemoryIngestPort
 from .builder import ExperienceBuilder
+from .game import GamePerceptionInbound
 from .incident import IncidentIngestResult, LifeIncident
 
 if TYPE_CHECKING:
@@ -87,6 +88,35 @@ class LifeExperiencePipeline:
 
     def ingest_unit(self, unit: ExperienceUnit) -> None:
         self._orchestrator.ingest(unit)
+
+    def ingest_game_beat(self, beat: GamePerceptionInbound) -> ExperienceUnit:
+        """游戏/仿真亲历事件 → ExperienceUnit（source=game）。
+
+        narrative 已是感知协议层翻译好的流畅自然语言；结构化原始数据
+        落 ``evidence``。热日志 + VirtualChronicle(game_event) + Presence
+        同步由编排器既有链路完成。
+        """
+        evidence = dict(beat.evidence)
+        evidence.setdefault("perception_protocol", {
+            "trigger": beat.trigger,
+            "scene": beat.scene,
+            "channel_id": beat.channel_id,
+        })
+        return self._builder.record_virtual_beat(
+            beat.narrative.strip(),
+            perception=beat.effective_perception,
+            action_summary=beat.effective_action_summary,
+            emotion_text=beat.emotion_text,
+            emotion_label=beat.emotion_label,
+            valence_delta=beat.valence_delta,
+            arousal_delta=beat.arousal_delta,
+            salience=beat.salience,
+            action_kind=ExperienceActionKind.attending,
+            source=ExperienceSource.game.value,
+            evidence=evidence,
+            session_id=beat.session_id,
+            channel_id=beat.channel_id,
+        )
 
     def ingest_life_incident(
         self,

@@ -34,6 +34,7 @@ const G = {
   deaths: 0,
   player: new Player(),
   enemies: [], bullets: [], shocks: [], rocks: [], healMotes: [], pickups: [], lanterns: [],
+  npcs: [],
   boss: null, portal: null, fightOn: false,
   cam: { x: 0, y: 0 },
   shake: 0, hitstop: 0,
@@ -73,6 +74,7 @@ function loadRoom(id, spawn) {
   G.chapter = def.chapter;
   G.enemies = []; G.bullets = []; G.shocks = []; G.rocks = [];
   G.healMotes = []; G.pickups = []; G.lanterns = [];
+  G.npcs = [];
   G.boss = null; G.portal = null; G.fightOn = false;
 
   const rows = World.rows;
@@ -80,6 +82,7 @@ function loadRoom(id, spawn) {
     for (let tx = 0; tx < rows[ty].length; tx++) {
       const ch = rows[ty][tx];
       if (ch === 'k') G.lanterns.push(new Checkpoint(tx, ty));
+      else if (ch === 'N') G.npcs.push(new NPC(tx, ty));
       else if (ch === 'c') G.enemies.push(new Crawler(tx, ty));
       else if (ch === 'f') G.enemies.push(new Flyer(tx, ty));
       else if (ch === 's') G.enemies.push(new Shooter(tx, ty));
@@ -217,6 +220,7 @@ function tickPlay() {
   for (const m of G.healMotes) m.update();
   G.healMotes = G.healMotes.filter((m) => !m.dead);
   for (const k of G.lanterns) k.update();
+  for (const n of G.npcs) n.update();
   for (const it of G.pickups) it.update();
   G.pickups = G.pickups.filter((it) => !it.dead);
   if (G.boss) G.boss.update();
@@ -595,6 +599,7 @@ function drawWorld() {
   ctx.translate(Math.round(-G.cam.x + shx), Math.round(-G.cam.y + shy));
   drawTilesAt(0, 0);
   for (const k of G.lanterns) k.draw(ctx);
+  for (const n of G.npcs) n.draw(ctx);
   for (const it of G.pickups) it.draw(ctx);
   if (G.portal) G.portal.draw(ctx);
   for (const m of G.healMotes) m.draw(ctx);

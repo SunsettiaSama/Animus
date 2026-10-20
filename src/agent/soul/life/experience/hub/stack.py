@@ -6,7 +6,7 @@ from config.soul.presence.config import EXPERIENCE_MEMORY_INGEST_THRESHOLD
 
 from ..dialogue import DialogueExperiencePipeline
 from ..domain import ExperienceSource, ExperienceUnit
-from ..ingest import IncidentIngestResult, LifeExperiencePipeline, LifeIncident
+from ..ingest import GamePerceptionInbound, IncidentIngestResult, LifeExperiencePipeline, LifeIncident
 from ..unit_layer import ExperienceUnitLayer
 from ..unit_layer.manage.collapser import ExperienceCollapser
 from ..unit_layer.promote.ports import MemoryIngestPort
@@ -111,6 +111,10 @@ class LifeExperienceStack:
             source=source,
         )
 
+    def ingest_game_beat(self, beat: GamePerceptionInbound) -> ExperienceUnit:
+        """感知协议层入口：游戏/仿真事件 → experience unit（source=game）。"""
+        return self.life.ingest_game_beat(beat)
+
     def record_dialogue_turn(
         self,
         *,
@@ -191,4 +195,22 @@ class LifeExperienceStack:
             agent_persona_narrative=agent_persona_narrative,
         )
         self.orchestrator.ingest_authored_unit(result.unit)
+        self._emit_compression_block(block, interactor_id, result.unit)
+
+    @staticmethod
+    def _emit_compression_block(block, interactor_id: str, unit) -> None:
+        """R1.1 观测：Speak 压缩块经 Skill1 产出的正式体验单元。"""
+        try:
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.COMPRESSION_BLOCK,
+                unit_id=unit.id,
+                interactor_id=str(interactor_id or ""),
+                session_id=str(getattr(block, "session_id", "") or ""),
+                promote_to_memory=bool(unit.feeling.promote_to_memory),
+            )
+        except Exception:
+            pass
 

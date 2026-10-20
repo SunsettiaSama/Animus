@@ -23,7 +23,7 @@ function runAllTests() {
   {
     let info = [];
     let ok = true;
-    const allowed = new Set('#=^kpcf sdjWVGH12345.'.split(''));
+    const allowed = new Set('#=^kpcf sdjWVGH12345.N'.split(''));
     for (const [id, def] of Object.entries(ROOMS)) {
       for (let y = 0; y < def.map.length; y++) {
         for (let x = 0; x < def.map[y].length; x++) {
@@ -35,7 +35,7 @@ function runAllTests() {
       for (let y = 0; y < def.map.length; y++) {
         for (let x = 0; x < def.map[y].length; x++) {
           const c = def.map[y][x];
-          if ('kpcWs'.includes(c)) {
+          if ('kpcWNs'.includes(c)) {
             const below = def.map[y + 1] && def.map[y + 1][x];
             if (!'#GH'.includes(below)) { ok = false; info.push(id + ' 实体' + c + ' 悬空 @' + x + ',' + y + ' 下方=' + below); }
           }

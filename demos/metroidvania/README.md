@@ -23,6 +23,7 @@ python -m http.server 8000
 | 冲刺（获得后） | C / L / Shift |
 | 下劈弹跳 | 空中按住 ↓ + 攻击 |
 | 蹬墙跳 | 贴墙下滑时按跳跃 |
+| 与守灯人交谈 | 靠近后按 Enter |
 | 暂停 | Esc / P |
 | 静音 | M |
 
@@ -45,8 +46,26 @@ js/levels.js    6 个房间的 ASCII 地图 + 碰撞世界
 js/particles.js 粒子系统
 js/player.js    玩家手感（土狼时间/跳跃缓冲/蹬墙跳/冲刺/下劈）
 js/enemies.js   爬行者/飞翼/炮手/弹幕/道具/灯台
+js/npc.js       守灯人 NPC（soul 化身，靠近按 Enter 交谈）
 js/boss.js      两个 Boss
 js/game.js      状态机 + 渲染 + HUD
+test/           无头仿真（sim.js）与全量冒烟（smoke.js），node 直接运行
+perception/     感知协议层无头采集端（harness.js，NDJSON 双向）
+```
+
+## 感知协议层（soul 接入）
+
+本 demo 是感知协议层（`src/agent/perception`，文档见 `docs/agent/perception/README.md`）
+接入的第一个游戏：
+
+- 入口处的**守灯人·烛**是 soul 在游戏世界中的化身；浏览器直开时有静态
+  兜底台词，接桥后由 soul 的 speak 管线产出。
+- `perception/harness.js` 在 node 里无头跑完整局，帧级 diff 产出事件流
+  （stdout NDJSON），并接收 soul 台词回注（stdin NDJSON）。
+
+```bash
+# 端到端演示（仓库根执行）：无头整局 → 事件 → 自然语言 → life 入账 → NPC 对话
+python scripts/starfall_perception_demo.py
 ```
 
 ## 调参

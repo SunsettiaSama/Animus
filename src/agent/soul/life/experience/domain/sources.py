@@ -11,6 +11,7 @@ class ExperienceSource(str, Enum):
     narrative = "narrative"
     surprise = "surprise"
     collision = "collision"
+    game = "game"
 
 
 # 现实锚点层写入编排器的 source
@@ -23,6 +24,7 @@ REALITY_SOURCES: frozenset[str] = frozenset({
 VIRTUAL_SOURCES: frozenset[str] = frozenset({
     ExperienceSource.narrative.value,
     ExperienceSource.surprise.value,
+    ExperienceSource.game.value,
 })
 
 # 参与交会折叠检测的 source（现实 + 虚拟）

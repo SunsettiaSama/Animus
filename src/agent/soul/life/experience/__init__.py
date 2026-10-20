@@ -24,6 +24,7 @@ from .domain import (
 from .hub import LifeExperienceStack
 from .ingest import (
     ExperienceBuilder,
+    GamePerceptionInbound,
     IncidentIngestResult,
     IncidentKind,
     LifeExperiencePipeline,
@@ -59,6 +60,7 @@ __all__ = [
     "ExperienceUnit",
     "ExperienceUnitLayer",
     "ExperienceUnitManager",
+    "GamePerceptionInbound",
     "IncidentIngestResult",
     "IncidentKind",
     "InteractionDirection",

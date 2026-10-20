@@ -29,6 +29,10 @@ class AppPaths:
         return self.root / "config" / "llm_core" / "aux_models.yaml"
 
     @property
+    def vision_model_yaml(self) -> Path:
+        return self.root / "config" / "llm_core" / "vision.yaml"
+
+    @property
     def memory_config_yaml(self) -> Path:
         return self.root / "config" / "agent" / "memory.yaml"
 

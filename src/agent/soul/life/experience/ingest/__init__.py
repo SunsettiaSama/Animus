@@ -1,4 +1,5 @@
 from .builder import ExperienceBuilder
+from .game import GamePerceptionInbound
 from .incident import IncidentIngestResult, IncidentKind, LifeIncident
 from .pipeline import LifeExperiencePipeline
 from .presence import (
@@ -10,6 +11,7 @@ from .presence import (
 
 __all__ = [
     "ExperienceBuilder",
+    "GamePerceptionInbound",
     "IncidentIngestResult",
     "IncidentKind",
     "LifeExperiencePipeline",

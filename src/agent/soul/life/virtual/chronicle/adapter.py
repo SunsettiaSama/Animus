@@ -13,6 +13,10 @@ def virtual_entry_from_unit(unit: ExperienceUnit) -> VirtualChronicleEntry | Non
     if unit.source == "surprise":
         kind = VirtualChronicleKind.surprise
         trigger = VirtualUnitTrigger.surprise.value
+    elif unit.source == "game":
+        # 感知协议层：游戏/仿真侧亲历事件（agent.soul.感知协议层 灌入）
+        kind = VirtualChronicleKind.game_event
+        trigger = ctx.trigger.value if ctx else "game"
     elif unit.source == "narrative":
         trigger = ctx.trigger.value if ctx else VirtualUnitTrigger.fabricate.value
         if trigger in (
