@@ -22,6 +22,23 @@ class EvolutionBeat:
     emotion_strength: str = ""
 
 
+def beats_from_dicts(items: list[dict]) -> list[EvolutionBeat]:
+    """soul.run_wander 等返回的 beat 字典 → EvolutionBeat（各域心跳入口共用）。"""
+    return [
+        EvolutionBeat(
+            hint=str(item.get("hint", "")),
+            salience=float(item.get("salience", 0.4)),
+            trigger=str(item.get("trigger", "")),
+            source=str(item.get("source", "")),
+            share_desire=str(item.get("share_desire", "")),
+            emotion_text=str(item.get("emotion_text", "")),
+            emotion_intensity=float(item.get("emotion_intensity", 0.0)),
+            emotion_strength=str(item.get("emotion_strength", "")),
+        )
+        for item in items
+    ]
+
+
 @dataclass
 class EvolutionCaptureReport:
     events: list[dict] = field(default_factory=list)

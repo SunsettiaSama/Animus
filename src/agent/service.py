@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from runtime.scheduler.engine import SchedulerEngine
     from runtime.scheduler.config import SchedulerConfig
     from runtime.scheduler.task import ScheduledTask
-    from agent.soul.heartbeat.task_runner import TaskRunner
+    from agent.soul.heartbeat.schedule.task_runner import TaskRunner
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +51,8 @@ class AgentService:
         memory_service: Any = None,
         soul_service: Any = None,
     ) -> None:
-        from agent.soul.heartbeat.profiles import make_default_scheduler_config
-        from agent.soul.heartbeat.task_runner import TaskRunner
+        from agent.soul.heartbeat.schedule.profiles import make_default_scheduler_config
+        from agent.soul.heartbeat.schedule.task_runner import TaskRunner
 
         self._llm_cfg_path = llm_cfg_path
         self._llm_service = llm_service

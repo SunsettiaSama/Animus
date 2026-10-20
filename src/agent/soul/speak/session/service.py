@@ -281,6 +281,12 @@ class SpeakSessionService:
     def is_pushing(self, session_id: str) -> bool:
         return self._queues.is_pushing(session_id)
 
+    def any_busy(self) -> bool:
+        return self._queues.any_busy()
+
+    def any_typing(self) -> bool:
+        return self._queues.any_typing()
+
     def is_busy(self, session_id: str) -> bool:
         return self._queues.is_busy(session_id)
 

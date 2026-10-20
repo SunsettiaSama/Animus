@@ -1955,6 +1955,14 @@ class SpeakService(SpeakInboundPort, SpeakOutboundPort, SpeakDrivePort):
     def is_busy(self, session_id: str) -> bool:
         return self._session_manager.is_busy(session_id)
 
+    def any_busy(self) -> bool:
+        """聚合只读口（heartbeat vitals 探针）：任一会话在说话/推送。"""
+        return self._session_manager.any_busy()
+
+    def any_typing(self) -> bool:
+        """聚合只读口：任一会话的用户正在打字。"""
+        return self._session_manager.any_typing()
+
     def notify_director_user_input(
         self,
         session_id: str,

@@ -29,7 +29,7 @@ class SubAgentTaoBackend:
     def _resolve_profiles(self) -> dict[str, SubAgentProfile]:
         if self._profiles is not None:
             return self._profiles
-        from agent.soul.heartbeat.profiles import make_default_scheduler_config
+        from agent.soul.heartbeat.schedule.profiles import make_default_scheduler_config
         return make_default_scheduler_config(llm_cfg_path=self._llm_cfg_path).profiles
 
     def run(self, request: TaoRunRequest) -> TaoRunResult:

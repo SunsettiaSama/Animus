@@ -18,6 +18,7 @@ class SoulHeartbeatConfig:
     inject_timezone: str = ""
     preflight_instruction: str = ""
     llm_aux_name: str = "heartbeat"
+    inject_judge_timeout_sec: float = 30.0
     webhook_secret: str = ""
 
     @classmethod
@@ -59,5 +60,6 @@ class SoulHeartbeatConfig:
             inject_timezone=str(_hb_attr("inject_timezone", "")),
             preflight_instruction=str(_hb_attr("preflight_instruction", "")),
             llm_aux_name=str(_hb_attr("llm_aux_name", "heartbeat")),
+            inject_judge_timeout_sec=float(_hb_attr("inject_judge_timeout_sec", 30.0)),
             webhook_secret=str(_hb_attr("webhook_secret", "")),
         )

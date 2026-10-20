@@ -346,7 +346,7 @@ class TaoLoop:
         _engine_to_use = scheduler_engine
         if _engine_to_use is None and cfg.scheduler is not None:
             from runtime.scheduler.engine import SchedulerEngine
-            from agent.soul.heartbeat.task_runner import TaskRunner
+            from agent.soul.heartbeat.schedule.task_runner import TaskRunner
             _runner = TaskRunner(
                 cfg=cfg.scheduler,
                 timeline=self._timeline,

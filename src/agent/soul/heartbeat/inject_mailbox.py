@@ -20,6 +20,15 @@ class HeartbeatInjectMailbox:
         with self._lock:
             self._pending = t
 
+    def peek(self) -> str | None:
+        """非破坏读（vitals 探针用）；消费仍走 take_for_prompt。"""
+        with self._lock:
+            return self._pending
+
+    def has_pending(self) -> bool:
+        with self._lock:
+            return self._pending is not None
+
     def take_for_prompt(self) -> str | None:
         with self._lock:
             p = self._pending

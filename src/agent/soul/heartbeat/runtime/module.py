@@ -3,18 +3,20 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from config.soul.config import SoulConfig
-from agent.soul.heartbeat.checklist import ChecklistRegistry, default_checklist
+from agent.soul.heartbeat.schedule import ChecklistRegistry
 from agent.soul.heartbeat.config import SoulHeartbeatConfig
 from agent.soul.heartbeat.console_log import configure_console_log, hb_debug
-from agent.soul.heartbeat.orchestrator import HeartbeatOrchestrator
+from agent.soul.heartbeat.orchestrate.orchestrator import HeartbeatOrchestrator
+from agent.soul.heartbeat.policy import may_sleep
+from agent.soul.heartbeat.vitals import VitalsBuilder
+from agent.soul.heartbeat.vitals.snapshot import SoulVitals
+from agent.soul.heartbeat.window import within_window
 
-_MEMORY_SLEEP_ITEM_ID = "memory-sleep"
 from agent.soul.heartbeat.tick_log import HeartbeatTickLog, HeartbeatTickResult
-from agent.soul.heartbeat.worker import SoulEvolutionWorker
+from agent.soul.heartbeat.orchestrate.worker import SoulEvolutionWorker
 
 if TYPE_CHECKING:
     from agent.soul.service import SoulService
@@ -42,11 +44,17 @@ class HeartbeatModule:
         self._soul: SoulService | None = None
 
         self._orchestrator = HeartbeatOrchestrator(
-            checklist=ChecklistRegistry(default_checklist(self._soul_config)),
+            checklist=ChecklistRegistry(),
             soul_config=self._soul_config,
         )
         self._evolution_worker = SoulEvolutionWorker(self._orchestrator)
         self._orchestrator.set_worker(self._evolution_worker)
+        self._orchestrator.set_vitals_provider(lambda: self.vitals())
+
+        self._vitals_builder = VitalsBuilder.default(
+            soul=None, worker=self._evolution_worker, core=None
+        )
+        self._core_service = None  # attach_core_service 回填
 
         self._lock = threading.Lock()
 
@@ -58,10 +66,17 @@ class HeartbeatModule:
 
         in_active = self._in_active_hours()
         if self._soul is not None and self._soul.is_running:
-            self._orchestrator.run_due_item(_MEMORY_SLEEP_ITEM_ID)
+            # 活跃时段外仍需执行的项（如 memory-sleep 的夜间整理）先行
+            for off_item in self._orchestrator.checklist.off_hours_items():
+                if off_item.enabled:
+                    self._orchestrator.run_due_item(off_item.id)
             if not in_active:
                 if self._soul.presence.is_awake():
-                    self._soul.run_presence_sleep()
+                    ok, reason = may_sleep(self.vitals())
+                    if ok:
+                        self._soul.run_presence_sleep()
+                    else:
+                        hb_debug(logger, "[Heartbeat] sleep deferred - %s", reason)
             elif not self._soul.presence.is_awake():
                 self._soul.run_presence_wake()
 
@@ -78,7 +93,7 @@ class HeartbeatModule:
             return result
 
         results = self._orchestrator.run_due(
-            exclude_item_ids=frozenset({_MEMORY_SLEEP_ITEM_ID}),
+            exclude_item_ids=frozenset(i.id for i in self._orchestrator.checklist.off_hours_items()),
         )
         duration_ms = int((time.monotonic() - t0) * 1000)
         ran = sum(1 for r in results if r.ok)
@@ -100,10 +115,25 @@ class HeartbeatModule:
     def set_soul_service(self, soul: SoulService | None) -> None:
         self._soul = soul
         self._orchestrator.set_soul_service(soul)
+        # 体征探针随 soul 接线重建；core 引用保留（由 attach_core_service 维护）
+        self._vitals_builder = VitalsBuilder.default(
+            soul=soul, worker=self._evolution_worker, core=self._core_service
+        )
         if soul is not None:
             self._soul_config = soul.config
             if soul.is_running:
                 self.start_evolution_worker()
+
+    def attach_core_service(self, core) -> None:
+        """core 线程由 SoulService 在 start 后创建，此处回填自身探针。"""
+        from agent.soul.heartbeat.probe import HeartbeatSelfProbe
+
+        self._core_service = core
+        self._vitals_builder.register(HeartbeatSelfProbe(core))
+
+    def vitals(self) -> SoulVitals:
+        """当前生命体征快照（探针容错，绝不抛）。"""
+        return self._vitals_builder.snapshot()
 
     def set_scheduler_engine(self, engine) -> None:
         self._orchestrator.set_scheduler_engine(engine)
@@ -139,16 +169,8 @@ class HeartbeatModule:
         return self._tick_log.recent(n)
 
     def _in_active_hours(self) -> bool:
-        start_str = self._cfg.active_hours_start
-        end_str = self._cfg.active_hours_end
-        tz_name = self._cfg.active_timezone
-        if not start_str or not end_str:
-            return True
-        from datetime import time as dtime
-        from zoneinfo import ZoneInfo
-
-        tz = ZoneInfo(tz_name)
-        now_local = datetime.now(tz).time()
-        start = dtime.fromisoformat(start_str)
-        end_ = dtime.fromisoformat(end_str)
-        return start <= now_local <= end_
+        return within_window(
+            self._cfg.active_hours_start,
+            self._cfg.active_hours_end,
+            self._cfg.active_timezone,
+        )

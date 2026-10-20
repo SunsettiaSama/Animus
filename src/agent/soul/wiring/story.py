@@ -349,8 +349,6 @@ class StoryRuntime:
         if expired:
             result["expired_archived"] = len(expired)
         result["pool_depth"] = len(self.pool.pending_landmark_ids())
-        # 预约轴提前演化（T-1h）：重活后台单飞，tick 本体保持零 LLM 等待
-        self._maybe_evolve()
         return result
 
     # ── 预约轴提前演化（导演规划生活 + 编剧成稿 + 预跑池，R9 预约轴版） ──
@@ -359,19 +357,33 @@ class StoryRuntime:
         """StoryScheduler 的供给源：预跑池到点出货（零 LLM 等待）。"""
         return [e.draft for e in self.pool.pop_due(now)]
 
-    def _maybe_evolve(self) -> None:
-        if self._evolve_inflight or not self.pool.has_capacity():
-            return
-        if self._soul() is None:
-            return
-        self._evolve_inflight = True
-        threading.Thread(
-            target=self._evolve_pass, name="story-evolution", daemon=True
-        ).start()
+    def maybe_submit_evolve(self, orchestrator) -> bool:
+        """有容量时把演化过道作为一次性重任务提交给心跳 worker。
 
-    def _evolve_pass(self) -> None:
-        """后台演化过场：①窗口内预约地标提前 fill（重 LLM）；②已演化未
-        开口地标的 echo 补稿（重启丢池/失效重估/到点路径先填后漏，零 LLM）。"""
+        固定 id ``story-evolve`` 借 worker pending 去重防重入；
+        演化本体见 :meth:`evolve_pass`。
+        """
+        if orchestrator is None:
+            return False
+        if self._evolve_inflight or not self.pool.has_capacity():
+            return False
+        if self._soul() is None:
+            return False
+        from agent.soul.heartbeat.schedule.item import ChecklistItem
+
+        return orchestrator.submit_heavy(ChecklistItem(
+            id="story-evolve",
+            domain="story",
+            action="story.evolve",
+            target="agent.soul.wiring.story_tick:story_evolve_entry",
+            heavy=True,
+        ))
+
+    def evolve_pass(self) -> None:
+        """演化过道：①窗口内预约地标提前 fill（重 LLM）；②已演化未
+        开口地标的 echo 补稿（重启丢池/失效重估/到点路径先填后漏，零 LLM）。
+        由心跳 SoulEvolutionWorker 执行（submit_heavy 提交）。"""
+        self._evolve_inflight = True
         try:
             soul = self._soul()
             if soul is None:

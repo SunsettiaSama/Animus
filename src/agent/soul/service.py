@@ -17,8 +17,9 @@ from infra.memory import MemoryInfraService
 from config.soul.config import SoulConfig
 from agent.soul.access import is_read_api_action
 from agent.soul.heartbeat.bridge import MemoryHeartbeatResult
-from agent.soul.heartbeat.evolution import new_heartbeat_tick_id
-from agent.soul.heartbeat.orchestrator import HeartbeatOrchestrator
+from agent.soul.memory.heartbeat import new_heartbeat_tick_id
+from agent.soul.heartbeat.orchestrate.orchestrator import HeartbeatOrchestrator
+from agent.soul.life.experience.ingest.game import GamePerceptionInbound
 from agent.soul.life.experience.ingest.incident import IncidentIngestResult, LifeIncident
 from agent.soul.presence import (
     Expectation,
@@ -145,6 +146,7 @@ class SoulService:
         self._presence_speak_bridge: Any = None
         self._presence_speak_wired = False
         self._agent_initiated_handlers: list[Any] = []
+        self._game_event_briefs_port: Any = None
 
     @property
     def config(self) -> SoulConfig:
@@ -881,6 +883,35 @@ class SoulService:
         self._ensure_experience_pipeline()
         return self.experience.ingest_incident(incident, salience=incident.salience)
 
+    def ingest_game_perception(self, beat: GamePerceptionInbound) -> dict:
+        """感知协议层入口：游戏/仿真亲历事件 → experience unit（source=game）。
+
+        事件在感知协议层已被翻译为流畅自然语言（``beat.narrative``），
+        此处只入账：热日志 + VirtualChronicle(game_event) + Presence 同步。
+        """
+        self._require_running()
+        self._ensure_experience_pipeline()
+        unit = self.experience.ingest_game_beat(beat)
+        return {
+            "ok": True,
+            "experience_id": unit.id,
+            "source": unit.source,
+            "salience": unit.feeling.salience,
+            "narrative": unit.situation.narration,
+        }
+
+    def attach_game_event_briefs(self, port) -> None:
+        """挂接游戏事件简报口（感知协议层 store.briefs 形状）。
+
+        简报并入 speak 的 life 事件口（"[正在经历/刚经历完] …"），
+        上限 4 条内 landmark 优先，游戏事件随后补位。
+        """
+        self._game_event_briefs_port = port
+
+    def register_speak_context_provider(self, provider) -> None:
+        """注册 speak 环境材料 Provider（游戏内容/外部世界观封包接入点）。"""
+        self._ensure_speak_service().register_context_provider(provider)
+
     def seed_session_warm_spread(self, session_id: str) -> None:
         sid = session_id.strip()
         if not sid or not self._warm_spread_unit_ids:
@@ -1034,6 +1065,9 @@ class SoulService:
         self._heartbeat = heartbeat
         self._orchestrator = heartbeat.orchestrator
         heartbeat.set_soul_service(self)
+        from agent.soul.wiring.heartbeat import register_default_wake_items
+
+        register_default_wake_items(heartbeat, self)
         self._ensure_presence_service()
         self.presence.set_timezone(heartbeat.config.active_timezone)
         if self._scheduler_engine is not None:
@@ -1056,9 +1090,18 @@ class SoulService:
 
     def status(self) -> dict[str, Any]:
         evolution_status: dict[str, Any] = {}
+        vitals_status: dict[str, Any] = {}
         if self._heartbeat is not None:
             evolution_status = self._heartbeat.evolution_worker.status()
+            from agent.soul.heartbeat.policy import judge_liveness
+
+            vitals = self._heartbeat.vitals()
+            vitals_status = {
+                "vitals": vitals.as_dict(),
+                "liveness": judge_liveness(vitals),
+            }
         workers_status = self._workers.status(orchestration=evolution_status)
+        workers_status["heartbeat_vitals"] = vitals_status
         return {
             "state": self._state,
             "life_dir": self._life_dir,
@@ -1086,7 +1129,7 @@ class SoulService:
         if self._heartbeat is not None:
             return self._heartbeat
         from agent.soul.heartbeat.config import SoulHeartbeatConfig
-        from agent.soul.heartbeat.module import HeartbeatModule
+        from agent.soul.heartbeat.runtime.module import HeartbeatModule
 
         hb_cfg = SoulHeartbeatConfig.from_soul_config(self._cfg)
         module = HeartbeatModule(
@@ -1096,6 +1139,9 @@ class SoulService:
             soul_config=self._cfg,
         )
         module.set_soul_service(self)
+        from agent.soul.wiring.heartbeat import register_default_wake_items
+
+        register_default_wake_items(module, self)
         self._heartbeat = module
         self._orchestrator = module.orchestrator
         self._ensure_presence_service()
@@ -1107,13 +1153,14 @@ class SoulService:
     def _start_core_heartbeat(self) -> None:
         if self._core_heartbeat is not None:
             return
-        from agent.soul.heartbeat.core_service import HeartbeatCoreService
+        from agent.soul.heartbeat.runtime.core_service import HeartbeatCoreService
 
         self._core_heartbeat = HeartbeatCoreService(
             heartbeat=self._ensure_heartbeat(),
             llm_service=self._llm_service,
             llm_cfg_path=self._heartbeat_llm_cfg_path,
         )
+        self._heartbeat.attach_core_service(self._core_heartbeat)
         self._core_heartbeat.start()
 
     def _stop_core_heartbeat(self) -> None:
@@ -1187,7 +1234,7 @@ class SoulService:
 
     def run_memory_sleep(self, *, dry_run: bool = False) -> dict:
         """手动触发一次记忆睡眠整理（遗忘扫描 + 聚类重建 + 反刍喂料 + 缓冲衰减）。"""
-        from agent.soul.heartbeat.evolution import new_heartbeat_tick_id
+        from agent.soul.memory.heartbeat import new_heartbeat_tick_id
 
         self._require_running()
         tid = new_heartbeat_tick_id()
@@ -1347,7 +1394,7 @@ class SoulService:
         """由 life-worker 规划一条里程碑：先查窗口配额，再 compose + 计划写入。"""
         from datetime import datetime, timezone
 
-        from agent.soul.heartbeat.checklist.landmark_schedule import (
+        from agent.soul.heartbeat.schedule.landmark_schedule import (
             compute_landmark_trigger_at,
             landmark_window_start,
         )
@@ -1887,11 +1934,22 @@ class SoulService:
 
             def _life_events_for_speak():
                 """角色正在亲历的 landmark（life→speak 演化通道）；
-                空列表 = 无事件，编剧据材料里的 everyday 标记写日常感。"""
-                return self.life.api.current_landmark_briefs(
+                空列表 = 无事件，编剧据材料里的 everyday 标记写日常感。
+                感知协议层挂接的游戏事件简报随后并入（见 attach_game_event_briefs）。"""
+                events = list(self.life.api.current_landmark_briefs(
                     past_sec=3600.0,
                     future_sec=300.0,
-                )
+                ))
+                game_port = self._game_event_briefs_port
+                if game_port is not None:
+                    try:
+                        events.extend(
+                            brief for brief in (game_port() or [])
+                            if isinstance(brief, dict) and brief.get("intention")
+                        )
+                    except Exception:  # noqa: BLE001 — 游戏侧故障不拖垮 speak
+                        pass
+                return events
 
             self._speak_service.attach_life_event_port(_life_events_for_speak)
 

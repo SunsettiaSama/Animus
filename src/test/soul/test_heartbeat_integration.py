@@ -4,7 +4,7 @@ import logging
 
 from agent.soul.heartbeat.config import SoulHeartbeatConfig
 from agent.soul.heartbeat.console_log import configure_console_log
-from agent.soul.heartbeat.module import HeartbeatModule
+from agent.soul.heartbeat.runtime.module import HeartbeatModule
 
 
 def _open_hours_cfg() -> SoulHeartbeatConfig:
@@ -85,7 +85,7 @@ def test_tick_runs_when_soul_running(soul_service):
 
 def test_tao_config_accepts_subagent_memory_profile():
     from agent.profile import SubAgentProfile
-    from agent.soul.heartbeat.profiles import _sub_memory
+    from agent.soul.heartbeat.schedule.profiles import _sub_memory
     from config.agent.tao_config import TaoConfig
 
     TaoConfig(memory=_sub_memory())

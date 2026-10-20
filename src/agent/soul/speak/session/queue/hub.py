@@ -312,6 +312,22 @@ class SessionQueueHub:
         with runtime.lock:
             return runtime.phase == "pushing" or bool(runtime.turn_busy)
 
+    def any_busy(self) -> bool:
+        """聚合只读口（heartbeat vitals 探针用）：任一会话正在 turn/推送。"""
+        for runtime in list(self._runtimes.values()):
+            with runtime.lock:
+                if runtime.phase == "pushing" or runtime.turn_busy:
+                    return True
+        return False
+
+    def any_typing(self) -> bool:
+        """聚合只读口：任一会话的用户正在打字（soul 侧等价信号）。"""
+        for runtime in list(self._runtimes.values()):
+            with runtime.lock:
+                if runtime.typing_active:
+                    return True
+        return False
+
     def has_user_interrupt(self, session_id: str) -> bool:
         """用户已入队打断：出站应尽快停，把话筒交给角色。"""
         runtime = self._runtime(session_id)
