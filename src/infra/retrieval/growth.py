@@ -34,7 +34,8 @@ class AuthorLLM(Protocol):
 @dataclass
 class GrowthConfig:
     enabled: bool = True
-    authoring_enabled: bool = True
+    # 生产默认关（PRD R4.2 统计先行）：开启还需注入 LLM 才实际造模板
+    authoring_enabled: bool = False
     # 平均命中分低于该阈值视为低效（滚动窗口）
     hit_threshold: float = 0.25
     min_samples: int = 20

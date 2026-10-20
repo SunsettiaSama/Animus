@@ -238,6 +238,8 @@ class InboundMemoryComposeBridge:
                 "unit_ids": list(pulled.spilled.unit_ids),
             }
 
+        self._emit_adoption(bundle.session_id, pulled, merged_ids)
+
         if get_prompt_trace().is_enabled(bundle.session_id):
             trace_pull = bundle.meta.setdefault("trace_pull", {})
             if isinstance(trace_pull, dict):
@@ -294,6 +296,26 @@ class InboundMemoryComposeBridge:
             },
         )
         return pulled
+
+    def _emit_adoption(self, session_id: str, pulled, merged_ids: list[str]) -> None:
+        """R3.3 观测：H2 采纳——经 budget/去重后实际注入 Speak 上下文的记忆行。"""
+        try:
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.ADOPTION,
+                session_id=session_id,
+                turn_index=pulled.inject.turn_index,
+                injected_count=len(merged_ids),
+                injected_ids=list(merged_ids)[:12],
+                spilled_count=len(pulled.spilled.unit_ids or []),
+                social_prefetch_count=len(pulled.social_prefetch_unit_ids or []),
+                warm_spread_count=len(pulled.warm_spread_unit_ids or []),
+                sources=list(pulled.sources or [])[:8],
+            )
+        except Exception:
+            pass
 
     def apply_interactor_portrait(
         self,

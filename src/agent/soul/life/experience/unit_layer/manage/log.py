@@ -32,7 +32,28 @@ class ExperienceLog:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "a", encoding="utf-8") as f:
             f.write(json.dumps(unit.to_dict(), ensure_ascii=False) + "\n")
+        self._emit_created(unit)
         return unit
+
+    @staticmethod
+    def _emit_created(unit: ExperienceUnit) -> None:
+        """F1 观测：体验单元写入热日志（含 upsert 首写路径；报表按 unit_id 去重）。"""
+        try:
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.UNIT_CREATED,
+                unit_id=unit.id,
+                source=str(unit.source or ""),
+                session_id=str(unit.situation.session_id or ""),
+                salience=float(unit.feeling.salience or 0.0),
+                annotation_decided=bool(unit.feeling.annotation_decided),
+                promote_to_memory=bool(unit.feeling.promote_to_memory),
+                emotion_label=str(unit.feeling.emotion_label or ""),
+            )
+        except Exception:
+            pass
 
     def remove_by_ids(self, unit_ids: set[str]) -> int:
         """从热存储中删除指定体验单元（交会折叠 supersede 参与方）。"""
@@ -137,4 +158,6 @@ class ExperienceLog:
         with open(self._path, "w", encoding="utf-8") as f:
             for line in kept:
                 f.write(line + "\n")
+        if not replaced:
+            self._emit_created(unit)
         return unit

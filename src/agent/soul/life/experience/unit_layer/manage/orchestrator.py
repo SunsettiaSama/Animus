@@ -134,7 +134,7 @@ class ExperienceUnitManager:
         return promoted
 
     def _stamp_presence_bundle_on_unit(self, unit: ExperienceUnit) -> None:
-        if unit.source in ("narrative", "surprise", "collision", "interaction"):
+        if unit.source in ("narrative", "surprise", "collision", "interaction", "game"):
             from agent.soul.life.anchor.presence_bundle import (
                 presence_bundle_from_unit,
                 stamp_presence_bundle,
@@ -219,8 +219,25 @@ class ExperienceUnitManager:
         self._log.append(collision_unit)
         self._write_collision_chronicle(collision_unit, merged_text, has_user=has_user)
         self._promote_to_memory(collision_unit)
+        self._emit_collapse(units, collision_unit)
         # 交会结果必须压入 Presence（share/toward_user），否则长时间尺度主动开口断链
         self._notify_after_ingest(collision_unit)
+
+    @staticmethod
+    def _emit_collapse(units: list[ExperienceUnit], collision_unit: ExperienceUnit) -> None:
+        """G4 观测：交会折叠（撤回 N 个参与单元 → 1 个 collision 单元）。"""
+        try:
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.COLLAPSE,
+                participant_ids=[u.id for u in units],
+                collision_unit_id=collision_unit.id,
+                sources=[str(u.source or "") for u in units],
+            )
+        except Exception:
+            pass
 
     def _notify_after_ingest(self, unit: ExperienceUnit) -> None:
         if self._after_ingest is not None:
@@ -284,13 +301,35 @@ class ExperienceUnitManager:
 
     def _promote_to_memory(self, unit: ExperienceUnit) -> None:
         if self._memory_port is None:
+            self._emit_annotated(unit, outcome="no_port")
             return
         if unit.id in self._memory_ingested_ids:
+            self._emit_annotated(unit, outcome="already_ingested")
             return
         if not unit.should_promote_to_memory():
+            self._emit_annotated(unit, outcome="not_promoted")
             return
         promote_unit_to_memory(self._memory_port, unit)
         self._memory_ingested_ids.add(unit.id)
+        self._emit_annotated(unit, outcome="submitted")
+
+    @staticmethod
+    def _emit_annotated(unit: ExperienceUnit, *, outcome: str) -> None:
+        """F2 观测：擢升判定结果（annotation 决策 + outcome 漏斗口径）。"""
+        try:
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.UNIT_ANNOTATED,
+                unit_id=unit.id,
+                source=str(unit.source or ""),
+                annotation_decided=bool(unit.feeling.annotation_decided),
+                promote_to_memory=bool(unit.feeling.promote_to_memory),
+                outcome=outcome,
+            )
+        except Exception:
+            pass
 
     def _retract_participants_from_memory(self, units: list[ExperienceUnit]) -> None:
         if self._memory_port is None:

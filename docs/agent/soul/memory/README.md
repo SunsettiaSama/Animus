@@ -14,6 +14,7 @@ src/agent/soul/memory/
 │   └── networks/store/
 │       ├── mysql/
 │       └── json/
+├── telemetry/                  成长观测：事件流水 + 快照 + 报表（见 growth-observability-requirements.md）
 ├── bypass/                     增量式 stack 旁路基座（与 event/social 隔离）
 ├── io/session/                 Speak 会话、画像、压缩块
 ├── io/life/                    Life 体验擢升

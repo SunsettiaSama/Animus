@@ -35,3 +35,7 @@ class JsonEdgeStore:
         for row in self._rows.all():
             if row.get("from_id") == node_id or row.get("to_id") == node_id:
                 self._rows.delete(str(row["id"]))
+
+    def list_all(self, limit: int = 100_000) -> list[MemoryEdge]:
+        """全量边（成长快照/报表用；生产检索不走此口）。"""
+        return [row_to_edge(row) for row in self._rows.all()[:limit]]

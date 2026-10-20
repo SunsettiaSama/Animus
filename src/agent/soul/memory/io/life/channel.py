@@ -28,13 +28,38 @@ class LifeMemoryChannel:
         if sleep_filter is not None:
             screened = sleep_filter.screen(inbound)
             if not screened.allowed:
-                return ExperienceIngestAck(
+                ack = ExperienceIngestAck(
                     node_ids=[],
                     mode=MemoryIngestMode.formal,
                     route_reason=screened.reason,
                     network="",
                 )
-        return self._ingest_formal(inbound)
+                self._emit_submitted(inbound, ack, allowed=False, filter_reason=screened.reason)
+                return ack
+        ack = self._ingest_formal(inbound)
+        self._emit_submitted(inbound, ack, allowed=True, filter_reason="")
+        return ack
+
+    @staticmethod
+    def _emit_submitted(inbound: ExperienceIngestInbound, ack: ExperienceIngestAck, *, allowed: bool, filter_reason: str) -> None:
+        """F3 观测：擢升提交经 sleep filter 与图路由后的 ack（入图结果收口）。"""
+        try:
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.PROMOTE_SUBMITTED,
+                unit_id=inbound.unit.id,
+                source=str(inbound.unit.source or ""),
+                allowed=allowed,
+                filter_reason=str(filter_reason or ""),
+                node_ids=list(ack.node_ids),
+                node_count=len(ack.node_ids),
+                network=str(ack.network or ""),
+                route_reason=str(ack.route_reason or ""),
+            )
+        except Exception:
+            pass
 
     def _ingest_formal(self, inbound: ExperienceIngestInbound) -> ExperienceIngestAck:
         persona = self._deps.agent_persona_narrative()

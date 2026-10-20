@@ -80,19 +80,36 @@ def get_default_rewriter() -> TemplateRewriter | None:
     """进程级默认 rewriter（生产接线用）。
 
     - 开关读 config/infra/retrieval.yaml 的 rewriter.enabled（默认开）；
-    - 纯内存模板（不落 .react，不接 growth LLM——生产命中反馈接入是后续步骤）；
+    - growth 统计先行（R4.1）：模板使用/命中反馈持久化到
+      ``<store_root>/growth_stats.json``（入口 B 的 report() 回调喂给这里）；
+      生产不注入 LLM——authoring（造模板）默认关闭，待统计跑出分化后再放开（D4）；
+    - 模板库带持久化（``<store_root>/templates.json``，grown 模板可复用）；
     - 失败安全：任何装配异常返回 None（调用方拿到 None = 维持旧行为）。
     """
     global _DEFAULT_REWRITER
     if _DEFAULT_REWRITER is not None:
         return _DEFAULT_REWRITER
     try:
+        from pathlib import Path
+
         from config.infra.retrieval_config import RetrievalConfig
 
         cfg = RetrievalConfig.load_default()
         if not cfg.rewriter.enabled:
             return None
-        _DEFAULT_REWRITER = TemplateRewriter(TemplateStore(), cache_size=cfg.rewriter.cache_size)
+        root = Path(cfg.store_root)
+        store = TemplateStore(root / "templates.json")
+        growth = (
+            GrowthEngine(
+                store,
+                llm=None,
+                cfg=cfg.growth,
+                stats_path=str(root / "growth_stats.json"),
+            )
+            if cfg.growth.enabled
+            else None
+        )
+        _DEFAULT_REWRITER = TemplateRewriter(store, growth=growth, cache_size=cfg.rewriter.cache_size)
     except Exception:
         return None
     return _DEFAULT_REWRITER

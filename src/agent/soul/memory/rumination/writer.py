@@ -261,7 +261,27 @@ class RuminationWriter:
         self._store.add_rehearsal(source.id)
         if self._on_written is not None:
             self._on_written(updated)
+        self._emit_rewrite(source, updated, len(edges), trigger=trigger, tick_id=tick_id)
         return updated, edges
+
+    @staticmethod
+    def _emit_rewrite(source: MemoryUnit, updated: MemoryUnit, edge_count: int, *, trigger: str, tick_id: str) -> None:
+        """G4 观测：反刍覆盖改写（含新增边数；边本体走 edge_added 收口）。"""
+        try:
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.RUMINATION_REWRITE,
+                node_id=str(source.id),
+                node_type=str(source.MEMORY_TYPE),
+                new_edges=edge_count,
+                trigger=str(trigger or ""),
+                tick_id=str(tick_id or ""),
+                focus=str(getattr(updated, "focus", "") or "")[:80],
+            )
+        except Exception:
+            pass
 
     def apply_edges(
         self,

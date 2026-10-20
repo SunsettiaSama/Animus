@@ -73,6 +73,19 @@ def build_memory_service(
         session_channels = MySQLSessionChannelStore(mysql_client)
         nodes.init_schema()
 
+    # 记忆成长观测（R1/R2）：装配时显式配置 telemetry，并在 store 收口处包装。
+    # 调用方（回放框架/测试）若已 configure 过定制目录，则不覆盖。
+    from agent.soul.memory.telemetry import (
+        configure_memory_telemetry,
+        has_configured_memory_telemetry,
+    )
+    from agent.soul.memory.telemetry.config import MemoryTelemetryConfig
+    from agent.soul.memory.telemetry.store_hooks import wrap_stores
+
+    if not has_configured_memory_telemetry():
+        configure_memory_telemetry(MemoryTelemetryConfig.load_default())
+    nodes, edges = wrap_stores(nodes, edges)
+
     vectors = SemanticVectorIndex(infra) if infra.enabled else SemanticVectorIndex(None)
     from agent.soul.memory.domain import MemoryNetwork
 
@@ -191,6 +204,19 @@ def build_memory_service(
         spread,
         cfg,
     )
+
+    def _growth_snapshot_hook() -> None:
+        """R2.1：sleep 末尾以 store 实际状态落成长快照（含向量基建形态标记）。"""
+        from agent.soul.memory.telemetry import get_memory_telemetry
+        from agent.soul.memory.telemetry.snapshot import build_growth_snapshot
+
+        telemetry = get_memory_telemetry()
+        if telemetry is None:
+            return
+        telemetry.write_snapshot(
+            build_growth_snapshot(nodes, edges, vector_infra_enabled=infra.enabled)
+        )
+
     sleep = SleepService(
         event,
         social,
@@ -203,6 +229,7 @@ def build_memory_service(
             sleep_emotion_threshold=getattr(cfg, "sleep_emotion_threshold", 0.55),
             consolidation_scan_limit=getattr(cfg, "sleep_consolidation_scan_limit", 500),
         ),
+        snapshot_hook=_growth_snapshot_hook,
     )
     session_buffer = SessionMemoryBuffer(
         nodes=nodes,

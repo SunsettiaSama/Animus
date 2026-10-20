@@ -46,7 +46,8 @@ class RetrievalConfig:
             ),
             growth=_GrowthConfig(
                 enabled=bool(gr.get("enabled", True)),
-                authoring_enabled=bool(gr.get("authoring_enabled", True)),
+                # 生产默认关（R4.2 统计先行），与 GrowthConfig 数据类默认一致
+                authoring_enabled=bool(gr.get("authoring_enabled", False)),
                 hit_threshold=float(gr.get("hit_threshold", 0.25)),
                 min_samples=int(gr.get("min_samples", 20)),
                 cooldown_minutes=float(gr.get("cooldown_minutes", 30.0)),

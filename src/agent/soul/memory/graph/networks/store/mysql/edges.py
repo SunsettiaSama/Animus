@@ -67,3 +67,11 @@ class MySQLEdgeStore:
                     "DELETE FROM soul_memory_edges WHERE from_id=%s OR to_id=%s",
                     (node_id, node_id),
                 )
+
+    def list_all(self, limit: int = 100_000) -> list[MemoryEdge]:
+        """全量边（成长快照/报表用；生产检索不走此口）。"""
+        with self._db.conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM soul_memory_edges LIMIT %s", (int(limit),))
+                rows = cur.fetchall()
+        return [row_to_edge(r) for r in rows]

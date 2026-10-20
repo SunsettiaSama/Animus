@@ -602,9 +602,12 @@ class MemoryService:
         ]
 
     def search(self, mode: str, **kwargs) -> list[dict]:
+        import time
+
         from agent.soul.memory.graph.networks.store.codec import scored_to_dict
         from agent.soul.memory.domain import Valence
 
+        started = time.perf_counter()
         m = mode.strip().lower()
         retriever = self._retriever
         if m in ("recent", "timeline"):
@@ -647,7 +650,34 @@ class MemoryService:
             )
         else:
             raise ValueError(f"unknown memory search mode: {mode!r}")
-        return [scored_to_dict(s) for s in scored]
+        rows = [scored_to_dict(s) for s in scored]
+        self._emit_search_telemetry(m, kwargs, rows, started)
+        return rows
+
+    @staticmethod
+    def _emit_search_telemetry(mode: str, kwargs: dict, rows: list[dict], started: float) -> None:
+        """R3 入口 A 观测：soul_memory_search 工具检索（五种模式统一收口）。"""
+        try:
+            import time
+
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.RETRIEVAL_PERFORMED,
+                entry="A_tool_search",
+                mode=mode,
+                query=str(kwargs.get("query", ""))[:200],
+                top_k=int(kwargs.get("top_k", kwargs.get("limit", 5)) or 5),
+                result_count=len(rows),
+                results=[
+                    {"id": str(r.get("id", "")), "score": r.get("final_score")}
+                    for r in rows[:10]
+                ],
+                elapsed_ms=round((time.perf_counter() - started) * 1000.0, 2),
+            )
+        except Exception:
+            pass
 
     def heartbeat_ruminate(self) -> dict:
         return self.rumination.heartbeat_ruminate()

@@ -56,30 +56,76 @@ class MemoryRetrievePolicy:
         secondary_query: str = "",
         mode: RetrieveMode = "hybrid",
     ) -> list[RetrieveHit]:
+        import time
+
+        started = time.perf_counter()
         staged = [
             item
             for item in self._staging.items(session_id)
             if not is_noise_unit(item.unit, kind=item.kind)
         ]
         if not staged:
+            self._emit_telemetry(session_id, mode, "empty_staging", "", "", [], started)
             return []
         roll = self._rng.random() * 100.0
         if mode == "random" or roll >= self._normal_ratio * 100.0:
             picked = self._rng.choice(staged)
-            return [RetrieveHit(unit=picked.unit, score=0.0, mode="random")]
+            hits = [RetrieveHit(unit=picked.unit, score=0.0, mode="random")]
+            self._emit_telemetry(session_id, mode, "random", "", "", hits, started)
+            return hits
         query = _compose_query(primary_query, secondary_query)
         if not query.strip():
+            self._emit_telemetry(session_id, mode, "empty_query", "", "", [], started)
             return []
+        rewritten = query
         if self._query_rewriter is not None:
             try:
-                query = self._query_rewriter.rewrite(query).query or query
+                rewritten = self._query_rewriter.rewrite(query).query or query
             except Exception:
                 pass
         if mode == "bm25":
-            return self._retrieve_bm25(staged, query)
-        if mode == "embedding":
-            return self._retrieve_embedding(staged, query)
-        return self._retrieve_hybrid(staged, query)
+            hits = self._retrieve_bm25(staged, rewritten)
+        elif mode == "embedding":
+            hits = self._retrieve_embedding(staged, rewritten)
+        else:
+            hits = self._retrieve_hybrid(staged, rewritten)
+        self._emit_telemetry(session_id, mode, "normal", query, rewritten, hits, started)
+        return hits
+
+    @staticmethod
+    def _emit_telemetry(
+        session_id: str,
+        mode: str,
+        branch: str,
+        query_original: str,
+        query: str,
+        hits: list["RetrieveHit"],
+        started: float,
+    ) -> None:
+        """R3 入口 C 观测：compose buffer 检索（含 90/10 扰动分支）。"""
+        try:
+            import time
+
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.RETRIEVAL_PERFORMED,
+                entry="C_compose",
+                session_id=session_id,
+                mode=str(mode),
+                branch=branch,
+                query=str(query_original or "")[:200],
+                rewritten_query=str(query or "")[:200],
+                result_count=len(hits),
+                results=[
+                    {"id": h.unit.unit_id, "score": round(float(h.score), 4)}
+                    for h in hits[:10]
+                ],
+                elapsed_ms=round((time.perf_counter() - started) * 1000.0, 2),
+            )
+        except Exception:
+            pass
 
     def _retrieve_bm25(self, staged: list[StagedMemory], query: str) -> list[RetrieveHit]:
         self._bm25.build([(item.unit.unit_id, item.unit.text) for item in staged])

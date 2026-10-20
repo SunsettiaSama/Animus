@@ -258,13 +258,39 @@ class SocialMemoryNetwork:
         *,
         interactor_id: str = "",
     ) -> MemoryBlock:
+        import time
+
+        started = time.perf_counter()
         scored = self._query.recall(query, top_k, interactor_id=interactor_id)
         entries = [s.render_line() for s in scored]
         if interactor_id:
             label = f"\u793e\u4ea4\u8bb0\u5fc6\u00b7{interactor_id}"
         else:
             label = "\u793e\u4ea4\u8bb0\u5fc6"
+        self._emit_recall_telemetry(query, top_k, interactor_id, scored, started)
         return MemoryBlock(label=label, entries=entries)
+
+    @staticmethod
+    def _emit_recall_telemetry(query: str, top_k: int, interactor_id: str, scored, started: float) -> None:
+        """R3 入口 D 观测：recall_social()。"""
+        try:
+            import time
+
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.RETRIEVAL_PERFORMED,
+                entry="D_recall_social",
+                interactor_id=str(interactor_id or ""),
+                query=str(query or "")[:200],
+                top_k=int(top_k),
+                result_count=len(scored),
+                results=[{"id": s.unit.id, "score": round(float(s.final_score), 4)} for s in scored[:10]],
+                elapsed_ms=round((time.perf_counter() - started) * 1000.0, 2),
+            )
+        except Exception:
+            pass
 
     def evolve_core(
         self,

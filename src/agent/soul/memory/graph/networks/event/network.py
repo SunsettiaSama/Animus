@@ -151,13 +151,38 @@ class EventMemoryNetwork:
         top_k: int,
         emotional_context: str = "",
     ) -> MemoryBlock:
+        import time
+
+        started = time.perf_counter()
         _ = emotional_context
         scored = self._query.hybrid(query=query, top_k=top_k)
         unit_ids = [s.unit.id for s in scored]
         if unit_ids and self._enqueue_recall is not None:
             self._enqueue_recall(lambda: record_recall_batch(self._nodes, unit_ids))
         entries = [s.render_line() for s in scored]
+        self._emit_recall_telemetry(query, top_k, scored, started)
         return MemoryBlock(label="事件记忆", entries=entries)
+
+    @staticmethod
+    def _emit_recall_telemetry(query: str, top_k: int, scored, started: float) -> None:
+        """R3 入口 D 观测：recall()（含最终 top-k 与分数；recall 强化另走 recall_recorded）。"""
+        try:
+            import time
+
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.RETRIEVAL_PERFORMED,
+                entry="D_recall",
+                query=str(query or "")[:200],
+                top_k=int(top_k),
+                result_count=len(scored),
+                results=[{"id": s.unit.id, "score": round(float(s.final_score), 4)} for s in scored[:10]],
+                elapsed_ms=round((time.perf_counter() - started) * 1000.0, 2),
+            )
+        except Exception:
+            pass
 
     def forget_scan(self, threshold: float | None, dry_run: bool) -> list[str]:
         resolved = threshold if threshold is not None else self._cfg.forget_threshold

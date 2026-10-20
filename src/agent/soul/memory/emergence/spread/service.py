@@ -296,15 +296,21 @@ class SpreadActivationService:
         *,
         precise_relevance_threshold: float | None = None,
     ) -> PointEmergenceResult:
-        query_text, entities = self._rewritten_cue(cue)
+        import time
+
+        started = time.perf_counter()
+        query_text, entities, rewrite_result = self._rewrite_full(cue)
         precise = self._hybrid_precise(
             cue,
             precise_relevance_threshold=precise_relevance_threshold,
             query_text=query_text,
         )
+        precise_before = len(precise)
+        walk_diag: dict = {}
         precise = self._beam_walk_merge(
-            cue, precise, query=query_text, entities=entities
+            cue, precise, query=query_text, entities=entities, diag=walk_diag
         )
+        beam_walk_added = len(precise) - precise_before
         precise_lines = self._render_lines(precise)
         precise_ids = [s.unit.id for s in precise]
         result = PointEmergenceResult(
@@ -317,13 +323,97 @@ class SpreadActivationService:
             cue_hash=cue_hash(cue.session_id, cue.user_text, cue.agent_text, cue.interactor_id),
         )
         assoc_result = self._apply_associative(cue, result)
+        assoc_before = len(assoc_result.associative_unit_ids)
         final = self._merge_wander(cue, assoc_result)
+        wander_added = len(final.associative_unit_ids) - assoc_before
         final.associative_ready = True
         self._point_store.put(final)
         self._push_point_snapshot(final)
         if final.merged_unit_ids():
             self._notify_point_ready(final)
+
+        self._emit_point_query_telemetry(
+            cue,
+            original_text=self._cue_text(cue),
+            query_text=query_text,
+            entities=entities,
+            rewrite_result=rewrite_result,
+            precise=precise,
+            beam_walk_added=beam_walk_added,
+            wander_added=wander_added,
+            final=final,
+            walk_diag=walk_diag,
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+        )
+        self._report_graph_hits(rewrite_result, walk_diag)
         return final
+
+    def _emit_point_query_telemetry(
+        self,
+        cue: ActivationCue,
+        *,
+        original_text: str,
+        query_text: str,
+        entities: list[str],
+        rewrite_result,
+        precise,
+        beam_walk_added: int,
+        wander_added: int,
+        final: PointEmergenceResult,
+        walk_diag: dict,
+        elapsed_ms: float,
+    ) -> None:
+        """R3 入口 B 观测：点查询全链路（各路召回明细 + rewriter 产物 + 耗时）。"""
+        try:
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.RETRIEVAL_PERFORMED,
+                entry="B_point_query",
+                session_id=cue.session_id,
+                interactor_id=cue.interactor_id,
+                turn_index=cue.turn_index,
+                query=original_text[:200],
+                rewritten_query=str(query_text or "")[:200],
+                entities=list(entities or [])[:8],
+                template_id=str(getattr(rewrite_result, "template_id", "") or ""),
+                rewrite_fallback=bool(getattr(rewrite_result, "used_original_fallback", False)),
+                precise_count=len(precise),
+                beam_walk_added=beam_walk_added,
+                associative_count=len(final.associative_unit_ids) - wander_added,
+                wander_added=wander_added,
+                result_count=len(final.merged_unit_ids()),
+                results=[
+                    {
+                        "id": uid,
+                        "score": next(
+                            (round(float(s.final_score), 4) for s in precise[:10] if s.unit.id == uid),
+                            None,
+                        ),
+                    }
+                    for uid in final.merged_unit_ids()[:10]
+                ],
+                elapsed_ms=round(elapsed_ms, 2),
+            )
+        except Exception:
+            pass
+
+    def _report_graph_hits(self, rewrite_result, walk_diag: dict) -> None:
+        """R4.1：把 H4 图路命中（实体种子 + 束搜索触达）回报给 growth 模板统计。"""
+        if rewrite_result is None or self._query_rewriter is None:
+            return
+        try:
+            from infra.retrieval.rewriter import HitSignal
+
+            hits: list = []
+            for node_id, score in (walk_diag.get("entity_seed_scores") or {}).items():
+                hits.append(HitSignal(id=str(node_id), score=float(score)))
+            for node_id, score in (walk_diag.get("walker_hits") or []):
+                hits.append(HitSignal(id=str(node_id), score=float(score)))
+            self._query_rewriter.report(rewrite_result, hits)
+        except Exception:
+            pass
 
     def _apply_associative(
         self, cue: ActivationCue, result: PointEmergenceResult
@@ -474,14 +564,19 @@ class SpreadActivationService:
 
     def _rewritten_cue(self, cue: ActivationCue) -> tuple[str, list[str]]:
         """cue 文本 → (改写后 query, entities)；未接 rewriter 时返回原文与空实体。"""
+        query, entities, _rr = self._rewrite_full(cue)
+        return query, entities
+
+    def _rewrite_full(self, cue: ActivationCue):
+        """同 _rewritten_cue，但保留完整 RewriteResult（观测 + growth 反馈用）。"""
         text = self._cue_text(cue)
         if not text.strip() or self._query_rewriter is None:
-            return text, []
+            return text, [], None
         try:
             rr = self._query_rewriter.rewrite(text)
         except Exception:
-            return text, []
-        return (rr.query or text), list(rr.entities)
+            return text, [], None
+        return (rr.query or text), list(rr.entities), rr
 
     def _beam_walk_merge(
         self,
@@ -490,11 +585,13 @@ class SpreadActivationService:
         *,
         query: str,
         entities: list[str],
+        diag: dict | None = None,
     ) -> list[ScoredUnit]:
         """precise 种子 + 实体种子 → 语义束搜索；新触达节点补进 precise 尾部。
 
         消融结论（kg_walk 臂 +0.078 Hit@k）：改写价值在 entities→精确种子，
         束搜索沿查询语义方向流动，补齐向量路漏掉的图邻域。
+        ``diag`` 仅观测用（H4 图路命中：实体种子分 + 束搜索触达），不改变行为。
         """
         vectors = self._vectors
         if not self._beam_walk_enabled or vectors is None or not hasattr(vectors, "iter_entries"):
@@ -514,6 +611,8 @@ class SpreadActivationService:
                 seed_scores = self._resolve_seeds_with(cue, query, entities)
             except Exception:
                 seed_scores = {}
+            if diag is not None:
+                diag["entity_seed_scores"] = dict(seed_scores)
             for node_id, score in seed_scores.items():
                 seeds[node_id] = max(seeds.get(node_id, 0.0), min(score, 0.95))
         if not seeds:
@@ -542,6 +641,8 @@ class SpreadActivationService:
         hits = walker.walk(query_vector, seeds)
         if not hits:
             return precise
+        if diag is not None:
+            diag["walker_hits"] = [(h.node_id, float(h.score)) for h in hits]
 
         known = {s.unit.id for s in precise}
         extras: list[str] = []

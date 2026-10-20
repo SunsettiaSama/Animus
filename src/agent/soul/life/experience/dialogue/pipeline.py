@@ -153,7 +153,26 @@ class DialogueExperiencePipeline:
         unit = unit_from_dialogue_session(item.session, experience)
         self._orchestrator.ingest_dialogue_close(unit)
         self._append_interaction_close_chronicle(unit, experience.narration)
+        self._emit_session_closed(session_id, len(item.session.turns), unit)
         return unit
+
+    @staticmethod
+    def _emit_session_closed(session_id: str, turns: int, unit: ExperienceUnit) -> None:
+        """R1.1 观测：会话闭合（轮数 + 终局单元）。"""
+        try:
+            from agent.soul.memory.telemetry import emit_event
+            from agent.soul.memory.telemetry import events as ev
+
+            emit_event(
+                ev.SESSION_CLOSED,
+                session_id=session_id,
+                turns=turns,
+                unit_id=unit.id,
+                promote_to_memory=bool(unit.feeling.promote_to_memory),
+                annotation_decided=bool(unit.feeling.annotation_decided),
+            )
+        except Exception:
+            pass
 
     def _append_interaction_close_chronicle(self, unit: ExperienceUnit, narration: str) -> None:
         chronicle = self._orchestrator.anchor_chronicle
