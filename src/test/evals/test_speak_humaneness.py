@@ -206,6 +206,8 @@ def test_card_family_ablation_arm_offline(tmp_path, monkeypatch):
         ("rd_dynsched_llm", "dynsched_llm"),
         ("rd_softplot", "softplot"),
         ("direct_silence", "charsilence"),
+        ("rd_combo", "combo"),
+        ("rd_combo_v2", "combo_v2"),
     ):
         monkeypatch.setenv("SPEAK_EVAL_CARD_FAMILY", family)
         runtime = build_offline_runtime(responders=(arm,))
